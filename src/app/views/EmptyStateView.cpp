@@ -8,6 +8,8 @@
 #include <QLabel>
 #include <QVBoxLayout>
 
+#include <utility>
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
@@ -27,10 +29,10 @@ QLabel *centeredLabel(const QString &text, const QString &objectName, QWidget *p
 
 } // namespace
 
-EmptyStateView::EmptyStateView(const QIcon &symbol, const QString &title, const QString &text, const QString &note,
+EmptyStateView::EmptyStateView(QIcon symbol, const QString &title, const QString &text, const QString &note,
                                QWidget *parent)
     : QWidget(parent)
-    , m_symbol(symbol)
+    , m_symbol(std::move(symbol))
     , m_symbolLabel(new QLabel(this))
 {
     m_symbolLabel->setAlignment(Qt::AlignCenter);
@@ -83,8 +85,9 @@ EmptyStateView::EmptyStateView(const QIcon &symbol, const QString &title, const 
 void EmptyStateView::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
-    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ThemeChange)
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::ThemeChange) {
         refreshSymbol();
+    }
 }
 
 void EmptyStateView::refreshSymbol()

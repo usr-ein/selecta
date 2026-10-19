@@ -31,7 +31,9 @@ class Sidebar;
 // What the main window needs from the rest of the app. The referenced objects outlive the window.
 struct AppServices
 {
+    // cppcheck-suppress uninitMemberVarNoCtor ; references are bound by aggregate initialisation
     storage::SessionLog &sessions;
+    // cppcheck-suppress uninitMemberVarNoCtor
     AppSettings &settings;
     BuildInfo build;
     qint64 sessionStartedAtMs = 0;

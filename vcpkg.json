@@ -24,12 +24,17 @@
         "thread",
         "widgets"
       ]
-    }
+    },
+    "rapidfuzz-cpp",
+    "zlib"
   ],
   "features": {
     "tests": {
       "description": "Unit and UI test frameworks",
-      "dependencies": [ "gtest" ]
+      "dependencies": [
+        "gtest",
+        "benchmark"
+      ]
     },
     "media": {
       "description": "Decoding, MP3 encoding, resampling and tags (milestones M5 and M6)",
@@ -37,7 +42,11 @@
         {
           "name": "ffmpeg",
           "default-features": false,
-          "features": [ "avcodec", "avformat", "swresample" ]
+          "features": [
+            "avcodec",
+            "avformat",
+            "swresample"
+          ]
         },
         "mp3lame",
         "soxr",

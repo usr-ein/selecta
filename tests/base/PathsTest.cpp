@@ -23,7 +23,7 @@ TEST(Paths, AreAbsoluteAndDistinct)
 
 TEST(Paths, EnsureDirCreatesNestedFolders)
 {
-    QTemporaryDir dir;
+    const QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString nested = dir.filePath(u"a/b/c"_s);
     EXPECT_TRUE(paths::ensureDir(nested));

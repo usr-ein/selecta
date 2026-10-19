@@ -8,18 +8,21 @@ namespace selecta::app::icons {
 QIcon symbol(const QString &sfSymbol, const QString &fallbackThemeName)
 {
     QIcon icon = QIcon::fromTheme(sfSymbol);
-    if (icon.isNull() && !fallbackThemeName.isEmpty())
+    if (icon.isNull() && !fallbackThemeName.isEmpty()) {
         icon = QIcon::fromTheme(fallbackThemeName);
+    }
     return icon;
 }
 
 QPixmap tinted(const QIcon &icon, QSize size, qreal devicePixelRatio, const QColor &color)
 {
-    if (icon.isNull() || size.isEmpty())
+    if (icon.isNull() || size.isEmpty()) {
         return {};
+    }
     const QPixmap source = icon.pixmap(size, devicePixelRatio);
-    if (source.isNull())
+    if (source.isNull()) {
         return {};
+    }
     QPixmap result(source.size());
     result.setDevicePixelRatio(source.devicePixelRatio());
     result.fill(Qt::transparent);

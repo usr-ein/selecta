@@ -10,8 +10,9 @@ namespace {
 QString normalizedName(const QString &host)
 {
     QString name = host.trimmed().toLower();
-    while (name.endsWith(u'.'))
+    while (name.endsWith(u'.')) {
         name.chop(1);
+    }
     return name;
 }
 
@@ -39,8 +40,9 @@ bool isKnownLiveServerName(const QString &host)
 
 ServerKind classifyAddress(const QHostAddress &address)
 {
-    if (address.isNull())
+    if (address.isNull()) {
         return ServerKind::Unresolved;
+    }
 
     // An IPv4-mapped IPv6 address (::ffff:a.b.c.d) is classified as the IPv4 address it carries.
     bool isV4 = false;
@@ -48,22 +50,27 @@ ServerKind classifyAddress(const QHostAddress &address)
     const QHostAddress normalized = isV4 ? QHostAddress(v4) : address;
 
     if (normalized == QHostAddress(QHostAddress::AnyIPv4) || normalized == QHostAddress(QHostAddress::AnyIPv6) ||
-        normalized.isMulticast() || normalized.isBroadcast())
+        normalized.isMulticast() || normalized.isBroadcast()) {
         return ServerKind::Invalid;
-    if (normalized.isLoopback() || normalized.isPrivateUse() || normalized.isLinkLocal())
+    }
+    if (normalized.isLoopback() || normalized.isPrivateUse() || normalized.isLinkLocal()) {
         return ServerKind::Local;
+    }
     return ServerKind::Live;
 }
 
 ServerKind classifyServerHost(const QString &host)
 {
     const QString name = normalizedName(host);
-    if (name.isEmpty())
+    if (name.isEmpty()) {
         return ServerKind::Invalid;
-    if (isKnownLiveServerName(name))
+    }
+    if (isKnownLiveServerName(name)) {
         return ServerKind::Live;
-    if (name == u"localhost"_s)
+    }
+    if (name == u"localhost"_s) {
         return ServerKind::Local;
+    }
     const QHostAddress address(name);
     return address.isNull() ? ServerKind::Unresolved : classifyAddress(address);
 }

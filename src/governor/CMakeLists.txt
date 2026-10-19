@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 qt_add_library(selecta_governor STATIC
     Limits.h
+    Permit.h
     ServerGuard.h ServerGuard.cpp
     TokenBucket.h TokenBucket.cpp)
 add_library(Selecta::Governor ALIAS selecta_governor)

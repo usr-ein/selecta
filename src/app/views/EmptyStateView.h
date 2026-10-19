@@ -15,7 +15,7 @@ class EmptyStateView : public QWidget
     Q_OBJECT
 
 public:
-    EmptyStateView(const QIcon &symbol, const QString &title, const QString &text, const QString &note = {},
+    EmptyStateView(QIcon symbol, const QString &title, const QString &text, const QString &note = {},
                    QWidget *parent = nullptr);
 
 protected:

@@ -21,13 +21,16 @@ TokenBucket::TokenBucket(const base::Clock &clock, int capacity, base::Clock::Du
 TokenBucket::Level TokenBucket::levelAt(base::Clock::TimePoint now) const
 {
     Level level = m_level;
-    if (level.tokens >= m_capacity)
+    if (level.tokens >= m_capacity) {
         return {m_capacity, now}; // a full bucket doesn't bank time towards the next token
-    if (now <= level.since)
+    }
+    if (now <= level.since) {
         return level; // no time has passed (or the clock is behind): nothing earned
+    }
     const auto earned = (now - level.since) / m_interval;
-    if (earned >= m_capacity - level.tokens)
+    if (earned >= m_capacity - level.tokens) {
         return {m_capacity, now};
+    }
     level.tokens += static_cast<int>(earned);
     level.since += earned * m_interval;
     return level;
@@ -40,11 +43,13 @@ int TokenBucket::available() const
 
 bool TokenBucket::tryTake(int count)
 {
-    if (count <= 0)
+    if (count <= 0) {
         return true;
+    }
     Level level = levelAt(m_clock.now());
-    if (count > level.tokens)
+    if (count > level.tokens) {
         return false;
+    }
     level.tokens -= count;
     m_level = level;
     return true;
@@ -55,8 +60,9 @@ base::Clock::Duration TokenBucket::timeUntilAvailable(int count) const
     const base::Clock::TimePoint now = m_clock.now();
     const Level level = levelAt(now);
     const int wanted = std::min(count, m_capacity);
-    if (wanted <= level.tokens)
+    if (wanted <= level.tokens) {
         return base::Clock::Duration::zero();
+    }
     const base::Clock::TimePoint ready = level.since + (wanted - level.tokens) * m_interval;
     return ready > now ? ready - now : base::Clock::Duration::zero();
 }

@@ -40,7 +40,9 @@ protected:
 
     std::unique_ptr<MainWindow> makeWindow()
     {
-        selecta::app::BuildInfo build{.version = u"0.0.0-test"_s, .session = session};
+        selecta::app::BuildInfo build;
+        build.version = u"0.0.0-test"_s;
+        build.session = session;
         auto window = std::make_unique<MainWindow>(selecta::app::AppServices{sessions, *settings, build, 1'000});
         window->setAttribute(Qt::WA_DontShowOnScreen);
         window->show();
@@ -66,7 +68,8 @@ TEST_F(MainWindowTest, OpensOnGetTracksByDefault)
 TEST_F(MainWindowTest, EverySidebarItemHasAView)
 {
     auto window = makeWindow();
-    for (const QString &id : window->viewIds()) {
+    const QStringList ids = window->viewIds();
+    for (const QString &id : ids) {
         EXPECT_TRUE(window->navigateTo(id)) << id.toStdString();
         EXPECT_EQ(window->currentViewId(), id);
         EXPECT_FALSE(window->currentTitle().isEmpty()) << id.toStdString();
@@ -81,7 +84,7 @@ TEST_F(MainWindowTest, UnknownViewChangesNothing)
 {
     auto window = makeWindow();
     ASSERT_TRUE(window->navigateTo(u"history"_s));
-    QSignalSpy changed(window.get(), &MainWindow::viewChanged);
+    const QSignalSpy changed(window.get(), &MainWindow::viewChanged);
     EXPECT_FALSE(window->navigateTo(u"does-not-exist"_s));
     EXPECT_FALSE(window->navigateTo(QString()));
     EXPECT_EQ(window->currentViewId(), u"history"_s);

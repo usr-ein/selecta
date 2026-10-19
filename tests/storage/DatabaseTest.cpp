@@ -163,7 +163,7 @@ TEST(Database, EmptyPathIsRefused)
 
 TEST(Database, FileDatabaseUsesWalAndPersists)
 {
-    QTemporaryDir dir;
+    const QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString path = dir.filePath(u"test.sqlite3"_s);
     {
@@ -192,7 +192,7 @@ TEST(Database, ForeignKeysAreEnforced)
 
 TEST(Database, OpeningANonexistentFolderFails)
 {
-    QTemporaryDir dir;
+    const QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     Database db;
     EXPECT_FALSE(db.open(dir.filePath(u"missing/folder/db.sqlite3"_s)));

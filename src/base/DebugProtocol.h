@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
-#include <QtTypes>
+#include <QString>
 
 // The local debugging protocol between a running Selecta (started with --debug-server, in builds with
 // SELECTA_DEVTOOLS) and `selecta-cli app …`.
@@ -13,8 +13,8 @@
 // Commands: ping, state, views, tree, screenshot, navigate, click, type, appearance, log, quit.
 namespace selecta::base::debugprotocol {
 
-inline constexpr char kSocketName[] = "selecta-debug";
-inline constexpr qsizetype kMaxLineBytes = 64 * 1024;
+inline constexpr QLatin1StringView kSocketName{"selecta-debug"};
+inline constexpr qsizetype kMaxLineBytes = qsizetype{64} * 1024;
 inline constexpr int kTreeDefaultDepth = 8;
 inline constexpr int kTreeMaxDepth = 32;
 inline constexpr int kLogMaxLines = 2000;

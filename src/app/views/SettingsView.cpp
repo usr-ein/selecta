@@ -67,8 +67,9 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, QWidget
     m_appearance->setObjectName(u"settings.appearance"_s);
     const std::array choices{std::pair{Appearance::System, tr("System")}, std::pair{Appearance::Light, tr("Light")},
                              std::pair{Appearance::Dark, tr("Dark")}};
-    for (const auto &[value, label] : choices)
+    for (const auto &[value, label] : choices) {
         m_appearance->addItem(label, static_cast<int>(value));
+    }
     setAppearance(appearance);
     appearanceForm->addRow(tr("Theme:"), m_appearance);
     connect(m_appearance, &QComboBox::activated, this, [this](int index) {
@@ -128,8 +129,9 @@ void SettingsView::setAppearance(Appearance appearance)
 {
     const QSignalBlocker blocker(m_appearance);
     const int index = m_appearance->findData(static_cast<int>(appearance));
-    if (index >= 0)
+    if (index >= 0) {
         m_appearance->setCurrentIndex(index);
+    }
 }
 
 } // namespace selecta::app

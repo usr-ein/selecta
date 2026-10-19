@@ -25,8 +25,9 @@ bool isValidList(std::span<const Migration> migrations)
 {
     int previous = 0;
     for (const Migration &migration : migrations) {
-        if (migration.version != previous + 1 || migration.sql == nullptr)
+        if (migration.version != previous + 1 || migration.sql == nullptr) {
             return false;
+        }
         previous = migration.version;
     }
     return true;
@@ -36,12 +37,14 @@ bool isValidList(std::span<const Migration> migrations)
 
 MigrationResult migrate(Database &db, std::span<const Migration> migrations)
 {
-    if (!isValidList(migrations))
+    if (!isValidList(migrations)) {
         return {MigrationStatus::InvalidList, db.userVersion(), u"migration versions must be 1, 2, 3, …"_s};
+    }
 
     int current = db.userVersion();
-    if (current < 0)
+    if (current < 0) {
         return {MigrationStatus::Failed, current, db.lastError()};
+    }
 
     const int latest = migrations.empty() ? 0 : migrations.back().version;
     if (current > latest) {
@@ -50,8 +53,9 @@ MigrationResult migrate(Database &db, std::span<const Migration> migrations)
     }
 
     for (const Migration &migration : migrations) {
-        if (migration.version <= current)
+        if (migration.version <= current) {
             continue;
+        }
         Transaction transaction(db);
         if (!transaction.isActive() || !db.exec(QString::fromUtf8(migration.sql)) ||
             !db.setUserVersion(migration.version) || !transaction.commit()) {

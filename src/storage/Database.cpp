@@ -25,14 +25,17 @@ bool isBlankSql(const char *tail)
         if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r' || *p == ';') {
             ++p;
         } else if (p[0] == '-' && p[1] == '-') {
-            while (*p && *p != '\n')
+            while (*p && *p != '\n') {
                 ++p;
+            }
         } else if (p[0] == '/' && p[1] == '*') {
             p += 2;
-            while (*p && !(p[0] == '*' && p[1] == '/'))
+            while (*p && (p[0] != '*' || p[1] != '/')) {
                 ++p;
-            if (*p)
+            }
+            if (*p) {
                 p += 2;
+            }
         } else {
             return false;
         }
@@ -83,8 +86,9 @@ bool Database::open(const QString &path)
             return false;
         }
         // WAL can be refused (e.g. on some network file systems); SQLite then keeps the old mode without an error.
-        if (const QString mode = journalMode(); mode != u"wal"_s)
+        if (const QString mode = journalMode(); mode != u"wal"_s) {
             qCWarning(lcStorage) << "WAL is unavailable for" << path << "- journal mode is" << mode;
+        }
     }
     qCDebug(lcStorage) << "opened" << path;
     return true;
@@ -92,8 +96,9 @@ bool Database::open(const QString &path)
 
 void Database::close()
 {
-    if (!m_db)
+    if (!m_db) {
         return;
+    }
     assertOwnerThread();
     sqlite3_close_v2(m_db); // with unfinalized statements, the connection becomes a zombie until they are finalized
     m_db = nullptr;
@@ -147,8 +152,9 @@ Statement Database::prepare(QStringView sql)
 int Database::userVersion()
 {
     Statement statement = prepare(u"PRAGMA user_version;");
-    if (statement.isValid() && statement.step() == Statement::Step::Row)
+    if (statement.isValid() && statement.step() == Statement::Step::Row) {
         return static_cast<int>(statement.int64(0));
+    }
     return -1;
 }
 
@@ -160,8 +166,9 @@ bool Database::setUserVersion(int version)
 QString Database::journalMode()
 {
     Statement statement = prepare(u"PRAGMA journal_mode;");
-    if (statement.isValid() && statement.step() == Statement::Step::Row)
+    if (statement.isValid() && statement.step() == Statement::Step::Row) {
         return statement.text(0).toLower();
+    }
     return {};
 }
 
@@ -187,8 +194,9 @@ void Database::recordError(QStringView what)
 
 Statement::~Statement()
 {
-    if (m_stmt)
+    if (m_stmt) {
         sqlite3_finalize(m_stmt);
+    }
 }
 
 Statement::Statement(Statement &&other) noexcept
@@ -201,8 +209,9 @@ Statement::Statement(Statement &&other) noexcept
 Statement &Statement::operator=(Statement &&other) noexcept
 {
     if (this != &other) {
-        if (m_stmt)
+        if (m_stmt) {
             sqlite3_finalize(m_stmt);
+        }
         m_stmt = std::exchange(other.m_stmt, nullptr);
         m_hasRow = std::exchange(other.m_hasRow, false);
         m_bindFailed = std::exchange(other.m_bindFailed, false);
@@ -213,8 +222,9 @@ Statement &Statement::operator=(Statement &&other) noexcept
 
 bool Statement::checkBind(int resultCode, int index)
 {
-    if (resultCode == SQLITE_OK)
+    if (resultCode == SQLITE_OK) {
         return true;
+    }
     m_bindFailed = true;
     m_lastError = u"bind parameter %1: "_s.arg(index) + QString::fromUtf8(sqlite3_errstr(resultCode));
     qCWarning(lcStorage) << m_lastError;
@@ -223,15 +233,17 @@ bool Statement::checkBind(int resultCode, int index)
 
 Statement &Statement::bind(int index, qint64 value)
 {
-    if (m_stmt)
+    if (m_stmt) {
         checkBind(sqlite3_bind_int64(m_stmt, index, value), index);
+    }
     return *this;
 }
 
 Statement &Statement::bind(int index, double value)
 {
-    if (m_stmt)
+    if (m_stmt) {
         checkBind(sqlite3_bind_double(m_stmt, index, value), index);
+    }
     return *this;
 }
 
@@ -261,8 +273,9 @@ Statement &Statement::bind(int index, const QByteArray &value)
 
 Statement &Statement::bindNull(int index)
 {
-    if (m_stmt)
+    if (m_stmt) {
         checkBind(sqlite3_bind_null(m_stmt, index), index);
+    }
     return *this;
 }
 
@@ -273,8 +286,9 @@ Statement::Step Statement::step()
         m_lastError = u"step: invalid statement"_s;
         return Step::Error;
     }
-    if (m_bindFailed)
+    if (m_bindFailed) {
         return Step::Error;
+    }
     switch (const int rc = sqlite3_step(m_stmt)) {
     case SQLITE_ROW:
         m_hasRow = true;
@@ -291,15 +305,17 @@ Statement::Step Statement::step()
 bool Statement::run()
 {
     Step result = step();
-    while (result == Step::Row)
+    while (result == Step::Row) {
         result = step();
+    }
     return result == Step::Done;
 }
 
 void Statement::reset()
 {
-    if (!m_stmt)
+    if (!m_stmt) {
         return;
+    }
     sqlite3_reset(m_stmt);
     sqlite3_clear_bindings(m_stmt);
     m_hasRow = false;
@@ -329,8 +345,9 @@ double Statement::real(int column) const
 
 QString Statement::text(int column) const
 {
-    if (!hasColumn(column))
+    if (!hasColumn(column)) {
         return {};
+    }
     // Call sqlite3_column_text before sqlite3_column_bytes: the order matters when a conversion happens.
     const auto *data = reinterpret_cast<const char *>(sqlite3_column_text(m_stmt, column));
     return QString::fromUtf8(data, sqlite3_column_bytes(m_stmt, column));
@@ -338,10 +355,11 @@ QString Statement::text(int column) const
 
 QByteArray Statement::blob(int column) const
 {
-    if (!hasColumn(column))
+    if (!hasColumn(column)) {
         return {};
+    }
     const auto *data = static_cast<const char *>(sqlite3_column_blob(m_stmt, column));
-    return QByteArray(data, sqlite3_column_bytes(m_stmt, column));
+    return {data, sqlite3_column_bytes(m_stmt, column)};
 }
 
 bool Statement::isNull(int column) const
@@ -358,16 +376,19 @@ Transaction::Transaction(Database &db)
 
 Transaction::~Transaction()
 {
-    if (m_active && !m_db.exec(u"ROLLBACK;"))
+    if (m_active && !m_db.exec(u"ROLLBACK;")) {
         qCWarning(lcStorage) << "rollback failed:" << m_db.lastError();
+    }
 }
 
 bool Transaction::commit()
 {
-    if (!m_active)
+    if (!m_active) {
         return false;
-    if (!m_db.exec(u"COMMIT;"))
+    }
+    if (!m_db.exec(u"COMMIT;")) {
         return false; // still active: the destructor rolls back
+    }
     m_active = false;
     return true;
 }

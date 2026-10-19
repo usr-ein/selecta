@@ -110,8 +110,9 @@ TEST(TokenBucket, SearchBudgetMatchesTheEtiquetteNumbers)
     const auto countIn = [&](std::chrono::seconds window) {
         int sent = 0;
         for (auto elapsed = 0s; elapsed < window; elapsed += 1s) {
-            while (bucket.tryTake())
+            while (bucket.tryTake()) {
                 ++sent;
+            }
             clock.advance(1s);
         }
         return sent;

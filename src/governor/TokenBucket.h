@@ -34,8 +34,8 @@ public:
 private:
     struct Level
     {
-        int tokens;
-        base::Clock::TimePoint since; // when the token being earned started accruing
+        int tokens = 0;
+        base::Clock::TimePoint since; // when the token being earned started accruing (default: epoch)
     };
     Level levelAt(base::Clock::TimePoint now) const;
 

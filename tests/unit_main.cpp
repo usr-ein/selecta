@@ -7,7 +7,7 @@
 int main(int argc, char **argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
-    QCoreApplication app(argc, argv);
+    const QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("SelectaTests"));
     QStandardPaths::setTestModeEnabled(true);
     return RUN_ALL_TESTS();

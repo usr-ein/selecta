@@ -31,7 +31,9 @@
 
 using namespace Qt::StringLiterals;
 
+namespace {
 Q_LOGGING_CATEGORY(lcUi, "selecta.app.ui")
+} // namespace
 
 namespace selecta::app {
 namespace {
@@ -66,13 +68,13 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     : QMainWindow(parent)
     , m_services(std::move(services))
     , m_appearance(m_services.settings.appearance())
+    , m_navModel(new NavModel(this))
 {
     setObjectName(u"mainWindow"_s);
     setWindowTitle(u"Selecta"_s);
     setMinimumSize(kMinimumWidth, kMinimumHeight);
     setUnifiedTitleAndToolBarOnMac(true);
 
-    m_navModel = new NavModel(this);
     createCentralArea();
     createViews();
     createActions();
@@ -136,8 +138,9 @@ void MainWindow::createCentralArea()
 void MainWindow::addView(const QString &id, QWidget *widget, std::function<QString()> subtitle)
 {
     Q_ASSERT_X(!m_viewIndex.contains(id), "MainWindow::addView", "duplicate view id");
-    if (widget->objectName().isEmpty())
+    if (widget->objectName().isEmpty()) {
         widget->setObjectName(u"view."_s + id);
+    }
     m_stack->addWidget(widget);
     m_viewIndex.insert(id, m_views.size());
     m_views.append({id, std::move(subtitle), widget});
@@ -209,8 +212,10 @@ void MainWindow::createViews()
     addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));
 
 #ifndef QT_NO_DEBUG
-    for (const QString &id : m_navModel->ids())
+    const QStringList ids = m_navModel->ids();
+    for (const QString &id : ids) {
         Q_ASSERT_X(m_viewIndex.contains(id), "MainWindow::createViews", "every sidebar item needs a view");
+    }
 #endif
 }
 
@@ -362,7 +367,7 @@ void MainWindow::createToolBar()
 
 void MainWindow::restoreSavedState()
 {
-    AppSettings &settings = m_services.settings;
+    const AppSettings &settings = m_services.settings;
     if (const QByteArray geometry = settings.windowGeometry(); geometry.isEmpty() || !restoreGeometry(geometry)) {
         QSize size(kDefaultWidth, kDefaultHeight);
         if (const QScreen *screen = QGuiApplication::primaryScreen()) {
@@ -372,14 +377,17 @@ void MainWindow::restoreSavedState()
         }
         resize(size);
     }
-    if (!m_mainSplitter->restoreState(settings.splitterState(kMainSplitter)))
+    if (!m_mainSplitter->restoreState(settings.splitterState(kMainSplitter))) {
         m_mainSplitter->setSizes({kSidebarWidth, std::max(1, width() - kSidebarWidth)});
-    if (!m_contentSplitter->restoreState(settings.splitterState(kContentSplitter)))
+    }
+    if (!m_contentSplitter->restoreState(settings.splitterState(kContentSplitter))) {
         m_contentSplitter->setSizes({std::max(1, width() - kSidebarWidth - kInspectorWidth), kInspectorWidth});
+    }
     setSidebarShown(settings.sidebarShown());
     setInspectorShown(settings.inspectorShown());
-    if (!navigateTo(settings.lastView()))
+    if (!navigateTo(settings.lastView())) {
         navigateTo(kDefaultView);
+    }
 }
 
 void MainWindow::saveState()
@@ -392,8 +400,9 @@ void MainWindow::saveState()
     settings.setInspectorShown(isInspectorShown());
     settings.setLastView(m_currentId);
     settings.setAppearance(m_appearance);
-    if (!settings.sync())
+    if (!settings.sync()) {
         qCWarning(lcUi) << "couldn't write settings to" << settings.fileName();
+    }
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -406,8 +415,9 @@ bool MainWindow::navigateTo(const QString &id)
 {
     const auto found = m_viewIndex.constFind(id);
     if (found == m_viewIndex.cend()) {
-        if (!id.isEmpty())
+        if (!id.isEmpty()) {
             qCWarning(lcUi) << "unknown view" << id;
+        }
         return false;
     }
     m_stack->setCurrentIndex(static_cast<int>(found.value()));
@@ -422,8 +432,9 @@ QStringList MainWindow::viewIds() const
 {
     QStringList ids;
     ids.reserve(m_views.size());
-    for (const View &view : m_views)
+    for (const View &view : m_views) {
         ids.append(view.id);
+    }
     return ids;
 }
 
@@ -440,8 +451,9 @@ QString MainWindow::currentSubtitle() const
 void MainWindow::refreshTitle()
 {
     const auto found = m_viewIndex.constFind(m_currentId);
-    if (found == m_viewIndex.cend() || !m_title)
+    if (found == m_viewIndex.cend() || !m_title) {
         return;
+    }
     const View &view = m_views.at(found.value());
     m_title->setText(m_navModel->titleOf(view.id));
     m_subtitle->setText(view.subtitle ? view.subtitle() : QString());
@@ -474,7 +486,8 @@ void MainWindow::setAppearance(Appearance appearance)
     m_appearance = appearance;
     applyAppearance(appearance);
     m_services.settings.setAppearance(appearance);
-    for (QAction *action : m_appearanceGroup->actions()) {
+    const QList<QAction *> actions = m_appearanceGroup->actions();
+    for (QAction *action : actions) {
         const QSignalBlocker blocker(action);
         action->setChecked(action->data().toInt() == static_cast<int>(appearance));
     }

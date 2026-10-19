@@ -37,8 +37,9 @@ NavDelegate::NavDelegate(QObject *parent)
 QSize NavDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
     const bool isHeader = index.data(NavModel::IsHeaderRole).toBool();
-    if (!isHeader)
+    if (!isHeader) {
         return {option.rect.width(), kItemHeight};
+    }
     return {option.rect.width(), index.data(Qt::DisplayRole).toString().isEmpty() ? kSpacerHeight : kHeaderHeight};
 }
 
@@ -46,10 +47,12 @@ QPixmap NavDelegate::symbolPixmap(const QModelIndex &index, const QColor &color,
 {
     const QString key = index.data(NavModel::IdRole).toString() + u'|' + QString::number(color.rgba(), 16) + u'|' +
                         QString::number(devicePixelRatio);
-    if (const auto found = m_pixmaps.constFind(key); found != m_pixmaps.cend())
+    if (const auto found = m_pixmaps.constFind(key); found != m_pixmaps.cend()) {
         return found.value();
-    if (m_pixmaps.size() >= kMaxCachedPixmaps)
+    }
+    if (m_pixmaps.size() >= kMaxCachedPixmaps) {
         m_pixmaps.clear(); // appearance changes create new keys; keep the cache bounded
+    }
     const QPixmap pixmap = icons::tinted(index.data(Qt::DecorationRole).value<QIcon>(), QSize(kIconSize, kIconSize),
                                          devicePixelRatio, color);
     m_pixmaps.insert(key, pixmap);
@@ -58,8 +61,9 @@ QPixmap NavDelegate::symbolPixmap(const QModelIndex &index, const QColor &color,
 
 void NavDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
 {
-    if (!painter || !index.isValid())
+    if (!painter || !index.isValid()) {
         return;
+    }
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);
     const QPalette &palette = option.palette;
@@ -103,9 +107,10 @@ void NavDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, c
     const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : qApp->devicePixelRatio();
     const QPixmap symbol = symbolPixmap(index, iconColor, dpr);
     const int iconX = rect.left() + kSideInset + 8;
-    const int iconY = rect.top() + (rect.height() - kIconSize) / 2;
-    if (!symbol.isNull())
+    const int iconY = rect.top() + ((rect.height() - kIconSize) / 2);
+    if (!symbol.isNull()) {
         painter->drawPixmap(QPoint(iconX, iconY), symbol);
+    }
 
     int right = rect.right() - kSideInset - 8;
     const int count = index.data(NavModel::CountRole).toInt();

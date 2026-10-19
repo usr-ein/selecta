@@ -15,7 +15,7 @@ class NavModel : public QAbstractListModel
     Q_OBJECT
 
 public:
-    enum Role {
+    enum Role {                    // NOLINT(cppcoreguidelines-use-enum-class): Qt item roles are plain ints
         IdRole = Qt::UserRole + 1, // QString; empty for headers
         IsHeaderRole,              // bool
         CountRole,                 // int; 0 hides the count
@@ -46,6 +46,8 @@ public:
     void setCount(const QString &id, int count);
 
 private:
+    static QList<Item> defaultItems();
+
     QList<Item> m_items;
     QHash<QString, int> m_counts;
 };

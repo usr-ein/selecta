@@ -36,11 +36,12 @@ LoggerState &state()
 }
 
 // The handler that was active before ours. Atomic so a nested message (see t_inHandler) can reach it without the mutex.
+// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables): process-wide by nature
 std::atomic<QtMessageHandler> g_previous{nullptr};
 
 // Set while this thread is inside the handler. A message logged from inside it (e.g. by QFile) must not try to take the
 // mutex again; it goes to the previous handler only.
-thread_local bool t_inHandler = false;
+thread_local bool t_inHandler = false; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): per-thread guard
 
 QString logPath(const QString &dir, int index)
 {
@@ -50,8 +51,9 @@ QString logPath(const QString &dir, int index)
 bool openCurrent(LoggerState &s)
 {
     s.file.setFileName(logPath(s.dir, 0));
-    if (!s.file.open(QIODevice::WriteOnly | QIODevice::Append))
+    if (!s.file.open(QIODevice::WriteOnly | QIODevice::Append)) {
         return false;
+    }
     s.written = s.file.size();
     return true;
 }
@@ -61,8 +63,9 @@ void rotate(LoggerState &s)
 {
     s.file.close();
     QFile::remove(logPath(s.dir, s.keepFiles - 1));
-    for (int i = s.keepFiles - 2; i >= 0; --i)
+    for (int i = s.keepFiles - 2; i >= 0; --i) {
         QFile::rename(logPath(s.dir, i), logPath(s.dir, i + 1));
+    }
     openCurrent(s); // if this fails, file logging stops; the previous handler still gets every message
 }
 
@@ -89,39 +92,43 @@ void handleMessage(QtMsgType type, const QMessageLogContext &context, const QStr
         t_inHandler = true;
         LoggerState &s = state();
         {
-            QMutexLocker locker(&s.mutex);
+            const QMutexLocker locker(&s.mutex);
             if (s.installed && s.file.isOpen()) {
                 const QByteArray line =
                     (QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs) + u' ' + levelName(type) + u' ' +
                      QLatin1StringView(context.category ? context.category : "default") + u": " + message + u'\n')
                         .toUtf8();
-                if (s.file.write(line) == line.size())
+                if (s.file.write(line) == line.size()) {
                     s.written += line.size();
+                }
                 s.file.flush(); // flushed per message so a crash keeps the last lines
-                if (s.written >= s.maxBytes && s.keepFiles > 1)
+                if (s.written >= s.maxBytes && s.keepFiles > 1) {
                     rotate(s);
+                }
             }
         }
         t_inHandler = false;
     }
-    if (QtMessageHandler previous = g_previous.load(std::memory_order_acquire))
+    if (QtMessageHandler previous = g_previous.load(std::memory_order_acquire)) {
         previous(type, context, message);
+    }
 }
 
 } // namespace
 
 bool installFileLogger(const QString &dir, qint64 maxBytes, int keepFiles)
 {
-    if (!QDir().mkpath(dir))
+    if (!QDir().mkpath(dir)) {
         return false;
+    }
 
     bool opened = false;
     {
         LoggerState &s = state();
-        QMutexLocker locker(&s.mutex);
+        const QMutexLocker locker(&s.mutex);
         s.file.close();
         s.dir = dir;
-        s.maxBytes = maxBytes > 0 ? maxBytes : qint64{1} << 20;
+        s.maxBytes = maxBytes > 0 ? maxBytes : qint64{1024} * 1024;
         s.keepFiles = keepFiles > 0 ? keepFiles : 1;
         opened = openCurrent(s);
         s.installed = true;
@@ -129,8 +136,9 @@ bool installFileLogger(const QString &dir, qint64 maxBytes, int keepFiles)
 
     // Installing twice must not record our own handler as "previous": it would call itself forever.
     const QtMessageHandler previous = qInstallMessageHandler(handleMessage);
-    if (previous != handleMessage)
+    if (previous != handleMessage) {
         g_previous.store(previous, std::memory_order_release);
+    }
     return opened;
 }
 
@@ -138,9 +146,10 @@ void uninstallFileLogger()
 {
     LoggerState &s = state();
     {
-        QMutexLocker locker(&s.mutex);
-        if (!s.installed)
+        const QMutexLocker locker(&s.mutex);
+        if (!s.installed) {
             return;
+        }
         s.installed = false;
         s.file.close();
     }

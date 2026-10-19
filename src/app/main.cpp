@@ -27,7 +27,9 @@
 using namespace Qt::StringLiterals;
 namespace paths = selecta::base::paths;
 
+namespace {
 Q_LOGGING_CATEGORY(lcApp, "selecta.app")
+} // namespace
 
 namespace {
 
@@ -54,12 +56,13 @@ Options parseOptions(const QApplication &app)
     const QCommandLineOption debugServer(u"debug-server"_s,
                                          u"Accept inspection commands from `selecta-cli app` on a local socket."_s);
     const QCommandLineOption debugSocket(u"debug-socket"_s, u"Name of the debug socket."_s, u"name"_s,
-                                         QString::fromLatin1(selecta::base::debugprotocol::kSocketName));
+                                         QString(selecta::base::debugprotocol::kSocketName));
     parser.addOptions({dataDir, headless, debugServer, debugSocket});
     parser.process(app);
 
-    if (parser.isSet(dataDir))
+    if (parser.isSet(dataDir)) {
         paths::setRootOverride(parser.value(dataDir));
+    }
     return {parser.isSet(headless), parser.isSet(debugServer), parser.value(debugSocket)};
 }
 
@@ -67,10 +70,13 @@ Options parseOptions(const QApplication &app)
 void reportFatal(const QString &title, const QString &detail, bool headless)
 {
     qCCritical(lcApp).noquote() << title << '-' << detail;
-    if (headless)
-        std::fputs(qPrintable(title + u": "_s + detail + u'\n'), stderr);
-    else
+    if (headless) {
+        if (std::fputs(qPrintable(title + u": "_s + detail + u'\n'), stderr) == EOF) {
+            // stderr is closed: the log file above already has the message
+        }
+    } else {
         QMessageBox::critical(nullptr, title, detail);
+    }
 }
 
 QString migrationMessage(const selecta::storage::MigrationResult &result)
@@ -102,11 +108,11 @@ QString buildType()
 
 int main(int argc, char *argv[])
 {
-    QApplication app(argc, argv);
+    const QApplication app(argc, argv);
     QApplication::setApplicationName(u"Selecta"_s);
     QApplication::setApplicationDisplayName(u"Selecta"_s);
     QApplication::setOrganizationDomain(u"usr-ein.github.io"_s);
-    QApplication::setApplicationVersion(QString::fromLatin1(selecta::base::kVersion));
+    QApplication::setApplicationVersion(QString(selecta::base::kVersion));
 
     const Options options = parseOptions(app);
 
@@ -128,11 +134,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    if (!selecta::base::installFileLogger(paths::logDir()))
+    if (!selecta::base::installFileLogger(paths::logDir())) {
         qCWarning(lcApp) << "can't write the log file in" << paths::logDir();
+    }
     qCInfo(lcApp).noquote() << u"Selecta %1 starting; Qt %2 on %3; data in %4"_s.arg(
-        QString::fromLatin1(selecta::base::kVersion), QString::fromLatin1(qVersion()), QGuiApplication::platformName(),
-        dataDir);
+        QString(selecta::base::kVersion), QString::fromLatin1(qVersion()), QGuiApplication::platformName(), dataDir);
 
     selecta::storage::Database database;
     if (!database.open(paths::databaseFile())) {
@@ -151,14 +157,15 @@ int main(int argc, char *argv[])
     selecta::storage::SessionLog sessions(database);
     const qint64 startedAt = QDateTime::currentMSecsSinceEpoch();
     const int session = sessions.start(startedAt);
-    if (session < 0)
+    if (session < 0) {
         qCWarning(lcApp) << "couldn't record the session:" << database.lastError();
+    }
 
     selecta::app::AppSettings settings(paths::settingsFile());
     selecta::app::applyAppearance(settings.appearance());
 
-    selecta::app::BuildInfo build{
-        .version = QString::fromLatin1(selecta::base::kVersion),
+    const selecta::app::BuildInfo build{
+        .version = QString(selecta::base::kVersion),
         .qtVersion = QString::fromLatin1(qVersion()),
         .buildType = buildType(),
         .liveServerCompiledIn = selecta::governor::liveServerCompiledIn(),
@@ -167,16 +174,18 @@ int main(int argc, char *argv[])
         .logDir = paths::logDir(),
     };
     selecta::app::MainWindow window({sessions, settings, build, startedAt});
-    if (options.headless)
+    if (options.headless) {
         window.setAttribute(Qt::WA_DontShowOnScreen);
+    }
     window.show();
 
 #ifdef SELECTA_DEVTOOLS
     std::unique_ptr<selecta::app::devtools::DebugServer> debugServer;
     if (options.debugServer) {
         debugServer = std::make_unique<selecta::app::devtools::DebugServer>(window, paths::logDir());
-        if (!debugServer->listen(options.debugSocket))
+        if (!debugServer->listen(options.debugSocket)) {
             qCWarning(lcApp) << "the debug server isn't available";
+        }
     }
 #else
     if (options.debugServer)
@@ -185,8 +194,9 @@ int main(int argc, char *argv[])
 
     const int exitCode = QApplication::exec();
 
-    if (session > 0 && !sessions.end(session, QDateTime::currentMSecsSinceEpoch()))
+    if (session > 0 && !sessions.end(session, QDateTime::currentMSecsSinceEpoch())) {
         qCWarning(lcApp) << "couldn't close session" << session << ':' << database.lastError();
+    }
     qCInfo(lcApp) << "Selecta quit with code" << exitCode;
     selecta::base::uninstallFileLogger();
     return exitCode;

@@ -1,0 +1,73 @@
+# Static analysis for Selecta's own sources (tools/lint.sh, or the `lint` preset). Third-party code is not checked.
+# Checks are broad; the exclusions below are deliberate and explained.
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  cert-*,
+  -cert-err58-cpp,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-const-or-ref-data-members,
+  -cppcoreguidelines-avoid-do-while,
+  -cppcoreguidelines-macro-usage,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  -cppcoreguidelines-owning-memory,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-bounds-constant-array-index,
+  misc-*,
+  -misc-include-cleaner,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-designated-initializers,
+  performance-*,
+  portability-*,
+  readability-*,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-implicit-bool-conversion,
+  -readability-redundant-access-specifiers,
+  -readability-convert-member-functions-to-static,
+  -readability-avoid-unconditional-preprocessor-if,
+  -modernize-use-nodiscard,
+  -portability-avoid-pragma-once,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access,
+  -readability-trailing-comma,
+  -performance-enum-size
+# Why the exclusions:
+#   avoid-magic-numbers / readability-magic-numbers: layout metrics and protocol constants are named where it matters.
+#   owning-memory: Qt parent/child ownership (new QWidget(parent)) is the idiom.
+#   pro-type-reinterpret-cast, pro-bounds-pointer-arithmetic: binary protocol and C APIs (SQLite, zlib, FFmpeg).
+#   pro-type-vararg: qDebug-style macros and C APIs.
+#   readability-redundant-access-specifiers: Q_SIGNALS / Q_SLOTS sections.
+#   readability-implicit-bool-conversion: Qt pointer and flag tests are idiomatic.
+#   misc-include-cleaner: noisy with Qt's umbrella and forwarding headers.
+#   use-nodiscard: [[nodiscard]] is applied where ignoring a result is a bug (open, migrate…), not on every getter.
+#   avoid-pragma-once: every supported compiler handles #pragma once.
+#   pro-bounds-avoid-unchecked-container-access: fires on Qt JSON/hash insertions; QList::at asserts in debug.
+#   trailing-comma, enum-size: style and micro-optimisation, no defects.
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/(src|tests|tools)/.*'
+FormatStyle: file
+CheckOptions:
+  - key: readability-function-cognitive-complexity.Threshold
+    value: '40'
+  - key: readability-function-cognitive-complexity.IgnoreMacros
+    value: 'true'
+  - key: cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor
+    value: 'true'
+  - key: cppcoreguidelines-special-member-functions.AllowMissingMoveFunctionsWhenCopyIsDeleted
+    value: 'true'
+  - key: misc-const-correctness.AnalyzeValues
+    value: 'true'
+  - key: misc-const-correctness.WarnPointersAsValues
+    value: 'false'
+  - key: bugprone-unused-return-value.AllowCastToVoid
+    value: 'true'

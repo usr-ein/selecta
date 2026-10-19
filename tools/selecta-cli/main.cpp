@@ -18,26 +18,33 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 
+#include <array>
 #include <cstdio>
 
 using namespace Qt::StringLiterals;
 
 namespace {
 
-enum ExitCode { kOk = 0, kFailed = 1, kUsage = 2 };
+constexpr int kOk = 0;
+constexpr int kFailed = 1;
+constexpr int kUsage = 2;
 
 void print(FILE *stream, const QString &text)
 {
-    std::fputs(text.toUtf8().constData(), stream);
-    std::fputc('\n', stream);
+    const QByteArray line = text.toUtf8() + '\n';
+    if (std::fwrite(line.constData(), 1, static_cast<std::size_t>(line.size()), stream) !=
+        static_cast<std::size_t>(line.size())) {
+        return; // stdout or stderr is gone: there is nothing else to report to
+    }
 }
 
 QJsonValue parseValue(const QString &raw)
 {
     QJsonParseError error{};
     const QJsonDocument document = QJsonDocument::fromJson(u"[%1]"_s.arg(raw).toUtf8(), &error);
-    if (error.error == QJsonParseError::NoError && document.isArray() && document.array().size() == 1)
+    if (error.error == QJsonParseError::NoError && document.isArray() && document.array().size() == 1) {
         return document.array().first();
+    }
     return raw;
 }
 
@@ -50,8 +57,9 @@ int checkServer(const QStringList &arguments)
     using selecta::governor::ServerKind;
     const QString &host = arguments.first();
     const ServerKind kind = selecta::governor::classifyServerHost(host);
-    const QString names[] = {u"local test server"_s, u"live Soulseek network"_s,
-                             u"host name: resolve it, then check each address"_s, u"not a server address"_s};
+    const std::array<QString, 4> names = {u"local test server"_s, u"live Soulseek network"_s,
+                                          u"host name: resolve it, then check each address"_s,
+                                          u"not a server address"_s};
     const bool allowed = selecta::governor::serverAllowed(host, false);
     print(stdout, u"%1: %2; %3"_s.arg(host, names[static_cast<int>(kind)],
                                       allowed ? u"allowed"_s : u"refused by this build"_s));
@@ -91,7 +99,7 @@ int app(const QStringList &arguments, const QString &socket)
     if (result.isObject() || result.isArray()) {
         const QJsonDocument document =
             result.isObject() ? QJsonDocument(result.toObject()) : QJsonDocument(result.toArray());
-        std::fputs(document.toJson(QJsonDocument::Indented).constData(), stdout);
+        print(stdout, QString::fromUtf8(document.toJson(QJsonDocument::Indented)).trimmed());
     } else {
         print(stdout, result.toVariant().toString());
     }
@@ -102,16 +110,16 @@ int app(const QStringList &arguments, const QString &socket)
 
 int main(int argc, char *argv[])
 {
-    QCoreApplication application(argc, argv);
+    const QCoreApplication application(argc, argv);
     QCoreApplication::setApplicationName(u"selecta-cli"_s);
-    QCoreApplication::setApplicationVersion(QString::fromLatin1(selecta::base::kVersion));
+    QCoreApplication::setApplicationVersion(QString(selecta::base::kVersion));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(u"Selecta development tools."_s);
     parser.addHelpOption();
     parser.addVersionOption();
     const QCommandLineOption socket(u"socket"_s, u"Debug socket of the running Selecta."_s, u"name"_s,
-                                    QString::fromLatin1(selecta::base::debugprotocol::kSocketName));
+                                    QString(selecta::base::debugprotocol::kSocketName));
     parser.addOption(socket);
     parser.addPositionalArgument(u"command"_s, u"check-server or app"_s);
     parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
@@ -123,10 +131,12 @@ int main(int argc, char *argv[])
         return kUsage;
     }
     const QString command = positional.takeFirst();
-    if (command == u"check-server")
+    if (command == u"check-server") {
         return checkServer(positional);
-    if (command == u"app")
+    }
+    if (command == u"app") {
         return app(positional, parser.value(socket));
+    }
     print(stderr, u"unknown command: "_s + command);
     return kUsage;
 }

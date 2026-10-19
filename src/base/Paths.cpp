@@ -11,7 +11,8 @@ using namespace Qt::StringLiterals;
 namespace selecta::base::paths {
 namespace {
 
-QString g_root; // see setRootOverride()
+QString
+    g_root; // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): set once at start-up, see setRootOverride()
 
 } // namespace
 
@@ -27,25 +28,29 @@ QString rootOverride()
 
 QString appSupportDir()
 {
-    if (!g_root.isEmpty())
+    if (!g_root.isEmpty()) {
         return g_root + u"/data"_s;
+    }
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 }
 
 QString cacheDir()
 {
-    if (!g_root.isEmpty())
+    if (!g_root.isEmpty()) {
         return g_root + u"/cache"_s;
+    }
     return QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
 }
 
 QString logDir()
 {
-    if (!g_root.isEmpty())
+    if (!g_root.isEmpty()) {
         return g_root + u"/logs"_s;
+    }
 #ifdef Q_OS_MACOS
-    if (!QStandardPaths::isTestModeEnabled())
+    if (!QStandardPaths::isTestModeEnabled()) {
         return QDir::homePath() + u"/Library/Logs/"_s + QCoreApplication::applicationName();
+    }
 #endif
     return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + u"/logs"_s;
 }
@@ -62,8 +67,9 @@ QString settingsFile()
 
 QString defaultInboxDir()
 {
-    if (!g_root.isEmpty())
+    if (!g_root.isEmpty()) {
         return g_root + u"/Inbox"_s;
+    }
     return QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + u"/Selecta/Inbox"_s;
 }
 

@@ -23,12 +23,15 @@ QString appearanceKey(Appearance appearance)
 
 Appearance appearanceFromKey(QStringView key, Appearance fallback)
 {
-    if (key == u"system")
+    if (key == u"system") {
         return Appearance::System;
-    if (key == u"light")
+    }
+    if (key == u"light") {
         return Appearance::Light;
-    if (key == u"dark")
+    }
+    if (key == u"dark") {
         return Appearance::Dark;
+    }
     return fallback;
 }
 

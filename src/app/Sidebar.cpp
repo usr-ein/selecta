@@ -30,8 +30,9 @@ StatusDot::StatusDot(QWidget *parent)
 
 void StatusDot::setOnline(bool online)
 {
-    if (m_online == online)
+    if (m_online == online) {
         return;
+    }
     m_online = online;
     setAccessibleName(online ? tr("Online") : tr("Offline"));
     update();
@@ -80,11 +81,13 @@ Sidebar::Sidebar(NavModel *model, QWidget *parent)
     layout->addLayout(status);
 
     connect(m_list->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &current) {
-        if (m_selecting || !current.isValid())
+        if (m_selecting || !current.isValid()) {
             return;
+        }
         const QString id = m_model->idAt(current.row());
-        if (!id.isEmpty())
+        if (!id.isEmpty()) {
             Q_EMIT navigationRequested(id);
+        }
     });
 
     setConnectionStatus(tr("Not connected"), false);
@@ -94,10 +97,11 @@ void Sidebar::select(const QString &id)
 {
     const int row = m_model->rowOf(id);
     m_selecting = true;
-    if (row < 0)
+    if (row < 0) {
         m_list->selectionModel()->clear();
-    else
+    } else {
         m_list->selectionModel()->setCurrentIndex(m_model->index(row), QItemSelectionModel::ClearAndSelect);
+    }
     m_selecting = false;
 }
 

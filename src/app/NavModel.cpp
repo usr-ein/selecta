@@ -22,8 +22,12 @@ NavModel::Item item(const QString &id, const QString &title, const QString &sfSy
 
 NavModel::NavModel(QObject *parent)
     : QAbstractListModel(parent)
+    , m_items(defaultItems())
+{}
+
+QList<NavModel::Item> NavModel::defaultItems()
 {
-    m_items = {
+    return {
         item(u"get"_s, tr("Get tracks"), u"list.bullet.rectangle"_s, u"view-list-details"_s),
         item(u"inbox"_s, tr("Inbox"), u"tray.and.arrow.down"_s, u"mail-folder-inbox"_s),
         header(tr("Digging")),
@@ -49,15 +53,15 @@ int NavModel::rowCount(const QModelIndex &parent) const
 
 QVariant NavModel::data(const QModelIndex &index, int role) const
 {
-    if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid))
+    if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid)) {
         return {};
+    }
     const Item &entry = m_items.at(index.row());
     switch (role) {
     case Qt::DisplayRole:
     case Qt::ToolTipRole:
-        return entry.title;
     case Qt::AccessibleTextRole:
-        return entry.isHeader ? entry.title : entry.title;
+        return entry.title;
     case Qt::DecorationRole:
         return entry.icon;
     case IdRole:
@@ -73,18 +77,21 @@ QVariant NavModel::data(const QModelIndex &index, int role) const
 
 Qt::ItemFlags NavModel::flags(const QModelIndex &index) const
 {
-    if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid))
+    if (!checkIndex(index, CheckIndexOption::IndexIsValid | CheckIndexOption::ParentIsInvalid)) {
         return Qt::NoItemFlags;
+    }
     return m_items.at(index.row()).isHeader ? Qt::NoItemFlags : (Qt::ItemIsEnabled | Qt::ItemIsSelectable);
 }
 
 int NavModel::rowOf(const QString &id) const
 {
-    if (id.isEmpty())
+    if (id.isEmpty()) {
         return -1;
+    }
     for (qsizetype row = 0; row < m_items.size(); ++row) {
-        if (m_items.at(row).id == id)
+        if (m_items.at(row).id == id) {
             return static_cast<int>(row);
+        }
     }
     return -1;
 }
@@ -109,8 +116,9 @@ QStringList NavModel::ids() const
 {
     QStringList result;
     for (const Item &entry : m_items) {
-        if (!entry.isHeader)
+        if (!entry.isHeader) {
             result.append(entry.id);
+        }
     }
     return result;
 }
@@ -118,15 +126,18 @@ QStringList NavModel::ids() const
 void NavModel::setCount(const QString &id, int count)
 {
     const int row = rowOf(id);
-    if (row < 0)
+    if (row < 0) {
         return;
+    }
     const int clamped = count > 0 ? count : 0;
-    if (m_counts.value(id, 0) == clamped)
+    if (m_counts.value(id, 0) == clamped) {
         return;
-    if (clamped == 0)
+    }
+    if (clamped == 0) {
         m_counts.remove(id);
-    else
+    } else {
         m_counts.insert(id, clamped);
+    }
     const QModelIndex changed = index(row);
     Q_EMIT dataChanged(changed, changed, {CountRole});
 }

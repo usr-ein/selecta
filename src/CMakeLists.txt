@@ -5,4 +5,17 @@
 add_subdirectory(base)
 add_subdirectory(governor)
 add_subdirectory(storage)
+
+# Libraries with clean boundaries, each built by its own agent against a contract in docs/contracts/ (PLAN §9).
+# A library's directory joins the build as soon as it has a CMakeLists.txt.
+set(_selecta_libraries slsk meta match)
+if(SELECTA_WITH_MEDIA)
+    list(APPEND _selecta_libraries audio convert)
+endif()
+foreach(_module IN LISTS _selecta_libraries)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_module}/CMakeLists.txt")
+        add_subdirectory(${_module})
+    endif()
+endforeach()
+
 add_subdirectory(app)

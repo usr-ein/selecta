@@ -12,7 +12,7 @@ using selecta::app::NavModel;
 TEST(NavModel, PassesQtModelChecks)
 {
     NavModel model;
-    QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Fatal);
+    const QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Fatal);
     model.setCount(u"inbox"_s, 3);
     model.setCount(u"inbox"_s, 0);
 }
@@ -55,7 +55,7 @@ TEST(NavModel, LooksUpIds)
 TEST(NavModel, CountsSignalOnlyOnChange)
 {
     NavModel model;
-    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
+    const QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
     model.setCount(u"inbox"_s, 4);
     model.setCount(u"inbox"_s, 4);
     model.setCount(u"unknown"_s, 4);

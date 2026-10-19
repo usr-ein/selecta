@@ -28,7 +28,9 @@
 
 using namespace Qt::StringLiterals;
 
+namespace {
 Q_LOGGING_CATEGORY(lcDevtools, "selecta.app.devtools")
+} // namespace
 
 namespace selecta::app::devtools {
 namespace protocol = base::debugprotocol;
@@ -36,19 +38,22 @@ namespace {
 
 constexpr int kProbeTimeoutMs = 200;
 
-QJsonArray rectJson(const QRect &rect)
+QJsonArray rectJson(QRect rect)
 {
     return {rect.x(), rect.y(), rect.width(), rect.height()};
 }
 
 QString widgetText(const QWidget *widget)
 {
-    if (const auto *label = qobject_cast<const QLabel *>(widget))
+    if (const auto *label = qobject_cast<const QLabel *>(widget)) {
         return label->text();
-    if (const auto *button = qobject_cast<const QAbstractButton *>(widget))
+    }
+    if (const auto *button = qobject_cast<const QAbstractButton *>(widget)) {
         return button->text();
-    if (const auto *edit = qobject_cast<const QLineEdit *>(widget))
+    }
+    if (const auto *edit = qobject_cast<const QLineEdit *>(widget)) {
         return edit->text();
+    }
     return {};
 }
 
@@ -56,29 +61,37 @@ QJsonObject describe(const QWidget *widget, int depth)
 {
     QJsonObject node;
     node["class"_L1] = QString::fromLatin1(widget->metaObject()->className());
-    if (!widget->objectName().isEmpty())
+    if (!widget->objectName().isEmpty()) {
         node["name"_L1] = widget->objectName();
+    }
     node["visible"_L1] = widget->isVisible();
     node["geometry"_L1] = rectJson(widget->geometry());
-    if (!widget->isEnabled())
+    if (!widget->isEnabled()) {
         node["enabled"_L1] = false;
-    if (const QString text = widgetText(widget); !text.isEmpty())
+    }
+    if (const QString text = widgetText(widget); !text.isEmpty()) {
         node["text"_L1] = text;
-    if (const auto *button = qobject_cast<const QAbstractButton *>(widget); button && button->isCheckable())
+    }
+    if (const auto *button = qobject_cast<const QAbstractButton *>(widget); button && button->isCheckable()) {
         node["checked"_L1] = button->isChecked();
+    }
     if (const auto *view = qobject_cast<const QAbstractItemView *>(widget); view && view->model()) {
         node["rows"_L1] = view->model()->rowCount(view->rootIndex());
-        if (const QModelIndex current = view->currentIndex(); current.isValid())
+        if (const QModelIndex current = view->currentIndex(); current.isValid()) {
             node["current"_L1] = current.data().toString();
+        }
     }
     if (depth > 0) {
         QJsonArray children;
         for (QObject *child : widget->children()) {
-            if (const auto *childWidget = qobject_cast<const QWidget *>(child); childWidget && !childWidget->isWindow())
+            if (const auto *childWidget = qobject_cast<const QWidget *>(child);
+                childWidget && !childWidget->isWindow()) {
                 children.append(describe(childWidget, depth - 1));
+            }
         }
-        if (!children.isEmpty())
+        if (!children.isEmpty()) {
             node["children"_L1] = children;
+        }
     }
     return node;
 }
@@ -141,8 +154,9 @@ void DebugServer::acceptConnections()
 
 void DebugServer::readFrom(QLocalSocket *socket)
 {
-    if (!m_buffers.contains(socket))
+    if (!m_buffers.contains(socket)) {
         return;
+    }
     // Work on a copy: handling a command can run code that adds or removes connections and rehashes m_buffers.
     QByteArray buffer = m_buffers.value(socket) + socket->readAll();
     QByteArray replies;
@@ -165,8 +179,9 @@ void DebugServer::readFrom(QLocalSocket *socket)
         newline = buffer.indexOf('\n');
     }
 
-    if (!m_buffers.contains(socket))
+    if (!m_buffers.contains(socket)) {
         return; // disconnected while handling
+    }
     if (!replies.isEmpty()) {
         socket->write(replies);
         socket->flush();
@@ -188,27 +203,47 @@ QJsonObject DebugServer::handle(const QJsonObject &request)
     const QJsonObject args = request.value("args"_L1).toObject();
     QString error;
     QJsonValue result;
-    if (command == u"ping")
-        result = ping();
-    else if (command == u"state")
-        result = state();
-    else if (command == u"views")
-        result = QJsonArray::fromStringList(m_window.viewIds());
-    else if (command == u"tree")
-        result = tree(args, &error);
-    else if (command == u"screenshot")
-        result = screenshot(args, &error);
-    else if (command == u"navigate")
-        result = navigate(args, &error);
-    else if (command == u"click")
-        result = click(args, &error);
-    else if (command == u"type")
-        result = type(args, &error);
-    else if (command == u"appearance")
-        result = appearance(args, &error);
-    else if (command == u"log")
-        result = log(args, &error);
-    else if (command == u"quit") {
+    if (command == u"ping") {
+        {
+            result = ping();
+        }
+    } else if (command == u"state") {
+        {
+            result = state();
+        }
+    } else if (command == u"views") {
+        {
+            result = QJsonArray::fromStringList(m_window.viewIds());
+        }
+    } else if (command == u"tree") {
+        {
+            result = tree(args, &error);
+        }
+    } else if (command == u"screenshot") {
+        {
+            result = screenshot(args, &error);
+        }
+    } else if (command == u"navigate") {
+        {
+            result = navigate(args, &error);
+        }
+    } else if (command == u"click") {
+        {
+            result = click(args, &error);
+        }
+    } else if (command == u"type") {
+        {
+            result = type(args, &error);
+        }
+    } else if (command == u"appearance") {
+        {
+            result = appearance(args, &error);
+        }
+    } else if (command == u"log") {
+        {
+            result = log(args, &error);
+        }
+    } else if (command == u"quit") {
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
         result = true;
     } else {
@@ -216,16 +251,17 @@ QJsonObject DebugServer::handle(const QJsonObject &request)
     }
 
     QJsonObject response{{"id"_L1, request.value("id"_L1)}, {"ok"_L1, error.isEmpty()}};
-    if (error.isEmpty())
+    if (error.isEmpty()) {
         response["result"_L1] = result;
-    else
+    } else {
         response["error"_L1] = error;
+    }
     return response;
 }
 
 QJsonValue DebugServer::ping()
 {
-    return QJsonObject{{"version"_L1, QString::fromLatin1(base::kVersion)},
+    return QJsonObject{{"version"_L1, QString(base::kVersion)},
                        {"pid"_L1, QCoreApplication::applicationPid()},
                        {"qt"_L1, QString::fromLatin1(qVersion())},
                        {"platform"_L1, QGuiApplication::platformName()},
@@ -393,8 +429,9 @@ QJsonValue DebugServer::log(const QJsonObject &args, QString *error)
     const QList<QByteArray> all = file.readAll().split('\n');
     QJsonArray tail;
     const qsizetype end = (!all.isEmpty() && all.last().isEmpty()) ? all.size() - 1 : all.size();
-    for (qsizetype i = std::max<qsizetype>(0, end - lines); i < end; ++i)
+    for (qsizetype i = std::max<qsizetype>(0, end - lines); i < end; ++i) {
         tail.append(QString::fromUtf8(all.at(i)));
+    }
     return tail;
 }
 

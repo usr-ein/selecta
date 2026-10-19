@@ -26,8 +26,9 @@ QString formatTime(qint64 msSinceEpoch)
 QString formatDuration(qint64 ms)
 {
     const qint64 minutes = std::max<qint64>(0, ms) / 60'000;
-    if (minutes < 60)
+    if (minutes < 60) {
         return HistoryView::tr("%n min", nullptr, static_cast<int>(minutes));
+    }
     return HistoryView::tr("%1 h %2 min").arg(minutes / 60).arg(minutes % 60);
 }
 
@@ -93,13 +94,14 @@ void HistoryView::refresh()
         } else {
             ended = tr("Didn't quit cleanly");
         }
-        QList<QStandardItem *> row{
+        const QList<QStandardItem *> row{
             new QStandardItem(isCurrent ? tr("%1 (this one)").arg(session.number) : QString::number(session.number)),
             new QStandardItem(formatTime(session.startedAtMs)), new QStandardItem(ended), new QStandardItem(length)};
         m_model->appendRow(row);
     }
-    for (int column = 0; column < m_model->columnCount() - 1; ++column)
+    for (int column = 0; column < m_model->columnCount() - 1; ++column) {
         m_table->resizeColumnToContents(column);
+    }
     m_summary->setText(tr("Downloads will be listed here by session once Selecta can download (milestone M4). "
                           "Sessions are already recorded: one per launch."));
 }

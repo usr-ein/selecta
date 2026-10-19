@@ -13,7 +13,7 @@ namespace selecta::base {
 // passes it on to the previous handler (stderr, or os_log on macOS). Keeps at most `keepFiles` files of about
 // `maxBytes` each. Calling it again re-targets the file. Returns false when the file can't be opened; messages still
 // reach the previous handler.
-bool installFileLogger(const QString &dir, qint64 maxBytes = qint64{1} << 20, int keepFiles = 5);
+bool installFileLogger(const QString &dir, qint64 maxBytes = qint64{1024} * 1024, int keepFiles = 5);
 
 // Stops writing to the file and restores the previous handler. Safe to call when nothing is installed.
 void uninstallFileLogger();
