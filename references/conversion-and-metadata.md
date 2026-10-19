@@ -36,7 +36,7 @@
 2. The "26 ms problem": Traktor treats `Lavf`/`Lavc` Xing frames (and LAME tags with a zero CRC) as audio while
    rekordbox skips them, so cues differ by one MP3 frame between apps; genuine LAME tags with a valid CRC are read
    consistently. In one sample, 8 of 13 Lavf/Lavc files shifted vs 5 of 122 LAME files (M, dj-data-converter #3).
-3. FFmpeg's `libmp3lame` wrapper has no default bitrate (`b=0` → LAME's 128 kbps), only sets `-q` when asked (LAME
+3. FFmpeg's `libmp3lame` wrapper has no default bitrate (`b=0` → LAME's default compression ratio 11.025 = 128 kbps), only sets `-q` when asked (LAME
    default `-q 3`), forces `out_samplerate = in_samplerate`, and marks LAME init as not thread-safe (H).
 4. LAME's CBR lowpass table: 320 kbps → 20.5 kHz, 256 → 19.7, 224 → 19.4, 192 → 18.6, 160 → 17.5, 128 → 17.0 kHz
    (`libmp3lame/lame.c`, `optimum_bandwidth`) — a reference for spectral-cutoff heuristics (H).
@@ -101,7 +101,8 @@ layout as `lame -b 320` (the reference everyone tests against).
 - **When to resample:** only when the target format cannot carry the source rate: MP3 (max 48 kHz), or a user-chosen
   "hardware compatibility" profile (§4.3). Never upsample automatically.
 - **Target rate:** 88.2 / 176.4 kHz → 44.1 kHz (integer ratio). 96 / 192 kHz → 48 kHz keeps an integer ratio, but
-  44.1 kHz is the CD/DJ norm; proposed default **44.1 kHz for MP3 output**, 48 kHz sources kept at 48 kHz (decision D-4 in §9).
+  44.1 kHz is the CD/DJ norm and, with a modern resampler, the ratio does not matter for quality (M); proposed default
+  **44.1 kHz for MP3 output**, 48 kHz sources kept at 48 kHz (decision D-4 in §9).
 - **Engine:** libsoxr, quality `SOXR_VHQ` (28-bit precision) or `SOXR_HQ` (20-bit); both far beyond what MP3 needs.
   FFmpeg's `swr` with `resampler=soxr` uses `precision=20` by default (H) but needs an FFmpeg built with libsoxr.
   FFmpeg's native swr resampler (`filter_size=32` default) is acceptable as a fallback (L: not measured here; measure with a sweep test, §10).
@@ -205,13 +206,15 @@ Picard tag-mapping appendix (`picard-docs/appendices/tag_mapping.rst`); beets `m
 
 **Multi-value rule for ID3v2.3 (H):** TagLib renders a text frame with several values null-separated even when saving
 v2.3 (`TextIdentificationFrame::renderFields`), which v2.3 readers show as only the first value. mutagen joins with
-`/` (`v23_sep='/'`); Picard has a "join with" setting (default `/`). Selecta should join with `; ` for ARTIST-like
-fields where `/` occurs in names (e.g. "AC/DC") — proposed `", "` for ARTIST-type fields and `"; "` elsewhere (decision D-6 in §9).
+`/` (`v23_sep='/'`); Picard has a "join with" setting (default `/`). Selecta should avoid `/`, which occurs inside
+names (e.g. "AC/DC"): proposed `", "` for ARTIST-type fields and `"; "` elsewhere (decision D-6 in §9).
 
-**Text encoding (H):** TagLib frames default to Latin-1 and are rendered as UTF-16 (v2.3) or UTF-8 (v2.4) only when a
-value is not Latin-1-representable (`Frame::checkTextEncoding`). Setting
-`ID3v2::FrameFactory::instance()->setDefaultTextEncoding(String::UTF16)` makes every v2.3 text frame UTF-16 with BOM,
-which is what Picard does for v2.3 and avoids readers that decode "Latin-1" with a local code page (L). Recommended.
+**Text encoding (H):** frames that TagLib creates from properties (`setProperties()` →
+`FrameFactory::createFrameForProperty`) are UTF-8 internally, and `Frame::checkTextEncoding` renders UTF-8 frames as
+**UTF-16 with BOM** whenever the tag is saved as v2.3 — the same result Picard produces for v2.3. Frames kept from a
+parsed tag stay Latin-1 only if every value is Latin-1-representable. `FrameFactory::setDefaultTextEncoding()` affects
+only frames *parsed* from files, so it is not needed if Selecta builds each output tag fresh from its model (recommended:
+strip, then write). APIC frames default to Latin-1 for their (empty) description (`attachedpictureframe.cpp`).
 
 ## 4. ID3v2.3 vs ID3v2.4, and what DJ software reads
 
@@ -395,9 +398,9 @@ plus conditional sections `[…]` dropped when a token inside is empty (Picard/b
 
 | Item | Template | Example |
 |---|---|---|
-| Single (OQ-11) | `{artist} - {title}.{ext}` | `Floorplan - Never Grow Old (Original Mix).mp3` |
-| Album folder (DL-3/DL-5) | `{albumartist} - {album}[ ({year})]` | `Robert Hood - Paradygm Shift (2015)` |
-| Album track | `[{disc}-]{track:02} {artist} - {title}.{ext}` (disc prefix only when `disctotal` > 1) | `03 Robert Hood - Alpha.mp3` |
+| Single (OQ-11) | `{artist} - {title}.{ext}` | `Kerri Vale - Night Shift (Original Mix).mp3` (fictional) |
+| Album folder (DL-3/DL-5) | `{albumartist} - {album}[ ({year})]` | `Kerri Vale - Night Shift EP (2024)` |
+| Album track | `[{disc}-]{track:02} {artist} - {title}.{ext}` (disc prefix only when `disctotal` > 1) | `03 Kerri Vale - Night Shift (Dub).mp3` |
 
 Missing values: fall back to the parsed remote path (library module), then `Unknown Artist` / `Untitled`; never
 produce an empty component.
@@ -408,8 +411,8 @@ produce an empty component.
 |---|---|---|
 | 1. Normalise | Unicode **NFC** (`QString::normalized(NormalizationForm_C)`) for every generated component | APFS stores names as given (normalization-*preserving*, normalization-*insensitive* lookups, H Apple APFS FAQ); HFS+ forces its NFD variant; peers on macOS/HFS+ send NFD. NFC everywhere keeps Selecta's DB keys, rekordbox paths and other OSes consistent. |
 | 2. Strip dangerous code points | C0/C1 controls, U+007F, bidi controls U+200E/F, U+202A–U+202E, U+2066–U+2069, U+FEFF | invisible names, extension spoofing (U+202E makes `x\u202Egpj.mp3` display as `x3pm.jpg`) |
-| 3. Replace separators | `/` and `\` → `-` (e.g. `AC/DC` → `AC-DC`) | path traversal; Finder shows POSIX `:` as `/` |
-| 4. Replace reserved | `:` → ` -` (collapse spaces), `?` `*` `"` `<` `>` `|` → `_` (beets uses `_` for all) | Windows, FAT32 and exFAT forbid them (USB sticks, SMB) |
+| 3. Replace separators | `/` and `\` → `-` (e.g. `AC/DC` → `AC-DC`); a component equal to `.` or `..` → `_` | path separators and traversal |
+| 4. Replace reserved | `:` → ` -` (collapse spaces), `?` `*` `"` `<` `>` `\|` → `_` (beets uses `_` for all) | Windows, FAT32 and exFAT forbid them (USB sticks, SMB); Finder displays a POSIX `:` as `/` |
 | 5. Edges | trim whitespace; strip trailing `.` and spaces; leading `.` → `_`; leading `-` → `_` | hidden files on macOS; Windows/FAT ignore trailing dots; CLI ambiguity (beets rules) |
 | 6. Reserved names | `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9` (with or without extension) → append `_` | Windows/FAT |
 | 7. Length | component ≤ **200 UTF-8 bytes** (beets' cap; APFS limit is 255 bytes, FAT/exFAT 255 UTF-16 units) incl. extension; cut at a grapheme boundary (`QTextBoundaryFinder`), shorten `title` first, then `artist`; full path ≤ 1 000 bytes (macOS `PATH_MAX` = 1024) | leaves room for ` (2)` suffixes and copies to other filesystems |
