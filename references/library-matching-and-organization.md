@@ -418,15 +418,97 @@ in collection → In Inbox → Queued → Downloaded this session → Downloaded
 
 ## 10. Speed: indexing 50k–200k tracks
 
-TODO: SQLite FTS5 (unicode61 / trigram tokenizer), Qt's bundled SQLite build flags, in-memory key maps.
+Workload: a popular search streams up to thousands of results within seconds; a batch run produces tens of thousands;
+NFR-2 asks for filter + sort of 10 000 results < 50 ms. Annotation (badges) must keep up with streaming and run off the
+UI thread.
+
+**Recommendation: SQLite is the source of truth; matching runs on an immutable in-memory `MatchIndex` snapshot.**
+
+| Structure | Content | Size at 200k tracks (estimate) |
+|---|---|---|
+| `exact_key → [track ids]` hash map | collection + Inbox + history | ~20 MB with keys |
+| `loose_key → [ids]` hash map | same | ~15 MB |
+| token postings `token → sorted [ids]` + document frequency | title/artist tokens (≈ 5 per track) | ~1M postings × 4 B ≈ 4 MB + vocabulary |
+| `album_key → [album ids]` | local albums | small |
+| `(size, basename_key) → [download ids]`, `(peer, remote_path) → id` | history | small |
+| per-track compact record | keys, version, duration, quality rank | ~100 B × 200k = 20 MB |
+
+Per result: parse (tens of µs, regex-heavy — precompile; prefer hand-written scanners for the hot rules) → normalise
+→ exact lookups (O(1)) → if no exact hit, fuzzy candidates = union of postings of the **2–3 rarest tokens** of the
+title (IDF order), capped at ~200 → score with cached rapidfuzz scorers (~1 µs per pair for short strings) → tier.
+Estimated ≤ 100 µs per result on one Apple Silicon core, i.e. 10 000 results ≈ 1 s of background work, parallelisable
+and incremental as results arrive (TODO: benchmark in M4 with a synthetic 200k-track library).
+
+The snapshot is rebuilt off-thread on scanner commits and swapped atomically (generation counter); results annotated
+with an older generation are re-scored lazily when visible.
+
+**SQLite FTS5** is still useful for the Library view's search box and ad-hoc lookups: `unicode61 remove_diacritics 2`
+for word search, optionally the `trigram` tokenizer for substring/`LIKE` search. TODO (pending verification): SQLite
+version in Qt 6.11's bundled QSQLITE driver and whether it is compiled with FTS5 — otherwise use the system/Homebrew
+SQLite via `QT_FEATURE_system_sqlite` or ship our own SQLite build.
+
+Rejected alternatives: per-result SQL queries on the hot path (contention with the single writer, unpredictable
+latency); `spellfix1`/edit-distance search in SQL (not compiled by default, slower than in-memory scoring); trigram
+fuzzy retrieval as the main path (too many candidates for short tokens like `dj`, `mc`, `mix`).
 
 ## 11. Acoustic fingerprints (Chromaprint / AcoustID)
 
-TODO.
+Verified in `acoustid/chromaprint` (v1.6.2, commit 3b38c10):
+- **Licence**: Chromaprint's own code is MIT, but it includes FFmpeg-derived code under LGPL-2.1, so the whole is
+  "considered LGPL 2.1" (`LICENSE.md`); the FFT backend's licence also applies to binaries. Backends: `vdsp`
+  (Accelerate, default on Apple), `avtx`/`avfft` (FFmpeg), `fftw3`/`fftw3f`, `kissfft` (`CMakeLists.txt`). With
+  vDSP on macOS there is no extra licence burden; all options are GPLv3-compatible.
+- **Algorithm parameters**: audio resampled to 11 025 Hz (`DEFAULT_SAMPLE_RATE`), frames of 4096 samples with 2/3
+  overlap (`kDefaultFrameSize`, `kDefaultFrameOverlap`), i.e. one 32-bit sub-fingerprint every 1365 samples ≈ 8 per
+  second. `fpcalc` analyses the first 120 s by default (`g_max_duration`).
+- **Local comparison**: `FingerprintMatcher` (`src/fingerprint_matcher.cpp`, internal, not in the public C API)
+  aligns two fingerprints, computes per-item Hamming distances (popcount of XOR) and reports matching segments whose
+  average bit error is below `kDefaultMatchThreshold = 10.0` (bits out of 32). The public API also has
+  `chromaprint_hash_fingerprint` (a 32-bit simhash; hashes differing in > 15 bits are "completely different",
+  `chromaprint.h`), useful as a cheap index key.
+- **AcoustID web service** needs an application API key and is rate-limited; not needed for Selecta's local
+  duplicate detection (TODO: confirm current terms and limits).
+
+Where it helps Selecta:
+1. **LIB-7 (P2)**: duplicates inside the collection (same recording under different names/formats).
+2. **Supersede guard** (§15): confirm that an album track and an Inbox single are the same recording before trashing.
+3. **Preview check (new idea, P2)**: once a preview has been downloaded, fingerprint the cached audio and compare it
+   with likely owned candidates — turns "likely" into "exact" or "none" for the result being auditioned.
+
+Cost: decoding 120 s of audio and computing the fingerprint is dominated by decoding (FFmpeg); store fingerprints in the
+analysis cache keyed by content hash. Not useful *before* download: search results carry no audio.
 
 ## 12. Library scanning
 
-TODO: TagLib 2.x, FSEvents (event IDs, renames, offline volumes), file identity, moves/renames.
+**Reading (LIB-1).** TagLib 2.x (LGPL-2.1/MPL-1.1, see `references/conversion-and-metadata.md`) opened read-only;
+never call `save()` on collection files (principle 2). Read: title, artist, album, album artist, track/disc (+ totals),
+date, genre, label/publisher, catalogue number, ISRC, BPM, key, MusicBrainz recording id when present, plus audio
+properties (codec, duration in ms, bitrate, sample rate, bit depth, channels; for MP3 the Xing/Info header tells
+VBR vs CBR). Filenames are parsed with the same parser as remote paths when tags are missing (`meta_source`).
+
+**Throughput (NFR-2: 100k tracks < 5 min).** Enumeration with `getattrlistbulk`/`fts` or `QDirIterator` is seconds;
+tag reading dominates (a few ms per file on SSD, far more on a spinning external drive). Use a bounded worker pool
+(4–8 readers on SSD, 1–2 on HDD), batch inserts (1000 rows per transaction), and skip files whose
+`(size, mtime_ns, inode)` did not change on re-scan. TODO: measure on the maintainer's library.
+
+**Identity, moves and renames.** File identity = (volume UUID, inode) with (size, mtime) as a change detector, plus
+a lazily computed `partial_hash` for moves across volumes. On an FSEvents notification for a directory: re-stat that
+directory, then reconcile — same inode at a new path ⇒ move (keep `file.id`, history links follow); a vanished path
+plus a new path with equal `(size, partial_hash)` ⇒ cross-volume move; otherwise delete/insert. Never trust rename
+events alone.
+
+**FSEvents (LIB-2)** — details to confirm (TODO, pending verification): a stream per root with file-level events,
+persisting the last event id and the event-database UUID per volume so changes made while Selecta was closed are
+replayed at launch; a full (stat-only) rescan whenever the history is unavailable or the stream reports dropped
+events or "must scan sub-dirs". `QFileSystemWatcher` is not suitable for recursive trees of this size.
+
+**Offline volumes.** Roots on external drives: on unmount mark the root's files `offline` (never delete rows);
+badges still say "In collection" with an "offline volume" note; rescan (stat-only) on mount.
+
+**Exclusions.** Hidden files; AppleDouble `._*` files (they carry audio extensions on exFAT/FAT drives and must be
+skipped); `.DS_Store`; Selecta's own Inbox and caches if they live under a collection root; iCloud/File-Provider
+*dataless* placeholders (reading them triggers a download — check the dataless flag before opening, see
+`references/sharing-and-uploads.md`); symlink loops (track visited (dev, inode) of directories).
 
 ## 13. SQLite schema draft
 
@@ -699,7 +781,12 @@ Recommendation: document "import into rekordbox only from the collection" and sh
 
 ## 16. rekordbox (future option only)
 
-Out of scope for v1 (PRD D1, LIB-8). TODO: one paragraph on rekordbox XML export vs `master.db`.
+Out of scope for v1 (PRD D1, LIB-8). Future options, least invasive first: (1) parse a user-exported **rekordbox XML**
+collection (`DJ_PLAYLISTS/COLLECTION/TRACK` with a `Location` file URL, title, artist, album, duration, bitrate): it
+would tell Selecta which collection files rekordbox references and add rekordbox-only metadata to matching;
+(2) read rekordbox 6/7's `master.db` directly — an encrypted SQLite (SQLCipher) database that community tools such as
+pyrekordbox open; unofficial, version-fragile, read-only at best (medium confidence; not investigated further). Writing
+to rekordbox stays a non-goal.
 
 ---
 
