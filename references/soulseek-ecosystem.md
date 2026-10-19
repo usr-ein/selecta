@@ -120,30 +120,169 @@ TODO
 
 ## 4. Automation tools
 
-### 4.1 slsk-batchdl (sldl)
-TODO: search rate-limiter defaults and their origin; filtering, ranking and matching options.
+### 4.1 slsk-batchdl / sldl → sockseek
+
+Evidence: `fiso64/sockseek@ff9a3ac` (HEAD tagged v3.0.7, 2026-10-15) and its GitHub history/issues.
+
+**Identity and licence (high confidence).** `fiso64/slsk-batchdl` redirects to `fiso64/sockseek` (same repo, renamed;
+README: "formerly named `sldl` (and `slsk-batchdl` before that)"). Code renamed 2026-05-23 (`b30135b2`); LICENSE changed
+GPL-3.0 → **AGPL-3.0** on 2026-05-11 (`7d521792`). Last GPL-3.0 release: **v2.6.0 (2025-11-29)**. The 3.x line aims to
+become "a fully-featured persistent Soulseek client". Built on Soulseek.NET (minor-version range 800850000–800859999).
+Selecta should **reimplement ideas only**.
+
+**Search rate limiter (high confidence on code; low confidence on the numbers' validity).**
+
+| Item | Value / behaviour | Evidence |
+|---|---|---|
+| `--searches-per-time` (`--spt`) | **34** | `Sockseek.Core/Settings/EngineSettings.cs:48` |
+| `--searches-renew-time` (`--srt`) | **220 s** (≈ 9.3 searches/min average) | `EngineSettings.cs:50` |
+| Help text | "Higher values may cause 30-minute bans" | `Sockseek.Cli/Help.Content.cs:125-128` |
+| Notes text | "The server bans users for 30 minutes if too many searches are performed within a short timespan … allow up to 34 searches every 220 seconds" | `Help.Content.cs:694-699`, `README.md:709` |
+| Algorithm | **Fixed window**, not a token bucket: all 34 permits refill at once when the window lapses (lazy reset) → up to **68 searches back-to-back** across a window boundary | `Sockseek.Core/Search/RateLimitedSemaphore.cs:1-92` |
+| When exhausted | Jobs wait (status `SearchRateLimited`/"Waiting"); nothing dropped | `Sockseek.Core/Search/Searcher.cs:639-659` |
+| What counts | Every network search: main query, an extra no-diacritics variant, "artist maybe wrong" fallback, up to 5 `--desperate` fallbacks | `Searcher.cs:554-637` |
+| Concurrency | `--concurrent-searches` 2, `--concurrent-jobs` 20, `--search-timeout` 5000 ms, `--max-stale-time` 30 000 ms | `EngineSettings.cs:42-44`, `Help.Content.cs:123-124` |
+| Reconnect | 1 s doubling, capped at 8 s — not ban-aware | `Sockseek.Core/Soulseek/SoulseekClientManager.cs:236-280` |
+
+**Origin of 34/220 (high confidence): empirical, single developer, Nov 2023.** Introduced in commit `20d8310d`
+(2023-11-28, message "stuff") in response to issue #12 (a user disconnected "within 2–3 minutes" at ~4 concurrent
+searches). The author wrote in that commit's README: "These values were determined through experimentation as
+unfortunately I couldn't find any information regarding soulseek's rate limits, so they may be incorrect" (disclaimer
+since dropped), and on #12: "From my own testing it seems to be around 34 searches every 220 seconds". The same commit
+added `--random-login` (random credentials to dodge bans; now hidden, "for testing only"). **Not** derived from the
+server operator, Soulseek.NET, slskd or Nicotine+ — none of which publish or implement a search *rate* limit (Soulseek.NET
+only caps *concurrent* searches, default 2 since PR #883, 2025-10-15: "10 concurrent searches will put a strain on any
+host").
+
+Real-world reports (user statements = hearsay):
+
+| Report | What happened |
+|---|---|
+| sockseek #12 (2023-11) | Disconnected within 2–3 min at ~4 concurrent searches, 6 s timeout (≈ up to 40 searches/min). |
+| sockseek #95 (2025-04) | "Not found" after 10–20 items **even at default 34/220**; user says the IP got banned; workaround "one search per minute and a different IP". |
+| soularr #124 (2025-05, fixed 2026-04) | "30 min ban" when searches return few/no results and run back-to-back (~1 search / 5–6 s sustained); another user: "30 mins ban every 11 hours". |
+| sockseek #128 (2025-08) | Not a ban: the **server silently drops searches containing excluded substrings** (e.g. "clipse" inside "Eclipse"); "The list of banned terms appears to be growing rapidly." Zero results are therefore ambiguous. |
+| slskd #1866 (2026-10) | slskd author (hearsay): "you might have been temporarily banned for too many login attempts". |
+
+Searches of slskd, Nicotine+ and Soulseek.NET issue trackers found no search-rate ban reports. Exact limits stay unknown;
+the etiquette note owns the final numbers (ADR-006).
+
+**Filtering (high confidence).** Two condition sets (`Sockseek.Core/Matching/Conditions/FileConditions.cs:7-23`,
+defaults `Sockseek.Core/Settings/SearchSettings.cs:14-29`):
+
+| Set | Purpose | Defaults |
+|---|---|---|
+| Necessary (`--format`, `--length-tol`, `--min/max-bitrate`, `--min/max-samplerate`, `--min/max-bitdepth`, `--strict-title/artist/album`, `--banned-users`, `--allowed-users`, `--cond "br>=320; format=mp3"`) | Hard filter | formats mp3,flac,ogg,m4a,opus,wav,aac,alac; length tolerance 3 s |
+| Preferred (`--pref-*`, `--pref "<conds>"`) | Ranking only ("never filter anything out") | format mp3; length tol 3 s; bitrate 200–2500; max sample rate 48 kHz; strict title + strict album |
+| `--strict-conditions` | Reject files with **missing** attributes | off — by default a file with **no bitrate attribute passes `--min-bitrate`** (`AcceptMissingProps = true`) |
+
+The author notes (`Help.Content.cs:466-475`) that "the standard Soulseek client does not broadcast the bitrate", so strict
+bitrate filtering excludes SoulseekQt sharers. (Cross-check: aioslsk docs say the official client sends bitrate/VBR for
+"compressed" formats and sample rate/bit depth for lossless — `JurgenR/aioslsk@a90ad82:docs/source/SOULSEEK.rst:2559-2595`.
+The protocol note should settle which attributes appear per format.) Selecta's strict mode (SRCH-6) must make this
+explicit — it is exactly the "unknown quality" policy.
+
+**Ranking (high confidence)** — lexicographic key, `Sockseek.Core/Search/SearchProjection/ResultSorter.cs:213-542`:
+1. user has not failed this run (downrank after 1 failure, ignore after 2);
+2. necessary conditions met; 3. user allow/ban preferences; 4. has a valid length;
+5. **bracket check**: file name has no `(...)`/`[...]` unless the query has brackets — penalises "(Extended Mix)";
+6–11. strict then fuzzy match of title, album, artist ("Identity beats quality preferences");
+12–17. preferred length, format, bitrate, sample rate, bit depth, all-preferred;
+18. free upload slot; then upload speed in 650 KiB/s buckets; strict title/artist in full path; **consensus** (how many
+results infer the same artist/title); speed in 350 KiB/s buckets; bitrate in 80 kbps buckets; stable hash tie-break.
+Queue length and file size are never used.
+
+**Matching a tracklist line (high confidence).** Inputs: CSV (column aliases), YouTube, Spotify, Bandcamp, MusicBrainz,
+`slsk://` links, strings, list files with per-line conditions (`README.md:157-260`). Query = "artist title", lowercased,
+punctuation → spaces (`Searcher.cs:661-696`, special set in `Utils.cs:439-449`), plus a hard-coded **banned-term list
+dodged with a `*` wildcard** (`Searcher.cs:699-738`) — deliberate evasion of the server's filter; Selecta must not copy
+this (use the server's ExcludedSearchPhrases list to explain zero results instead). Strict string match: replace `_ : | ? > < * "`
+with spaces, strip diacritics, case-insensitive word-boundary containment; title vs file name, artist vs full path, album
+vs parent folder (`FileConditions.cs:296-443`). Optional `--remove-ft` (`Utils.cs:502-535`), `--remove-brackets`,
+`--regex`, `--parse-title`, `--extract-artist`. Filename inference for consensus counting: `Searcher.cs:356-470`.
+`--fast-search` starts a provisional download from the first good result (free slot, ≥ 1 MB/s, preferred conditions)
+after 300 ms.
+
+**"Already have it" (high confidence)** — `Sockseek.Core/Files/TrackSkipper.cs`: default *Index* mode (its own record of
+previous runs, an m3u-based index); optional *Name* mode over a music directory (file name contains title AND relative
+path contains artist, word boundaries — false-positive prone, e.g. "Intro"); *Tag* mode (TagLib: title equal after
+removing all spaces, artist contained). No version/remix awareness beyond `--remove-ft`, no duration check unless
+`--skip-check-cond`.
+
+**Etiquette episode (2026-03, sockseek #163/#165):** sldl reported fake share counts (10 files / 50 folders) to avoid
+peers' "no shares" auto-bans; the Nicotine+ and Soulseek.NET maintainers objected ("done in bad faith") and quoted the
+rule that third-party clients are tolerated only if they implement the full feature set including uploads; now defaults
+to 0. Selecta must report true counts (it shares by design).
 
 ### 4.2 soularr and other *arr bridges
-TODO
+
+**soularr** (`mrusse/soularr@2037399`, GPL-3.0, Python, ~1k★) bridges Lidarr's wanted albums to slskd's HTTP API. One
+search per album (album title, optional artist), `search_timeout` 5000 ms, `maximum_peer_queue` 50,
+`minimum_search_interval` **5 s between search starts** (added 2026-04-25 for issue #124: "The search timeout only
+applied to the actual length of a specific search not the time between searches … little to no results … can lead to
+rapid searches"). Quality spec `allowed_filetypes = "flac 24/192,flac 16/44.1,flac,mp3 320,mp3"` — **exact** equality on
+bitrate or bit depth/sample rate, list order = priority, files lacking the attribute are rejected when a spec has one
+(`soularr.py:265-310, 710-752`). Album match: difflib ratio of "title.ext" vs file name (0.8 sample config, 0.5 code
+fallback), every track must match, folder must have exactly the expected number of files of one extension; **no duration
+check** (`soularr.py:91-166, 348-392`). Politeness: caches folder browses per user ("prevents us from hammering the
+users"), remembers broken users.
+
+**Lesson for Selecta's batch (BATCH-4):** pace on search *starts*, not on completion — a zero-result search completes
+instantly, so "timeout" is not pacing.
+
+Others (medium confidence, skimmed): **Tubifarry** (MIT, Lidarr plugin with slskd indexer) has per-user grab limits per
+hour/day/week and max queued per user — but `SlskdIndexer.cs:28 RateLimit => new(3)` is 3 *ticks*, i.e. effectively no
+indexer rate limit (likely bug). **setseeker** (no licence) — DJ set → Shazam IDs → slskd; refuses to download unless
+the backend is actually sharing (a "reciprocity audit") — closest automation to Selecta's DJ use case. **decksmith**
+(MIT) — turns a Soulseek/Nicotine+ download pile into a rekordbox-ready collection.
 
 ## 5. Servers, emulators and test harnesses
 
-### 5.1 Soulfind
-TODO: can it be a local test server? how to run, Docker, limitations.
+### 5.1 Soulfind — yes, it is the local test server
 
-Already verified: `michel/soulseek-rs@20bd676` runs every e2e suite in CI against Soulfind built from source with
-`dub build :server` (LDC) (`.github/workflows/ci.yml:74-140`), and its test harness spawns
-`soulfind -p <free port> -d <tmp>/soulfind-e2e-<port>.db` per test, waits for the port, retries on a new port if the
-child dies, and **skips** (passes) when no binary is available (`soulseek-rs-lib/tests/e2e.rs:1-16, 76-125`).
-`docs/protocol-coverage.md` there records per-message which behaviours Soulfind exercises (e.g. 93 EmbeddedMessage:
-"soulfind never sends one"; 102 PossibleParents / 71 HaveNoParent: e2e "a leaf adopting a parent").
+Evidence: `soulfind-dev/soulfind@5a256f5` (2026-10-15) + GitHub API/issues. Confidence high unless marked.
+
+| Question | Answer |
+|---|---|
+| Purpose | README: "Soulfind exists for local testing, and should not be used in production." Nicotine+'s protocol doc: "It handles the protocol well enough for development and testing of client implementations" (`nicotine-plus@f3b9d4d:doc/SLSKPROTOCOL.md:315-317`). |
+| Licence / people | GPL-3.0-or-later (dub.json, SPDX headers, REUSE). Created by seeschloss (2005); main developer **mathiascode (also the Nicotine+ maintainer; ~600 commits)**, plus slook. Last human commit 2026-10-10. |
+| **AI policy** | `CONTRIBUTING.md:13-24` **forbids contributions generated or co-authored by LLMs/AI tools.** Selecta's agents must never open issues/PRs upstream; the maintainer may, in his own words. |
+| Toolchain | D (ldc/dmd/gdc) + dub; system SQLite. Two binaries: `soulfind` (server), `soulsetup` (interactive admin TUI). |
+| Binaries | Rolling release tag `latest` (2026-10-14) with `soulfind-macos-arm64.zip`, macos-x86_64, linux-{x86_64,arm64}, windows, BSDs. Record a checksum; there are no versioned tags. |
+| Container | Multi-arch `ghcr.io/soulfind-dev/soulfind:latest` (`:latest-amd64`, `:latest-arm64`), static musl build `FROM scratch`, `WORKDIR /data` → DB `/data/soulfind.db`. Only `latest` exists → **pin by digest**. `docker run -d -v soulfind-data:/data -p 127.0.0.1:2242:2242 ghcr.io/soulfind-dev/soulfind`. |
+| CLI | `soulfind -p/--port <port> -d/--database <file> [--debug]`; `soulsetup -d <file> [-b <backup>]` (`src/server/package.d:24-47`). |
+| Defaults (`src/defines.d:14-41`) | port 2242; max users 100 000; login timeout 1 min; kick = 2 min ban; **search fan-out tick 650 ms**; wishlist interval **12 min (2 min privileged)**; max incoming server message 8192 bytes (larger → disconnect); max query length 256; usernames ≤ 30 printable-ASCII chars. Listens on 0.0.0.0, **IPv4 only**, no bind-address option. |
+| Accounts | **Unknown users are auto-registered on first login** (PBKDF2-hashed), unless private mode (`src/server/user.d:141-180`). Wrong password → INVALIDPASS. Admin/privileges/bans via `soulsetup` (interactive only) or by PMing the user `server` as an admin (`ban`, `kick`, `announcement`, …). |
+| Login checks | **Rejects major or minor version 0** (INVALIDVERSION, `user.d:106-109`); the MD5 hash field is parsed but **not verified**; success reply carries MOTD, client IP, MD5 of the password, supporter flag; then RoomList, WishlistInterval, PrivilegedUsers, **ExcludedSearchPhrases (160)**, queued PMs. Duplicate login → old session gets **Relogged (41)** and is dropped. |
+| Search routing | **No distributed network.** FileSearch/WishlistSearch are queued and every 650 ms re-sent as server code 26 `FileSearch(user, token, query)` **directly to every connected user — including the searcher** (`src/server/server.d:75-145, 847-856`); RoomSearch → room members; UserSearch → one user. EmbeddedMessage (93), PossibleParents (102), ParentMinSpeed/Ratio (83/84), ResetDistributed (130) are defined but never sent; client distributed messages (71, 73, 100, 126, 127, 129) are ignored. Open issue #6 (reopened 2026-08 because projects use Soulfind in CI) — maintainer "can't promise soon". |
+| Rate limits | **None** (open issue #62). It cannot validate Selecta's governor against server behaviour. |
+| Other coverage | GetPeerAddress, ConnectToPeer + CantConnectToPeer relay (incl. obfuscation type/port), watch/status/stats, PMs + acks + MessageUsers, rooms (public/private/operators/tickers), interests/recommendations, privileges, SharedFoldersFiles, SendUploadSpeed, ChangePassword. ServerPing gets no reply (as the official server). |
+| Known users | slskd/Soulseek.NET's author load-tested slskd with "as many as 2500 search requests concurrently … pointed at an instance of a soulfind server" (slskd #1306) and proposed a byte-logging flag (Soulfind PR #81 → #84 open); **soulseek-rs runs its whole e2e and stress CI against it** (below). |
+| macOS caveat (medium) | Native binary reportedly dies at start-up with macOS's system SQLite ("SQLite error 7"); workaround `DYLD_LIBRARY_PATH=/opt/homebrew/opt/sqlite/lib` (`michel/soulseek-rs@20bd676:README.md:757-761`). The container is unaffected. |
+| Loopback quirk (medium) | A client connecting from 127.0.0.1 is advertised under the host's primary LAN IP (found via a UDP `connect()` to 10.255.255.255, `src/server/conns.d:294-313`) → test clients must listen on 0.0.0.0; behaviour with no network interface up is unverified. |
+
+**Precedent to copy — soulseek-rs CI** (`michel/soulseek-rs@20bd676`, MIT): job "End-to-end (soulfind)" builds Soulfind
+from source (`dub build :server`, LDC) and runs four e2e suites with `SOULSEEK_E2E_REQUIRED=1`
+(`.github/workflows/ci.yml:74-140`); a "Stress (soulfind)" job runs 128 mock peers, 32 searches and 128 downloads around
+one real client. The harness (`soulseek-rs-lib/tests/e2e.rs:1-16, 76-125`) uses `SOULSEEK_TEST_SERVER=host:port` if
+set, else spawns `soulfind -p <free port> -d <tmp>/soulfind-e2e-<port>.db`, polls TCP connect for ≤ 10 s, retries on a
+port race, and **skips** when no binary is found (fails instead when `..._REQUIRED=1`). Its `docs/protocol-coverage.md`
+lists which messages are proven e2e against Soulfind vs unit-only (e.g. 93 EmbeddedMessage: "soulfind never sends one").
 
 ### 5.2 Other emulators and harnesses
-- Seeker `Common/MockSoulseekClient.cs` (3.1k lines, GPL-3.0-only): in-process fake of the whole client API, used by a
-  "Debug Mock" build; search terms `n:N`/`t:N` set result count/timing, file-name tokens `speed:N`, `failat:N`, `stall`,
-  `slots:N` script transfer behaviour (`jackBonadies/SeekerAndroid@ff1dcc6:DEVELOPMENT.md:28-30`,
-  `MockSoulseekClient.cs:1091-1093, 2163-2172`). Idea only (licence).
-- TODO: aioslsk mock server, nafsi, souls, soulsex, SunSeek.
+
+| Harness | Language / licence | What it gives Selecta | Verdict |
+|---|---|---|---|
+| **aioslsk mock server** `tests/e2e/mock/server.py` (+ `distributed.py`, `model.py`) | Python ≥ 3.11, GPL-3.0-or-later | Standalone CLI (`python -m tests.e2e.mock.server --port 2416 2242`), in-memory users (auto-register, seeded `admin0`/`priv0`), sends ParentMinSpeed/Ratio, **routes searches through the distributed network** (EmbeddedMessage 93 to roots chosen by a pluggable `--distributed-strategy`: `everyone_root`, `realistic_parents`, `chain_parents`, …), PossibleParents at an interval, tracks BranchLevel/Root/ChildDepth; `--mock-search-interval` injects dummy searches; `--wishlist-interval` configurable. | **Second harness, only for distributed-network tests** (what Soulfind cannot do). Fidelity = the aioslsk author's model of the server. Its README suggests a hosts-file entry `127.0.0.1 server.slsknet.org` for clients without a server setting — Selecta has a setting and must not rely on that trick. |
+| **Seeker `MockSoulseekClient`** (`Common/MockSoulseekClient.cs`, 3.1k lines) | C#, GPL-3.0-only + Soulseek.NET lineage | In-process fake of the whole client API for a "Debug Mock" build; query terms `n:N`, `t:N` set result count/timing; file-name tokens `speed:N`, `failat:N`, `stall`, `slots:N` script transfers (`DEVELOPMENT.md:28-30`, `MockSoulseekClient.cs:1091-1093, 2163-2172`). | **Idea to copy (not code):** a `FakeNetwork` behind Selecta's core service interfaces for UI work and deterministic UI tests, with the same magic-token approach. |
+| nafsi (`siohaza/nafsi`) | Rust, GPL-3.0 | One-commit (2026-03-11) port of Soulfind; SQLite/Postgres; per-connection token-bucket limiter that silently drops excess messages; sends PossibleParents but still broadcasts searches directly. | Optional cross-check only. |
+| souls (`fstxz/souls`) | Rust, GPL-3.0 | Self-described "doesn't do anything useful" (login, ping). | No. |
+| soulsex (`catuhana/soulsex`) | Elixir, BSD-3-Clause | Login + a few handlers; no search or peer relaying. | No. |
+| python-SunSeek (`v72nico`) | Python, GPL-3.0 | Abandoned 2021; predates current login/obfuscation behaviour. | No. |
+| Nicotine+ tests | Python | Unit tests with mocked sockets (`pynicotine/tests/unit/protocol/test_slskproto.py`); no server harness. | Message fixtures only. |
+
+No official test server exists (nothing found on slsknet.org or in any client's docs); every project uses Soulfind or
+its own mock.
 
 ### 5.3 Wireshark dissectors
 TODO
@@ -162,7 +301,117 @@ TODO
 
 ## 9. Standing up a local offline Soulseek test network
 
-TODO
+Nothing below has been run yet (research only); treat commands as a starting point for `devenv/` in M1 and verify each
+step offline. Reference peers' config keys were read from source (`nicotine-plus@f3b9d4d:pynicotine/config.py:159-183`,
+`pynicotine/__init__.py:42-84`; `slskd@6a450e4:docs/config.md:146-1441`, `config/slskd.example.yml:210-222`).
+
+**Key networking fact.** Soulfind tells each client the source IP it sees for every other client. So every participant
+must be reachable at the address the server sees. Two topologies work; a hybrid (Selecta native on macOS, peers inside
+Docker Desktop's VM) most likely does **not** (peers would get unroutable 172.x addresses or the Docker gateway) —
+medium-high confidence, reasoned from `soulfind/src/server/conns.d` and Docker Desktop networking, not tested.
+
+### 9.1 Topology A — everything native on the Mac (daily dev loop, Selecta under the debugger)
+
+1. **Server.** Download `soulfind-macos-arm64.zip` from the Soulfind `latest` release; record its SHA-256 in `devenv/`.
+   `brew install sqlite`, then
+   `DYLD_LIBRARY_PATH=/opt/homebrew/opt/sqlite/lib ./soulfind -p 2242 -d devenv/data/soulfind.db --debug`.
+   It binds 0.0.0.0 (LAN-visible, no rate limits): keep the macOS firewall on, or accept LAN exposure on a trusted network.
+2. **Accounts.** None to create — users auto-register on first login. Optional: `soulsetup -d devenv/data/soulfind.db`
+   to make an admin (after its first login), grant privileges (privileged-queue tests), and add a *client phrase*
+   (sent as ExcludedSearchPhrases) and a *server phrase* (query silently dropped) to test the "why zero results?" UI.
+3. **Peer 1 — Nicotine+ headless** (`pip install nicotine-plus` in a venv). **Write its config before the first launch**
+   (default server is the live one!):
+   ```ini
+   [server]
+   server = ('127.0.0.1', 2242)
+   login = 'np-peer1'
+   passw = 'test'
+   portrange = (2240, 2240)
+   upnp = False
+   auto_connect_startup = True
+   [transfers]
+   shared = [('Synthetic', '/abs/path/devenv/data/shares/peer1')]
+   ```
+   Run `nicotine --headless --config devenv/data/np1/config --user-data devenv/data/np1 --rescan`. (Value syntax =
+   Python literals; confirm by letting Nicotine+ write a default config with networking off.)
+4. **Peer 2 — slskd** (native osx-arm64 release):
+   `SLSKD_SLSK_ADDRESS=127.0.0.1 SLSKD_SLSK_PORT=2242 SLSKD_SLSK_USERNAME=slskd-peer2 SLSKD_SLSK_PASSWORD=test
+   SLSKD_SLSK_LISTEN_PORT=50300 SLSKD_SHARED_DIR=/abs/path/devenv/data/shares/peer2 SLSKD_NO_AUTH=true
+   SLSKD_NO_VERSION_CHECK=true SLSKD_HTTP_PORT=5030 ./slskd`. Its web UI/REST API on 127.0.0.1:5030 drives peer-side
+   searches, downloads from Selecta's shares, and upload-queue scenarios. (Default would be `vps.slsknet.org:2271`.)
+5. **Selecta** (debug build): server 127.0.0.1:2242 (the SAFE-3 allow-list accepts loopback/private only), its own test
+   username, listen port e.g. 2250 on 0.0.0.0, login version = Selecta's dev identifier (major 177 = "experimental" in
+   the Nicotine+ registry, non-zero minor — Soulfind rejects 0).
+6. **Synthetic shares**: the ffmpeg-generated corpus from PLAN §5.3 (tones/noise/chirps in every format and bitrate,
+   tagged, with folder `cover.jpg`), split differently per peer to create overlaps, singles vs albums and "upgrade"
+   cases. Never real music.
+7. **Belt and braces** (optional, automated runs only): a temporary `/etc/hosts` sinkhole
+   `127.0.0.1 server.slsknet.org vps.slsknet.org` so a misconfigured reference peer cannot reach the live network;
+   remove it before the maintainer's manual live sessions.
+
+### 9.2 Topology B — everything in Docker (CI and fully isolated runs)
+
+```yaml
+# devenv/compose.yml — sketch, unverified
+networks:
+  slsk: { internal: true }        # no internet route, no published ports
+services:
+  soulfind:
+    image: ghcr.io/soulfind-dev/soulfind@sha256:<pin>    # multi-arch; only tag is :latest
+    command: ["soulfind", "--debug"]                     # :2242, DB /data/soulfind.db
+    volumes: ["soulfind-data:/data"]
+    networks: [slsk]
+  peer-slskd:
+    image: slskd/slskd:<pinned version>
+    environment:
+      SLSKD_SLSK_ADDRESS: soulfind
+      SLSKD_SLSK_PORT: "2242"
+      SLSKD_SLSK_USERNAME: slskd-peer
+      SLSKD_SLSK_PASSWORD: test
+      SLSKD_SLSK_LISTEN_PORT: "50300"
+      SLSKD_SHARED_DIR: /shares
+      SLSKD_NO_AUTH: "true"
+      SLSKD_NO_VERSION_CHECK: "true"
+    volumes: ["./data/shares/slskd:/shares:ro"]
+    networks: [slsk]
+  peer-nicotine:
+    build: ./nicotine          # python:3.12-slim + pinned `pip install nicotine-plus==<ver>` at build time
+    command: ["nicotine", "--headless", "--config", "/cfg/config", "--user-data", "/data"]
+    volumes: ["./nicotine/config:/cfg/config:ro", "./data/shares/np:/shares:ro"]
+    networks: [slsk]
+  selecta-cli:
+    build: { context: .., dockerfile: devenv/Dockerfile.selecta-linux }   # headless selecta-cli + tests
+    depends_on: [soulfind, peer-slskd, peer-nicotine]
+    networks: [slsk]
+volumes: { soulfind-data: {} }
+```
+
+- Server address = container DNS name (`soulfind`); containers get distinct IPs, so direct *and* indirect
+  (ConnectToPeer/PierceFirewall) connections can both be exercised (block a peer's inbound port with a second network or
+  `iptables` in the container to force the indirect path).
+- Pull/build all images **before** starting (no registry access from an internal network); pin by digest/version.
+- To watch slskd's UI from the Mac, attach only `peer-slskd` to a second, non-internal network and publish
+  `127.0.0.1:5030` (that container then has an internet route — acceptable only because its server is pinned).
+
+### 9.3 Per-test isolation (CTest / Qt Test)
+
+Copy soulseek-rs's harness: an `E2E` CTest label whose fixture spawns `$SELECTA_SOULFIND_BIN -p <free port> -d <tmp>.db`
+per test (fresh DB = fresh users), waits for TCP accept (≤ 10 s), retries on a port race, kills the process at teardown;
+**skips** when the binary is absent locally, **fails** in CI (`SELECTA_E2E_REQUIRED=1`). Clients inside the test are
+in-process `slsk::Client` instances (Selecta's own library) plus, for interop tests, a reference peer started from
+Topology B images. Inject the governor's fake clock so pacing tests never sleep.
+
+### 9.4 What the local network cannot test (needs other means)
+
+| Gap | Mitigation |
+|---|---|
+| Distributed network (parents/children, EmbeddedMessage 93, BranchLevel/Root) | aioslsk mock server with `--distributed-strategy realistic_parents`; unit tests from Nicotine+/aioslsk message fixtures. Run slskd peers with `SLSKD_SLSK_NO_DNET=true` to reduce noise. |
+| Server-side rate limits and bans | None in Soulfind (#62). Governor proven by unit/property tests with a fake clock; live behaviour only in the maintainer's M9 sessions. |
+| Login MD5 validation | Not checked by Soulfind; unit-test it (the official server reportedly excludes users with a bad hash from the distributed network — Soulfind #6, hearsay). |
+| Unicode usernames, IPv6 | Soulfind rejects non-ASCII usernames and is IPv4-only; behaviour of the official server may differ. |
+| SoulseekQt interop | SoulseekQt has no server setting (Soulfind #50 reporter patched the binary; aioslsk suggests a hosts-file redirect). Optional manual check on a separate machine/VM with a hosts redirect — never automated. |
+| Obfuscated connections | Soulfind relays obfuscation fields; whether reference peers use them is unverified — test Selecta's codec with fixtures. |
+| Self-echo | Soulfind sends your own searches back to you → Selecta must ignore FileSearch requests from its own username (free robustness test). |
 
 ## 10. Implications for Selecta
 
