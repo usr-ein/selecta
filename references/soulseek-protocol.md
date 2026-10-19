@@ -460,9 +460,9 @@ one; when a `PierceFireWall` arrives while a direct connect is still pending, th
 | 42 | PlaceholdUpload | | `str path` | obsolete, drop |
 | 43 | QueueUpload | downloader → uploader | `str path` | P0 both |
 | 44 | PlaceInQueueResponse | uploader → downloader | `str path, u32 place` | P0 both |
-| 46 | UploadFailed | uploader → downloader | `str path` | Sent when the `F` connection of an active upload closes (NS also on read errors); downloader re-queues or ignores if done | P0 both |
+| 46 | UploadFailed | uploader → downloader | `str path` — sent when the `F` connection of an active upload closes (NS also on read errors); the downloader re-queues, or ignores it if done | P0 both |
 | 47–49 | Exact/indirect file search, queued downloads | | | obsolete, drop |
-| 50 | UploadDenied | uploader → downloader | `str path, str reason` | Reject a `QueueUpload` or a queued file | P0 both |
+| 50 | UploadDenied | uploader → downloader | `str path, str reason` — rejects a `QueueUpload` or an already queued file | P0 both |
 | 51 | PlaceInQueueRequest | downloader → uploader | `str path` | P0 both |
 | 52 | UploadQueueNotification | | empty | NS only, deprecated, drop |
 
