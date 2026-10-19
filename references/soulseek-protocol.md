@@ -212,6 +212,11 @@ Used by SoulseekQt, Nicotine+ ≥ 3.2.1 and Soulseek.NET clients. User A wants t
 5. If B can't reach A either, B sends `CantConnectToPeer(token, A)` to the server, which relays
    `CantConnectToPeer(token)` to A. **Do not rely on it**: keep a local timeout [N+doc §1001].
 
+Variation: Nicotine+ sends `ConnectToPeer` at the same moment as the direct dial, i.e. only *after* the address is
+known (cached ≤ 30 min for watched users, otherwise `GetPeerAddress` first); its code notes this deliberately
+differs from SoulseekQt, which sends `ConnectToPeer` together with `GetPeerAddress` ([N+] `slskproto.py:847-873,
+1860-1876`). Port 0 or > 65535 in the address reply ⇒ indirect only.
+
 Legacy order (Soulseek NS, Nicotine+ ≤ 3.2.0, Museek+): direct first, `ConnectToPeer` only after the direct
 attempt fails; NS retries the indirect request every 20 s up to three times [N+doc §Legacy].
 
@@ -247,6 +252,11 @@ Rules that follow:
 searches (`FileSearch`, `UserSearch`, `WishlistSearch`; echoed in `FileSearchResponse`), transfers
 (`TransferRequest` → `FileTransferInit`) and `FolderContentsRequest`. Tokens are not authenticators: a peer
 can echo any token. Validate against (username, token, expected state).
+
+Generation in the wild: Nicotine+ starts each counter at a random value in `[0, 2³²/1000]` and increments, wrapping
+to 1 (`slskmessages.py:45-60`); aioslsk starts at 1, one generator per subsystem; Soulseek.NET uses one sequential
+counter from 0. Selecta: one random-start counter per purpose, skip 0, and keep `ConnectToPeer` tokens unique
+across *all* pending indirect requests (an incoming `PierceFireWall` carries nothing but the token).
 
 ### 3.4 NAT, port forwarding, obfuscation
 
@@ -286,8 +296,8 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 22 | MessageUser | → ← | → `str user, str msg`; ← `u32 id, u32 timestamp, str user, str msg, bool new` | Private message. `new=false` = re-delivery of an offline/unacked message. Messages from user **`server`** are server notices (e.g. "connection restricted", errors), and Soulfind's admin commands are PMs to/from `server` | active | P0 receive+ack, P1 UI |
 | 23 | MessageAcked | → | `u32 id` | **Must ack** or the server keeps re-sending | active | P0 |
 | 25 | FileSearchRoom | → | `u32 token, u32 room_id, str query` | superseded by 120 | obsolete | drop |
-| 26 | FileSearch | → ← | → `u32 token, str query`; ← `str user, u32 token, str query` | Send: global search. Receive: a `UserSearch`/`RoomSearch` aimed at us, delivered outside the distributed network | active | P0 |
-| 28 | SetStatus | → | `i32 status` (1 away, 2 online) | Server echoes `GetUserStatus` only when going away | active | P0 |
+| 26 | FileSearch | → ← | → `u32 token, str query`; ← `str user, u32 token, str query` | Send: global search. Receive: a `UserSearch`/`RoomSearch` aimed at us, delivered outside the distributed network (Soulfind delivers *every* search this way) | active | P0 |
+| 28 | SetStatus | → | `i32 status` (1 away, 2 online; other values ignored) | Server echoes `GetUserStatus` only when going away | active | P0 |
 | 32 | ServerPing | → | empty | Keep-alive, "at most once per minute"; server no longer replies (Soulfind doesn't either); Nicotine+ uses TCP keepalive instead; aioslsk pings every 300 s | active | P0 (every 5 min + TCP keepalive) |
 | 33 | SendConnectToken | → ← | `str user, u32 token` | forwarded by server, used by nobody; re-adding it would isolate the client | obsolete | drop |
 | 34 | SendDownloadSpeed | → | `str user, u32 speed` | superseded by 121 | obsolete | drop |
@@ -312,7 +322,7 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 71 | HaveNoParent | → | `bool no_parent` | Ask for / stop `PossibleParents` (§8) | active | P0 |
 | 73 | ParentIP | → | `ip` | NS only | deprecated | drop |
 | 83 | ParentMinSpeed | ← | `u32 speed` | Min upload speed to be a parent | active | P0 parse |
-| 84 | ParentSpeedRatio | ← | `u32 ratio` | max children = upload speed ÷ ratio | active | P0 parse |
+| 84 | ParentSpeedRatio | ← | `u32 ratio` | Input to our max-children computation (formulas differ between clients, §8) | active | P0 parse |
 | 86–88, 90, 91 | ParentInactivityTimeout, SearchInactivityTimeout, MinParentsInCache, DistribPingInterval, AddToPrivileged | ← | `u32` / `str` | no longer sent | obsolete | drop |
 | 92 | CheckPrivileges | → ← | → empty; ← `u32 seconds_left` | Our remaining privileges (seconds per N+doc, aioslsk, Soulfind; Soulseek.NET's doc comment says "days" — treat as seconds). Soulfind also pushes it when privileges change | active | P0 (cheap) |
 | 93 | EmbeddedMessage | ← | `u8 distrib_code` + raw distributed message (rest of payload, no length) | Only `DistribSearch`. Receiving it means **we are a branch root**: forward the *unpacked* distributed message to children | active | P0 |
@@ -424,7 +434,7 @@ one; when a `PierceFireWall` arrives while a direct connect is still pending, th
 
 ### 6.1 Table
 
-| Code | Name | Dir (from the peer that sends it) | Fields | Selecta |
+| Code | Name | Sent by → to | Fields | Selecta |
 |---|---|---|---|---|
 | 1 | Private message | | | obsolete, drop |
 | 4 | GetShareFileList | requester → sharer | empty | P1 send (browse), P0 answer |
@@ -432,13 +442,13 @@ one; when a `PierceFireWall` arrives while a direct connect is still pending, th
 | 8 | FileSearchRequest | | `u32 token, str query` | obsolete, drop |
 | 9 | FileSearchResponse | responder → searcher | zlib: `str user, u32 token, [file]`, `bool slotfree, u32 avgspeed, u32 queue_len, u32 unknown=0`, `[private file]` | P0 both |
 | 10, 14 | Room invitation, Cancelled queued transfer | | | obsolete, drop |
-| 15 | UserInfoRequest | → | empty | P1 send, P0 answer |
-| 16 | UserInfoResponse | ← | `str description, bool has_pic, [bytes pic], u32 total_uploads, u32 queue_size, bool slots_free` [opt: `u32 upload_permitted`] | P1 receive, P0 send |
+| 15 | UserInfoRequest | requester → peer | empty | P1 send, P0 answer |
+| 16 | UserInfoResponse | peer → requester | `str description, bool has_pic, [bytes pic], u32 total_uploads, u32 queue_size, bool slots_free` [opt: `u32 upload_permitted`] | P1 receive, P0 send |
 | 33, 34 | Send connect token, Move download to top | | | obsolete, drop |
-| 36 | FolderContentsRequest | → | `u32 token, str folder` | P0 both (album download needs it) |
-| 37 | FolderContentsResponse | ← | zlib: `u32 token, str folder, [str dir, [file]]` — N+doc: folder "with all subfolders"; **Nicotine+ code returns only that one folder (no subfolders) or an empty list** ([N+] `shares.py:1386-1409`). Request sub-folders (CD1/CD2…) explicitly | P0 both |
-| 40 | TransferRequest | uploader → downloader | `u32 direction (0 download, 1 upload), u32 token, str path` [+ `u64 size` if direction 1] | P0 both |
-| 41 | TransferResponse | ← | `u32 token, bool allowed`; allowed & answering a legacy download request: `u64 size`; not allowed: `str reason` | P0 both |
+| 36 | FolderContentsRequest | requester → sharer | `u32 token, str folder` | P0 both (album download needs it) |
+| 37 | FolderContentsResponse | sharer → requester | zlib: `u32 token, str folder, [str dir, [file]]` — N+doc: folder "with all subfolders"; **Nicotine+ code returns only that one folder (no subfolders) or an empty list** ([N+] `shares.py:1386-1409`). Request sub-folders (CD1/CD2…) explicitly | P0 both |
+| 40 | TransferRequest | uploader → downloader (direction 1); legacy: downloader → uploader (direction 0) | `u32 direction (0 download, 1 upload), u32 token, str path` [+ `u64 size` if direction 1] | P0 both |
+| 41 | TransferResponse | recipient of 40 → its sender | `u32 token, bool allowed`; allowed & answering a legacy download request: `u64 size`; not allowed: `str reason` | P0 both |
 | 42 | PlaceholdUpload | | `str path` | obsolete, drop |
 | 43 | QueueUpload | downloader → uploader | `str path` | P0 both |
 | 44 | PlaceInQueueResponse | uploader → downloader | `str path, u32 place` | P0 both |
@@ -456,7 +466,7 @@ A **file entry** (used in share lists, search results and folder contents):
 u8   code = 1
 str  filename      // search results: full virtual path; share list / folder contents: bare name within its dir
 u64  size
-str  extension     // SoulseekQt always sends "", NS needs "mp3" to show attributes → derive from filename
+str  extension     // often "" (SoulseekQt; aioslsk saw it filled only for mp3/flac); NS needs "mp3" → derive from filename
 u32  n_attributes
   u32 attr_code, u32 attr_value   × n
 ```
