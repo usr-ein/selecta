@@ -99,6 +99,16 @@ impersonate each other:
 Recommendation (detailed in §9): Selecta logs in as **177 / <Selecta minor>** until it has a reserved number, and asks
 the Nicotine+ maintainers (who keep this table) to reserve one before the first live session (M9).
 
+The server does act on these numbers: a zero major or minor is rejected with `INVALIDVERSION` (Soulfind), and the
+aioslsk server notes record that a too-old client version gets a PM from `server`: "Your connection is restricted: You
+cannot search or chat. Your client version is too old. You need to upgrade to the latest version." (threshold unknown;
+`docs/source/SOULSEEK.rst`). Selecta must recognise that message and stop, not retry with other numbers.
+
+**Is batch search a "bot"?** The Rules ban "automated clients (robot/bot)". Selecta's batch and wishlist are
+user-initiated features of a full client (Nicotine+ and SoulseekQt have wishlists), they are paced by the governor and
+nothing downloads without the user's approval (BATCH-5/6). Keeping "review first" and conservative pacing is what keeps
+these features on the client side of that line. (Inference.)
+
 ## 4. Server-side limits and bans
 
 The official server is closed source and publishes no limits. Everything below comes from what clients observe, from
@@ -131,6 +141,7 @@ duration. Nicotine+ already special-cases private messages from the user `server
 | Same account logs in elsewhere | `Relogged` (server code 41), then disconnect | **Never reconnect automatically** (PRD NET-4) | High · N+ `slskproto.py` sets `_manual_server_disconnect`; slskd `KickedFromServerException` path does not start the watchdog |
 | Login rejected | `LoginResponse` failure with `INVALIDUSERNAME` (+ detail), `EMPTYPASSWORD`, `INVALIDPASS`, `INVALIDVERSION`, `SVRFULL`, `SVRPRIVATE` | No automatic retry except `SVRFULL` (long backoff). `INVALIDVERSION` means the version fields are wrong — never "try other numbers" | High · N+ `slskmessages.py` `LoginRejectReason`, Soulfind `messages.d` |
 | Admin kill | Plain disconnect, no reason | Normal reconnect backoff; if it repeats, stop and tell the user | High (rule text: admins "can kill any connections without prior notice") |
+| Restricted connection (old client version) | PM from `server`: "Your connection is restricted: You cannot search or chat. Your client version is too old…" | Stop searching and chatting; show it; fix the version fields | Medium · aioslsk `docs/source/SOULSEEK.rst` ("The server will send private chat messages to report errors and information back to the client") |
 | Global admin notice | `AdminMessage` (server code 66) | Show it | High · N+ doc |
 | Search returns nothing for a popular query | Silence: no error, no results | Do not "work around" (see §7.3); say in the UI that the query may be filtered | Medium · sockseek #128; Soulfind models *server-side* phrase filtering (`is_search_query_filtered` silently drops the search) |
 | Longer / IP-level bans | Logins keep timing out across accounts on one IP | Stop; manual only | Low–medium · sockseek #95 (user switched IP after "the one I used before got banned"); a Google Groups user says a "30 minute" search ban lasted months (hearsay, 2023); FAQ mentions IP bans as the admins' last resort |
@@ -149,6 +160,7 @@ no documented appeal path.
 | The ban message itself: "Do not quickly repeat a search" | **Repeating the same query** is a named trigger, independent of the global rate | Cache and de-duplicate | High |
 | Nicotine+ (`search.py`) | No outgoing limiter for manual searches (human-paced); wishlist sends **one** term per server interval | — | High |
 | Soulseek.NET (`SoulseekClientOptions`) | `maximumConcurrentSearches = 2`, `searchTimeout = 15000` ms, `responseLimit = 250`, `fileLimit = 25000` | ≤ 8/min if a caller chains searches | High (code) |
+| slskd (`SearchesController.cs`) | No rate limit: the API only refuses a *concurrent* start request (HTTP 429, "Only one concurrent operation is permitted") | Whatever the automation in front of it sends — hence the Lidarr/soularr ban reports | High (code) |
 
 **Caveat on sockseek's limiter** (`Sockseek.Core/Search/RateLimitedSemaphore.cs`): it is a *fixed window* — all 34
 permits come back at once when the window expires, and the window restarts at the moment of the refill. 34 searches at
@@ -381,7 +393,10 @@ round-trip tests and fuzz seeds, and **replays** them for regression tests. Fixt
 
 - **Live-server lock checked after DNS resolution.** Debug/test builds allow only loopback, RFC 1918, link-local and
   ULA addresses; check the *resolved* address, not the hostname, so an `/etc/hosts` alias or an IP literal cannot
-  slip through. Release builds need a one-time explicit confirmation that names the Rules.
+  slip through. As defence in depth, also refuse the known official endpoints by name: `server.slsknet.org:2242`
+  (Nicotine+, Soulseek.NET, aioslsk, Seeker defaults), `server.slsknet.org:2416` (SoulseekQt, per aioslsk docs) and
+  `vps.slsknet.org:2271` (slskd default) — the official service has several names and ports, so a name list alone is
+  not enough. Release builds need a one-time explicit confirmation that names the Rules.
 - **One instance per account and machine** (lock file): protects against "connect many clients at once from the same
   IP" and against `Relogged` ping-pong.
 - **Ban detector → automatic pause.** Recognise the `server` PM ("You have been banned for …"), login timeouts and
