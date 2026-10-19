@@ -430,15 +430,272 @@ TODO: TagLib 2.x, FSEvents (event IDs, renames, offline volumes), file identity,
 
 ## 13. SQLite schema draft
 
-TODO.
+Draft for ADR-005 (library part only; search cache, peers and transfers belong to other notes). Conventions: integer
+Unix-epoch milliseconds, paths stored NFC and **relative to their root**, keys tagged with `norm_version`, WAL mode,
+foreign keys on. One writer thread (PLAN §2.3); the matcher reads an in-memory snapshot, not these tables.
+
+```sql
+-- Volumes and roots ---------------------------------------------------------
+CREATE TABLE volume (
+  id             INTEGER PRIMARY KEY,
+  uuid           TEXT NOT NULL UNIQUE,          -- NSURLVolumeUUIDStringKey
+  name           TEXT,                          -- last seen volume name
+  mount_path     TEXT,                          -- last seen mount point
+  fsevents_uuid  TEXT,                          -- FSEventsCopyUUIDForDevice: detects a reset event history
+  last_event_id  INTEGER,                       -- FSEvents "sinceWhen" to resume after a restart
+  online         INTEGER NOT NULL DEFAULT 0,
+  last_seen_at   INTEGER
+);
+
+CREATE TABLE root (
+  id             INTEGER PRIMARY KEY,
+  kind           TEXT NOT NULL CHECK (kind IN ('collection','inbox')),
+  volume_id      INTEGER NOT NULL REFERENCES volume(id),
+  rel_path       TEXT NOT NULL,                 -- relative to the volume root (survives mount-point changes)
+  singles_dir    TEXT,                          -- LIB-1: name of the Singles folder
+  albums_dir     TEXT,                          -- LIB-1: name of the Albums folder
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  last_full_scan_at INTEGER,
+  UNIQUE (volume_id, rel_path)
+);
+
+-- Files and tracks ----------------------------------------------------------
+CREATE TABLE file (
+  id             INTEGER PRIMARY KEY,
+  root_id        INTEGER NOT NULL REFERENCES root(id),
+  rel_path       TEXT NOT NULL,                 -- NFC, relative to the root
+  dir_rel        TEXT NOT NULL,                 -- parent folder (album grouping)
+  inode          INTEGER,                       -- file id: rename/move detection
+  size           INTEGER NOT NULL,
+  mtime_ns       INTEGER NOT NULL,
+  partial_hash   BLOB,                          -- e.g. XXH3-128 of size + first/last 64 KiB
+  audio_hash     BLOB,                          -- optional, lazy: hash of the audio payload without tags
+  state          TEXT NOT NULL DEFAULT 'present' CHECK (state IN ('present','offline','missing')),
+  first_seen_at  INTEGER NOT NULL,
+  last_seen_at   INTEGER NOT NULL,
+  scan_error     TEXT,
+  UNIQUE (root_id, rel_path)
+);
+CREATE INDEX file_inode ON file(root_id, inode);
+CREATE INDEX file_size  ON file(size);
+
+CREATE TABLE album (                            -- a local album folder (collection or Inbox), disc folders merged
+  id             INTEGER PRIMARY KEY,
+  root_id        INTEGER NOT NULL REFERENCES root(id),
+  dir_rel        TEXT NOT NULL,
+  title TEXT, artist TEXT, year INTEGER,
+  is_va          INTEGER NOT NULL DEFAULT 0,
+  track_count    INTEGER,
+  album_key      TEXT,                          -- artist_key ␟ album_title_key
+  norm_version   INTEGER NOT NULL,
+  UNIQUE (root_id, dir_rel)
+);
+CREATE INDEX album_key ON album(album_key);
+
+CREATE TABLE track (                            -- 1:1 with an audio file
+  file_id        INTEGER PRIMARY KEY REFERENCES file(id) ON DELETE CASCADE,
+  album_id       INTEGER REFERENCES album(id),
+  -- display values as read
+  title TEXT, artist TEXT, album TEXT, album_artist TEXT,
+  track_no INTEGER, track_total INTEGER, disc_no INTEGER, disc_total INTEGER,
+  year INTEGER, genre TEXT, label TEXT, catalog_no TEXT, isrc TEXT, bpm REAL, musical_key TEXT,
+  mb_recording_id TEXT,
+  meta_source    TEXT NOT NULL CHECK (meta_source IN ('tags','filename','mixed')),
+  -- audio properties
+  codec TEXT NOT NULL, duration_ms INTEGER, bitrate_kbps INTEGER, is_vbr INTEGER,
+  sample_rate INTEGER, bit_depth INTEGER, channels INTEGER,
+  quality_rank   INTEGER NOT NULL,              -- §9
+  -- match keys (§4.2)
+  norm_version   INTEGER NOT NULL,
+  artist_key TEXT, artist_set TEXT, title_key TEXT, title_extra_key TEXT,
+  version_class TEXT NOT NULL, version_by_key TEXT, is_remaster INTEGER NOT NULL DEFAULT 0,
+  exact_key TEXT, loose_key TEXT
+);
+CREATE INDEX track_exact ON track(exact_key);
+CREATE INDEX track_loose ON track(loose_key);
+CREATE INDEX track_album ON track(album_id);
+
+-- UI search over the library (not on the matching hot path)
+CREATE VIRTUAL TABLE track_fts USING fts5(
+  title, artist, album, content='track', content_rowid='file_id',
+  tokenize='unicode61 remove_diacritics 2');
+
+-- Sessions and download history (DL-9) ---------------------------------------
+CREATE TABLE session (id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, ended_at INTEGER, app_version TEXT);
+
+CREATE TABLE album_download (                   -- an explicit "download whole folder"
+  id             INTEGER PRIMARY KEY,
+  session_id     INTEGER NOT NULL REFERENCES session(id),
+  peer           TEXT NOT NULL,
+  remote_folder  TEXT NOT NULL,
+  expected_audio INTEGER NOT NULL,
+  state          TEXT NOT NULL CHECK (state IN ('in_progress','complete','partial','failed','cancelled')),
+  inbox_album_id INTEGER REFERENCES album(id),
+  completed_at   INTEGER
+);
+
+CREATE TABLE download (
+  id             INTEGER PRIMARY KEY,
+  session_id     INTEGER NOT NULL REFERENCES session(id),
+  peer           TEXT NOT NULL,
+  remote_path    TEXT NOT NULL,                 -- virtual path exactly as received
+  remote_size    INTEGER NOT NULL,
+  remote_attrs   TEXT,                          -- JSON {bitrate, length, vbr, sample_rate, bit_depth}
+  basename_key   TEXT NOT NULL,                 -- case-folded NFC basename: (size, basename) identity
+  kind           TEXT NOT NULL CHECK (kind IN ('single','album_track','preview_kept')),
+  album_download_id INTEGER REFERENCES album_download(id),
+  state          TEXT NOT NULL,                 -- queued/transferring/completed/failed/cancelled
+  completed_at   INTEGER,
+  -- parsed remote fields + keys (same definitions as track)
+  p_artist TEXT, p_title TEXT, p_album TEXT, p_version TEXT,
+  norm_version INTEGER, artist_key TEXT, title_key TEXT, version_class TEXT, exact_key TEXT, loose_key TEXT,
+  -- where the file is now
+  location       TEXT NOT NULL DEFAULT 'none' CHECK (location IN ('none','inbox','filed','trashed','deleted')),
+  file_id        INTEGER REFERENCES file(id),   -- current Inbox or collection file, when known
+  content_hash   BLOB                           -- hash of the completed download (before any conversion)
+);
+CREATE INDEX download_size_name ON download(remote_size, basename_key);
+CREATE INDEX download_peer_path ON download(peer, remote_path);
+CREATE INDEX download_exact     ON download(exact_key);
+
+-- Matching support -------------------------------------------------------------
+CREATE TABLE match_correction (                 -- LIB-6
+  id             INTEGER PRIMARY KEY,
+  remote_key     TEXT NOT NULL,                 -- exact_key of the parsed result (or loose_key)
+  file_id        INTEGER REFERENCES file(id),   -- NULL = "not in my collection"
+  verdict        TEXT NOT NULL CHECK (verdict IN ('same','different')),
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX match_correction_key ON match_correction(remote_key);
+
+CREATE TABLE artist_alias (
+  alias_key      TEXT PRIMARY KEY,
+  canonical_key  TEXT NOT NULL,
+  source         TEXT NOT NULL CHECK (source IN ('builtin','user'))
+);
+
+-- Supersede and file-operation audit (DL-7, DL-8, PLAN §2.4) --------------------
+CREATE TABLE supersede (
+  id               INTEGER PRIMARY KEY,
+  album_download_id INTEGER REFERENCES album_download(id),
+  album_track_file_id INTEGER NOT NULL REFERENCES file(id),
+  single_file_id   INTEGER NOT NULL REFERENCES file(id),
+  single_location  TEXT NOT NULL CHECK (single_location IN ('inbox','collection')),
+  tier             TEXT NOT NULL CHECK (tier IN ('exact','likely')),
+  action           TEXT NOT NULL CHECK (action IN ('trashed','flagged','dismissed','undone')),
+  reason           TEXT NOT NULL,               -- e.g. 'exact+quality>=' or 'single better quality'
+  file_op_id       INTEGER REFERENCES file_op(id),
+  created_at       INTEGER NOT NULL,
+  resolved_at      INTEGER
+);
+
+CREATE TABLE file_op (                          -- append-only audit log, also mirrored to a text log
+  id             INTEGER PRIMARY KEY,
+  at             INTEGER NOT NULL,
+  session_id     INTEGER REFERENCES session(id),
+  op             TEXT NOT NULL CHECK (op IN ('create_in_collection','move_in_inbox','trash_from_inbox',
+                                            'trash_from_cache','restore_from_trash')),
+  src_path       TEXT, dst_path TEXT, trash_path TEXT,  -- trash_path = resultingItemURL from the Trash call
+  size           INTEGER, inode INTEGER, mtime_ns INTEGER, content_hash BLOB,
+  reason         TEXT NOT NULL,                 -- 'supersede:<id>', 'user', 'filing:<id>' …
+  undo_of        INTEGER REFERENCES file_op(id),
+  result         TEXT NOT NULL                  -- 'ok' or an error message
+);
+```
+
+Notes:
+- `match_cache` is deliberately absent: matching is fast enough to recompute (§10); cached search results store
+  parsed fields and keys so re-annotation after a library change is just a re-score.
+- History rows are never deleted when files move: `location`/`file_id` are updated (FSEvents + inode reconciliation).
+- Downloads also feed FAIR/peer statistics; those columns are owned by the transfers schema, not here.
 
 ## 14. Album detection for downloads, naming templates, companion files
 
-TODO.
+**Album or single?** The user's action decides (PRD glossary): "download whole folder" = album download; anything
+else = single. Helpers:
+- DL-12: when ≥ 2 files of one remote folder are queued as singles, offer "Download the whole folder as an album"; when
+  the user has downloaded ≥ 80 % of a folder's audio files as singles, offer to regroup them as an album in the Inbox.
+- A folder with disc sub-folders (`CD1`, `Disc 2`, §8) is one album download; filing flattens it with a disc prefix
+  (`1-01 …`) when `disc_total > 1` (keeps rekordbox-friendly flat folders; TODO confirm with the maintainer).
+- Folder downloads with only 1–2 audio files (a digital single "Title" + "Title (Extended)") are still albums if the
+  user chose "download folder"; no auto-reclassification (open question Q5).
+
+**Album identity for naming** (`Inbox/Albums/<Artist> - <Album> (<Year>)/`, DL-3): before download, from the parsed
+folder name; after download, from **majority vote over the files' tags** (album, album artist, year), which beats the
+folder name. VA → `Various Artists - <Album> (<Year>)`. Missing year → drop ` (<Year>)`. The Inbox folder can be
+renamed freely (it is Selecta's), so a later rename after tags are read is safe.
+
+**Naming templates** (OQ-11 default `<Artist> - <Title>.<ext>`): include the version, i.e. the title tag usually
+already contains `(Extended Mix)`; if the version came from the filename only, append ` (<Version>)`. Collision →
+` (2)`, never overwrite (DL-5). Sanitisation (details in `references/conversion-and-metadata.md`): replace `/` and `\`
+with `-`, `:` with ` -`, drop `* ? " < > |` and control characters, trim trailing dots/spaces, no leading `.`, NFC, cap
+each component at 255 UTF-8 bytes by shortening the title (keep the extension and any ` (2)` suffix).
+
+**Companion files** (Inbox album folders):
+
+| Files | Download? | At filing (to MP3 320) |
+|---|---|---|
+| `cover/folder/front.(jpg|png)`, other root-level images ≤ 10 MB | yes | Embed as APIC (CONV-5); also copy `cover.jpg` into the album folder. |
+| `Scans/`, `Artwork/` sub-folders, `.pdf` booklets | optional (setting, default off) | Keep with the lossless original (OQ-2). |
+| `.cue`, `.log` (EAC/XLD), `.accurip`, `.ffp/.md5/.sfv/.st5` | yes for lossless | Keep with the lossless original; they describe the rip, not the MP3s. |
+| `.m3u/.m3u8`, `.nfo`, `.txt` | yes (small) | Drop (or keep with the original). |
+| `Thumbs.db`, `desktop.ini`, `.DS_Store`, `._*`, `AlbumArtSmall.jpg`, `AlbumArt_{…}.jpg` | no | — |
+| `.url`, `.lnk`, `.exe`, `.bat`, `.scr`, `.app`, `.dmg`, `.pkg`, scripts, archives | **never** | — (security: never fetched, never executed; NFR-4) |
+| video files, anything > 50 MB that is not audio | no (opt-in) | — |
 
 ## 15. The Inbox supersede rule
 
-TODO.
+PRD: DL-7 (trash an Inbox single superseded by a completed album download, with notification and Undo; uncertain →
+flag), DL-8 (filed singles: flag only), principle 2 (never touch filed files), DL-6 (crash safety). Design:
+
+**Trigger.** `AlbumDownloadCompleted(album_download_id)`: every expected audio file has completed **and passed
+verification** (P0: final size equals the remote size and TagLib reads a duration > 0; P1 DL-10: full decode and
+duration within tolerance of the search result). A `partial`/`failed` album never trashes anything; it can only flag.
+Re-run on: completion of a late retry, user "re-check", and a single completing *after* its album is present (that
+case is flag-only: the user overrode the DL-11 warning).
+
+**Matching.** Local-vs-local, so evidence is strong: tags on both sides, exact durations. Stricter rules than for
+search results: `exact` requires equal `title_key` and artist set (or alias), version "same" (§5), and |Δ| ≤ 2 s.
+P2: Chromaprint similarity (§11) as an extra guard.
+
+```mermaid
+flowchart TD
+  A[Album download completed and verified] --> B[For each album track T: find singles S in Inbox and collection]
+  B --> C{tier T,S}
+  C -- none --> Z[nothing]
+  C -- likely --> F[Flag pair for review]
+  C -- exact --> D{S location}
+  D -- collection --> F2[Flag only: 'also on album X' - never touched]
+  D -- Inbox --> E{quality T >= quality S on the filing scale?}
+  E -- no --> F3[Flag: single is better than the album copy]
+  E -- yes --> G{S busy? playing, converting, filing, user-pinned}
+  G -- yes --> H[Defer until idle]
+  G -- no --> I{Re-validate S: same inode, size, mtime as indexed}
+  I -- changed --> J[Abort, rescan, re-evaluate]
+  I -- same --> K[FileOps.trashFromInbox S + supersede row + file_op row]
+  K --> L[Notification with Undo]
+```
+
+**Safety rules (each one a test):**
+1. Only `FileOps.trashFromInbox` can remove a file, and it refuses any path whose canonical form (symlinks resolved,
+   NFC) is outside the Inbox root; supersede additionally checks `root.kind = 'inbox'` and `single_location = 'inbox'`.
+2. Trash, never unlink: macOS Trash via `NSFileManager trashItemAtURL:resultingItemURL:error:`; keep the resulting URL
+   in `file_op.trash_path` for Undo. If trashing fails (volume without a Trash), flag instead — never fall back to delete.
+3. Undo = move `trash_path` back to `src_path` (suffix if occupied), logged as `restore_from_trash`. Available from the
+   notification and from a "Recently removed by Selecta" list in the Library view (30 days). If the Trash was emptied,
+   Undo is shown as unavailable.
+4. Circuit breaker: more than 10 trashes for one album event, or more than 30 % of the Inbox singles, requires an
+   explicit confirmation sheet (protects against matcher bugs, e.g. a VA album matching everything).
+5. Quality guard: never trash a single that is better than the album copy (lossless single vs MP3 album, 320 vs 192).
+6. Version guard: a Radio Edit single is not superseded by an album's Original Mix (§5).
+7. TOCTOU guard: re-stat the single right before trashing; compare (inode, size, mtime) with the index.
+8. Crash safety: write the `supersede` and `file_op` rows (state "pending") *before* the trash call and complete them
+   after; on start-up, reconcile pending rows by checking where the file is.
+9. Setting "Ask before removing superseded singles" (default **off**, per DL-7's automatic trash + Undo); a dry-run
+   mode for tests.
+
+Risk to raise with the maintainer: if he ever imports Inbox files directly into rekordbox, trashing breaks those links.
+Recommendation: document "import into rekordbox only from the collection" and show the Inbox path in the Inbox view.
 
 ## 16. rekordbox (future option only)
 
