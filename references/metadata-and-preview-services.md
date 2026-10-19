@@ -1312,7 +1312,7 @@ tracks.
 
 ## 16. Sources
 
-All accessed 2026-10-19.
+All accessed 2026-10-19 or 2026-10-20.
 
 **Spotify**
 
@@ -1343,6 +1343,20 @@ All accessed 2026-10-19.
 | https://github.com/spotDL/spotify-downloader/pull/2626 | spotDL's switch to an unofficial client (SpotipyFree), March 2026 |
 | https://pypi.org/project/spotipyFree/ | What SpotipyFree is (wrapper over SpotAPI, no official API) |
 | https://community.spotify.com/t5/Desktop-Mac/applescript-play-track-command-still-not-working/td-p/1052047 | Past AppleScript breakage |
+| https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow | PKCE parameters, no secret, refresh token may not rotate |
+| https://developer.spotify.com/documentation/web-api/tutorials/refreshing-tokens | PKCE refresh request, 1-h access tokens, 6-month refresh tokens, `invalid_grant` |
+| https://developer.spotify.com/blog/2025-02-12-increasing-the-security-requirements-for-integrating-with-spotify | Loopback/HTTPS redirects, `localhost` migration example, custom schemes still supported, implicit grant deprecation, PKCE for public clients |
+| https://developer.spotify.com/documentation/embeds/reference/oembed + one request (`/oembed?url=…/track/…`) | oEmbed fields; a track returns title and thumbnail only |
+| https://developer.spotify.com/documentation/embeds/references/iframe-api, …/tutorials/using-the-iframe-api, …/tutorials/troubleshooting, …/tutorials/creating-an-embed | iFrame API methods/events; previews without encrypted media; supported browsers |
+| https://developer.spotify.com/documentation/embeds/terms | Widget Terms of Use v2.0 (2014): website licence, sharing clause, no integration with other streams, no caching |
+| https://developer.spotify.com/documentation/web-playback-sdk | Premium requirement, supported browsers, no commercial use without approval |
+| https://wordpress.org/documentation/article/spotify-embed/, https://community.spotify.com/t5/Spotify-for-Developers/Embed-code-full-songs-vs-preview/td-p/5514126 | Full tracks in embeds for logged-in users (secondary) |
+| https://community.spotify.com/t5/Spotify-for-Developers/Premium-Required-quot-When-Attempting-to-Play-Track-via-API/td-p/6263971 | 403 `PREMIUM_REQUIRED` on player endpoints (community) |
+| `/Applications/Spotify.app/Contents/Resources/Spotify.sdef` (Spotify 1.3.0.277, read locally) | AppleScript commands and properties |
+| https://lobehub.com/skills/openclaw-skills-spotify-applescript | Third-party report that `play track` works (Feb 2026) |
+| https://github.com/isaaclins/spotiglass (README), https://github.com/jnsdls/slopify/issues/22 | Web Playback SDK in a macOS `WKWebView` (third-party claim and test plan) |
+| https://github.com/spotDL/spotify-downloader/releases/tag/v4.5.0 | Default switched to SpotipyFree; official API needs own ID/secret + Premium |
+| https://github.com/spotDL/spotify-downloader/issues/2585, …/2596, …/2710 | Shared-key "rate/request limit … 86400"; own-key throttling report |
 
 **Libraries and prior art**
 
@@ -1356,6 +1370,11 @@ All accessed 2026-10-19.
 | https://github.com/watsonbox/exportify (README) | CSV export columns (incl. ISRC), image size |
 | https://github.com/metabrainz/libmusicbrainz (GitHub API; `src/Query.cc` header) | Licence LGPL-2.1-or-later, activity |
 | https://www.freshports.org/audio/libmusicbrainz5, https://musicbrainz.org/doc/libmusicbrainz | Last release 5.1.0 (2014) |
+| https://github.com/yt-dlp/yt-dlp @ `8973412` (2026-10-10; release 2026.08.19): `README.md` (options, output template, format selection, "EMBEDDING YT-DLP", dependencies), `yt_dlp/extractor/youtube/_search.py`, `yt_dlp/extractor/youtube/_tab.py` (`_extract_video`, `_music_reponsive_list_entry`), `yt_dlp/extractor/youtube/_video.py` (error and warning texts, `CHUNK_SIZE`), `yt_dlp/YoutubeDL.py` (fixups, `check_max_downloads`), `yt_dlp/__init__.py` (exit codes), `yt_dlp/options.py` (`-t sleep`), `LICENSE` (Unlicense) | §12 |
+| `brew info yt-dlp deno qtwebengine` (local Homebrew metadata) and https://github.com/Homebrew/homebrew-core/blob/master/Formula/q/qtwebengine.rb | Installed vs current versions; yt-dlp's Deno dependency; `webengine_proprietary_codecs=ON` |
+| https://doc-snapshots.qt.io/qtwebengine/qtwebengine-features.html | Proprietary codecs; Widevine not shipped, discovery, `--widevine-path` |
+| https://doc.qt.io/qt-6/qtwebview-index.html | Qt WebView: system web view on macOS, QML and C++ APIs, licensing |
+| https://github.com/qutebrowser/qutebrowser/issues/4505, https://forum.qt.io/topic/160275/using-spotify-web-sdk-in-qt6 | Spotify/Widevine failures under QtWebEngine on macOS |
 
 **Deezer, Apple, MusicBrainz, Discogs, stores**
 
@@ -1384,3 +1403,18 @@ All accessed 2026-10-19.
 | https://intercom.help/proton-radio/en/articles/4474941-the-2-minute-preview-on-beatport-ways-around-it-for-djs-music-labels-and-artists, https://support.beatport.com/hc/en-us/articles/4412322748820-Why-can-t-I-play-some-tracks-in-full | Beatport 2-minute previews, position |
 | https://gist.github.com/9re/5939575, https://www.billboard.com/pro/beatport-embeddable-streaming-music-player-pays-artists/ | Beatport embed player (2015) |
 | https://parse.bot/marketplace/0123da1a-5d2d-4970-bf6f-398f792855a1/traxsource-com-api | No official Traxsource API (third-party statement) |
+| Deezer `/search`, `/track/{id}`, `/album/{id}` and MusicBrainz `/ws/2/isrc/{isrc}` for four club tracks (manual, 2026-10-20) | Keyless coverage check (§4.4) |
+
+**Apple, YouTube and Google**
+
+| Source | Use |
+|---|---|
+| https://developer.apple.com/documentation/bundleresources/information-property-list/nsappleeventsusagedescription (JSON data endpoint) | "This key is required if your app uses APIs that send Apple events" |
+| https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.automation.apple-events (JSON data endpoint) | Hardened-runtime Apple Events entitlement |
+| https://developers.google.com/youtube/terms/required-minimum-functionality | Player ≥ 200 × 200, no overlays, Referer identification, OS web views |
+| https://developers.google.com/youtube/terms/developer-policies (updated 2026-10-15) | No background player, no audio isolation, no caching of audiovisual content, no credentials in open-source projects |
+| https://developers.google.com/youtube/v3/determine_quota_cost (updated 2026-10-15) | 100 `search.list` calls per day per project |
+| https://www.youtube.com/static?template=terms (effective 2023-12-15) | Download, automated-access and circumvention restrictions |
+| https://github.com/openai/openai-apps-sdk-examples/issues/161, https://teamdynamix.umich.edu/TDClient/30/Portal/KB/Article/14491/Fixing-YouTube-Player-Error-153-with-Referrer-Policy-Settings | IFrame error 153 without a Referer (since 2025-07-09) in WKWebView apps |
+| https://news.ycombinator.com/item?id=21853654, https://github.com/tw93/pake/issues/1148 | Google blocks sign-in from embedded browser frameworks (QtWebEngine-based browsers, webviews) |
+| https://news.ycombinator.com/item?id=40144199 | YouTube Premium in embeds depends on the Google session cookie (user reports) |
