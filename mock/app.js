@@ -33,7 +33,7 @@ const LOSSY = new Set(['MP3', 'AAC', 'OGG', 'OPUS']);
 const FORMATS = ['FLAC', 'MP3', 'WAV', 'AIFF', 'ALAC', 'AAC', 'OGG', 'OPUS'];
 const EXT = { FLAC: 'flac', MP3: 'mp3', WAV: 'wav', AIFF: 'aiff', ALAC: 'm4a', AAC: 'm4a', OGG: 'ogg', OPUS: 'opus' };
 const RATES = [44100, 48000, 88200, 96000, 176400, 192000];
-const LIMITS = { searches: 34, windowSec: 220, batchKeepFree: 8, peerConcurrent: 2, peerQueued: 10, peerSoft: 15, peerHard: 25 };
+const LIMITS = { searchBurst: 6, searchRefillSec: 30, batchKeepFree: 2, peerConcurrent: 2, peerQueued: 10, peerSoft: 15, peerHard: 25 };
 
 const CATALOG = [
   { artist: 'Kassia Moreau', album: 'Night Transit EP', year: 2023, genre: 'Deep Techno', bpm: 124, tracks: [['Night Transit', 'Original Mix', 408], ['Low Orbit', '', 422], ['Paper Lanterns', '', 375], ['Night Transit', 'Dub', 440]] },
@@ -136,7 +136,7 @@ const S = {
   filters: presetFilters('dj'), presetId: 'dj', presetDirty: false,
   group: 'folders', sort: 'best', sortDir: -1, collapsed: new Set(), moreFilters: false,
   sel: null, inspector: true, sidebar: true,
-  budget: [], cache: new Map(), results: new Map(),
+  budget: { tokens: LIMITS.searchBurst, at: 0 }, cache: new Map(), results: new Map(),
   netPaused: false, server: 'live', theme: store.get('theme', 'system'),
   autoPreview: false, cancelOnSkip: true,
   transfers: [], uploads: [], inbox: [], history: [], msgs: [], wishlist: [],
@@ -158,6 +158,8 @@ function makePath(style, p, rel, i, v, grp) {
     case 'year': return `${p.root}\\Electronic\\${rel.year}\\${rel.album}\\${nn2(i)}. ${title}.${ext}`;
     case 'scene': { const d = `${sceneName(rel.artist)}-${sceneName(rel.album)}-WEB-${rel.year}-${grp}`; return `${p.root}\\complete\\${d}\\${nn2(i)}-${sceneName(rel.artist).toLowerCase()}-${sceneName(title).toLowerCase()}.${ext}`; }
     case 'crate': return `${p.root}\\DJ\\Crates\\${rel.genre}\\${rel.artist} - ${title}.${ext}`;
+    case 'reversed': return `${p.root}\\Tracks\\${title} - ${rel.artist}.${ext}`;
+    case 'typo': return `${p.root}\\Downloads\\${typoName(rel.artist)} - ${title}.${ext}`;
     default: return `${p.root}\\Downloads\\${rel.artist} - ${title}.${ext}`;
   }
 }
@@ -196,7 +198,7 @@ function generateResults(query, { pseudo = true, salt = 0 } = {}) {
     const pool = shuffle(PEERS.slice(), r).slice(0, 7 + Math.floor(r() * (rel.pseudo ? 6 : 13)));
     for (const p of pool) {
       const v = pickVariant(r), sr = r();
-      const style = rel.tracks.length > 1 ? (sr < 0.36 ? 'album' : sr < 0.5 ? 'year' : sr < 0.62 ? 'scene' : sr < 0.82 ? 'crate' : 'loose') : (sr < 0.55 ? 'loose' : 'crate');
+      const style = rel.tracks.length > 1 ? (sr < 0.34 ? 'album' : sr < 0.46 ? 'year' : sr < 0.56 ? 'scene' : sr < 0.72 ? 'crate' : sr < 0.8 ? 'reversed' : sr < 0.88 ? 'typo' : 'loose') : (sr < 0.45 ? 'loose' : sr < 0.72 ? 'crate' : sr < 0.86 ? 'reversed' : 'typo');
       const grp = ['PTC', 'HYPE', 'WAX', 'DRT', 'MOS'][Math.floor(r() * 5)];
       const picks = FOLDER_STYLES.has(style) ? idx : [idx[Math.floor(r() * idx.length)]];
       const arrival = 120 + r() * 2800 * (1.4 - Math.min(1, p.speed / 8e6));
@@ -217,7 +219,7 @@ function generateResults(query, { pseudo = true, salt = 0 } = {}) {
         const path = makePath(style, p, rel, i, v, grp), cut = path.lastIndexOf('\\');
         const res = {
           id: `r${S.nextId++}`, peer: p, path, folder: path.slice(0, cut), file: path.slice(cut + 1), style,
-          rel, ti: i, trackNo: FOLDER_STYLES.has(style) ? i + 1 : 0, artist: rel.artist, title: t[0], version: t[1], dur,
+          rel, ti: i, trackNo: FOLDER_STYLES.has(style) ? i + 1 : 0, artist: style === 'typo' ? typoName(rel.artist) : rel.artist, title: t[0], version: t[1], dur,
           fmt: v.fmt, br: unknown ? null : v.br ?? null, vbr: !!v.vbr, sr: unknown ? null : v.sr ?? null, bd: unknown ? null : v.bd ?? null,
           size, suspicious, arrival,
         };
@@ -248,16 +250,16 @@ function versionRel(a, b) { const x = norm(a), y = norm(b); if (x === y || (ORIG
 const OWN_ORDER = { owned: 4, upgrade: 3, likely: 2, version: 1 };
 function ownership(r) {
   const a = norm(r.artist), t = norm(r.title);
-  const tr = S.transfers.find(x => x.rid === r.id && x.kind !== 'preview' && !['done', 'failed', 'cancelled'].includes(x.state));
+  const tr = S.transfers.find(x => x.kind !== 'preview' && !['done', 'failed', 'cancelled'].includes(x.state) && (x.rid === r.id || (x.r && norm(x.r.artist) === a && norm(x.r.title) === t && versionRel(x.r.version, r.version) === 'same')));
   if (tr) return { kind: 'queued', tr };
   for (const it of S.inbox) {
-    if (norm(it.artist) !== a) continue;
-    if (it.kind === 'single' && norm(it.title) === t && versionRel(it.version, r.version) === 'same') return { kind: 'inbox', item: it };
-    if (it.kind === 'album' && it.rel && it.rel.tracks.some(x => norm(x[0]) === t && versionRel(x[1], r.version) === 'same')) return { kind: 'inbox', item: it };
+    if (norm(it.artist) !== a && similarity(it.artist, r.artist) < 0.85) continue;
+    if (it.kind === 'single' && (norm(it.title) === t || similarity(it.title, r.title) >= 0.9) && versionRel(it.version, r.version) === 'same') return { kind: 'inbox', item: it };
+    if (it.kind === 'album' && it.rel && it.rel.tracks.some(x => (norm(x[0]) === t || similarity(x[0], r.title) >= 0.9) && versionRel(x[1], r.version) === 'same')) return { kind: 'inbox', item: it };
   }
   let best = null;
   for (const c of COLLECTION.tracks) {
-    if (norm(c.artist) !== a || norm(c.title) !== t) continue;
+    if ((norm(c.artist) !== a && similarity(c.artist, r.artist) < 0.85) || (norm(c.title) !== t && similarity(c.title, r.title) < 0.9)) continue;
     const vr = versionRel(c.version, r.version);
     const k = vr === 'same' ? (qrank(c) < Math.min(320, qrank(r)) ? 'upgrade' : 'owned') : vr === 'unsure' ? 'likely' : 'version';
     if (!best || OWN_ORDER[k] > OWN_ORDER[best.kind]) best = { kind: k, track: c };
@@ -275,7 +277,7 @@ const BADGES = {
   inbox: { ic: 'tray', cls: 'acc', label: 'Inbox', long: 'In your Inbox, not filed yet' },
   session: { ic: 'download', cls: 'acc', label: 'This session', long: 'Downloaded this session' },
   past: { ic: 'clock', cls: 'mute', label: 'Earlier', long: 'Downloaded in an earlier session' },
-  queued: { ic: 'hourglass', cls: 'acc', label: 'Queued', long: 'In your transfers' },
+  queued: { ic: 'hourglass', cls: 'acc', label: 'Queued', long: 'Already downloading' },
 };
 const HAVE = new Set(['owned', 'inbox', 'session', 'queued']);
 function ownDetail(o) {
@@ -340,7 +342,7 @@ function computeView(s) {
   if (s.canon === undefined) {
     s.canon = canonCandidates(s.query);
     const q = norm(s.query), top = s.canon[0];
-    s.canonSel = top && top.kind === 'track' && q.includes(norm(top.title)) ? 0 : -1;
+    s.canonSel = top && top.kind === 'track' && (s.corrected || titleInQuery(top.title, q)) ? 0 : -1;
   }
   const c = s.canonSel >= 0 ? s.canon[s.canonSel] : null;
   const f = S.filters, all = s.results.slice(0, s.revealed);
@@ -380,9 +382,16 @@ const curSearch = () => S.searches.find(s => s.id === S.searchId) || null;
 function ago(t) { const d = (Clock.t - t) / 1000; return d < 50 ? 'just now' : d < 3600 ? `${Math.round(d / 60)} min ago` : `${Math.round(d / 3600)} h ago`; }
 
 /* ---------- search budget (network governor, simulated) ---------- */
-function budgetUses() { const w = LIMITS.windowSec * 1000; S.budget = S.budget.filter(t => Clock.t - t < w); return S.budget; }
-const budgetLeft = () => LIMITS.searches - budgetUses().length;
-function budgetRefillIn() { const u = budgetUses(); return u.length ? Math.max(0, (u[0] + LIMITS.windowSec * 1000 - Clock.t) / 1000) : 0; }
+// Token bucket: up to searchBurst at once, then one more every searchRefillSec. Never a fixed window.
+function budgetFill() {
+  const b = S.budget;
+  b.tokens = Math.min(LIMITS.searchBurst, b.tokens + (Clock.t - b.at) / (LIMITS.searchRefillSec * 1000));
+  b.at = Clock.t;
+  return b;
+}
+const budgetLeft = () => Math.floor(budgetFill().tokens);
+const budgetSpend = () => { budgetFill().tokens -= 1; };
+function budgetRefillIn() { const b = budgetFill(); return b.tokens >= LIMITS.searchBurst ? 0 : (1 - (b.tokens % 1)) * LIMITS.searchRefillSec; }
 
 function startSearch(query, { refresh = false } = {}) {
   query = query.trim().replace(/\s+/g, ' ');
@@ -399,14 +408,15 @@ function startSearch(query, { refresh = false } = {}) {
   }
   if (S.netPaused) { toast('Network activity is paused', 'Resume it from the toolbar to search.', { kind: 'warn' }); return; }
   if (budgetLeft() <= 0) { toast('Search budget used up', `The next search frees up in ${Math.ceil(budgetRefillIn())} s. Cached searches still open instantly.`, { kind: 'warn', icon: 'gauge' }); return; }
-  S.budget.push(Clock.t);
+  budgetSpend();
   const prior = refresh && existing;
-  const results = generateResults(query, { salt: prior ? (prior.salt || 0) + 1 : 0 });
+  const net = networkQuery(query);
+  const results = generateResults(net.q, { salt: prior ? (prior.salt || 0) + 1 : 0 });
   if (prior) {
-    Object.assign(prior, { results, revealed: 0, status: 'running', startedAt: Clock.t, cachedAt: null, salt: (prior.salt || 0) + 1, sel: null });
+    Object.assign(prior, { results, netQuery: net.q, corrected: net.corrected, revealed: 0, status: 'running', startedAt: Clock.t, cachedAt: null, salt: (prior.salt || 0) + 1, sel: null });
     S.sel = null; nav('search:' + prior.id); return;
   }
-  const s = { id: 's' + S.nextSearch++, query, results, revealed: 0, status: 'running', startedAt: Clock.t, cachedAt: null, sel: null };
+  const s = { id: 's' + S.nextSearch++, query, netQuery: net.q, corrected: net.corrected, results, revealed: 0, status: 'running', startedAt: Clock.t, cachedAt: null, sel: null };
   S.searches.unshift(s);
   nav('search:' + s.id);
 }
@@ -426,7 +436,7 @@ function updateSearches() {
 /* ---------- toolbar, sidebar ---------- */
 function ratioFor(w) { const x = RATIO[w]; return x.down.bytes ? x.up.bytes / x.down.bytes : 0; }
 function budgetHtml() {
-  const left = budgetLeft(), pct = left / LIMITS.searches;
+  const left = budgetLeft(), pct = left / LIMITS.searchBurst;
   return `${icon('gauge')}<b>${left}</b><span class="mini-meter${pct < 0.3 ? ' warn' : ''}" aria-hidden="true"><i style="width:${pct * 100}%"></i></span>`;
 }
 function renderToolbar() {
@@ -439,8 +449,8 @@ function renderToolbar() {
     <div class="tb-spacer"></div>
     ${S.view === 'search' && curSearch() ? viewControlsHtml() : ''}
     <div class="tb-group tb-hide-sm">
-      <button class="tbtn" id="tbBudget" data-act="budget-info" title="Searches left in the current ${LIMITS.windowSec}-second window (limit ${LIMITS.searches})">${budgetHtml()}</button>
-      <button class="tbtn" data-act="nav" data-v="peers" title="Uploaded ÷ downloaded over the last 30 days">${icon('transfers')}<b>${r30.toFixed(2)}</b><span class="tb-hide-md">ratio</span></button>
+      <button class="tbtn" id="tbBudget" data-act="budget-info" title="Searches you can run now: up to ${LIMITS.searchBurst}, one more every ${LIMITS.searchRefillSec} s">${budgetHtml()}</button>
+      <button class="tbtn" data-act="nav" data-v="transfers" title="Uploaded ÷ downloaded over the last 30 days">${icon('transfers')}<b id="tbRatio">${r30.toFixed(2)}</b><span class="tb-hide-md">ratio</span></button>
     </div>
     <div class="tb-group">
       <button class="tbtn${S.netPaused ? ' on' : ''}" data-act="toggle-pause" aria-pressed="${S.netPaused}" title="${S.netPaused ? 'Resume network activity' : 'Pause network activity (no new searches or transfers)'}">${icon(S.netPaused ? 'play-c' : 'pause-c')}</button>
@@ -449,14 +459,14 @@ function renderToolbar() {
     </div>`;
 }
 function navModel() {
-  const unread = S.msgs.reduce((a, m) => a + m.unread, 0);
+  const ready = S.batch.lines.filter(l => l.status === 'match' || l.status === 'review').length;
   const active = S.transfers.filter(t => t.kind !== 'preview' && !['done', 'failed', 'cancelled'].includes(t.state)).length;
   return [
-    { items: [{ id: 'batch', ic: 'batch', label: 'Batch search', cnt: S.batch && S.batch.running ? 'spin' : '' }, { id: 'wishlist', ic: 'star', label: 'Wishlist', cnt: S.wishlist.reduce((a, w) => a + w.found, 0) || '' }] },
-    { title: 'Searches', items: S.searches.map(s => ({ id: 'search:' + s.id, ic: 'search', label: s.query, cnt: s.status === 'running' ? 'spin' : shownCount(s), close: s.id })) },
-    { title: 'Library', items: [{ id: 'inbox', ic: 'inbox', label: 'Inbox', cnt: S.inbox.length || '' }, { id: 'collection', ic: 'music', label: 'Collection' }, { id: 'history', ic: 'history', label: 'History' }] },
-    { title: 'Network', items: [{ id: 'transfers', ic: 'transfers', label: 'Transfers', cnt: active || '' }, { id: 'peers', ic: 'peers', label: 'Peers & ratio' }, { id: 'messages', ic: 'msg', label: 'Messages', cnt: unread ? { pill: unread } : '' }, { id: 'shares', ic: 'share', label: 'Shares' }] },
-    { title: 'Tools', items: [{ id: 'converter', ic: 'convert', label: 'Converter' }, { id: 'settings', ic: 'settings', label: 'Settings' }] },
+    { items: [{ id: 'batch', ic: 'batch', label: 'Get tracks', cnt: S.batch.running ? 'spin' : ready || '' }, { id: 'inbox', ic: 'inbox', label: 'Inbox', cnt: S.inbox.length || '' }] },
+    { title: 'Digging', items: [...S.searches.map(s => ({ id: 'search:' + s.id, ic: 'search', label: s.query, cnt: s.status === 'running' ? 'spin' : shownCount(s), close: s.id })), { id: 'wishlist', ic: 'star', label: 'Wishlist', cnt: S.wishlist.reduce((a, w) => a + w.found, 0) || '' }] },
+    { title: 'Library', items: [{ id: 'collection', ic: 'music', label: 'Collection' }, { id: 'history', ic: 'history', label: 'History' }] },
+    { title: 'Network', items: [{ id: 'transfers', ic: 'transfers', label: 'Activity', cnt: active || '' }, { id: 'shares', ic: 'share', label: 'Shares' }, { id: 'messages', ic: 'msg', label: 'Messages', cnt: S.msgs.reduce((a, m) => a + m.unread, 0) ? { pill: S.msgs.reduce((a, m) => a + m.unread, 0) } : '' }] },
+    { title: '', items: [{ id: 'converter', ic: 'convert', label: 'Converter' }, { id: 'settings', ic: 'settings', label: 'Settings' }] },
   ];
 }
 function shownCount(s) { let n = 0; for (let i = 0; i < s.revealed; i++) { const r = s.results[i]; if (!hiddenReason(r, S.filters, ownership(r))) n++; } return n; }
@@ -484,11 +494,11 @@ function filtersHtml() {
   const rates = RATES.map(sr => `<button class="chip${f.rates.has(sr) ? ' on' : ''}" data-act="rate" data-v="${sr}" aria-pressed="${f.rates.has(sr)}">${khz(sr)}</button>`).join('');
   return `
   <div class="vb-row">
-    <label class="fl"><span class="fl-l">Preset</span><select id="fPreset" data-ch="preset">${presetOpts}</select></label>
-    <div class="fl" role="group" aria-label="Formats"><span class="fl-l">Formats</span><span class="chips">${chips}</span></div>
-    <button class="btn sm more-filters" data-act="more-filters">${S.moreFilters ? 'Fewer filters' : 'More filters'}</button>
+    <label class="fl"><span class="fl-l">Want</span><select id="fPreset" data-ch="preset" aria-label="Quality wanted">${presetOpts}</select></label>
+    <button class="btn sm more-filters" data-act="more-filters" aria-expanded="${!!S.moreFilters}">${icon('settings')} ${S.moreFilters ? 'Hide filters' : 'Filters'}</button>
   </div>
   <div class="vb-row secondary">
+    <div class="fl" role="group" aria-label="Formats"><span class="fl-l">Formats</span><span class="chips">${chips}</span></div>
     <div class="fl"><span class="fl-l">Lossy</span><select id="fBrOp" data-ch="brOp" aria-label="Bitrate rule">${ops}</select><select id="fBrVal" data-ch="brVal" aria-label="Bitrate in kbps"${f.brOp === 'any' ? ' disabled' : ''}>${brs}</select><span class="fl-l">kbps</span><label class="cb"><input type="checkbox" id="fCbr" data-ch="cbrOnly"${f.cbrOnly ? ' checked' : ''}>CBR only</label></div>
     <div class="fl"><span class="fl-l">Lossless</span><select id="fBits" data-ch="minBits" aria-label="Minimum bit depth"><option value="16"${f.minBits === 16 ? ' selected' : ''}>≥ 16-bit</option><option value="24"${f.minBits === 24 ? ' selected' : ''}>≥ 24-bit</option></select><span class="chips" role="group" aria-label="Allowed sample rates">${rates}</span><span class="fl-l">kHz</span></div>
     <div class="fl"><span class="fl-l">Length</span><input class="field num" id="fMin" data-ch="minDur" value="${fmtDur(f.minDur)}" aria-label="Minimum length"><span class="fl-l">to</span><input class="field num" id="fMax" data-ch="maxDur" value="${fmtDur(f.maxDur)}" aria-label="Maximum length"></div>
@@ -593,8 +603,8 @@ function updateResults() {
   const status = s.status === 'running'
     ? `<span class="spinner" aria-hidden="true"></span>&nbsp;Receiving results · ${plural(v.peers, 'peer')} so far`
     : s.cachedAt != null ? `${icon('clock')} Cached ${ago(s.cachedAt)} · <button class="link" data-act="refresh-search">Search again</button> <span class="faint">(uses 1 search)</span>`
-    : `${plural(v.peers, 'peer')} answered · <button class="link" data-act="refresh-search">Search again</button>`;
-  $('#summary').innerHTML = `<span><b>${fmtInt(v.shown.length)}</b> of ${fmtInt(v.all.length)} match</span>${hidden ? `<span class="why"><span class="faint">Hidden by filters:</span>${why}</span>` : ''}<span class="grow-1"></span><span style="display:inline-flex;align-items:center;gap:4px">${status}</span>`;
+    : `${plural(v.peers, 'peer')} answered · <button class="link" data-act="refresh-search">Search again</button> · <button class="link" data-act="search-wider" title="Sends fewer words to catch misspelled file names. Uses one search">Search wider</button>`;
+  $('#summary').innerHTML = `${s.corrected ? `<span class="fix">${icon('check-c')}Searched for “${esc(s.netQuery)}”, spelled as on ${srcName()}</span>` : ''}<span><b>${fmtInt(v.shown.length)}</b> of ${fmtInt(v.all.length)} match</span>${hidden ? `<span class="why"><span class="faint">Hidden by filters:</span>${why}</span>` : ''}<span class="grow-1"></span><span style="display:inline-flex;align-items:center;gap:4px">${status}</span>`;
   for (const el of $$('#filters [data-fmt-count]')) el.textContent = v.fmtCount[el.dataset.fmtCount] || 0;
   const rows = [], order = [];
   if (v.groups) {
@@ -645,7 +655,7 @@ function inspectorTrack(r) {
     : '';
   return `<div class="insp">
     <div><div class="insp-title">${esc(r.title)}${r.version ? ` <span class="muted">(${esc(r.version)})</span>` : ''}</div><div class="insp-sub">${esc(r.artist)} · ${esc(qualLong(r))} · ${fmtDur(r.dur)} · ${fmtSize(r.size)}</div></div>
-    <div class="insp-actions">${hasClip(r) && S.clips ? `<button class="btn" data-act="clip" data-id="${r.id}" title="Plays a 30-second clip from Deezer. Costs the peer nothing">${icon('play')} 30-s clip</button>` : ''}<button class="btn" data-act="full" data-id="${r.id}" title="Downloads the file from the peer into the preview cache">${icon('wave')} Full preview</button><button class="btn primary" data-act="download" data-id="${r.id}">${icon('download')} Download</button></div>
+    <div class="insp-actions"><button class="btn" data-act="preview" data-id="${r.id}" title="${esc(SOURCES[pickSource(r)])}. Space">${icon('play')} Preview</button><button class="btn" data-act="full" data-id="${r.id}" title="Streams this exact file from the peer into the preview cache. ⇧Space">${icon('wave')} Peer file</button><button class="btn primary" data-act="download" data-id="${r.id}">${icon('download')} Download</button></div>
     ${ownNote(r, o)}
     <div class="notes">${len ? `<div>${len}</div>` : ''}<div>${plausibility(r)}</div></div>
     <details class="insp-sec"><summary>${icon('chev', 'sum-ic')}Quality<span class="sum-x">${esc(qualShort(r).text)}</span></summary><dl class="kv">
@@ -788,12 +798,12 @@ function finishTransfer(t) {
   toast('Downloaded to your Inbox', `${esc(t.name)} · ${esc(t.qual)}`, { kind: 'good', icon: 'tray' });
 }
 function inboxFromResult(r, p) {
-  S.inbox.unshift({ id: 'ib' + S.nextId++, kind: 'single', artist: r.artist, title: r.title, version: r.version, fmt: r.fmt, br: r.br, vbr: r.vbr, sr: r.sr, bd: r.bd, dur: r.dur, size: r.size, peer: p.name, session: SESSIONS[0].n, rel: r.rel });
+  S.inbox.unshift({ id: 'ib' + S.nextId++, proc: 0, kind: 'single', artist: r.artist, title: r.title, version: r.version, fmt: r.fmt, br: r.br, vbr: r.vbr, sr: r.sr, bd: r.bd, dur: r.dur, size: r.size, peer: p.name, session: SESSIONS[0].n, rel: r.rel });
   S.history.unshift({ session: SESSIONS[0].n, artist: r.artist, title: r.title, version: r.version, q: qualLong(r), peer: p.name, where: 'Inbox', time: clockTime() });
 }
 function finishAlbum(al) {
   const rel = al.rel, base = al.base, L = albumLinks(rel);
-  S.inbox.unshift({ id: 'ib' + S.nextId++, kind: 'album', artist: rel.artist, album: rel.album, year: rel.year, fmt: base.fmt, br: base.br, vbr: base.vbr, sr: base.sr, bd: base.bd, tracks: rel.tracks.length, size: al.ts.reduce((a, t) => a + t.size, 0), peer: al.peer.name, session: SESSIONS[0].n, rel });
+  S.inbox.unshift({ id: 'ib' + S.nextId++, proc: 0, kind: 'album', artist: rel.artist, album: rel.album, year: rel.year, fmt: base.fmt, br: base.br, vbr: base.vbr, sr: base.sr, bd: base.bd, tracks: rel.tracks.length, size: al.ts.reduce((a, t) => a + t.size, 0), peer: al.peer.name, session: SESSIONS[0].n, rel });
   S.history.unshift({ session: SESSIONS[0].n, artist: rel.artist, title: rel.album, version: '', album: true, n: rel.tracks.length, q: qualLong(base), peer: al.peer.name, where: 'Inbox', time: clockTime() });
   const trashed = L.inInbox.map(x => x.item);
   const histOf = it => S.history.find(h => !h.album && norm(h.artist) === norm(it.artist) && norm(h.title) === norm(it.title));
@@ -815,15 +825,13 @@ const TARGETS = {
   flac: { label: 'FLAC', fmt: 'FLAC', lossless: true },
   asis: { label: 'Keep as downloaded', asis: true },
 };
+// What happened to a download on arrival in the Inbox. Filing later only moves it.
 function filingPlan(it) {
   const tg = TARGETS[S.filingTarget];
-  if (tg.asis) return { kind: 'move', text: 'Moves as downloaded' };
-  if (!LOSSY.has(it.fmt)) {
-    if (LOSSY.has(tg.fmt)) return { kind: 'convert', text: `Converts to ${tg.label}, tags and artwork carried over` };
-    return it.fmt === tg.fmt ? { kind: 'move', text: 'Already in this format: moves as-is' } : { kind: 'convert', text: `Converts to ${tg.label} (lossless to lossless)` };
-  }
-  if (it.fmt === tg.fmt && (it.br || 0) >= (tg.br || 0)) return { kind: 'move', text: `Already ${qualLong(it)}: moves as-is, tags completed` };
-  return { kind: 'below', text: `${qualLong(it)} is below ${tg.label}. Files as-is: re-encoding can't add quality` };
+  if (tg.asis) return { kind: 'move', text: 'Kept as downloaded' };
+  if (!LOSSY.has(it.fmt)) return it.fmt === tg.fmt ? { kind: 'move', text: 'Already in this format' } : { kind: 'convert', text: `Converted from ${qualLong(it)}` };
+  if (it.fmt === tg.fmt && (it.br || 0) >= (tg.br || 0)) return { kind: 'move', text: `Already ${qualLong(it)}` };
+  return { kind: 'below', text: `Below ${tg.label}. Kept as-is: re-encoding can't add quality` };
 }
 function inboxFlags(it) {
   if (it.kind === 'album') {
@@ -834,51 +842,57 @@ function inboxFlags(it) {
   return lower ? ` · <span class="gflag acc" title="The old file stays where rekordbox expects it">${icon('up-c')}Upgrades your ${esc(qualLong(lower))} copy</span>` : '';
 }
 function inboxRow(it, alt) {
-  const plan = filingPlan(it), f = S.filing.get(it.id);
+  const plan = filingPlan(it), f = S.filing.get(it.id), tg = TARGETS[S.filingTarget];
   const title = it.kind === 'album' ? `${it.artist} — ${it.album} (${it.year})` : `${it.artist} — ${fullTitle(it.title, it.version)}`;
   const sub = it.kind === 'album' ? `${it.tracks} tracks · ${fmtSize(it.size)}` : `${fmtDur(it.dur)} · ${fmtSize(it.size)}`;
-  const pk = plan.kind === 'below' ? ['warn', 'warn'] : plan.kind === 'convert' ? ['acc', 'convert'] : ['good', 'check-c'];
   return `<tr class="${alt ? 'alt' : ''}">
     <td><input type="checkbox" data-ch="inbox-sel" data-id="${it.id}"${S.inboxSel.has(it.id) ? ' checked' : ''} aria-label="Select ${esc(title)}"></td>
     <td style="height:44px"><div class="cell2"><span class="thumb" style="background:${artGradient(hashStr(it.artist + (it.album || it.title)))}"></span><div class="t"><div style="overflow:hidden;text-overflow:ellipsis">${esc(title)}</div><div class="faint" style="font-size:11px;overflow:hidden;text-overflow:ellipsis">${sub}${inboxFlags(it)}</div></div></div></td>
-    <td>${esc(qualLong(it))}</td>
-    <td style="white-space:normal">${f ? `<div class="prog"><div class="bar"><i style="width:${(f.p * 100).toFixed(1)}%"></i></div><span class="muted num" style="font-size:11px">${esc(f.step)}</span></div>` : `<span class="bdg ${pk[0]}" style="white-space:normal;align-items:flex-start">${icon(pk[1])}<span>${esc(plan.text)}</span></span><div class="mono faint" style="font-size:10.5px;margin-top:3px;overflow-wrap:anywhere">→ ${esc(filedPath(it))}</div>`}</td>
+    <td><div>${esc(plan.kind === 'convert' ? tg.label : qualLong(it))}</div>${plan.kind === 'convert' ? `<div class="sub">from ${esc(qualLong(it))}</div>` : ''}</td>
+    <td style="white-space:normal">${it.proc != null || f ? `<div class="prog"><div class="bar"><i style="width:${((f ? f.p : it.proc) * 100).toFixed(1)}%"></i></div><span class="muted num" style="font-size:11px">${esc(f ? f.step : it.proc < 0.7 && plan.kind === 'convert' ? `Converting to ${tg.label}` : `Tagging from ${srcName()}`)}</span></div>`
+      : `${plan.kind === 'below' ? `<span class="bdg warn" style="white-space:normal;align-items:flex-start">${icon('warn')}<span>${esc(plan.text)}</span></span>` : `<span class="bdg good">${icon('check-c')}Tagged from ${srcName()} · cover</span>`}<div class="mono faint" style="font-size:10.5px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(filedPath(it))}">→ ${esc(filedPath(it))}</div>`}</td>
     <td><span class="muted">${esc(it.peer)}</span> <span class="faint">· session ${it.session}</span></td>
-    <td class="r"><button class="btn sm" data-act="inbox-file" data-id="${it.id}"${f ? ' disabled' : ''}>File</button></td>
+    <td class="r"><button class="btn sm" data-act="inbox-file" data-id="${it.id}"${f || it.proc != null ? ' disabled' : ''}>File</button></td>
   </tr>`;
 }
 function renderInbox() {
   const albums = S.inbox.filter(i => i.kind === 'album'), singles = S.inbox.filter(i => i.kind === 'single');
-  const opts = Object.entries(TARGETS).map(([k, t]) => `<option value="${k}"${k === S.filingTarget ? ' selected' : ''}>${t.label}${t.asis ? '' : ' · ID3v2.3 · artwork'}</option>`).join('');
   const section = (name, items) => items.length ? `<tr class="g"><td colspan="6"><div class="gwrap"><span class="gname">${name}</span><span class="gmeta">${items.length}</span></div></td></tr>${items.map((it, i) => inboxRow(it, i % 2 === 1)).join('')}` : '';
   $('#content').innerHTML = `
     <div class="viewbar"><div class="vb-row">
-      <label class="fl"><span class="fl-l">File as</span><select id="fileAs" data-ch="filingTarget">${opts}</select></label>
+      <span class="fl-l">${TARGETS[S.filingTarget].asis ? 'Kept as downloaded' : `Everything here is ${esc(TARGETS[S.filingTarget].label)}`}, tagged from ${srcName()} with cover art</span>
       <span class="grow-1"></span>
       <button class="btn" data-act="inbox-trash"${S.inboxSel.size ? '' : ' disabled'}>${icon('trash')} Move to Trash</button>
       <button class="btn primary" data-act="inbox-file-sel"${S.inboxSel.size ? '' : ' disabled'}>File ${S.inboxSel.size ? S.inboxSel.size + ' ' : ''}selected</button>
     </div></div>
     <div class="scroll"><table class="tbl" style="min-width:860px"><colgroup><col style="width:36px"><col><col style="width:116px"><col style="width:280px"><col style="width:180px"><col style="width:64px"></colgroup>
-      <thead><tr><th><input type="checkbox" data-ch="inbox-all" aria-label="Select everything"${S.inbox.length && S.inboxSel.size === S.inbox.length ? ' checked' : ''}></th><th>Item</th><th>Downloaded as</th><th>When you file it</th><th>From</th><th></th></tr></thead>
+      <thead><tr><th><input type="checkbox" data-ch="inbox-all" aria-label="Select everything"${S.inbox.length && S.inboxSel.size === S.inbox.length ? ' checked' : ''}></th><th>Item</th><th>Format</th><th>Tags and file name</th><th>From</th><th></th></tr></thead>
       <tbody>${section('Albums', albums)}${section('Singles', singles)}${S.inbox.length ? '' : '<tr><td colspan="6" style="height:120px;text-align:center;color:var(--label-2)">Your Inbox is empty. Downloads land here until you file them.</td></tr>'}</tbody></table></div>
-    <div class="footbar">${icon('info')}<span>Names follow your templates and the name cleaner (Settings → Filing). Filing copies the file, checks the copy, then clears it from the Inbox; lossless originals go to the Trash after a checked conversion. Selecta never changes files already in your collection.</span></div>`;
+    <div class="footbar">${icon('info')}<span>Downloads are converted and tagged as they arrive; a lossless original goes to the Trash once its conversion checks out. Filing moves an item into your collection under the names from Settings → Filing. Selecta never changes files already in your collection.</span></div>`;
 }
 function fileItems(ids) {
   for (const id of ids) {
     const it = S.inbox.find(x => x.id === id);
     if (!it || S.filing.has(id)) continue;
     const plan = filingPlan(it);
-    S.filing.set(id, { p: 0, n: it.kind === 'album' ? it.tracks : 1, conv: plan.kind === 'convert', step: 'Starting', it, plan, target: S.filingTarget });
+    S.filing.set(id, { p: 0, n: it.kind === 'album' ? it.tracks : 1, step: 'Starting', it, plan, target: S.filingTarget });
   }
   S.inboxSel.clear();
   renderContent();
 }
 function updateFiling(dt) {
   let changed = false;
+  for (const it of S.inbox) {
+    if (it.proc == null) continue;
+    const n = it.kind === 'album' ? it.tracks : 1;
+    it.proc = Math.min(1, it.proc + dt / ((filingPlan(it).kind === 'convert' ? 1400 : 500) * n));
+    if (it.proc >= 1) delete it.proc;
+    changed = true;
+  }
   for (const [id, f] of S.filing) {
-    f.p = Math.min(1, f.p + dt / ((f.conv ? 1100 : 450) * f.n));
+    f.p = Math.min(1, f.p + dt / (450 * f.n));
     const k = Math.min(f.n, Math.floor(f.p * f.n) + 1);
-    f.step = f.p < 0.94 ? `${f.conv ? 'Converting' : 'Copying'} ${k} of ${f.n}` : 'Checking the copy';
+    f.step = f.p < 0.94 ? `Moving ${k} of ${f.n}` : 'Checking the copy';
     changed = true;
     if (f.p >= 1) { S.filing.delete(id); completeFiling(f); }
   }
@@ -907,7 +921,7 @@ function completeFiling(f) {
 }
 
 /* ---------- Batch search ---------- */
-const SAMPLE_TRACKLIST = `Kassia Moreau - Low Orbit
+const SAMPLE_TRACKLIST = `Kassia Moreau - Night Transit (Dub)
 Okuma Drift - Cold Harbour
 Halden & Rue - Mirage Engine
 Marlo Vance - Tidal Memory (Ines Varga Remix)
@@ -915,7 +929,7 @@ Ines Varga - Vesper
 Teodor Lumen - Amber Static
 Juno Ashgrove - Velvet Machine (Extended Mix)
 Sefa Kintu - Lagos Night Bus
-Pale Monarch - Updraft
+Pale Monarch - Ridge Lift
 Ravel Ortiz - Room 404 (Dub)
 Kassia Moreau - Paper Lanterns
 Okuma Drift - Kinetic (Club Edit)
@@ -928,23 +942,36 @@ function parseLine(raw) {
   if (v) { title = v[1]; version = v[2]; }
   return { artist: artist.trim(), title: title.trim(), version: version.trim() };
 }
-function batchParse() {
-  const B = S.batch, seen = new Set();
+function batchParse({ keep = false } = {}) {
+  const B = S.batch, seen = new Set(), old = keep ? new Map(B.lines.map(l => [norm(l.raw), l])) : null;
   B.lines = B.text.split('\n').map(x => x.trim()).filter(Boolean).filter(x => { const k = norm(x); if (seen.has(k)) return false; seen.add(k); return true; }).map((raw, i) => {
+    const prev = old && old.get(norm(raw));
+    if (prev) return Object.assign(prev, { n: i + 1 });
     const p = parseLine(raw);
     const fake = { artist: p.artist, title: p.title, version: p.version, fmt: 'MP3', br: 320 };
     const own = ownership(fake);
-    return { id: 'b' + i, n: i + 1, raw, ...p, status: B.skipOwned && own && HAVE.has(own.kind) ? 'owned' : 'pending', own, best: null, alts: [], scoreV: 0, approved: false };
+    return { id: 'b' + hashStr(norm(raw)).toString(36), n: i + 1, raw, ...p, status: B.skipOwned && own && HAVE.has(own.kind) ? 'owned' : 'pending', own, best: null, alts: [], scoreV: 0, approved: false };
   });
-  for (const l of B.lines) { if (l.status === 'owned') continue; const rc = resolveCanon(l); l.canon = rc.c; l.canonExact = rc.exact; }
-  B.sel = null; B.done = false;
+  for (const l of B.lines) { if (l.status === 'owned' || 'canon' in l) continue; const rc = resolveCanon(l); l.canon = rc.c; l.canonExact = rc.exact; }
+  if (!keep) B.sel = null;
+  B.done = false;
 }
 function similarity(a, b) {
-  const A = new Set(norm(a).split(' ').filter(Boolean)), B2 = new Set(norm(b).split(' ').filter(Boolean));
-  if (!A.size && !B2.size) return 1;
-  if (!A.size || !B2.size) return 0;
-  let n = 0; A.forEach(x => { if (B2.has(x)) n++; });
-  return (2 * n) / (A.size + B2.size);
+  const key = `${a}\u0001${b}`, hit = SIM_CACHE.get(key);
+  if (hit !== undefined) return hit;
+  const A = norm(a).split(' ').filter(Boolean), B = norm(b).split(' ').filter(Boolean);
+  let v;
+  if (!A.length && !B.length) v = 1;
+  else if (!A.length || !B.length) v = 0;
+  else {
+    // Each word counts by its closest counterpart, so typos, missing letters and swapped letters still match.
+    const best = (X, Y) => X.reduce((s, x) => { let m = 0; for (const y of Y) { const t = wordSim(x, y); if (t > m) m = t; if (m === 1) break; } return s + m; }, 0);
+    v = (best(A, B) + best(B, A)) / (A.length + B.length);
+    if (A.length !== B.length) { const ja = A.join(''), jb = B.join(''); if (ja.length > 5 && jb.length > 5) v = Math.max(v, wordSim(ja, jb)); } // "okumadrift" vs "okuma drift"
+  }
+  if (SIM_CACHE.size > 50000) SIM_CACHE.clear();
+  SIM_CACHE.set(key, v);
+  return v;
 }
 function batchResolve(line) {
   const f = presetFilters(S.batch.preset), c = line.canon;
@@ -959,6 +986,7 @@ function batchResolve(line) {
   if (!picks.length || picks[0].m < 0.45) { line.status = 'notfound'; line.best = null; line.alts = []; return; }
   line.best = picks[0].r; line.alts = picks.slice(1).map(x => x.r); line.scoreV = picks[0].m; line.candidates = res.length;
   line.status = picks[0].m >= 0.85 && (!c || (picks[0].rm.ok && line.canonExact !== false)) ? 'match' : 'review';
+  if (line.status === 'match' && !line.dl) line.approved = true;
 }
 function updateBatch() {
   const B = S.batch;
@@ -974,9 +1002,9 @@ function updateBatch() {
   if (cached) { next.status = 'searching'; next.started = Clock.t - 1700; next.cached = true; return true; }
   if (S.netPaused) return false;
   if (Clock.t < B.nextAt || budgetLeft() <= LIMITS.batchKeepFree) { next.waiting = true; return false; }
-  S.budget.push(Clock.t);
+  budgetSpend();
   next.status = 'searching'; next.started = Clock.t; next.waiting = false;
-  B.nextAt = Clock.t + (LIMITS.windowSec * 1000) / (LIMITS.searches - LIMITS.batchKeepFree);
+  B.nextAt = Clock.t + LIMITS.searchRefillSec * 1000;
   return true;
 }
 const BSTAT = {
@@ -985,68 +1013,70 @@ const BSTAT = {
 };
 function batchRows() {
   const B = S.batch;
+  if (!B.lines.length) return '';
   return B.lines.map((l, i) => {
-    const st = BSTAT[l.status], sel = B.sel === l.id;
-    const label = l.status === 'pending' ? (B.running ? (l.waiting ? 'Paced' : 'Queued') : 'Ready') : st[2];
+    const st = GSTAT[l.status], sel = B.sel === l.id;
+    const label = l.status === 'pending' ? (B.running ? (l.waiting ? 'Next' : 'Queued') : 'Waiting') : l.status === 'owned' && l.own.kind === 'queued' ? 'Getting it' : st[2];
     const rel = l.canon
-      ? `<div class="faint" style="font-size:11px;overflow:hidden;text-overflow:ellipsis">→ ${esc(fullTitle(l.canon.title, l.canon.version))} · ${fmtDur(l.canon.dur)} · ${srcName()}${l.canonExact === false ? ' · closest version' : ''}</div>`
-      : l.status !== 'owned' ? `<div class="faint" style="font-size:11px">No release found on ${srcName()}</div>` : '';
-    const lenNote = l.best && l.canon ? (Math.abs(l.best.dur - l.canon.dur) <= 3 ? ' · same length' : ` · ${fmtDelta(l.best.dur - l.canon.dur)}`) : '';
-    const best = l.best
-      ? `<div class="t">${esc(l.best.artist)} — ${esc(fullTitle(l.best.title, l.best.version))}<div class="faint" style="font-size:11px">${esc(qualLong(l.best))} · ${fmtDur(l.best.dur)}${lenNote} · ${esc(l.best.peer.name)}${l.alts.length ? ` · ${plural(l.alts.length, 'alternative')}` : ''}</div></div>`
+      ? `<span class="rel-ok" title="Matched on ${srcName()}: tags and cover come from here">${icon('check')}${esc(fullTitle(l.canon.title, l.canon.version))} · ${fmtDur(l.canon.dur)}</span>`
+      : l.status === 'owned' ? '' : `<span class="faint">Not found on ${srcName()}</span>`;
+    const fit = l.best && l.canon ? Math.abs(l.best.dur - l.canon.dur) <= 3 : null;
+    const src = l.dl ? `<span class="bdg acc">${icon('download')}Getting it</span>`
+      : l.best ? `<span class="src"><span class="fmt">${l.best.fmt}</span> ${esc(qualShort(l.best).text)} <span class="faint">·</span> ${fmtDur(l.best.dur)}${fit === true ? `<span class="dd ok" title="Same length as the release">${icon('check')}</span>` : fit === false ? `<span class="dd" title="${esc(fmtDelta(l.best.dur - l.canon.dur))} against the release">${fmtDelta(l.best.dur - l.canon.dur)}</span>` : ''} <span class="faint">· ${esc(l.best.peer.name)}</span>${l.alts.length ? ` <button class="link" data-act="get-sel" data-id="${l.id}">+${l.alts.length}</button>` : ''}</span>`
       : l.status === 'owned' ? `<span class="faint" title="${esc(ownDetail(l.own))}">${esc(BADGES[l.own.kind].long)}</span>` : '';
     const playing = l.best && P.track && P.track.rid === l.best.id;
-    return `<tr class="r${i % 2 ? ' alt' : ''}${sel ? ' sel' : ''}" data-act="batch-sel" data-id="${l.id}" style="height:46px">
-      <td class="num faint">${l.n}</td>
-      <td title="${esc(l.raw)}"><div style="overflow:hidden;text-overflow:ellipsis">${esc(l.raw)}</div>${rel}</td>
-      <td><span class="bdg ${st[1]}">${l.status === 'searching' ? '<span class="spinner"></span>' : icon(st[0])}${esc(label)}${l.cached ? ' · cached' : ''}</span></td>
-      <td style="white-space:normal">${best}</td>
-      <td class="r num">${l.best ? `${Math.round(l.scoreV * 100)}%` : ''}</td>
-      <td class="r">${l.best ? `<button class="rb${playing ? ' on' : ''}" data-act="preview" data-id="${l.best.id}" aria-label="Preview the best match">${icon(playing && P.playing ? 'pause' : 'play')}</button> <label class="cb" title="Approve this match"><input type="checkbox" data-ch="batch-approve" data-id="${l.id}"${l.approved ? ' checked' : ''}${l.dl ? ' disabled' : ''}> ${l.dl ? 'Queued' : 'OK'}</label>` : ''}</td>
+    const can = l.best && !l.dl;
+    return `<tr class="r${i % 2 ? ' alt' : ''}${sel ? ' sel' : ''}" data-act="get-sel" data-id="${l.id}" style="height:46px">
+      <td>${can ? `<input type="checkbox" data-ch="batch-approve" data-id="${l.id}"${l.approved ? ' checked' : ''} aria-label="Get this track">` : ''}</td>
+      <td><div style="overflow:hidden;text-overflow:ellipsis" title="${esc(l.raw)}">${esc(l.raw)}</div><div class="sub">${rel}</div></td>
+      <td><span class="bdg ${st[1]}">${l.status === 'searching' ? '<span class="spinner"></span>' : icon(st[0])}${esc(label)}</span></td>
+      <td style="white-space:normal">${src}</td>
+      <td class="r">${l.best ? `<button class="rb${playing ? ' on' : ''}" data-act="preview" data-id="${l.best.id}" aria-label="Preview with waveform" title="Preview with waveform (Space)">${icon(playing && P.playing ? 'pause' : 'play')}</button>` : ''}</td>
     </tr>`;
   }).join('');
 }
 function renderBatch() {
   const B = S.batch;
-  const counts = s => B.lines.filter(l => l.status === s).length;
-  const left = budgetLeft(), done = B.lines.filter(l => !['pending', 'searching'].includes(l.status)).length;
-  const toSearch = B.lines.filter(l => l.status === 'pending' && !S.cache.has(norm(l.raw))).length;
-  const pace = (LIMITS.windowSec / (LIMITS.searches - LIMITS.batchKeepFree));
-  const approved = B.lines.filter(l => l.approved && !l.dl).length, confident = B.lines.filter(l => l.status === 'match' && !l.approved && !l.dl).length;
-  $('#content').innerHTML = `<div class="batch">
-    <div class="batch-left">
-      <div class="sec-h" style="margin:0"><h3>Tracklist</h3><span>${plural(B.lines.length, 'line')}, one track per line</span></div>
-      <div class="fl" style="flex-wrap:nowrap"><input class="field" style="flex:1;width:auto;min-width:0" id="spImport" placeholder="Spotify playlist or album link" aria-label="Spotify playlist or album link" spellcheck="false"><button class="btn sm" data-act="spotify-import">Import</button></div>
-      <textarea class="tracklist" id="tracklist" data-ch="batch-text" spellcheck="false" aria-label="Tracklist, one track per line"${B.running ? ' readonly' : ''}>${esc(B.text)}</textarea>
-      <label class="fl"><span class="fl-l">Preset for every line</span><select id="bPreset" data-ch="batch-preset"${B.running ? ' disabled' : ''}>${Object.entries(PRESETS).map(([k, p]) => `<option value="${k}"${k === B.preset ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
-      <label class="cb"><input type="checkbox" id="bSkip" data-ch="batch-skip"${B.skipOwned ? ' checked' : ''}${B.running ? ' disabled' : ''}>Skip tracks I already have</label>
-      <label class="cb"><input type="checkbox" id="bSpread" data-ch="batch-spread"${B.spread ? ' checked' : ''}>Spread downloads across peers</label>
-      <div class="card">
-        <div class="row"><b>Pacing</b><span class="muted num">${left} of ${LIMITS.searches} searches left</span></div>
-        <div class="pace" aria-hidden="true">${B.lines.map(l => `<i class="${l.status === 'searching' ? 'now' : l.status === 'owned' ? 'skip' : l.status === 'pending' ? '' : 'done'}"></i>`).join('')}</div>
-        <div class="muted">One search every ${pace.toFixed(1)} s, keeping ${LIMITS.batchKeepFree} searches free for you. ${toSearch ? `About ${fmtDur(toSearch * pace)} for the ${plural(toSearch, 'line')} left to search.` : 'Lines you searched recently open from the cache and cost nothing.'}</div>
-        <label class="cb"><input type="checkbox" id="bDemo" data-ch="batch-demo"${B.demo ? ' checked' : ''}>Demo clock ×10 <span class="faint">(mock only)</span></label>
-        <div class="row" style="justify-content:flex-start;gap:8px">${B.running ? `<button class="btn" data-act="batch-pause">${icon('pause')} Pause</button>` : `<button class="btn primary" data-act="batch-start"${B.lines.some(l => l.status === 'pending') ? '' : ' disabled'}>${icon('search')} ${B.started ? 'Resume' : 'Start searching'}</button>`}<button class="btn" data-act="batch-reset"${B.running ? ' disabled' : ''}>Re-read list</button></div>
-      </div>
-    </div>
-    <div class="batch-right">
-      <div class="summary"><span><b>${counts('match')}</b> confident</span><span><b>${counts('review')}</b> to review</span><span><b>${counts('notfound')}</b> not found</span><span><b>${counts('owned')}</b> you have</span><span class="grow-1"></span><span>Nothing downloads until you approve it.</span></div>
-      <div class="scroll"><table class="tbl" style="min-width:600px"><colgroup><col style="width:36px"><col style="width:30%"><col style="width:106px"><col><col style="width:50px"><col style="width:92px"></colgroup>
-        <thead><tr><th>#</th><th>Line</th><th>Status</th><th>Best match</th><th class="r">Match</th><th class="r">Review</th></tr></thead>
-        <tbody id="batchBody">${batchRows()}</tbody></table></div>
-      <div class="footbar"><button class="btn" data-act="batch-approve-all"${confident ? '' : ' disabled'}>Approve ${confident || ''} confident</button><button class="btn primary" data-act="batch-download"${approved ? '' : ' disabled'}>${icon('download')} Download ${approved || ''} approved</button><span>Approved downloads respect your per-peer limits${B.spread ? ' and spread across peers' : ''}.</span></div>
+  const n = s => B.lines.filter(l => l.status === s).length;
+  const ready = B.lines.filter(l => l.approved && !l.dl).length;
+  const left = B.lines.filter(l => ['pending', 'searching'].includes(l.status)).length;
+  const gettable = B.lines.filter(l => l.best && !l.dl).length;
+  if (!B.lines.length) {
+    $('#content').innerHTML = `<div class="scroll"><div class="pane" style="max-width:560px;margin:10vh auto 0;text-align:center;align-items:center">
+      <div style="color:var(--label-3)">${icon('batch', 'big-ic')}</div>
+      <h3 style="font-size:17px;margin:0">Paste the tracks you want</h3>
+      <p class="explain" style="text-align:center">One per line, “Artist - Title”. Selecta finds each release on ${srcName()}, then the best file on Soulseek. You preview, then it lands in your Inbox as ${esc(TARGETS[S.filingTarget].label)} with proper tags and cover.</p>
+      <button class="btn primary" data-act="add-tracks">${icon('plus')} Add tracks</button>
     </div></div>`;
+    return;
+  }
+  $('#content').innerHTML = `
+    <div class="viewbar"><div class="vb-row">
+      <button class="btn" data-act="add-tracks">${icon('plus')} Add tracks</button>
+      <span class="fl-l">Want</span><select data-ch="batch-preset" aria-label="Quality wanted"${B.running ? ' disabled' : ''}>${Object.entries(PRESETS).map(([k, p]) => `<option value="${k}"${k === B.preset ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+      <span class="grow-1"></span>
+      ${left ? `<span class="fl-l">${B.running ? `Finding · ${left} left · about ${Math.max(1, Math.round((left * LIMITS.searchRefillSec) / 60))} min` : `${left} not searched yet`}</span>` : ''}
+      ${B.running ? `<button class="btn" data-act="batch-pause">${icon('pause')} Pause</button>` : left ? `<button class="btn primary" data-act="batch-start">${icon('search')} ${B.started ? 'Resume' : 'Find them'}</button>` : ''}
+    </div></div>
+    <div class="summary"><span><b>${n('match')}</b> ready</span>${n('review') ? `<span><b>${n('review')}</b> to check</span>` : ''}${n('notfound') ? `<span><b>${n('notfound')}</b> not found</span>` : ''}${n('owned') ? `<span><b>${n('owned')}</b> you have</span>` : ''}<span class="grow-1"></span><span class="faint">Nothing downloads until you press Get</span></div>
+    <div class="scroll"><table class="tbl" style="min-width:680px"><colgroup><col style="width:34px"><col style="width:40%"><col style="width:106px"><col><col style="width:40px"></colgroup>
+      <thead><tr><th>${gettable ? `<input type="checkbox" data-ch="get-all" aria-label="Select all found tracks"${ready === gettable ? ' checked' : ''}>` : ''}</th><th>Track</th><th>Status</th><th>Best file on Soulseek</th><th></th></tr></thead>
+      <tbody id="batchBody">${batchRows()}</tbody></table></div>
+    <div class="footbar"><button class="btn primary" data-act="batch-download"${ready ? '' : ' disabled'}>${icon('download')} Get ${ready || ''} ${ready === 1 ? 'track' : 'tracks'}</button><span>They arrive in your Inbox as ${esc(TARGETS[S.filingTarget].label)}, tagged from ${srcName()} with cover art.</span></div>`;
 }
 function inspectorBatch() {
   const B = S.batch, l = B && B.lines.find(x => x.id === B.sel);
-  if (!l) return '<div class="insp-empty">Select a line to see the release it resolved to and the files that match it.</div>';
-  const cand = l.best ? [l.best, ...l.alts] : [], c = l.canon;
-  const relBlock = c ? `<section class="insp-sec"><h4>Release · ${srcName()}</h4><div style="display:flex;gap:10px;align-items:center"><span class="art" style="width:44px;height:44px;border-radius:6px;background:${artGradient(hashStr(c.artist + c.album))}"></span><div style="min-width:0"><div>${esc(fullTitle(c.title, c.version))}</div><div class="insp-sub">${esc(c.artist)} · ${esc(c.album)} (${c.year}) · ${fmtDur(c.dur)}</div></div></div>${l.canonExact === false ? `<div class="note warn" style="margin-top:8px">${icon('approx-c')}<div>No “${esc(l.version)}” version found. This is the closest release.</div></div>` : ''}${S.clips ? `<div class="insp-actions" style="margin-top:8px"><button class="btn sm" data-act="clip" data-id="${canonResult(c).id}">${icon('play')} 30-s clip</button></div>` : ''}</section>` : '';
-  return `<div class="insp"><div><div class="insp-title">${esc(l.title)}${l.version ? ` <span class="muted">(${esc(l.version)})</span>` : ''}</div><div class="insp-sub">${esc(l.artist || 'Unknown artist')} · line ${l.n}</div></div>
-    ${relBlock}
-    ${l.status === 'review' ? `<div class="note warn">${icon('approx-c')}<div><b>Check this one.</b> The best file scores ${Math.round(l.scoreV * 100)}% against the release. Preview it before approving.</div></div>` : ''}
-    ${l.status === 'notfound' ? `<div class="note">${icon('info')}<div>${c ? 'No file on the network matches this release within' : 'No release found, and nothing matched'} “${esc(PRESETS[B.preset].name)}”. <button class="link" data-act="add-wishlist" data-v="${esc(l.raw)}">Add it to the wishlist</button></div></div>` : ''}
-    ${cand.length ? `<section class="insp-sec"><h4>Files on the network</h4><div class="group">${cand.map((r, i) => `<div class="grow" style="gap:8px"><button class="rb" style="opacity:1" data-act="preview" data-id="${r.id}" aria-label="Preview">${icon('play')}</button><div class="gl" style="min-width:0">${esc(fullTitle(r.title, r.version))}<div class="gd">${esc(qualLong(r))} · ${fmtDur(r.dur)}${c ? ` (${Math.abs(r.dur - c.dur) <= 3 ? 'same length' : fmtDelta(r.dur - c.dur)})` : ''} · ${esc(r.peer.name)}</div></div>${i === 0 ? `<span class="bdg good">${icon('check')}Best</span>` : `<button class="btn sm" data-act="batch-pick" data-id="${r.id}">Use</button>`}</div>`).join('')}</div></section>` : ''}
+  if (!l) return '<div class="insp-empty">Select a track to see the tags it will get and the other files available.</div>';
+  const c = l.canon, cand = l.best ? [l.best, ...l.alts] : [];
+  const tag = (k, v) => `<dt>${k}</dt><dd>${v ? esc(v) : '<span class="faint">—</span>'}</dd>`;
+  return `<div class="insp">
+    <div><div class="insp-title">${esc(l.title)}${l.version ? ` <span class="muted">(${esc(l.version)})</span>` : ''}</div><div class="insp-sub">${esc(l.artist || 'Unknown artist')}</div></div>
+    ${c ? `<section class="insp-sec"><h4>Tags it will get · ${srcName()}</h4>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px"><span class="art" style="width:52px;height:52px;border-radius:6px;background:${artGradient(hashStr(c.artist + c.album))}"></span><div style="min-width:0"><div>${esc(c.album)}</div><div class="insp-sub">Cover embedded · JPEG 800×800</div></div></div>
+      <dl class="kv">${tag('Title', fullTitle(c.title, c.version))}${tag('Artist', c.artist)}${tag('Album', c.album)}${tag('Year', c.year)}${tag('Length', fmtDur(c.dur))}${tag('Label', c.label)}${tag('ISRC', c.isrc)}${tag('BPM', c.bpm)}</dl></section>`
+      : `<div class="note warn">${icon('approx-c')}<div>No release found on ${srcName()}, so tags come from the file name. You can fix them in the Inbox.</div></div>`}
+    ${cand.length ? `<section class="insp-sec"><h4>Files on Soulseek</h4><div class="group">${cand.map((r, i) => `<div class="grow" style="gap:8px"><button class="rb" style="opacity:1" data-act="preview" data-id="${r.id}" aria-label="Preview">${icon('play')}</button><div class="gl" style="min-width:0">${esc(qualLong(r))} · ${fmtDur(r.dur)}${c ? (Math.abs(r.dur - c.dur) <= 3 ? ' <span class="dd ok">same length</span>' : ` <span class="dd">${fmtDelta(r.dur - c.dur)}</span>`) : ''}<div class="gd">${esc(r.peer.name)} · ${r.peer.free ? 'free slot' : `queue ${r.peer.queue}`}${r.peer.today ? ` · ${r.peer.today} today` : ''}</div></div>${i === 0 ? `<span class="bdg good">${icon('check')}Best</span>` : `<button class="btn sm" data-act="batch-pick" data-id="${r.id}">Use</button>`}</div>`).join('')}</div></section>` : ''}
+    ${l.status === 'notfound' ? `<div class="note">${icon('info')}<div>Nothing on Soulseek matches within “${esc(PRESETS[B.preset].name)}”. <button class="link" data-act="add-wishlist" data-v="${esc(l.raw)}">Watch for it</button> or loosen the quality.</div></div>` : ''}
   </div>`;
 }
 
@@ -1108,11 +1138,21 @@ const TSTATE = t => {
   }
 };
 function renderTransfers() {
-  const downs = S.transfers, ups = S.uploads;
-  const body = S.transfersTab === 'down'
-    ? `<table class="tbl" style="min-width:860px"><colgroup><col><col style="width:150px"><col style="width:250px"><col style="width:170px"><col style="width:200px"></colgroup><thead><tr><th>Item</th><th>Peer</th><th>Status</th><th>Progress</th><th>To</th></tr></thead><tbody>${downs.map((t, i) => `<tr class="${i % 2 ? 'alt' : ''}"><td>${t.kind === 'preview' ? '<span class="tag">PREVIEW</span> ' : ''}${esc(t.name)} <span class="faint">· ${esc(t.qual)}</span></td><td class="muted">${esc(t.peer.name)}</td><td class="${t.state === 'failed' ? '' : 'muted'}">${t.state === 'failed' ? `<span class="bdg bad">${icon('ban')}${esc(TSTATE(t))}</span>` : esc(TSTATE(t))}</td><td><div class="prog"><div class="bar"><i style="width:${(t.progress * 100).toFixed(1)}%"></i></div><span class="num muted" style="font-size:11px;min-width:32px;text-align:right">${Math.floor(t.progress * 100)}%</span></div></td><td class="mono faint">${esc(t.kind === 'preview' ? 'Preview cache' : t.dest)}</td></tr>`).join('') || '<tr><td colspan="5" style="height:100px;text-align:center;color:var(--label-2)">No downloads yet this session.</td></tr>'}</tbody></table>`
-    : `<table class="tbl" style="min-width:700px"><colgroup><col style="width:170px"><col><col style="width:200px"><col style="width:110px"></colgroup><thead><tr><th>To user</th><th>File</th><th>Progress</th><th>Speed</th></tr></thead><tbody>${ups.map((u, i) => `<tr class="${i % 2 ? 'alt' : ''}"><td>${esc(u.user)}</td><td class="muted">${esc(u.file)}</td><td><div class="prog"><div class="bar"><i style="width:${Math.min(100, u.progress * 100).toFixed(1)}%"></i></div><span class="num muted" style="font-size:11px">${u.state === 'done' ? 'Done' : Math.floor(u.progress * 100) + '%'}</span></div></td><td class="num muted">${u.state === 'done' ? '' : fmtSpeed(u.speed)}</td></tr>`).join('')}</tbody></table>`;
-  $('#content').innerHTML = `<div class="viewbar"><div class="vb-row"><span class="seg" role="group" aria-label="Direction"><button data-act="tr-tab" data-v="down" class="${S.transfersTab === 'down' ? 'on' : ''}">Downloads</button><button data-act="tr-tab" data-v="up" class="${S.transfersTab === 'up' ? 'on' : ''}">Uploads</button></span><span class="grow-1"></span><span class="fl-l">Downloads: ${LIMITS.peerConcurrent} at a time per peer, ${LIMITS.peerQueued} queued per peer · Uploads: 3 slots, 4 MB/s cap</span></div></div><div class="scroll" id="trScroll">${body}</div>`;
+  const R = RATIO[S.peersWindow], ratio = R.down.bytes ? R.up.bytes / R.down.bytes : 0;
+  const st = ratio >= 1 ? ['good', 'check-c', 'You give back more than you take'] : ratio >= 0.5 ? ['', 'info', 'Fair — keep sharing'] : ['warn', 'warn', 'You take more than you give'];
+  const downs = S.transfers.filter(t => t.kind !== 'preview' || t.state === 'active');
+  const peers = PEERS.filter(p => p.today || p.session).sort((a, b) => b.today - a.today).slice(0, 8);
+  $('#content').innerHTML = `<div class="scroll"><div class="pane">
+    <div class="tiles">${tile('Ratio', ratio.toFixed(2), `${icon(st[1])}${esc(st[2])}`, st[0])}${tile('Shared', fmtInt(COLLECTION.stats.tracks), 'files other users can get')}${tile('Uploaded', fmtSize(R.up.bytes), plural(R.up.files, 'file'))}${tile('Downloaded', fmtSize(R.down.bytes), plural(R.down.files, 'file'))}</div>
+    <section><div class="sec-h"><h3>Transfers</h3><span>${plural(downs.filter(t => t.state === 'active').length, 'active download')} · ${plural(S.uploads.filter(u => u.state === 'active').length, 'upload')}</span></div>
+      <div style="overflow-x:auto"><table class="tbl" style="min-width:680px"><colgroup><col><col style="width:140px"><col style="width:210px"><col style="width:150px"></colgroup>
+      <thead><tr><th>Item</th><th>Peer</th><th>Status</th><th>Progress</th></tr></thead><tbody>
+      ${downs.map((t, i) => `<tr class="${i % 2 ? 'alt' : ''}"><td>${t.kind === 'preview' ? '<span class="tag">PREVIEW</span> ' : ''}${esc(t.name)}</td><td class="muted">${esc(t.peer.name)}</td><td class="${t.state === 'failed' ? '' : 'muted'}">${t.state === 'failed' ? `<span class="bdg bad">${icon('ban')}${esc(TSTATE(t))}</span>` : esc(TSTATE(t))}</td><td><div class="prog"><div class="bar"><i style="width:${(t.progress * 100).toFixed(1)}%"></i></div><span class="num muted" style="font-size:11px">${Math.floor(t.progress * 100)}%</span></div></td></tr>`).join('')
+      + S.uploads.map((u, i) => `<tr class="${(downs.length + i) % 2 ? 'alt' : ''}"><td><span class="tag">UP</span> ${esc(u.file)}</td><td class="muted">${esc(u.user)}</td><td class="muted">${u.state === 'done' ? 'Done' : fmtSpeed(u.speed)}</td><td><div class="prog"><div class="bar"><i style="width:${Math.min(100, u.progress * 100).toFixed(1)}%"></i></div><span class="num muted" style="font-size:11px">${Math.floor(u.progress * 100)}%</span></div></td></tr>`).join('')
+      || '<tr><td colspan="4" style="height:80px;text-align:center;color:var(--label-2)">Nothing transferring.</td></tr>'}</tbody></table></div></section>
+    <section><div class="sec-h"><h3>Peers today</h3><span>Selecta warns at ${LIMITS.peerSoft} files from one peer and stops at ${LIMITS.peerHard}</span></div>
+      <div class="group">${peers.map(p => { const c = capState(p); return `<div class="grow"><div class="gl">${esc(p.name)}${p.backoff ? ` <span class="bdg warn">${icon('ban')}${esc(p.backoff.reason)}</span>` : ''}<div class="gd">${p.today} today · ${p.all} all time · last ${esc(p.last || '—')}</div></div><div class="meter${c === 'cap' ? ' bad' : c === 'near' ? ' warn' : ''}" style="width:120px"><i style="width:${Math.min(100, (p.today / LIMITS.peerHard) * 100)}%"></i></div></div>`; }).join('') || '<div class="grow"><div class="gl faint">No downloads yet this session.</div></div>'}</div></section>
+  </div></div>`;
 }
 function renderPeers() {
   const R = RATIO[S.peersWindow], ratio = R.down.bytes ? R.up.bytes / R.down.bytes : 0;
@@ -1240,8 +1280,8 @@ function renderSettings() {
       ${row('Listen port', 'Peers connect to you on this port', '<span class="mono">2234</span> <span class="bdg good">' + icon('check-c') + 'Open</span>')}
       ${row('Network activity', 'Pausing stops new searches and transfers', `<button class="btn" data-act="toggle-pause">${S.netPaused ? 'Resume' : 'Pause'}</button>`)}</div></section>
     <section><div class="sec-h"><h3>Limits</h3><span>You can make these stricter, never looser than the ceiling</span></div><div class="group">
-      ${row('Searches', `At most ${LIMITS.searches} per ${LIMITS.windowSec} s · ceiling ${LIMITS.searches}`, '<select aria-label="Search limit"><option selected>34 per 220 s</option><option>20 per 220 s</option><option>10 per 220 s</option></select>')}
-      ${row('Batch search', `Keeps ${LIMITS.batchKeepFree} searches free for you`, '<select aria-label="Searches kept free"><option selected>Keep 8 free</option><option>Keep 16 free</option></select>')}
+      ${row('Searches', `Up to ${LIMITS.searchBurst} at once, then one every ${LIMITS.searchRefillSec} s. Every search counts: yours, Get tracks and the Wishlist`, '<select aria-label="Search pace"><option selected>2 per minute</option><option>1 per minute</option><option>1 every 2 minutes</option></select>')}
+      ${row('Get tracks', `Searches one track every ${LIMITS.searchRefillSec} s and leaves ${LIMITS.batchKeepFree} searches for you`, '')}
       ${row('Downloads per peer', 'At the same time · queued', `<span class="muted">${LIMITS.peerConcurrent} at a time · ${LIMITS.peerQueued} queued</span>`)}
       ${row('Daily limit per peer', 'Warn, then stop until tomorrow', `<span class="muted">Warn at ${LIMITS.peerSoft} · stop at ${LIMITS.peerHard}</span>`)}
       ${row('Reconnect', 'Waits longer after each failed login', '<span class="muted">30 s, doubling up to 10 min</span>')}</div></section>
@@ -1251,17 +1291,17 @@ function renderSettings() {
       ${row('Albums folder', 'One folder per album', `<input class="field" style="width:120px" value="${COLLECTION.albumsDir}" aria-label="Albums folder name">`)}
       ${row('Inbox', 'Where downloads wait until you file them', '<span class="mono">~/Music/Selecta/Inbox</span> <button class="btn sm">Change…</button>')}</div></section>
     <section><div class="sec-h"><h3>Filing</h3><span>How files are named when they go into your collection</span></div><div class="group">
-      ${row('File as', 'Applied when you file from the Inbox', `<select data-ch="filingTarget" aria-label="Filing format">${Object.entries(TARGETS).map(([k, t]) => `<option value="${k}"${k === S.filingTarget ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
+      ${row('Inbox format', 'Downloads are converted to this and tagged as they arrive', `<select data-ch="filingTarget" aria-label="Inbox format">${Object.entries(TARGETS).map(([k, t]) => `<option value="${k}"${k === S.filingTarget ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
       ${row('Tags', 'ID3v2.3 reads best on CDJs and in rekordbox', '<select aria-label="Tag version"><option selected>ID3v2.3</option><option>ID3v2.4</option></select>')}
       ${row('Single files', 'Tokens: {artist} {title} {album} {albumartist} {year} {track} {label} {bpm} {key}', tpl('single', 'Single file name template'))}
       ${row('Album folders', '', tpl('albumDir', 'Album folder name template'))}
       ${row('Album tracks', '', tpl('albumTrack', 'Album track file name template'))}
       ${row('Clean names', 'Keeps Unicode letters. Removes quotes and symbols such as % $ / : * ?', `<label class="cb"><input type="checkbox" data-ch="naming-clean"${S.naming.clean ? ' checked' : ''}>On</label><select data-ch="naming-space" aria-label="Replace spaces with">${[['_', 'Spaces become _'], ['-', 'Spaces become -'], ['.', 'Spaces become .']].map(([v, l]) => `<option value="${v}"${S.naming.space === v ? ' selected' : ''}>${l}</option>`).join('')}</select><label class="cb"><input type="checkbox" data-ch="naming-and"${S.naming.and ? ' checked' : ''}>&amp; becomes “and”</label>`)}
       <div class="grow" style="display:block"><div class="gd" style="margin-bottom:4px">Preview</div><div id="namingPreview">${namingPreviewHtml()}</div></div>
-      ${row('Lossless originals', 'After converting to MP3 at filing time', '<select aria-label="Lossless originals"><option selected>Move to the Trash</option><option>Keep in ~/Music/Selecta/Originals</option></select>')}</div></section>
+      ${row('Lossless originals', 'Once their conversion checks out', '<select aria-label="Lossless originals"><option selected>Move to the Trash</option><option>Keep in ~/Music/Selecta/Originals</option></select>')}</div></section>
     <section><div class="sec-h"><h3>Preview</h3></div><div class="group">
-      ${row('Quick previews', '30-second clips from Deezer or iTunes. They cost Soulseek peers nothing', `<input type="checkbox" data-ch="clips"${S.clips ? ' checked' : ''} aria-label="Quick previews">`)}
-      ${row('Space plays', '⇧Space plays the other one', `<select data-ch="space-plays" aria-label="What Space plays"><option value="clip"${S.spacePlays === 'clip' ? ' selected' : ''}>The 30-s clip</option><option value="full"${S.spacePlays === 'full' ? ' selected' : ''}>The full file from the peer</option></select>`)}
+      ${row('Preview from', 'Space previews with the waveform; ⇧Space uses the file from the peer', `<select data-ch="preview-source" aria-label="Preview source">${Object.entries(SOURCES).map(([k, l]) => `<option value="${k}"${S.previewSource === k ? ' selected' : ''}>${l}</option>`).join('')}</select>`)}
+      ${row('yt-dlp', S.ytdlp ? 'Found at /opt/homebrew/bin/yt-dlp. Used for previews only: the audio stays in the preview cache and is never filed or shared' : 'Not found. Install it with Homebrew to preview full tracks', S.ytdlp ? `<span class="bdg good">${icon('check-c')}Installed</span>` : '<button class="btn sm">Locate…</button>')}
       ${row('Auto-preview', 'Start a preview when the selection rests on a track', `<input type="checkbox" data-ch="autoPreview"${S.autoPreview ? ' checked' : ''} aria-label="Auto-preview">`)}
       ${row('When you skip a full preview', 'Cancelling saves the peer’s upload bandwidth', `<select data-ch="cancelOnSkip" aria-label="When you skip a full preview"><option value="1"${S.cancelOnSkip ? ' selected' : ''}>Cancel the transfer</option><option value="0"${S.cancelOnSkip ? '' : ' selected'}>Let it finish</option></select>`)}
       ${row('Preview cache', 'Oldest previews are removed first', '<span class="muted">412 MB of 2 GB</span> <button class="btn sm">Clear</button>')}</div></section>
@@ -1271,7 +1311,7 @@ function renderSettings() {
       ${row('Browsed shares', 'Kept 24 h so you don’t ask the same peer twice', '<span class="muted">3 users</span> <button class="btn sm">Clear</button>')}
       ${row('Waveforms', 'Small; re-opening a preview is instant', '<span class="muted">1.4 MB</span> <button class="btn sm">Clear</button>')}</div></section>
     <section><div class="sec-h"><h3>Keyboard</h3></div><div class="group" style="padding:12px 14px"><div class="shortcuts">
-      <span class="kbd">↑ ↓</span><span>Previous / next result</span><span class="kbd">Space</span><span>Preview the selection (the 30-s clip or the full file, as set above), or play / pause</span><span class="kbd">⇧Space</span><span>The other kind of preview</span><span class="kbd">← →</span><span>Seek 5 s (with ⇧: 30 s). On a folder: collapse / expand</span>
+      <span class="kbd">↑ ↓</span><span>Previous / next result</span><span class="kbd">Space</span><span>Preview with the waveform (source as set above), or play / pause</span><span class="kbd">⇧Space</span><span>Preview the file from the Soulseek peer</span><span class="kbd">← →</span><span>Seek 5 s (with ⇧: 30 s). On a folder: collapse / expand</span>
       <span class="kbd">Return</span><span>Download the selection (folder: the whole album)</span><span class="kbd">K</span><span>Keep the preview (a clip: download the file)</span><span class="kbd">⌫</span><span>Discard the preview</span>
       <span class="kbd">⌘F</span><span>Search</span><span class="kbd">⌘I</span><span>Inspector</span><span class="kbd">⌘1 … ⌘9</span><span>Sidebar sections</span></div></div></section>
   </div></div>`;
@@ -1360,7 +1400,7 @@ const VIEWS = {
       return [s.query, s.status === 'running' ? 'Searching…' : v ? `${fmtInt(v.shown.length)} of ${fmtInt(v.all.length)} results shown` : ''];
     },
   },
-  batch: { insp: true, render: renderBatch, title: () => ['Batch search', `${plural(S.batch.lines.length, 'line')} · ${PRESETS[S.batch.preset].name}`] },
+  batch: { insp: true, render: renderBatch, title: () => ['Get tracks', S.batch.lines.length ? `${plural(S.batch.lines.length, 'track')} · ${PRESETS[S.batch.preset].name} · tags and cover from ${srcName()}` : 'Paste the tracks you want'] },
   wishlist: { render: renderWishlist, title: () => ['Wishlist', plural(S.wishlist.length, 'saved search', 'saved searches')] },
   inbox: {
     render: renderInbox,
@@ -1372,7 +1412,7 @@ const VIEWS = {
     render: renderTransfers,
     title: () => {
       const d = S.transfers.filter(t => t.state === 'active').length, w = S.transfers.filter(t => ['waiting', 'queued', 'connecting'].includes(t.state)).length, u = S.uploads.filter(x => x.state === 'active').length;
-      return ['Transfers', `${d} downloading · ${w} waiting · ${u} uploading`];
+      return ['Activity', `${d} downloading · ${w} waiting · ${u} uploading`];
     },
   },
   peers: { render: renderPeers, title: () => ['Peers & ratio', `Ratio ${ratioFor('30d').toFixed(2)} over 30 days`] },
@@ -1426,7 +1466,7 @@ function viewSig() {
     case 'search': { const s = curSearch(); return s ? `${s.id}|${s.revealed}|${s.status}|${S.transfers.map(t => t.state + (t.state === 'active' ? Math.floor(t.progress * 20) : '')).join('')}|${S.inbox.length}|${play}` : ''; }
     case 'transfers': return S.transfers.map(t => t.state + Math.floor(t.progress * 200) + (t.queuePos || '')).join('') + S.uploads.map(u => Math.floor(u.progress * 200)).join('');
     case 'batch': { const B = S.batch; return `${B.running}|${budgetLeft()}|${B.lines.map(l => l.status + (l.approved ? 1 : 0) + (l.dl ? 1 : 0) + (l.waiting ? 1 : 0)).join('')}|${play}`; }
-    case 'inbox': return S.inbox.map(i => i.id).join() + [...S.filing.values()].map(f => Math.floor(f.p * 100)).join();
+    case 'inbox': return S.inbox.map(i => i.id + (i.proc != null ? Math.floor(i.proc * 20) : '')).join() + [...S.filing.values()].map(f => Math.floor(f.p * 100)).join();
     case 'converter': return Object.values(S.conv.state).map(s => Math.floor(s.p * 100)).join() + S.conv.running;
     case 'peers': return `${PEERS.reduce((a, p) => a + p.today, 0)}|${RATIO.session.down.files}|${RATIO.session.up.files}|${S.peersWindow}`;
     case 'collection': case 'history': return `${S.inbox.length}|${S.history.length}|${COLLECTION.tracks.length}|${S.history.map(h => h.where).join()}`;
@@ -1438,6 +1478,7 @@ function refreshLive(force) {
   if (!S.ready) return;
   const b = $('#tbBudget'), bh = budgetHtml();
   if (b && b.innerHTML !== bh) b.innerHTML = bh;
+  const rb = $('#tbRatio'); if (rb) rb.textContent = ratioFor('30d').toFixed(2);
   renderNav();
   const sub = $('#tbSub'); if (sub) sub.textContent = VIEWS[S.view].title()[1];
   const sig = `${S.view}#${viewSig()}`;
@@ -1635,12 +1676,13 @@ function analyze(tk, from, to) {
     }
   }
 }
-function makeTrack(r, clip = false) {
-  const dur = clip ? Math.min(30, r.dur) : r.dur, n = Math.floor(dur * SR), hop = Math.round(SR / 150), nb = Math.ceil(n / hop);
+function makeTrack(r, kind = 'peer') {
+  if (kind === true) kind = 'clip'; else if (kind === false) kind = 'peer';
+  const clip = kind === 'clip', dur = clip ? Math.min(30, r.dur) : r.dur, n = Math.floor(dur * SR), hop = Math.round(SR / 150), nb = Math.ceil(n / hop);
   const barS = 240 / (r.rel.bpm || 124), off = clip ? Math.floor(Math.round((r.dur * 0.42) / barS) * barS * SR) : 0;
-  return { rid: r.id, key: clip ? `${r.id}#clip` : r.id, clip, off, fullN: Math.floor(r.dur * SR), r, n, dur, bpm: r.rel.bpm || 124, hop, nb, audio: null, synth: null, an: null, gen: 0, low: new Float32Array(nb), mid: new Float32Array(nb), high: new Float32Array(nb), analyzed: 0, maxL: 1e-6, maxM: 1e-6, maxH: 1e-6, tr: null, complete: false, kept: false };
+  return { rid: r.id, key: kind === 'peer' ? r.id : `${r.id}#${kind}`, src: kind, clip: kind !== 'peer', off, fullN: Math.floor(r.dur * SR), r, n, dur, bpm: r.rel.bpm || 124, hop, nb, audio: null, synth: null, an: null, gen: 0, low: new Float32Array(nb), mid: new Float32Array(nb), high: new Float32Array(nb), analyzed: 0, maxL: 1e-6, maxM: 1e-6, maxH: 1e-6, tr: null, fetchStart: Clock.t, complete: clip, kept: false };
 }
-const trackFraction = tk => (tk.complete ? 1 : tk.tr ? tk.tr.progress : 0);
+const trackFraction = tk => (tk.complete ? 1 : tk.src === 'ytdlp' ? clamp((Clock.t - tk.fetchStart) / 1800, 0, 1) : tk.tr ? tk.tr.progress : 0);
 function pumpAudio(budgetMs) {
   const tk = P.track;
   if (!tk) return;
@@ -1746,14 +1788,13 @@ function updatePlayback() {
 }
 
 /* ---------- preview lifecycle ---------- */
-function previewResult(r, { autoplay = true, clip = null } = {}) {
+function previewResult(r, { autoplay = true, clip = null, src = null } = {}) {
   if (!r) return;
-  let wantClip = clip == null ? S.clips && S.spacePlays === 'clip' : clip;
-  if (wantClip && (!S.clips || !hasClip(r))) {
-    if (clip) toast('No 30-second clip for this track', 'Previewing the full file from the peer instead.', { icon: 'info', ms: 3500 });
-    wantClip = false;
-  }
-  const key = wantClip ? `${r.id}#clip` : r.id;
+  let kind = src || (clip === true ? 'clip' : clip === false ? 'peer' : pickSource(r));
+  if (kind === 'clip' && !hasClip(r)) { if (clip === true || src === 'clip') toast('No 30-second clip for this track', 'Previewing another way instead.', { icon: 'info', ms: 3500 }); kind = S.ytdlp ? 'ytdlp' : 'peer'; }
+  if (kind === 'ytdlp' && !S.ytdlp) kind = hasClip(r) ? 'clip' : 'peer';
+  if (kind === 'peer' && r.id.startsWith('c:')) kind = S.ytdlp ? 'ytdlp' : 'clip';
+  const key = kind === 'peer' ? r.id : `${r.id}#${kind}`;
   if (P.track && P.track.key === key) { togglePlay(); return; }
   const prev = P.track;
   if (prev && prev.tr && prev.tr.kind === 'preview' && !['done', 'failed', 'cancelled'].includes(prev.tr.state) && !prev.tr.keep && S.cancelOnSkip) {
@@ -1764,7 +1805,7 @@ function previewResult(r, { autoplay = true, clip = null } = {}) {
   AE.stop(); P.playing = false; P.waiting = false; P.pos = 0;
   let tk = PREVIEW_CACHE.get(key);
   if (!tk) {
-    if (wantClip) { tk = makeTrack(r, true); tk.complete = true; }
+    if (kind !== 'peer') tk = makeTrack(r, kind);
     else {
       if (S.netPaused) { toast('Network activity is paused', 'Resume it from the toolbar to preview new results.', { kind: 'warn' }); return; }
       tk = makeTrack(r);
@@ -1807,6 +1848,7 @@ function discardPreview() {
 function playerStatus(tk) {
   const t = tk.tr;
   if (P.playing && P.waiting) return 'Buffering…';
+  if (tk.src === 'ytdlp') return tk.complete ? 'Full track via yt-dlp · preview only, never kept' : 'Fetching with yt-dlp…';
   if (tk.clip) return `30-s clip from ${tk.r.id.startsWith('c:') ? tk.r.peer.name : 'Deezer'} · costs peers nothing`;
   if (tk.kept && (tk.complete || !t || t.state === 'done')) return 'Kept · in your Inbox';
   if (tk.complete || !t) return 'In preview cache';
@@ -1837,8 +1879,8 @@ function renderPlayer() {
   }
   const r = tk.r;
   $('#plArt').style.background = artGradient(hashStr(r.artist + r.rel.album));
-  $('#plTitle').textContent = tk.clip ? `${trackName(tk)} · 30-s clip` : trackName(tk);
-  if (tk.clip) $('#plActions').innerHTML = `<button class="btn primary" data-act="download-current" title="Download the file (K)">${icon('download')} Download</button><button class="btn" data-act="full-preview"${tk.r.id.startsWith('c:') ? ' disabled' : ''} title="Preview the full file from the peer (⇧Space)">${icon('wave')} Full preview</button>`;
+  $('#plTitle').textContent = tk.src === 'clip' ? `${trackName(tk)} · 30-s clip` : tk.src === 'ytdlp' ? `${trackName(tk)} · yt-dlp preview` : trackName(tk);
+  if (tk.clip) $('#plActions').innerHTML = `<button class="btn primary" data-act="download-current" title="Download the file (K)">${icon('download')} Download</button>${tk.r.id.startsWith('c:') ? '' : `<button class="btn" data-act="full-preview" title="Stream this exact file from the Soulseek peer instead (⇧Space)">${icon('wave')} Peer file</button>`}`;
   else $('#plActions').innerHTML = `<button class="btn${tk.kept ? '' : ' primary'}" data-act="keep" title="Move this preview to your Inbox (K)"${tk.kept ? ' disabled' : ''}>${icon('tray')} ${tk.kept ? 'Kept' : 'Keep'}</button><button class="btn" data-act="discard" title="Discard this preview (⌫)" aria-label="Discard preview">${icon('trash')}</button>`;
   btn.innerHTML = icon(P.playing ? 'pause' : 'play');
   btn.setAttribute('aria-label', P.playing ? 'Pause' : 'Play');
@@ -1851,7 +1893,7 @@ function renderPlayerLite() {
   $('#plTime').innerHTML = `<b>${fmtDur(curPos())}</b> / ${fmtDur(tk.dur)}`;
   if (tk.clip) {
     $('#plSub').textContent = st;
-    $('#scrStatus').innerHTML = `Clip · <b>30 s from ${esc(tk.r.id.startsWith('c:') ? tk.r.peer.name : 'Deezer')}</b> · no Soulseek transfer · ${tk.bpm} BPM`;
+    $('#scrStatus').innerHTML = tk.src === 'ytdlp' ? `Preview · <b>${tk.complete ? 'full track via yt-dlp' : 'fetching with yt-dlp…'}</b> · not kept, not shared · ${tk.bpm} BPM` : `Clip · <b>30 s from ${esc(tk.r.id.startsWith('c:') ? tk.r.peer.name : 'Deezer')}</b> · no Soulseek transfer · ${tk.bpm} BPM`;
     return;
   }
   $('#plSub').textContent = `${qualLong(tk.r)} · from ${tk.r.peer.name} · ${st}`;
@@ -2107,7 +2149,7 @@ const ACT = {
     S.server = el.dataset.v; renderFoot(); renderSettings();
     toast(S.server === 'local' ? 'Using the local test server' : 'Using the Soulseek network', S.server === 'local' ? 'Debug builds use this by default. Nothing leaves your machine.' : 'Release builds connect here.', { icon: 'shield' });
   },
-  'budget-info': () => toast(`${budgetLeft()} of ${LIMITS.searches} searches left`, `${budgetLeft() < LIMITS.searches ? `The next one frees up in ${Math.ceil(budgetRefillIn())} s. ` : ''}Opening a search you ran in the last 24 hours uses the cache and costs nothing.`, { icon: 'gauge' }),
+  'budget-info': () => toast(`${budgetLeft()} of ${LIMITS.searchBurst} searches available`, `${budgetLeft() < LIMITS.searchBurst ? `One more in ${Math.ceil(budgetRefillIn())} s. ` : ''}Soulseek bans clients that search too fast, so Selecta paces every search. Opening a search you ran in the last 24 hours uses the cache and costs nothing.`, { icon: 'gauge' }),
   'browse-peer': el => toast(`Browse ${el.dataset.v}`, 'Browsing a user’s shares is part of v1. The mock doesn’t simulate it yet.', { icon: 'folder' }),
   'add-wishlist': el => {
     const q = (el.dataset.v || '').trim();
@@ -2188,7 +2230,7 @@ const CH = {
   'conv-id3': el => { S.conv.id3 = el.value; renderConverter(); },
   'conv-art': el => { S.conv.artMax = +el.value; renderConverter(); },
 };
-const ROW_ACTS = new Set(['sel', 'batch-sel', 'conv-sel']);
+const ROW_ACTS = new Set(['sel', 'batch-sel', 'get-sel', 'conv-sel']);
 document.addEventListener('click', e => {
   const bg = $('#sheet');
   if (e.target === bg) { closeSheet(); return; }
@@ -2212,13 +2254,12 @@ document.addEventListener('submit', e => {
   }
 });
 function spaceKey(shift = false) {
-  const def = S.clips && S.spacePlays === 'clip', clip = shift ? !def : def;
   let r = null;
   if (S.view === 'search') r = S.results.get(S.sel) || null;
   else if (S.view === 'batch') { const l = S.batch.lines.find(x => x.id === S.batch.sel); r = l && l.best ? l.best : null; }
   if (r) {
-    const key = clip && S.clips && hasClip(r) ? `${r.id}#clip` : r.id;
-    if (!P.track || P.track.key !== key) { previewResult(r, { clip }); return; }
+    const def = pickSource(r), kind = shift ? (def === 'peer' ? (S.ytdlp ? 'ytdlp' : 'clip') : 'peer') : def;
+    if (!P.track || P.track.key !== (kind === 'peer' ? r.id : `${r.id}#${kind}`)) { previewResult(r, { src: kind }); return; }
   }
   togglePlay();
 }
@@ -2257,8 +2298,6 @@ document.addEventListener('keydown', e => {
 
 /* ---------- releases first: canonical metadata (simulated Spotify / Deezer) ---------- */
 S.spotify = { id: '', secret: '', signedIn: false, user: '' };
-S.clips = true;
-S.spacePlays = 'clip';
 S.onlyRelease = true;
 S.groupAuto = true;
 REASONS.release = 'Not this release';
@@ -2274,13 +2313,14 @@ function canonTrack(rel, ti) {
 function canonCandidates(query) {
   const toks = norm(query).split(' ').filter(Boolean), out = [];
   if (!toks.length) return out;
+  const has = (text, k) => text.includes(k) || text.split(' ').some(w => wordSim(w, k) > 0);
   for (const rel of CATALOG) {
     const relText = norm(`${rel.artist} ${rel.album}`);
-    rel.tracks.forEach((t, i) => { if (toks.every(k => `${relText} ${norm(t[0])} ${norm(t[1])}`.includes(k))) out.push(canonTrack(rel, i)); });
-    if (!rel.single && rel.tracks.length > 2 && toks.every(k => relText.includes(k))) out.push({ kind: 'album', rel, artist: rel.artist, title: rel.album, version: '', album: rel.album, year: rel.year, n: rel.tracks.length, dur: rel.tracks.reduce((a, t) => a + t[2], 0) });
+    rel.tracks.forEach((t, i) => { const text = `${relText} ${norm(t[0])} ${norm(t[1])}`; if (toks.every(k => has(text, k))) out.push(canonTrack(rel, i)); });
+    if (!rel.single && rel.tracks.length > 2 && toks.every(k => has(relText, k))) out.push({ kind: 'album', rel, artist: rel.artist, title: rel.album, version: '', album: rel.album, year: rel.year, n: rel.tracks.length, dur: rel.tracks.reduce((a, t) => a + t[2], 0) });
   }
   const q = norm(query);
-  const rank = c => similarity(q, `${c.artist} ${fullTitle(c.title, c.version)}`) + (q.includes(norm(c.title)) ? 0.3 : 0) - (c.kind === 'album' ? 0.05 : 0);
+  const rank = c => similarity(q, `${c.artist} ${fullTitle(c.title, c.version)}`) + (titleInQuery(c.title, q) ? 0.3 : 0) - (c.kind === 'album' ? 0.05 : 0);
   return out.sort((a, b) => rank(b) - rank(a)).slice(0, 5);
 }
 // How well a network file fits the chosen release: length within ±3 s is the strongest signal, then artist and title.
@@ -2311,7 +2351,7 @@ function canonCardHtml(s, v) {
   const head = c
     ? `<span class="art" style="width:44px;height:44px;border-radius:6px;background:${artGradient(hashStr(c.artist + c.album))}"></span><div class="canon-t"><div class="canon-title">${esc(c.kind === 'album' ? c.album : fullTitle(c.title, c.version))} <span class="muted">· ${esc(c.artist)}</span></div><div class="canon-sub">${c.kind === 'album' ? `Album · ${c.n} tracks · ${fmtDur(c.dur)}` : `${esc(c.album)} · ${c.year} · <b>${fmtDur(c.dur)}</b> · ${esc(c.label)}`} · from ${src}</div></div>`
     : `<div class="canon-t"><div class="canon-title">Which release do you mean?</div><div class="canon-sub">Pick one so Selecta can rank files by length and name, not by name alone.</div></div>`;
-  const acts = c ? `<label class="cb" title="Hide files whose length or name doesn't fit this release"><input type="checkbox" data-ch="only-release"${S.onlyRelease ? ' checked' : ''}>Only this release</label>${c.kind === 'track' && S.clips ? `<button class="btn sm" data-act="canon-clip">${icon('play')} 30-s clip</button>` : ''}<button class="btn sm" data-act="add-wishlist" data-v="${esc(`${c.artist} ${c.kind === 'album' ? c.album : fullTitle(c.title, c.version)}`)}">${icon('star')} Wishlist</button>` : '';
+  const acts = c ? `<label class="cb" title="Hide files whose length or name doesn't fit this release"><input type="checkbox" data-ch="only-release"${S.onlyRelease ? ' checked' : ''}>Only this release</label>${c.kind === 'track' ? `<button class="btn sm" data-act="canon-clip" title="${esc(SOURCES[pickSource(canonResult(c))])}">${icon('play')} Preview</button>` : ''}<button class="btn sm" data-act="add-wishlist" data-v="${esc(`${c.artist} ${c.kind === 'album' ? c.album : fullTitle(c.title, c.version)}`)}">${icon('star')} Wishlist</button>` : '';
   return `<div class="canon">${head}<span class="grow-1"></span>${acts}</div><div class="canon-chips"><span class="fl-l">${s.canon.length > 1 || !c ? 'Releases' : 'Release'}</span>${chips}<button class="chip${s.canonSel < 0 ? ' on' : ''}" data-act="canon" data-v="-1" aria-pressed="${s.canonSel < 0}">Any (name only)</button></div>`;
 }
 function downloadForClip(tk) {
@@ -2366,7 +2406,7 @@ Object.assign(ACT, {
   clip: (el, e) => { e.stopPropagation(); previewResult(S.results.get(el.dataset.id), { clip: true }); },
   full: (el, e) => { e.stopPropagation(); previewResult(S.results.get(el.dataset.id), { clip: false }); },
   canon: el => { const s = curSearch(); if (!s) return; s.canonSel = +el.dataset.v; updateResults(); renderInspector(); renderNav(); },
-  'canon-clip': () => { const c = S._v && S._v.canon; if (c && c.kind === 'track') previewResult(canonResult(c), { clip: true }); },
+  'canon-clip': () => { const c = S._v && S._v.canon; if (c && c.kind === 'track') previewResult(canonResult(c)); },
   'download-current': () => { if (!P.track) return; if (P.track.clip) downloadForClip(P.track); else requestDownload(P.track.r); },
   'full-preview': () => { if (P.track && !P.track.r.id.startsWith('c:')) previewResult(P.track.r, { clip: false }); },
   'spotify-signin': () => {
@@ -2380,14 +2420,14 @@ Object.assign(ACT, {
     if (!S.spotify.id) { toast('Enter a client ID first', '', { kind: 'warn' }); return; }
     toast(S.spotify.secret ? 'Client ID and secret entered' : 'Client ID entered', S.spotify.secret ? 'In the app, Check requests a token with them. They’re saved to the Keychain, never to a file.' : 'No secret given, so Selecta uses sign-in (PKCE).', { icon: 'check-c' });
   },
-  'spotify-import': () => {
-    const v = (($('#spImport') || {}).value || '').trim();
+  'spotify-import': (el, e, val) => {
+    const v = (val || ($('#spImport') || {}).value || '').trim();
     if (!/open\.spotify\.com\/(playlist|album)\/|spotify:(playlist|album):/.test(v)) { toast('Paste a Spotify playlist or album link', 'For example https://open.spotify.com/playlist/…', { kind: 'warn' }); return; }
     const go = () => {
       const rr = mulberry32(hashStr(v)), lines = [];
       for (const rel of shuffle(CATALOG.slice(), rr).slice(0, 5)) for (const t of rel.tracks.slice(0, 2)) lines.push(`${rel.artist} - ${fullTitle(t[0], t[1])}`);
-      S.batch.text = lines.join('\n'); batchParse(); S.batch.parsedText = S.batch.text; S.batch.started = false;
-      renderBatch(); renderToolbar(); renderInspector();
+      S.batch.text = (S.batch.text ? S.batch.text + '\n' : '') + lines.join('\n'); batchParse({ keep: true }); S.batch.parsedText = S.batch.text;
+      nav('batch');
       toast(`Imported ${plural(lines.length, 'track')}`, 'Each line already knows its release, length and ISRC, so matching on the network is sharper.', { kind: 'good', icon: 'batch' });
     };
     if (S.spotify.signedIn) { go(); return; }
@@ -2396,12 +2436,116 @@ Object.assign(ACT, {
 });
 Object.assign(CH, {
   'only-release': el => { S.onlyRelease = el.checked; updateResults(); renderNav(); },
-  clips: el => { S.clips = el.checked; renderPlayer(); },
-  'space-plays': el => { S.spacePlays = el.value; },
   'naming-clean': el => { S.naming.clean = el.checked; refreshNaming(); },
   'naming-space': el => { S.naming.space = el.value; refreshNaming(); },
   'naming-and': el => { S.naming.and = el.checked; refreshNaming(); },
 });
+
+/* ---------- Get: statuses, add-tracks sheet, preview sources ---------- */
+const GSTAT = {
+  pending: ['clock', 'mute', 'Waiting'], searching: ['search', 'acc', 'Finding'], match: ['check-c', 'good', 'Ready'],
+  review: ['approx-c', 'warn', 'Check'], notfound: ['x-c', 'bad', 'Not found'], owned: ['check-c', 'mute', 'Have it'],
+};
+S.previewSource = store.get('previewSource', 'auto');
+S.ytdlp = true; // the mock pretends yt-dlp is installed
+function addTracksSheet() {
+  sheet({
+    title: 'Add tracks',
+    body: `<p>One per line, “Artist - Title”. A Spotify playlist or album link works too.</p>
+      <textarea class="tracklist" id="addBox" spellcheck="false" style="min-height:190px" aria-label="Tracks to add" placeholder="Kassia Moreau - Low Orbit&#10;Okuma Drift - Cold Harbour&#10;https://open.spotify.com/playlist/…"></textarea>`,
+    actions: [{ label: 'Cancel' }, { label: 'Add', primary: true, run: () => {} }],
+  });
+  const box = $('#addBox');
+  if (box) { box.value = ''; box.focus(); }
+  SHEET_ACTS[1].run = () => {
+    const v = (box ? box.value : '').trim();
+    if (!v) return;
+    if (/open\.spotify\.com\/(playlist|album)\/|spotify:(playlist|album):/.test(v)) { ACT['spotify-import'](null, null, v); return; }
+    S.batch.text = (S.batch.text ? S.batch.text + '\n' : '') + v;
+    batchParse({ keep: true }); S.batch.parsedText = S.batch.text;
+    nav('batch');
+    toast(`Added ${plural(S.batch.lines.length, 'track')}`, `Press <b>Find them</b> to look on Soulseek. Searches are paced so the server stays happy.`, { icon: 'batch' });
+  };
+}
+const SOURCES = {
+  auto: 'Automatic: yt-dlp, else the 30-s clip',
+  ytdlp: 'The full track via yt-dlp',
+  clip: 'The 30-second clip',
+  peer: 'The file from the Soulseek peer',
+};
+// The wanted source if it can play this result, else the next one that can. A release (c:) has no peer file.
+function pickSource(r) {
+  const want = S.previewSource === 'auto' ? 'ytdlp' : S.previewSource;
+  const can = k => (k === 'ytdlp' ? S.ytdlp : k === 'clip' ? hasClip(r) : !r.id.startsWith('c:'));
+  return [want, 'ytdlp', 'clip', 'peer'].find(can) || 'peer';
+}
+const SRC_LABEL = { clip: '30-s clip', ytdlp: 'yt-dlp', peer: 'peer file' };
+
+/* ---------- main-view helpers ---------- */
+Object.assign(ACT, {
+  'add-tracks': () => addTracksSheet(),
+  'get-sel': el => ACT['batch-sel'](el),
+  'search-wider': () => {
+    const s = curSearch();
+    if (!s) return;
+    const c = S._v && S._v.canon;
+    const words = c ? norm(c.kind === 'album' ? c.album : c.title) : norm(s.query).split(' ').slice(-2).join(' ');
+    if (words === norm(s.netQuery || s.query)) { toast('Already as wide as it gets', 'This search has no extra words to drop.', { icon: 'info' }); return; }
+    startSearch(words);
+  },
+});
+Object.assign(CH, {
+  'get-all': el => { for (const l of S.batch.lines) if (l.best && !l.dl) l.approved = el.checked; renderBatch(); },
+  'preview-source': el => { S.previewSource = el.value; store.set('previewSource', el.value); },
+});
+function approveReady() { for (const l of S.batch.lines) if (l.status === 'match' && !l.dl) l.approved = true; }
+
+/* ---------- typo-tolerant name matching (Damerau / OSA edit distance) ---------- */
+function osa(a, b) {
+  const n = a.length, m = b.length;
+  if (!n) return m;
+  if (!m) return n;
+  let p2 = new Array(m + 1).fill(0), p1 = Array.from({ length: m + 1 }, (_, j) => j), cur = new Array(m + 1).fill(0);
+  for (let i = 1; i <= n; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= m; j++) {
+      let v = Math.min(p1[j] + 1, cur[j - 1] + 1, p1[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, p2[j - 2] + 1);
+      cur[j] = v;
+    }
+    [p2, p1, cur] = [p1, cur, p2];
+  }
+  return p1[m];
+}
+const isSwap = (x, y) => { if (x.length !== y.length) return false; let i = 0; while (i < x.length && x[i] === y[i]) i++; return i < x.length - 1 && x[i] === y[i + 1] && x[i + 1] === y[i] && x.slice(i + 2) === y.slice(i + 2); };
+// Short words must match exactly (Mix ≠ Max) or by one swapped pair (rian → rain); longer words tolerate 1–2 edits.
+function wordSim(x, y) {
+  if (x === y) return 1;
+  const L = Math.max(x.length, y.length);
+  if (L <= 3) return 0;
+  if (L <= 5) return isSwap(x, y) ? 1 - 1 / L : 0;
+  const d = osa(x, y);
+  return d <= (L <= 8 ? 1 : 2) ? 1 - d / L : 0;
+}
+const SIM_CACHE = new Map();
+const titleInQuery = (title, q) => norm(title).split(' ').filter(Boolean).every(w => q.includes(w) || q.split(' ').some(x => wordSim(x, w) > 0));
+function networkQuery(query) {
+  const top = canonCandidates(query)[0];
+  if (!top || top.kind !== 'track') return { q: query, corrected: false };
+  const text = norm(`${top.artist} ${top.album} ${top.title} ${top.version}`);
+  if (norm(query).split(' ').filter(Boolean).every(k => text.includes(k)) || !titleInQuery(top.title, norm(query))) return { q: query, corrected: false };
+  return { q: `${top.artist} ${top.title}`.toLowerCase(), corrected: true };
+}
+function typoName(s) {
+  const words = s.split(' ');
+  let li = 0;
+  words.forEach((w, i) => { if (w.length > words[li].length) li = i; });
+  const w = words[li];
+  if (w.length < 4) return s;
+  const k = 1 + (hashStr(s) % (w.length - 2));
+  words[li] = w.slice(0, k) + w[k + 1] + w[k] + w.slice(k + 2);
+  return words.join(' ');
+}
 
 /* ---------- main loop & startup ---------- */
 let lastLive = 0;
@@ -2411,6 +2555,7 @@ function frame(now) {
   updateSearches(); updateTransfers(dt); updateBatch(); updateFiling(dt); updateConvert(dt);
   const tk = P.track;
   if (tk && tk.tr && tk.tr.state === 'done' && !tk.complete) tk.complete = true;
+  if (tk && tk.src === 'ytdlp' && !tk.complete && Clock.t - tk.fetchStart >= 1800) tk.complete = true;
   pumpAudio(6);
   if (tk && P.autoplay && !P.playing && (tk.gen >= tk.n * 0.08 || tk.gen >= SR * 20)) { P.autoplay = false; play(); }
   updatePlayback();
@@ -2424,13 +2569,12 @@ function init() {
     const results = generateResults(q);
     const s = { id: 's' + S.nextSearch++, query: q, results, revealed: results.length, status: 'done', startedAt: -secondsAgo * 1000, cachedAt: null, sel: null };
     S.cache.set(norm(q), { results, at: s.startedAt });
-    S.budget.push(s.startedAt);
     return s;
   };
   S.searches = [mk('neon rain', 40), mk('tidal memory', 95), mk('kassia moreau', 150)];
-  S.budget.sort((a, b) => a - b);
+  S.budget = { tokens: LIMITS.searchBurst - 2.6, at: 0 }; // the three sample searches above, partly refilled
   S.searchId = S.searches[0].id;
-  S.view = 'search';
+  S.view = 'batch';
   const h = new URLSearchParams(location.hash.slice(1));
   if (['light', 'dark', 'system'].includes(h.get('theme'))) S.theme = h.get('theme');
   if (S.theme !== 'system') applyTheme();

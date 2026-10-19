@@ -218,7 +218,6 @@ input[type=checkbox], input[type=radio], input[type=range] { accent-color: var(-
 .vb-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .fl { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .fl-l { font-size: 11px; color: var(--label-2); }
-.more-filters { display: none; }
 .summary { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 14px; font-size: 11.5px; color: var(--label-2); border-bottom: 1px solid var(--separator); background: var(--content); min-height: 29px; }
 .summary b { color: var(--label); font-weight: 600; }
 .why { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
@@ -489,6 +488,17 @@ details.insp-sec > summary .sum-x { margin-left: auto; font-weight: 400; color: 
 .vb-row.secondary { display: none; }
 .viewbar.more .vb-row.secondary { display: flex; }
 
+/* ---------- Get tracks ---------- */
+.tbl td .sub { font-size: 11px; color: var(--label-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
+.rel-ok { display: inline-flex; align-items: center; gap: 4px; }
+.rel-ok .ic { width: 11px; height: 11px; color: var(--good); }
+.src { display: inline-flex; align-items: center; gap: 5px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+.big-ic { width: 44px; height: 44px; stroke-width: 1.2; }
+.tbl tr.sel .sub, .tbl tr.sel .rel-ok .ic, .tbl tr.sel .src .faint { color: rgba(255, 255, 255, .82); }
+.tbl tr.sel .src .link, .tbl tr.sel .src .dd { color: #fff; }
+.summary .fix { display: inline-flex; align-items: center; gap: 4px; color: var(--good); }
+.summary .fix .ic { width: 13px; height: 13px; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .window { --sb-w: 210px; --insp-w: 268px; }
@@ -507,7 +517,6 @@ details.insp-sec > summary .sum-x { margin-left: auto; font-weight: 400; color: 
   .tb-hide-sm { display: none; }
   .vb-row.secondary { display: none; }
   .viewbar.more .vb-row.secondary { display: flex; }
-  .more-filters { display: inline-flex; }
   .batch { grid-template-columns: minmax(0, 1fr); overflow: auto; }
   .batch-left { border-right: 0; border-bottom: 1px solid var(--separator); overflow: visible; }
   .batch-right { min-height: 420px; }
