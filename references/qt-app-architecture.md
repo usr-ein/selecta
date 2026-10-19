@@ -533,7 +533,70 @@ per-repo cache limit. Concurrency groups cancel superseded runs.
 
 ## 10. macOS packaging and distribution
 
-TODO.
+### 10.1 Bundle
+
+- `qt_add_executable(Selecta MACOSX_BUNDLE …)` + own `Info.plist.in`: `CFBundleIdentifier`, versions,
+  `LSMinimumSystemVersion` (= deployment target: 14.4 with official Qt 6.12; **27.0 if Homebrew dylibs are bundled**,
+  see 6.2), `LSApplicationCategoryType = public.app-category.music`, `NSLocalNetworkUsageDescription` (10.3),
+  `CFBundleIconName` + `CFBundleIconFile` (10.2). No microphone/camera keys (Selecta records nothing; make sure the audio
+  backend never opens an input device, which would trigger a microphone prompt).
+- Deployment: `install(SCRIPT …)` from `qt_generate_deploy_app_script`, which runs `macdeployqt` (copies frameworks and
+  plugins, rewrites install names, strips, **ad-hoc signs by default** — its default identity is `-`; options
+  `-codesign=<id>`, `-hardened-runtime`, `-timestamp`, `-sign-for-notarization=<id>`, `-dmg`, `-libpath`; checked in
+  `qtbase@v6.12.0:src/tools/macdeployqt/macdeployqt/main.cpp`). Exclude unused plugin types (QML tooling, TLS backends
+  if unused, image formats we don't need) to keep the bundle small.
+- macdeployqt also copies non-Qt dylibs it finds (Homebrew FFmpeg, LAME…). Verify with `otool -L` that nothing in the
+  bundle points at `/opt/homebrew`.
+
+### 10.2 App icon for macOS 26+ (a visible "native" detail)
+
+On macOS 26+, an app with only a legacy `.icns` is shown shrunk inside a grey squircle in some places. Build the icon
+with **Icon Composer** (`.icon` bundle) and compile it with `xcrun actool AppIcon.icon --compile <bundle>/Contents/Resources
+--app-icon AppIcon --platform macosx --minimum-deployment-target 14.4 --output-partial-info-plist …`, which emits
+`Assets.car` (layered glass icon) and `AppIcon.icns` (older macOS); set `CFBundleIconName=AppIcon` and
+`CFBundleIconFile=AppIcon`. Needs Xcode 26+ (not just the Command Line Tools); `actool` can exit 0 on failure, so check
+the outputs. (medium — several third-party write-ups, Sept 2025–2026.) Wire it as an `add_custom_command` in
+`cmake/SelectaMacBundle.cmake`.
+
+### 10.3 Privacy prompts (TCC and friends) Selecta will trigger
+
+| Trigger | Prompt | Mitigation |
+|---|---|---|
+| Collection/Inbox on an external drive, or in `~/Documents`, `~/Desktop`, `~/Downloads`, iCloud Drive, a network volume | "Selecta would like to access files on a removable volume / in your Documents folder" | Expected; request at the moment the user picks the folder; store a security-scoped bookmark only if sandboxing is ever adopted (not planned). TODO(verify) whether `~/Music` is protected (believed not, except the Music app's library via its APIs) |
+| Connecting to peers or a test server on the **LAN**, UPnP/NAT-PMP to the router (NET-3) | **Local Network** (macOS 15+) | `NSLocalNetworkUsageDescription`; loopback (`127.0.0.1`, Docker published ports) is not "local network" (medium); the decision is tied to code identity, so unstable ad-hoc signatures can re-prompt; it is not managed by `tccutil` (state in `/Library/Preferences/com.apple.networkextension.plist`, no supported reset — TN3179 via Apple forums) |
+| Listening for incoming peer connections with the Application Firewall on | "Accept incoming network connections?" | Stable code-signing identity (Apple DTS advice) |
+| Keychain item created by an ad-hoc-signed build | Keychain access prompt **after every rebuild** (designated requirement = cdhash) | Sign dev builds with a stable identity — preferably a free **Apple Development** certificate (gives a Team ID); a self-signed code-signing certificate stabilises the requirement but reports conflict on whether it avoids the ACL-partition prompt (medium-low) |
+| Notifications (UI-6) | "Selecta would like to send notifications" | Ask on first relevant event, not at launch. TODO(verify) behaviour for ad-hoc builds |
+| `QScreen::grabWindow()` (6.12 uses ScreenCaptureKit) | Screen recording permission | Never call it (no screenshots in app) |
+
+### 10.4 Signing, notarisation and Gatekeeper
+
+| Path | Requirements | Result for users | Fit |
+|---|---|---|---|
+| **Local build, ad-hoc signed** (linker/macdeployqt default) | none | Runs on the machine that built it (no quarantine flag on locally built files) | **"Me first" default** |
+| Local build, signed with a stable identity (Apple Development cert from a free Apple ID, or self-signed) | one-time setup | Same + Keychain/TCC/firewall grants survive rebuilds | Recommended for the maintainer's daily builds |
+| Downloaded unsigned/ad-hoc build | — | Quarantined: macOS 15 removed the Control-click "Open" bypass (System Settings › Privacy & Security › Open Anyway); a Howard Oakley test on macOS 26.6.1 got "Move to Trash" for an ad-hoc, quarantined app (medium); `xattr -dr com.apple.quarantine` works | Friends/testers only |
+| **Developer ID + hardened runtime + notarisation** | Apple Developer Program (99 USD/yr), Developer ID Application cert, `--options runtime --timestamp`, no `get-task-allow`, `xcrun notarytool submit --wait`, `xcrun stapler staple` (app and DMG) | Opens normally anywhere | Needed for any public binary (PRD OQ-8) |
+
+Notes:
+- **Hardened runtime + ad-hoc signatures don't mix:** library validation rejects libraries without a Team ID (the
+  dyld error mentions "signed with custom identity or adhoc"), so enable `--options runtime` only with a real
+  Developer ID (or add `com.apple.security.cs.disable-library-validation`, which defeats the point). (medium)
+- Entitlements for a notarised, non-sandboxed Selecta: none expected. Do **not** adopt the App Sandbox (no App Store:
+  GPL and App Store terms conflict; sandboxing would also complicate arbitrary collection folders and listening sockets).
+- Sign inside-out (frameworks, plugins, helpers, then the app); macdeployqt's `-sign-for-notarization` does this.
+- **Homebrew cask:** Homebrew 5.0 (2025-11-12) deprecated `--no-quarantine`, and the official cask repo disabled casks
+  failing Gatekeeper checks on **2026-09-01** — an official cask now needs a notarised app. A personal tap still works
+  but gives no Gatekeeper relief; formulae (source builds) are unaffected. (medium — Homebrew issue #20755 + third-party
+  reports.)
+
+### 10.5 DMG and updates
+
+- DMG: `hdiutil create -format UDZO -fs APFS` (or macdeployqt `-dmg -fs=APFS`), or `create-dmg` (MIT, Homebrew 1.3.0)
+  for a background and an Applications link, or CPack's DragNDrop generator. Sign and notarise the DMG too.
+- **Sparkle 2** (MIT; cask 2.9.6 on Homebrew): EdDSA-signed appcast (`generate_keys`, `sign_update`), `SUFeedURL` +
+  `SUPublicEDKey` in Info.plist, `SPUStandardUpdaterController` from the Objective-C++ shell, appcast on GitHub
+  Releases/Pages. P2 — only useful once there are notarised public builds. TODO(verify) behaviour with ad-hoc builds.
 
 ## 11. GPLv3 licensing hygiene and dependency compatibility
 
