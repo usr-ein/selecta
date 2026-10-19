@@ -43,8 +43,9 @@
   /* Waveform screen: dark in both appearances, like a CDJ display */
   --screen: #0b0c0f;
   --screen-text: rgba(255, 255, 255, .64);
-  --wf-low: #2053d9;
-  --wf-mid: #f2aa3c;
+  --wf-low: #0055e1;
+  --wf-mid: #ffa600;
+  --wf-overlap: #b36607;
   --wf-high: #ffffff;
 }
 @media (prefers-color-scheme: dark) {

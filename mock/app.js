@@ -1191,7 +1191,7 @@ function renderSettings() {
   const row = (label, desc, ctl) => `<div class="grow"><div class="gl">${label}${desc ? `<div class="gd">${desc}</div>` : ''}</div>${ctl}</div>`;
   const seg = (act, cur, opts) => `<span class="seg" role="group">${opts.map(([v, l]) => `<button data-act="${act}" data-v="${v}" class="${cur === v ? 'on' : ''}" aria-pressed="${cur === v}">${l}</button>`).join('')}</span>`;
   $('#content').innerHTML = `<div class="scroll"><div class="pane" style="max-width:820px">
-    <section><div class="sec-h"><h3>Appearance</h3></div><div class="group">${row('Theme', 'Follows macOS unless you pick one', seg('set-theme', S.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]))}${row('Waveform style', 'The preview waveform stays dark in both themes', seg('wf-mode', P.mode, [['layered', 'Layered'], ['stacked', 'Stacked'], ['lanes', 'Lanes']]))}</div></section>
+    <section><div class="sec-h"><h3>Appearance</h3></div><div class="group">${row('Theme', 'Follows macOS unless you pick one', seg('set-theme', S.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]))}${row('Waveform style', 'The preview waveform stays dark in both themes', seg('wf-mode', P.mode, [['pioneer', 'Pioneer'], ['layered', 'Layered'], ['stacked', 'Stacked'], ['lanes', 'Lanes']]))}</div></section>
     <section><div class="sec-h"><h3>Network</h3><span>Debug builds only connect to a local test server</span></div><div class="group">
       ${row('Server', S.server === 'live' ? 'server.slsknet.org · the real Soulseek network' : 'localhost:2242 · Soulfind test server with test peers', seg('set-server', S.server, [['live', 'Soulseek network'], ['local', 'Local test server']]))}
       ${row('Listen port', 'Peers connect to you on this port', '<span class="mono">2234</span> <span class="bdg good">' + icon('check-c') + 'Open</span>')}
@@ -1232,8 +1232,8 @@ function renderSettings() {
    ===================================================================== */
 
 /* ---------- player state ---------- */
-const P = { track: null, playing: false, pos: 0, volume: 0.8, mode: store.get('wfMode', 'layered'), zoomSec: 8, waiting: false, autoplay: false, dirty: true, hoverX: null, drag: null, scrub: null };
-if (!['layered', 'stacked', 'lanes'].includes(P.mode)) P.mode = 'layered';
+const P = { track: null, playing: false, pos: 0, volume: 0.8, mode: store.get('wfMode', 'pioneer'), zoomSec: 8, waiting: false, autoplay: false, dirty: true, hoverX: null, drag: null, scrub: null };
+if (!['pioneer', 'layered', 'stacked', 'lanes'].includes(P.mode)) P.mode = 'pioneer';
 S.albums = new Map();
 S.filing = new Map();
 const PREVIEW_CACHE = new Map(); // result id -> track; insertion order = least recently used first
@@ -1789,7 +1789,7 @@ const WF = { colors: null, off: null, overKey: '' };
 function wfColors() {
   if (!WF.colors) {
     const cs = getComputedStyle(document.documentElement), g = (n, d) => cs.getPropertyValue(n).trim() || d;
-    WF.colors = { low: g('--wf-low', '#2053d9'), mid: g('--wf-mid', '#f2aa3c'), high: g('--wf-high', '#ffffff'), bg: g('--screen', '#0b0c0f') };
+    WF.colors = { low: g('--wf-low', '#0055e1'), mid: g('--wf-mid', '#ffa600'), overlap: g('--wf-overlap', '#b36607'), high: g('--wf-high', '#ffffff'), bg: g('--screen', '#0b0c0f') };
   }
   return WF.colors;
 }
@@ -1816,8 +1816,35 @@ function columns(tk, t0, t1, W) {
   }
   return { L, M, H };
 }
-function drawBands(ctx, cols, W, H) {
+function drawBands(ctx, cols, W, H, view) {
   const c = wfColors(), L = cols.L, M = cols.M, Hi = cols.H, mid = H / 2, half = H / 2 - 1;
+  if (P.mode === 'pioneer') {
+    if (view === 'over') {
+      // Overview: one-sided cumulative stack from the bottom: blue, amber on top, white crest.
+      const s = (H - 2) / 1.06;
+      for (const [color, wl, wm, wh] of [[c.high, 0.5, 0.32, 0.24], [c.mid, 0.5, 0.32, 0], [c.low, 0.5, 0, 0]]) {
+        ctx.fillStyle = color;
+        for (let x = 0; x < W; x++) { if (L[x] < 0) continue; const v = (L[x] * wl + M[x] * wm + Hi[x] * wh) * s; if (v > 0.25) ctx.fillRect(x, H - v, 1, v); }
+      }
+      return;
+    }
+    // Zoomed: mirrored; brown where lows and mids overlap, the larger band beyond it in its own colour, white highs on top.
+    const lo = x => L[x] * 0.96 * half, mi = x => M[x] * 0.85 * half;
+    ctx.fillStyle = c.overlap;
+    for (let x = 0; x < W; x++) { if (L[x] < 0) continue; const o = Math.min(lo(x), mi(x)); if (o > 0.25) ctx.fillRect(x, mid - o, 1, o * 2); }
+    for (const [color, mine, other] of [[c.low, lo, mi], [c.mid, mi, lo]]) {
+      ctx.fillStyle = color;
+      for (let x = 0; x < W; x++) {
+        if (L[x] < 0) continue;
+        const a = mine(x), o = Math.min(a, other(x));
+        if (a - o > 0.25) { ctx.fillRect(x, mid - a, 1, a - o); ctx.fillRect(x, mid + o, 1, a - o); }
+      }
+    }
+    ctx.globalAlpha = 0.85; ctx.fillStyle = c.high;
+    for (let x = 0; x < W; x++) { if (L[x] < 0) continue; const v = Hi[x] * 0.5 * half; if (v > 0.25) ctx.fillRect(x, mid - v, 1, v * 2); }
+    ctx.globalAlpha = 1;
+    return;
+  }
   if (P.mode === 'lanes') {
     const lh = H / 3, hh = lh / 2 - 1;
     [[c.high, Hi], [c.mid, M], [c.low, L]].forEach(([color, arr], i) => {
@@ -1865,7 +1892,7 @@ function drawZoom() {
     ctx.fillStyle = bar ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.06)';
     ctx.fillRect(Math.round(((bt * beat - t0) / z) * W), 0, Math.max(1, Math.round(dpr * (bar ? 1 : 0.6))), H);
   }
-  drawBands(ctx, columns(tk, t0, t1, W), W, H);
+  drawBands(ctx, columns(tk, t0, t1, W), W, H, 'zoom');
   const dl = trackFraction(tk) * tk.dur;
   if (dl < Math.min(t1, tk.dur)) hatch(ctx, Math.max(0, ((dl - t0) / z) * W), Math.min(W, ((tk.dur - t0) / z) * W), H, dpr);
   const cx = Math.round(W / 2);
@@ -1891,7 +1918,7 @@ function drawOverview() {
     WF.overKey = key; WF.off.width = W; WF.off.height = H;
     const o = WF.off.getContext('2d');
     o.fillStyle = c.bg; o.fillRect(0, 0, W, H);
-    if (tk) drawBands(o, columns(tk, 0, tk.dur, W), W, H);
+    if (tk) drawBands(o, columns(tk, 0, tk.dur, W), W, H, 'over');
   }
   ctx.drawImage(WF.off, 0, 0);
   if (!tk) return;

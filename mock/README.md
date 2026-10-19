@@ -24,8 +24,15 @@ Append to the URL: `#view=search|batch|inbox|collection|history|transfers|peers|
   - drag the zoomed waveform like a jog wheel, or click/drag the overview
   - **K** keeps the preview (moves it to the Inbox without downloading again); **⌫** discards it
   - skipping a preview cancels its transfer
-- **Waveform styles:** Layered (Pioneer-like: lows behind, highs in front), Stacked (cumulative: blue centre, orange,
-  white outside), Lanes (one band per lane). The style is remembered.
+- **Waveform styles:**
+  - **Pioneer** (default) follows rekordbox/CDJ 3Band as documented in `references/audio-preview-and-waveform.md` §2.
+    The zoomed view is mirrored: brown where lows and mids overlap, the larger band beyond it in its own colour (blue
+    #0055E1 or amber #FFA600), white highs on top. The overview is a one-sided stack from the bottom.
+  - **Layered:** every band drawn from the centre, lows behind and highs in front.
+  - **Stacked:** cumulative, with blue at the centre, then orange, then white on the outside.
+  - **Lanes:** one band per lane.
+
+  The style is remembered.
 - **Albums and the supersede rule:** in "neon rain", "Download album" on a folder. "Sodium" is already in the Inbox as a
   single; when the album finishes, that single goes to the Trash, with Undo. In "salt flats" the album is flagged
   because "Tidewater" is already filed in your Singles; filed files are never touched.
@@ -43,7 +50,7 @@ Append to the URL: `#view=search|batch|inbox|collection|history|transfers|peers|
 
 ## Design questions to answer while reviewing
 
-1. Which waveform style is right: Layered, Stacked or Lanes? Are the zoom window (8 s default) and the overview height right?
+1. Is the Pioneer style faithful enough, or do you prefer another? Are the zoom window (8 s default) and the overview height right?
 2. Filter bar: is two rows of filters plus the "Hidden by filters" line the right density? Anything missing or unneeded?
 3. Results: are Folders grouping as the default, and the column set (status, quality, peer · today, availability), right?
 4. Inspector: is the content and its order (ownership, quality check, file, peer and daily limit) what you want to see?
