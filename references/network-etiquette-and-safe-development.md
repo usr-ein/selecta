@@ -459,9 +459,9 @@ again. A ban is an IP-level event in practice; a second "test account" does not 
 "ceilings are compile-time constants, not settings"). This table assumes settings may loosen a limit from its default
 up to the ceiling; under the strictest reading of SAFE-2 ("settings can only make limits stricter") the ceiling simply
 equals the default — decision E8. All search sources (manual, batch, wishlist, user/room search, refresh) draw from
-**one** search budget. Rates are enforced
-as token buckets or sliding windows — never fixed windows (see §4.3). Confidence: **H** = backed by code or official
-text, **M** = consistent with several reports, **L** = judgement, tune on the local network and in M9.
+**one** search budget. Rates are enforced as token buckets or sliding windows — never fixed windows (see §4.3).
+Confidence: **H** = backed by code or official text, **M** = consistent with several reports, **L** = judgement, to be
+tuned on the local network and in M9.
 
 | Limit | Default | Ceiling | Justification | Source | Conf. |
 |---|---|---|---|---|---|
@@ -471,7 +471,7 @@ text, **M** = consistent with several reports, **L** = judgement, tune on the lo
 | **Batch pacing** | Uses the search bucket at its refill rate, keeping **2 tokens reserved** for manual searches; one search per line; cached lines are free; no automatic fallback queries (a "broaden unresolved lines" pass is a user action and costs budget). 100 lines ≈ 50 min; cached lines are instant | Same bucket | slsk-batchdl's multi-query `--desperate` mode multiplies load; bans with automated tools are the main report | §4.3 | M |
 | **Per-search collection cap** (SRCH-16) | Stop after **15 s**, 300 responses or 10 000 files | 60 s / 1 000 / 50 000 | Soulseek.NET defaults 15 s / 250 / 25 000; SoulseekQt 10 000 results; N+ shows 2 500 | §4.3, Qt changelog | H (refs) / L (values) |
 | **Wishlist** (SRCH-14) | One term per **server-provided interval** (`WishlistInterval`, usually 12 min; 2 min if privileged), round-robin; nothing if the server sent no interval | Never more often than the server interval, never < 120 s | N+ behaviour; protocol doc | §4.4 | H |
-| **Login / reconnect** (NET-4) | First retry random **10–30 s**, then ×2 with ±25 % jitter, cap **10 min**. After the ban PM: wait **30 min + 1–5 min**, auto-pause, ask the user. After a login timeout (possible silent ban): ≥ 5 min, ×2, cap 60 min. No auto-reconnect after `Relogged` or any login rejection except `SVRFULL` (≥ 5 min) | First retry ≥ 5 s; cap ≥ 5 min; ≤ **10 login attempts per hour** | "Do not connect and disconnect quickly"; N+ 5–15 s ×2 to ~5 min; slskd 1 s ×2 to 5 min + jitter; Soulfind jitters to spread reconnects | §4.2, §4.5 | H (shape) / M (values) |
+| **Login / reconnect** (NET-4) | First retry random **10–30 s**, then ×2 with ±25 % jitter, cap **10 min**. After the ban PM: wait **30 min + 1–5 min**, auto-pause, ask the user. After a login timeout (possible silent ban): ≥ 5 min, ×2, cap 60 min. No auto-reconnect after `Relogged` or any login rejection except `SVRFULL` (≥ 5 min) | First retry ≥ 5 s; cap ≥ 5 min; ≤ **10 login attempts per hour** | "Do not connect and disconnect quickly"; N+ 5–15 s ×2 to 5–10 min; slskd 1 s ×2 to 5 min + jitter; Soulfind jitters to spread reconnects | §4.2, §4.5 | H (shape) / M (values) |
 | **Sessions** | **1** Selecta session per account per machine (lock file) | 1 | Rules: ≤ 5 clients per IP; ban message: "many clients at once from the same IP"; `Relogged` | §3.1 | H |
 | **Peer lookups / new peer connections** (`GetPeerAddress`, `ConnectToPeer`) | ≤ **10 in flight**, ≤ **30 per minute** | ≤ 60/min | They are server operations; "too many operations at once" is the ban trigger. No public figure | §4.1 | L |
 | **Active downloads per peer** (FAIR-2) | **1** | 2 | N+ and Soulseek.NET serve one upload per user at a time; extra requests only lengthen the peer's queue | §5.1 | H |
@@ -485,12 +485,12 @@ text, **M** = consistent with several reports, **L** = judgement, tune on the lo
 | **Browse requests** (BRWS-2) | Burst 3, then **1 per 100 s** (≤ 6 per 10 min); same user not re-browsed within the 24 h cache TTL unless "Refresh" (≥ 10 min apart) | ≤ 30 per hour | A browse makes the peer compress and send its whole share list; crawling looks like a bot | — | L |
 | **User info / folder contents** | User info: ≤ 1 per user per 10 min, ≤ 30/h. Folder contents: ≤ 1 per folder per cache TTL, burst 5, ≤ 20 per 10 min | 2× default | Same reasoning | — | L |
 | **Private messages** (NET-7) | User-typed only; ≤ 1 per 2 s, identical text to the same user not repeated within 10 min; no automatic messages in v1 | Same | Repeated identical PMs → 30-min ban; N+ ResponseThrottle | §4.6 | M |
-| **Previews** (PREV-*) | Auto-preview after the selection rests **≥ 600 ms**; **only for results whose peer reports a free slot** (others need an explicit Space and queue like a download); **1** active preview; not started if we already have an active transfer with that peer; ≤ **30 previews per 10 min**; counted in per-peer caps (PREV-7); on skip **cancel** unless ≥ 85 % received; answer later offers with `Cancelled`; ignore `UploadFailed` for cancelled previews | ≤ 2 active; ≤ 60 per 10 min | §6 | §6 | M (cancel) / L (values) |
+| **Previews** (PREV-*) | Auto-preview after the selection rests **≥ 600 ms**; **only for results whose peer reports a free slot** (others need an explicit Space and queue like a download); **1** active preview; not started if we already have an active transfer with that peer; ≤ **30 previews per 10 min**; counted in per-peer caps (PREV-7); on skip **cancel** unless ≥ 85 % received; answer later offers with `Cancelled`; ignore `UploadFailed` for cancelled previews | ≤ 2 active; ≤ 60 per 10 min | Cancelling frees the uploader's slot; bursts of lookups look like flooding; slskd counts cancels as failures | §6 | M (cancel) / L (values) |
 | **Answering others' searches** (SHARE-2, belongs to the sharing note) | Answer only queries with ≥ 3 characters; at most **300 files** per response; never files matching an excluded phrase | ≤ 500 files | N+ `maxresults = 300`, `min_search_chars = 3`; slskd `ResponseFileLimit = 500`; Soulseek.NET README on excluded phrases | §7.3 | H |
 | **Upload side** (SHARE-3, belongs to the sharing note) | **3** slots, **1** active upload per user, round-robin, **privileged users first**, per-user queue limits 100 files / 10 GiB answered with exactly `Too many files` / `Too many megabytes`, `File not shared.` for anything not in the index | Slots ≥ 1 while sharing | N+ defaults; slskd interop note; Rules require respect of privileges | §5.2, §7.1 | H |
 
-Two numbers deserve a UI explanation, because users will want them higher: the search budget (show "2 searches per
-minute keeps you clear of Soulseek's 30-minute search ban") and the per-peer cap (show the peer's counters and why).
+Two numbers deserve a UI explanation, because users will want them higher: the search budget (e.g. "Searches are paced at 2 per minute to
+stay well clear of Soulseek's 30-minute ban for searching too fast") and the per-peer cap (show the peer's counters and why).
 
 ### 9.2 Never do this
 
