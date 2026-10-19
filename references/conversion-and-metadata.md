@@ -139,7 +139,17 @@ PCM, but only AIFF carries usable tags and artwork in rekordbox.
 - Never write 32-bit float WAV/AIFF for DJ use: rekordbox and CDJs accept only 16/24-bit integer PCM (H, rekordbox 7
   manual table; M for CDJs).
 
-### 2.4 Verification (CONV-7, DL-6)
+### 2.4 Lossless outputs (FLAC, AIFF, WAV, ALAC)
+
+- **Keep the source's word length.** FFmpeg's FLAC encoder treats any `S32` input as 24-bit unless told otherwise
+  ("encoding as 24 bits-per-sample", `flacenc.c`) — a 16-bit source pushed through a 32-bit pipeline silently becomes a
+  zero-padded "24-bit" file, the very fake-hi-res artefact §6 warns about. Feed `S16` for 16-bit sources and `S32` with
+  `bits_per_raw_sample = 24` for 24-bit sources (H).
+- FLAC: FFmpeg's native encoder (STREAMINFO MD5 included); ALAC (P1): FFmpeg `alac` encoder (`S16P`/`S32P`) in the
+  `ipod` muxer (`.m4a`) (H); AIFF: FFmpeg's AIFF muxer with `pcm_s16be`/`pcm_s24be`; WAV: Selecta's own header (§2.3).
+- Tags are always added afterwards with TagLib (FLAC: strip any ID3v1/ID3v2 that some tools prepend to FLAC files).
+
+### 2.5 Verification (CONV-7, DL-6)
 
 1. **Write safely:** encode into a temporary file in the *destination directory* (same volume), `fsync`, then
    publish it with a no-overwrite rename (`renamex_np(tmp, final, RENAME_EXCL)` on macOS; `link()` + `unlink()` or
@@ -163,7 +173,9 @@ job.
 ## 3. Metadata mapping
 
 Selecta's internal model uses **TagLib property keys** (upper case) as canonical names; TagLib translates them to each
-format. Rows marked ⚠ need Selecta-side handling. Sources: TagLib `mpeg/id3v2/id3v2frame.cpp` (`frameTranslation`),
+format. Rows marked ⚠ need Selecta-side handling. **AIFF (`ID3 ` chunk) and WAV (`ID3 `/`id3 ` chunk) carry a complete
+ID3v2 tag, so they follow the ID3v2.3/2.4 columns**; WAV additionally gets the RIFF INFO column (the only one rekordbox
+reads). Sources: TagLib `mpeg/id3v2/id3v2frame.cpp` (`frameTranslation`),
 `frames/textidentificationframe.cpp` (`txxxFrameTranslation`), `mp4/mp4itemfactory.cpp`, `riff/wav/infotag.cpp`;
 Picard tag-mapping appendix (`picard-docs/appendices/tag_mapping.rst`); beets `mediafile/__init__.py`.
 
@@ -492,7 +504,7 @@ flowchart LR
   LAME & FFE & AIFF & WAV --> TW[TagWriter<br/>TagLib]
   POL --> TW
   AP --> TW
-  TW --> VER[OutputVerifier<br/>§2.4]
+  TW --> VER[OutputVerifier<br/>§2.5]
   VER --> PUB[No-overwrite rename<br/>into collection]
 ```
 
@@ -506,7 +518,7 @@ flowchart LR
 | `ArtworkFinder` / `ArtworkProcessor` | §5.1 ranking; §5.3 resize/re-encode with `QImage` | Never upscale; keep originals; Latin-1 empty description. |
 | `Transcoder` | Decode → resample → dither → encode → mux, cancellable, progress | One LAME instance per job; serialise LAME init; feed float. |
 | `PcmWavWriter` | Minimal RIFF/WAVE writer with `WAVE_FORMAT_PCM` | Avoids FFmpeg's `WAVE_FORMAT_EXTENSIBLE` (§2.3). |
-| `OutputVerifier` | §2.4 checks | Failure → delete temp file, keep source, report. |
+| `OutputVerifier` | §2.5 checks | Failure → delete temp file, keep source, report. |
 | `PathBuilder` | §7 templates and sanitiser | Collision check case/normalisation-insensitive; never overwrite. |
 | `ConversionQueue` | Worker pool (CONV-8) | L: start with (performance cores − 1) workers; measure. |
 
@@ -531,7 +543,7 @@ flowchart LR
 | Ogg/Opus/WMA sources | ask: MP3 320 (generation loss) or AIFF (large) (D-5) | rekordbox can't play them |
 | Lossless originals after MP3 filing | kept in `~/Music/Selecta/Originals/` (PRD OQ-2) | re-encode later without re-downloading |
 | Naming | §7.1 templates; NFC; ≤ 200-byte components | portability, rekordbox path stability |
-| Verification | always on (§2.4) | CONV-7, DL-6 |
+| Verification | always on (§2.5) | CONV-7, DL-6 |
 
 ### 9.3 Decisions for the maintainer
 
@@ -547,8 +559,25 @@ flowchart LR
 | D-8 | Fetch the remote folder's cover image when downloading a single? | opt-in, off by default |
 | D-9 | File AAC/M4A downloads as-is (rekordbox plays them) rather than converting to MP3? | as-is, with badge |
 | D-10 | Write `TENC` = "Selecta x.y" in converted files? | Yes (helps debugging; no personal data) |
+| D-11 | Strip the uploader's DJ-app data (Serato GEOB frames, Traktor `PRIV`, `SERATO_*` comments) from downloads at filing, even when the audio is kept as-is? These are *someone else's* cues and grids. | Yes for the maintainer's rekordbox-only setup; make it a setting |
 
-### 9.4 Test corpus additions (for PLAN's synthetic corpus)
+### 9.4 Two filing paths, one tag policy
+
+- **Re-encode path** (lossless → MP3 320, etc.): §2 pipeline, fresh tag written from the model.
+- **Audio-preserving path** ("file as-is", CONV-2): the audio bytes are copied untouched, but the Inbox copy still gets
+  the filing tag policy *before* it is published — ID3v2.4 → v2.3 conversion, folder-art supplement, alias cleanup,
+  D-11 stripping — because Selecta may modify Inbox files but never filed ones (PRD principle 2). TagLib edits in place
+  and may rewrite the whole file when the tag grows, so apply it to the temp copy inside the copy → verify → publish
+  sequence (§2.5), never to the Inbox original before verification. Verification for this path: decoded-PCM MD5 of
+  source and output must match (tags changed, audio identical).
+
+**Security note:** every downloaded file is untrusted input to TagLib and FFmpeg. Require TagLib ≥ 2.3.2 (its
+changelog lists hardening "to prevent resource exhaustion, denial of service attacks and out of range conversions by
+crafted input" across formats, H) and current FFmpeg; cap picture sizes (e.g. reject embedded images > 20 MB or
+> 10 000 px before decoding with `QImageReader::setAllocationLimit`); consider running probing/conversion in a helper
+process so a parser crash cannot take down the app (decision for ADR-003; L).
+
+### 9.5 Test corpus additions (for PLAN's synthetic corpus)
 
 FLAC with `KEY` vs `INITIALKEY`; `ALBUM ARTIST` spelling; `TRACKTOTAL` and `TOTALTRACKS`; two `ARTIST` values;
 `MOOD`/`DISCSUBTITLE`/`RELEASEDATE` (v2.3 compensation); PNG, progressive-JPEG, CMYK-JPEG and 3000 px covers; `cover.jpg`
