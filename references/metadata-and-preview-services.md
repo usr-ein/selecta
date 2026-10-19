@@ -2,19 +2,22 @@
 
 > Status: **complete draft for review** (all sources accessed 2026-10-19). Items marked **TODO(verify)** come from
 > second-hand sources or need an experiment; do not turn them into constants until verified. Source repos are read at
-> the commits listed in §14.
+> the commits listed in §16.
 >
 > Scope (PRD v0.4): canonical track metadata (Spotify first, D29), matching a Soulseek result or a Get tracks line to a
 > release, official 30-second clips, full-length listening in official players, and **preview audio through the
-> user's own installed yt-dlp (D26, §17)**. **Out of scope (D20):** ripping or keeping files from streaming services —
+> user's own installed yt-dlp (D26, §12)**. **Out of scope (D20):** ripping or keeping files from streaming services —
 > everything Selecta keeps (Inbox, collection, shares) comes from Soulseek peers; yt-dlp audio stays in the preview
 > cache and is never filed, shared, converted or tagged. This note does not cover circumvention of any access control
 > (signature/PO-token internals, cookies, web-player tokens, DRM). spotDL is described only at the level of "where
 > metadata comes from, where audio comes from", plus its matching and tagging logic.
 >
-> Manual requests made for this note (all public, unauthenticated, one-off): Deezer 6 (2 searches that failed, 1 search,
-> 1 track, 1 ISRC lookup, 1 album) + 1 HEAD on a preview; iTunes Search 1 + 1 HEAD; MusicBrainz 3 (one rejected for a bad
-> `inc`); Cover Art Archive 1. No Spotify request was made and no Spotify credentials were used.
+> Manual requests made for this note (all public, unauthenticated, one-off), 2026-10-19/20: Deezer 6 (2 searches that
+> failed, 1 search, 1 track, 1 ISRC lookup, 1 album) + 1 HEAD on a preview; iTunes Search 1 + 1 HEAD; MusicBrainz 3 (one
+> rejected for a bad `inc`); Cover Art Archive 1; Spotify oEmbed 1 (no credentials); coverage check on 4 club tracks
+> (§4.4): Deezer 12 (search + track + album each) and MusicBrainz 4 (ISRC lookups). No Spotify Web API request was made
+> and no Spotify credentials were used. yt-dlp: no query was run; only the locally installed binary's offline
+> `--version` (2025.07.21). Spotify's AppleScript dictionary was read from the installed app bundle, not executed.
 
 ## 1. TL;DR
 
@@ -25,7 +28,7 @@
   after **6 months**. ISRCs (`external_ids`) survived (restored March 2026). `preview_url` is gone since 2024-11.
   → Spotify works for the maintainer (Premium: yes, per the question round) through **PKCE with a user-owned Client
   ID**; it cannot be a feature that "just works" for other users.
-- **Spotify's terms conflict with a Soulseek client** (quotes in §4): no use of Spotify Content in an app that
+- **Spotify's terms conflict with a Soulseek client** (quotes in §5): no use of Spotify Content in an app that
   "facilitates … the illegal or unauthorized use or sharing of audio" (Terms §IV); no product "integrated with streams
   or content from another service" (Policy §III.5); no storing Spotify Content "indefinitely", only "temporary caching
   of metadata and cover art", and no functionality that makes "permanent copies of Spotify Content" (Terms §IV) —
@@ -71,7 +74,7 @@
 | K10 | MusicBrainz: ISRC → recordings → releases with label, catalogue number, barcode and store URLs; core data CC0; 1 req/s per IP; UA with contact. | High | Manual requests; MB docs |
 | K11 | Discogs: search needs a token; 60/min; CC0 catalogue data but a 6-hour display-freshness and no-longer-than-needed caching rule; mandatory notices. | High (archived terms of 2025-05-27) | Discogs API ToU |
 | K12 | spotify-qt `lib`: GPL-3.0, active (2026-10-05), secret-based auth, no ISRC parsing, coupled to the app. Other C++ clients are MIT and stale. | High | Source read |
-| K13 | spotDL thresholds and formula as in §7.3; default metadata backend since 2026 is the unofficial SpotipyFree. | High | Source read @ `cd4a420`; PR #2626 |
+| K13 | spotDL thresholds and formula as in §8.3; default metadata backend since 2026 is the unofficial SpotipyFree. | High | Source read @ `cd4a420`; PR #2626 |
 | K14 | Beatport API v4 is partner-only; Traxsource has no API; Bandcamp's API serves labels/merch partners only and its policy forbids scraping. | Medium–high | Beatport discussion, Bandcamp developer page and policy |
 | K15 | Beatport site previews are 2 minutes from the middle of the track. | Medium (third-party, consistent) | Proton Radio, Label Engine; Beatport support (length only) |
 | K16 | One ISRC maps to many releases (and a recording can carry several ISRCs); an ISRC lookup does not pick the original release. | High (observed on one track; general pattern known) | MusicBrainz + Deezer requests |
@@ -105,9 +108,9 @@ requires the app owner to pay for Premium.**
 **Consequence for Selecta (high confidence):** a Client ID shipped with Selecta would serve at most 5 people and stop
 working if the maintainer's Premium lapses. The only workable model is **bring-your-own Client ID**: each user registers
 an app on developer.spotify.com (which now requires their own Premium), registers Selecta's loopback redirect URI, and
-pastes the Client ID into Selecta. spotify-qt (§6) and Sockseek/slsk-batchdl ("The Spotify account that owns the
+pastes the Client ID into Selecta. spotify-qt (§7) and Sockseek/slsk-batchdl ("The Spotify account that owns the
 application must have an active Premium subscription") work this way; spotDL instead ships a shared Client ID/secret
-and, since 2026, defaults to an unofficial client (§7).
+and, since 2026, defaults to an unofficial client (§8).
 
 ### 3.2 Auth flows for a desktop app
 
@@ -129,7 +132,7 @@ Scopes, requested only when the feature is first used (Spotify's compliance tips
 | Catalogue lookups (search, track, album, artist) | none (any user token works) |
 | Import the user's playlists | `playlist-read-private`, `playlist-read-collaborative` |
 | Import Liked Songs | `user-library-read` |
-| Play a track in the user's Spotify app (§5) | `user-modify-playback-state`, `user-read-playback-state` |
+| Play a track in the user's Spotify app (§6) | `user-modify-playback-state`, `user-read-playback-state` |
 
 Qt support: `QOAuth2AuthorizationCodeFlow` (Qt Network Authorization) supports PKCE via `setPkceMethod(S256)` since
 Qt 6.8, token refresh via `QAbstractOAuth2::refreshTokens()` (6.9+). `QOAuthHttpServerReplyHandler` listening on
@@ -150,7 +153,7 @@ fine for GPL-3.0-or-later Selecta but is worth recording in the dependency table
 | `GET /v1/me/playlists`, `GET /v1/playlists/{id}` | List the user's playlists | Metadata for any playlist. |
 | `GET /v1/playlists/{id}/items` | Import a playlist into Batch | Replaces `/tracks`. "Only accessible for playlists owned by the current user or playlists the user is a collaborator of"; others → 403. `limit` ≤ 50, `fields` filter, `is_local` entries carry no ID. |
 | `GET /v1/me/tracks` | Import Liked Songs | Paged. |
-| `GET /v1/me/player/devices`, `PUT /v1/me/player/play` | Full-length listening in the user's app (§5) | Premium only. |
+| `GET /v1/me/player/devices`, `PUT /v1/me/player/play` | Full-length listening in the user's app (§6) | Premium only. |
 
 Removed or unavailable to a new app: `GET /tracks?ids=`, `/albums?ids=`, `/artists?ids=` (batch), `/artists/{id}/top-tracks`,
 `/browse/new-releases`, `/browse/categories*`, `/users/{id}`, `/users/{id}/playlists`, `/markets`, audio features and
@@ -161,8 +164,8 @@ What this means for each maintainer goal:
 | Goal | Feasible in dev mode? |
 |---|---|
 | Canonical title/artists/album/date/track+disc numbers/ISRC/duration/artwork | Yes, one track request + one album request per track (no batching any more). |
-| Label | **No** (removed). Catalogue number and genre were never available. Both matter to DJs → need Deezer/MusicBrainz/Discogs anyway (§9). |
-| Improve matching of Soulseek results | Indirectly: Spotify gives the canonical title, version string and duration to match against (§12). |
+| Label | **No** (removed). Catalogue number and genre were never available. Both matter to DJs → need Deezer/MusicBrainz/Discogs anyway (§10). |
+| Improve matching of Soulseek results | Indirectly: Spotify gives the canonical title, version string and duration to match against (§14). |
 | Import Spotify playlists into Batch | Only the user's **own or collaborative** playlists and Liked Songs. Editorial playlists and other users' public playlists return 403. |
 | Previews | **No** (`preview_url` deprecated). |
 
@@ -188,7 +191,122 @@ endpoints for affected apps (community forum; medium confidence). Spotify has no
 "workarounds" scrape the web player or embed pages; Selecta must not use them (Developer Terms §IV "Improper use", and
 outside the scope rule).
 
-## 4. Spotify Developer Terms and Developer Policy vs a Soulseek client
+### 3.6 Spotify as the primary metadata source: what a new dev-mode app gets (October 2026)
+
+Spotify ranks first for matching and tags (D29, SRCH-17). For a Development Mode app created after 2026-02-11 the
+usable data comes from two requests per track — `GET /tracks/{id}` and `GET /albums/{id}` (cache albums by ID; the
+batch endpoints are gone):
+
+| Field | Spotify (new dev-mode app) | Where | Fill from |
+|---|---|---|---|
+| Title (Spotify writes versions as "Title - Extended Mix") | yes | track `name` | — |
+| Artists, in credited order | yes | track `artists[]` | — |
+| Album, album artist, album type | yes (`album`/`single`/`compilation`) | track `album`, album | MusicBrainz release-group type to tell EP from single |
+| Track number / disc number | yes | track | Track total: album `total_tracks`; disc total: `disc_number` of the album's last track (spotDL does this) |
+| Release date | yes, with `release_date_precision` (`year`/`month`/`day`) | album | The DSP date can postdate a vinyl original (§4.4); MusicBrainz `first-release-date` when present |
+| Duration | yes (`duration_ms`) | track | — |
+| ISRC | yes (`external_ids.isrc`, restored March 2026) | track | — |
+| UPC / EAN | yes (`external_ids`) | album | — |
+| Explicit | yes | track | — |
+| Artwork | yes; largest image typically 640 × 640 JPEG | album `images` (widest first) | Fits D29's ≤ 800 × 800 without upscaling; Deezer `cover_xl` (1000 px) or CAA 1200 if a larger source is wanted |
+| Copyright lines (℗/©) | yes | album `copyrights` | The ℗ line often names the label ("℗ 2017 Ninja Tune"), sometimes the distributor — a hint, not a label field |
+| **Label** | **no** (removed Feb 2026) | — | Deezer album `label` → MusicBrainz label-info |
+| Catalogue number | no (never offered) | — | MusicBrainz → Discogs (P2) |
+| Genre | no (`genres` "always empty") | — | Deezer genre (coarse), Discogs style (P2), or none |
+| BPM / key | no (audio features removed 2024-11) | — | Deezer `bpm` (often 0); rekordbox analyses anyway |
+| Popularity | no | — | — |
+| Preview clip | no | — | Deezer (by ISRC) → iTunes (§9) |
+
+An app created *before* 2026-02-11 may still see the old endpoint set (Spotify postponed that part for existing
+integrations); whether it still gets `label` is to be checked (X2).
+
+## 4. Secret-free Spotify access and keyless defaults
+
+The maintainer wants Spotify metadata without handing Selecta an API secret, "like spotDL". This section separates
+what spotDL actually does from the official secret-free path.
+
+### 4.1 What spotDL's "no setup" really is (master `cd4a420`, v4.5.2; `dev` `e016715` selects backends the same way)
+
+- **A bundled key.** `spotdl/utils/config.py` hard-codes a literal client ID **and client secret** in
+  `SPOTIFY_OPTIONS` (lines 309–311); `DEFAULT_CONFIG` spreads `SPOTIFY_OPTIONS` (line 387–388). The values are not
+  reproduced here. In official-API mode, `_OfficialSpotifyClient.init` (`spotdl/utils/spotify.py`) passes them to
+  spotipy's `SpotifyClientCredentials`, or to `SpotifyOAuth` (authorization code *with* the secret,
+  `redirect_uri="http://127.0.0.1:9900/"`, scopes `user-library-read,user-follow-read,playlist-read-private`) when
+  `--user-auth` is set.
+- **Not the default any more.** Since v4.5.0 (2026-05-16): "Due to Spotify API changes, spotDL now defaults to the
+  lighter `SpotipyFree` library … If you have Spotify Premium and provide a client ID and client secret, pass
+  `--use-official-api`." `SpotifyClient.init` picks SpotipyFree unless `--use-official-api`, `--user-auth`,
+  `--auth-token` or `--use-cache-file` is given. SpotipyFree wraps SpotAPI, which emulates the web player's private
+  endpoints — the zero-setup path is now unofficial access, which Selecta will not use (D21, §5 "Improper use").
+- **What a shared key costs.** Every user of the bundled key draws on one app's rate limit and (since 2026-07-23) one
+  developer account's quota. spotDL users hit "Your application has reached a rate/request limit. Retry will occur
+  after: 86400" — a 24-hour `Retry-After` — in January 2026 (issues #2585, #2596; earlier #2420). Under the 2026
+  rules the key also stops working whenever its owner's Premium lapses, and user sign-ins beyond the 5 allow-listed
+  accounts get 403. A user who brings their own Premium-backed key can still be throttled for a day on a large sync
+  (issue #2710, June 2026; cause not confirmed).
+- **What Spotify's terms say about credentials** (Developer Terms §VI "Security Codes"): the Security Code "must be
+  embedded in your SDA … in a secure manner not accessible by third parties"; "You may not sell, transfer, sublicense
+  or otherwise disclose your account or Security Codes to any other party"; "You are responsible for maintaining the
+  confidentiality of your account and Security Codes"; "You must use a separate Security Code for each SDA. You may not
+  use more than one Security Code for each SDA." A secret committed to a public repository is disclosed by definition;
+  using another project's key means using a Security Code issued to someone else. (Google's YouTube policies say it
+  outright: never "embed your API Credentials in open source projects".)
+
+**Selecta ships no client secret — neither the maintainer's nor anyone else's — and never reuses spotDL's.** A secret
+typed into Settings (META-1, client-credentials development use) stays in the Keychain and is never logged or written
+to settings files.
+
+### 4.2 The official secret-free path: Authorization Code with PKCE
+
+| Topic | Fact (sources: PKCE tutorial, refreshing-tokens page, redirect-URI concept page, 2025-02-12 security post) | For Selecta |
+|---|---|---|
+| What is needed | Authorize: `client_id`, `response_type=code`, `redirect_uri`, `code_challenge_method=S256`, `code_challenge`, `scope`, `state`. Token: `grant_type=authorization_code`, `code`, `redirect_uri`, `client_id`, `code_verifier` — **no secret**. Refresh: `grant_type=refresh_token`, `refresh_token`, `client_id` ("Only required for the PKCE extension"). PKCE is "recommended … where the client secret can't be safely stored". | Only a client ID. |
+| Is the client ID secret? | No — it appears in the authorisation URL the browser opens. | It *could* live in the source, but the maintainer asked to keep his credentials uncommitted: personal builds inject it at configure time from `local/secrets.env`; otherwise it is a Settings field. |
+| Redirect URI | HTTPS, or HTTP only for loopback IP literals `http://127.0.0.1:PORT` / `http://[::1]:PORT`; `localhost` is not accepted ("`http://localhost:3000` could be migrated to `http://127.0.0.1:3000`"); a loopback URI registered without a port accepts any port; custom schemes "will still be supported" (`com.example://callback`). Enforced for new apps from 2025-04-09, all apps from November 2025. | Register `http://127.0.0.1/callback`; listen on an ephemeral port with `QOAuthHttpServerReplyHandler` on `QHostAddress::LocalHost`. A custom scheme (`selecta://…`) would need `CFBundleURLTypes` and can be claimed by any other app; loopback avoids both. |
+| Access token | "limited lifespan (1 hour)"; `expires_in` describes the access token only. | Refresh ~5 min before expiry. |
+| Refresh token | 6 months from the user's authorisation; "Refreshing an access token does not extend the refresh token's lifetime"; responses "might not include a new refresh token" — keep the old one then; expiry → `invalid_grant` → discard and re-authorise. | Store `authorised_at` with the token in the Keychain; warn two weeks before the 6-month mark; one-click reconnect. |
+| Who can sign in | Dev mode: the app owner (must have Premium) plus up to 5 allow-listed accounts (Dashboard → User Management); others get 403. Extended quota: organisations with ≥ 250k MAU only. | **"Me first":** the maintainer's own app, his own account allow-listed — works today. **Public release:** every user registers their own app (with their own Premium) and pastes its Client ID; there is no shared-ID option. |
+| Endpoints a user token reaches (dev mode) | `GET /search` (≤ 10 results), `/tracks/{id}`, `/albums/{id}`, `/albums/{id}/tracks`, `/artists/{id}`, `/artists/{id}/albums`, `/me`, `/me/playlists`, `/playlists/{id}` (metadata), `/playlists/{id}/items` (own or collaborative playlists only), `/me/tracks`, `/me/library`, `/me/top/{type}`, the `/me/player/*` endpoints. | Everything Get tracks needs except other people's playlists (§14.6). |
+
+### 4.3 Resolving a pasted Spotify link without sign-in: oEmbed
+
+`GET https://open.spotify.com/oembed?url=<URL-encoded open.spotify.com link>` needs no authentication. One request for
+a track link returned: `title` (**track name only**, e.g. "Blinding Lights"), `thumbnail_url` (300 × 300 cover),
+`thumbnail_width/height`, `html` (iframe), `iframe_url` (present although absent from the documented example),
+`width`, `height`, `version`, `provider_name`, `provider_url`, `type: "rich"`. **No artist, album, duration or ISRC.**
+
+So oEmbed alone cannot resolve a link to "artist – title". Without a Spotify sign-in Selecta can: show the oEmbed
+title and thumbnail and let the user confirm a keyless (Deezer) search on that title; for album links, look the album
+URL up in MusicBrainz (`/ws/2/url?resource=…&inc=release-rels`; MusicBrainz stores Spotify album URLs as release
+relationships — coverage TODO(verify)); for playlists, ask for an Exportify CSV. With a sign-in, `GET /tracks/{id}`
+answers everything. Using oEmbed means accepting the Developer Terms ("By using Spotify Embeds, you accept the Spotify
+Developer Terms of Service"), so the title and thumbnail carry the usual attribution. Obtaining web-player tokens or
+calling Spotify's internal APIs is out of scope (§5, D21).
+
+### 4.4 Keyless default without a Spotify sign-in: Deezer + MusicBrainz, checked on club tracks
+
+Without a sign-in, Selecta resolves releases from Deezer (search with ISRC in every hit, track for BPM, album for label,
+date and cover) and enriches from MusicBrainz by ISRC. A coverage check on four club tracks (one plain
+"artist title" Deezer search each, then track + album + MusicBrainz ISRC lookup; 2026-10-20):
+
+| Line | Deezer search (top hits) | Deezer track / album fields | MusicBrainz by ISRC |
+|---|---|---|---|
+| DJ Boring – Winona | Found: 511 s, ISRC `USQY51621229`, EP "Winona"; also a 245-s "Winona (Mixed)" from a Defected radio compilation | BPM **0**; label "E-Beamz"; UPC; `record_type` ep; date 2017-06-09; genres "Electro, Techno/House"; 1000-px cover; preview | 1 recording (511 s) |
+| Ross From Friends – Talk To Me You'll Understand | Found (1 hit): 417 s, ISRC `UKA2G1608004` | BPM 126.05; label "Distant Hawaii"; EP; date 2017-02-10; cover; preview | **404 — ISRC unknown** |
+| Floorplan – Never Grow Old | Top 6 of 121 hits: only a 175-s "Never Grow Old (Mixed)" DJ-mix segment; **no unmixed original** | (not checked; the script's fallback picked another Floorplan track, whose album had label "Classic Music Company") | that other track's ISRC: 404 |
+| Kerri Chandler – Rain | Six versions in the top 6, each with its own ISRC: "(Mood EP Version)" 471 s, "(Dub)" 478 s, "(Dense & Pika Remix)" 385 s, "(Vocal Remix Harry Romero Edit)" 370 s, "(Old School Acoustic Mix)" 540 s, "(Old School Vocal Remix)" 490 s | First: BPM 124.9; label "Nervous Records"; album "Kerri Chandler's Nervous Tracks" (2007-05-22); cover; preview | **404** |
+
+What it shows (small sample; X5 measures it properly):
+- Deezer is a usable keyless identity source for club music: ISRC, preview and cover on every hit; label on every
+  album checked; BPM present on 2 of 3 tracks checked.
+- The traps are real: DJ-mix "(Mixed)" segments can outrank the original or be the only hit, and a bare "artist –
+  title" line can match half a dozen versions → the version rules and duration checks of §14.5 are not optional.
+- Dates are those of the streaming release, which may postdate a vinyl original.
+- **MusicBrainz knew only 1 of 4 ISRCs.** It is an enrichment source (catalogue numbers, store links) when it has the
+  track, not a primary source for club singles. This weakens the "open data tags" idea of the first draft: without
+  Spotify, tags realistically come from Deezer (§14.7).
+
+## 5. Spotify Developer Terms and Developer Policy vs a Soulseek client
 
 Documents: **Spotify Developer Terms, "Version 10, effective as of 15 May, 2025"** and **Spotify Developer Policy,
 "Effective as of 15 May, 2025"** (the Policy is incorporated into the Terms), plus the Design Guidelines and Compliance
@@ -196,7 +314,7 @@ Tips. Spotify Content is defined broadly: "any content, data, information or mat
 Spotify Platform … sound recordings, … cover art, … metadata, playlists, and user data". **Metadata and cover art are
 Spotify Content.**
 
-### 4.1 Clauses that conflict with Selecta's intended uses
+### 5.1 Clauses that conflict with Selecta's intended uses
 
 | # | Clause (verbatim) | Where | What it hits in Selecta | Conflict |
 |---|---|---|---|---|
@@ -207,8 +325,8 @@ Spotify Content.**
 | S5 | "If you display any Spotify Content you must clearly attribute the content as being supplied and made available by Spotify, by using the Spotify Marks" and "Metadata, cover art and Audio Preview Clips must be accompanied by a link back to the applicable album, content or playlist on the Spotify Service." | Policy §II.4 | Every UI surface showing Spotify-sourced fields needs the Spotify logo and a link back. Tags read later by rekordbox carry no attribution. | **Medium** (doable in Selecta's UI; impossible in files) |
 | S6 | "Don't manipulate any content or metadata." / "Track, artist, playlist, and album titles must always be presented with the metadata provided by Spotify." / artwork "must be kept in its original form", "Don't crop the artwork" | Design Guidelines | Selecta's normalisation (version strings, `feat.` handling), and resizing artwork for DJ hardware (CONV-5). (The Terms do allow "You may adjust the size of metadata or cover art as necessary".) | **Medium** |
 | S7 | "Do not build an SDA that enables the transfer of data to another service, except for the purpose of enabling a user to transfer their personal data, or the metadata of the user's playlists to another service." | Policy §III.9 | Playlist → Batch import moves playlist metadata into a search on another service. The exception covers "the metadata of the user's playlists"; arguably fine on its own, but S1/S2 still apply to the app. | **Low–medium** |
-| S8 | "Do not permit any device or system to segue, mix, re-mix, or overlap any Spotify Content with any other audio content"; Compliance Tips list "DJ/Mixes" as a disallowed use case. | Policy §III.7; Compliance Tips | Only if Selecta plays Spotify audio (§5): it must never overlap Spotify playback with its own preview player. | Low (avoidable) |
-| S9 | "Streaming SDA" includes "using the Spotify Platform to control a background Spotify application"; then "there shall be no playback of Spotify Content without showing relevant cover art and metadata in your SDA". | Terms §II; Policy §II.5 | `PUT /me/player/play` (§5) makes Selecta a Streaming SDA. | Low (UI obligations) |
+| S8 | "Do not permit any device or system to segue, mix, re-mix, or overlap any Spotify Content with any other audio content"; Compliance Tips list "DJ/Mixes" as a disallowed use case. | Policy §III.7; Compliance Tips | Only if Selecta plays Spotify audio (§6): it must never overlap Spotify playback with its own preview player. | Low (avoidable) |
+| S9 | "Streaming SDA" includes "using the Spotify Platform to control a background Spotify application"; then "there shall be no playback of Spotify Content without showing relevant cover art and metadata in your SDA". | Terms §II; Policy §II.5 | `PUT /me/player/play` (§6) makes Selecta a Streaming SDA. | Low (UI obligations) |
 | S10 | License to develop and distribute SDAs "(i) for private personal use"; "Do not analyze the Spotify Content … for any purpose, including … creating new or derived … functionality"; "Do not use the Spotify Platform or any Spotify Content to train a machine learning or AI model". | Terms §III; Policy §III.13–14 | Matching scores are "analysis" in a loose reading; no ML planned. | Low |
 
 Other notes:
@@ -218,24 +336,24 @@ Other notes:
 - No clause names Soulseek or P2P explicitly; S1 is the general "illegal or unauthorized … sharing of audio" clause.
   Whether a given user's Soulseek use is unauthorised is a fact question per file; Spotify does not need to show that to
   revoke access.
-- Deezer's developer terms contain the same kind of clause (§8.1, D-T1), and Apple's iTunes promo terms restrict use to
-  promoting purchases (§8.2). **No commercial catalogue API is clean for a P2P client.** MusicBrainz (CC0 core data) is
-  the exception (§9.1).
+- Deezer's developer terms contain the same kind of clause (§9.1, D-T1), and Apple's iTunes promo terms restrict use to
+  promoting purchases (§9.2). **No commercial catalogue API is clean for a P2P client.** MusicBrainz (CC0 core data) is
+  the exception (§10.1).
 
-### 4.2 Reading for Selecta (inference, not legal advice)
+### 5.2 Reading for Selecta (inference, not legal advice)
 
 1. **Tagging downloaded files (on arrival, D29) with Spotify metadata or artwork is the clearest conflict** (S3 + S4 +
    S5, on top of S1), and the tagged files are later shared on Soulseek from the collection (D12). Recommendation: by
    default, write no Spotify-sourced text or artwork into files; tag from MusicBrainz/Cover Art Archive/Deezer by ISRC
-   (§12.7). If the maintainer accepts the risk for personal builds (MQ1), make "Spotify first" an explicit setting.
+   (§14.7). If the maintainer accepts the risk for personal builds (MQ1), make "Spotify first" an explicit setting.
 2. **Spotify as a lookup aid** (resolve a line to a canonical title/version/duration/ISRC for matching, show it in the
    UI with attribution and a link back, keep it in a short-TTL cache) is less exposed but still within S1/S2.
 3. **Playlist import** is the use the Policy itself half-allows (S7 exception), limited by dev mode to the user's own
    playlists and Liked Songs.
 4. Make every Spotify feature **opt-in, off by default, behind a BYO Client ID**, with a plain-language warning. Offer
-   the non-API routes first: "Open in Spotify" deep links (§10) and importing an exported CSV (§12.6).
+   the non-API routes first: "Open in Spotify" deep links (§11) and importing an exported CSV (§14.6).
 
-## 5. Full-length listening through the user's own Spotify app
+## 6. Full-length listening through the user's own Spotify app
 
 The maintainer wants a legitimate way to hear the whole track before downloading. Three options, from least to most
 coupling:
@@ -251,7 +369,7 @@ integration. Keep **C** as a lab experiment for the maintainer.
 
 Selecta never plays Spotify audio itself, never records it, and never overlaps it with its own preview audio (S8).
 
-## 6. C++/Qt libraries for the Spotify Web API
+## 7. C++/Qt libraries for the Spotify Web API
 
 | Library | Language / deps | Licence (SPDX) | Activity | Auth | Coverage vs Selecta's needs | Verdict |
 |---|---|---|---|---|---|---|
@@ -297,7 +415,7 @@ signals:
     void quotaExceeded(QDateTime retryAfter);   // 429 with reason QUOTA_EXCEEDED
 };
 
-struct SpTrack {   // only what Selecta displays/matches; never written to files (§4.2)
+struct SpTrack {   // only what Selecta displays/matches; never written to files (§5.2)
     QString id, name, isrc, albumId, albumName, albumType, releaseDate, releaseDatePrecision;
     QStringList artists;
     int durationMs = 0, trackNumber = 0, discNumber = 0;
@@ -311,25 +429,25 @@ Implementation notes: one `QNetworkAccessManager` per service thread; `QJsonDocu
 (every field optional — Spotify removes fields without versioning); treat 401 → refresh once → re-auth; 429 → governor
 backoff; 403 on playlist items → "not your playlist" message; per-request timeout 15 s.
 
-## 7. spotDL: architecture, matching and tagging
+## 8. spotDL: architecture, matching and tagging
 
 Repository `spotDL/spotify-downloader`, **MIT** licence, read at v4.5.2 (`cd4a420`, 2026-07-20). MIT code can be ported
 into GPL-3.0-or-later Selecta with attribution (keep the copyright notice).
 
-### 7.1 Architecture (high level only)
+### 8.1 Architecture (high level only)
 
 | Concern | Where it comes from in spotDL |
 |---|---|
 | Metadata (title, artists, album, dates, ISRC, artwork URL, label, copyright) | Spotify. Since the 2026 restrictions the **default backend is "SpotipyFree"**, a third-party drop-in that talks to Spotify's private web-player endpoints instead of the Web API (PR #2626, March 2026, "Replaced spotipy with a non-api library"); the official Web API (spotipy) is used only with `--use-official-api` or user auth. spotDL also ships a shared Client ID/secret in its default config. |
 | Audio | Not Spotify: it searches other platforms (default provider YouTube Music; others selectable) and takes the best match. **Not documented further here (out of scope).** |
 | Lyrics | Genius, AZLyrics, Musixmatch. |
-| Tags | mutagen, from the Spotify metadata (§7.4). |
+| Tags | mutagen, from the Spotify metadata (§8.4). |
 
 Lessons: (1) spotDL's own trajectory shows that the official Web API is no longer enough for "anyone can use it"
 tools; (2) the unofficial-endpoint route is not acceptable for Selecta (Terms §IV "Improper use" and "Unauthorized
 access"; brittle).
 
-### 7.2 Turning a Spotify track into queries (`spotdl/providers/audio/base.py`, `utils/formatter.py`)
+### 8.2 Turning a Spotify track into queries (`spotdl/providers/audio/base.py`, `utils/formatter.py`)
 
 1. **ISRC first.** If the track has an ISRC and the provider supports ISRC search, search the bare ISRC string.
    - Exactly one result and it is "verified" (an official catalogue "song" entry, not a user video) → accept without
@@ -342,7 +460,7 @@ access"; brittle).
 4. A plain text input (not a Spotify URL) is resolved with a Spotify search and **the first hit is taken without
    scoring** (`Song.from_search_term`) — a weak spot for batch lines.
 
-### 7.3 Scoring (`spotdl/utils/matching.py`, `order_results`)
+### 8.3 Scoring (`spotdl/utils/matching.py`, `order_results`)
 
 Strings are normalised with `slugify` (python-slugify: ASCII-fold, lower-case, non-alphanumerics → `-`; Japanese is
 romanised with pykakasi), split into tokens and sorted; similarity is RapidFuzz `fuzz.ratio` (0–100).
@@ -361,7 +479,7 @@ romanised with pykakasi), split into tokens and sorted; similarity is RapidFuzz 
 | Combination | `avg = (artists + title) / 2`; if not an ISRC search and `avg ≤ 85`: `avg = (avg + time) / 2` and −5 on explicit-flag mismatch. Cap 100. |
 | Tie-break | Keep candidates within 8 points of the best; add 0–15 points by relative popularity; take the max. |
 
-### 7.4 Tags and artwork written by spotDL (`spotdl/utils/metadata.py`)
+### 8.4 Tags and artwork written by spotDL (`spotdl/utils/metadata.py`)
 
 MP3 saved as **ID3v2.3**: `TIT2` title; `TPE1` all artists (joined with `/` in v2.3); `TPE2` album artist; `TALB`;
 `TDRC` date + `TYER` year; `TCON` first genre (title-cased); `TRCK` n/N; `TPOS` n/N; `TSRC` ISRC; `TCOP` copyright
@@ -370,7 +488,7 @@ MP3 saved as **ID3v2.3**: `TIT2` title; `TPE1` all artists (joined with `/` in v
 Spotify album image (JPEG); `USLT` lyrics. FLAC/Opus/Vorbis get the equivalent Vorbis comments plus
 `METADATA_BLOCK_PICTURE`; M4A gets iTunes atoms and freeform `----:spotdl:WOAS` / `----:spotdl:ISRC`.
 
-### 7.5 What transfers to Selecta
+### 8.5 What transfers to Selecta
 
 | spotDL idea | Transfer? | How, for Soulseek results and previews |
 |---|---|---|
@@ -380,11 +498,11 @@ Spotify album image (JPEG); `USLT` lyrics. FLAC/Opus/Vorbis get the equivalent V
 | Forbidden-word penalty | **Invert it for DJs.** "remix", "extended", "dub", "edit", "VIP", "instrumental" are versions the user may want. | Parse the version descriptor on both sides and require equality (or show "different version") instead of penalising words. Keep penalties for junk only: "slowed", "reverb", "8d", "bass boosted", "sped up", "nightcore". |
 | "Verified" candidates | Partly. | Soulseek analogue: a result inside a release-like folder (track numbers, cover, consistent names) gets a small bonus; a lone file with a junk name gets none. |
 | Popularity tie-break | No (no Spotify popularity in dev mode; peer fairness and quality are Selecta's tie-breakers, BATCH-5). | — |
-| Tag set | Mostly. | Same frames, but label → `TPUB`, provenance URL → `WXXX`/`WOAS` of the *metadata source actually used*, no `POPM`. Values from MusicBrainz, not Spotify (§4.2). Mapping details: `conversion-and-metadata.md`. |
+| Tag set | Mostly. | Same frames, but label → `TPUB`, provenance URL → `WXXX`/`WOAS` of the *metadata source actually used*, no `POPM`. Values from MusicBrainz, not Spotify (§5.2). Mapping details: `conversion-and-metadata.md`. |
 
-## 8. Official 30-second preview sources
+## 9. Official 30-second preview sources
 
-### 8.1 Deezer (keyless "Simple API")
+### 9.1 Deezer (keyless "Simple API")
 
 Verified by manual requests on 2026-10-19 (Bicep — "Glue", ISRC `GBCFB1700229`):
 
@@ -399,7 +517,7 @@ Verified by manual requests on 2026-10-19 (Bicep — "Glue", ISRC `GBCFB1700229`
 | Rate limit | "50 requests / 5 seconds" per IP (quoted second-hand from the old docs page, which now requires login; medium confidence). Errors come back as HTTP 200 with `{"error": {"type", "message", "code"}}`; code 4 = quota (third-party clients; TODO(verify)). |
 | Terms | Developer Terms (BLOGMUSIK/Deezer, French law): **D-T1** "Will not use the Services in any way or on any website that is associated or promotes in whatever manner the illegal or unauthorized use, streaming, download, or sharing of music and associated elements content" (§III.6); strictly non-commercial, "limited to a strictly private use within a family scope" (§IV); "Local Storage/Offline Storage of audio data is strictly forbidden" (Guidelines); "Each application using Deezer API/SDKs must have to include a clearly visible Deezer Logo" (Logo guidelines). |
 
-### 8.2 iTunes Search API (keyless)
+### 9.2 iTunes Search API (keyless)
 
 Verified by one request (`/search?term=bicep+glue&media=music&entity=song&country=FR`):
 
@@ -411,7 +529,7 @@ Verified by one request (`/search?term=bicep+glue&media=music&entity=song&countr
 | Rate limit | "approximately 20 calls per minute (subject to change)". |
 | Terms | Promo content may be used "only to promote store content and not for entertainment purposes"; must be "proximate to a store badge" linking to the purchase page; song previews must carry "provided courtesy of iTunes" and be "streamed only, and not downloaded, saved, cached, or synchronized with video"; Apple may demand removal. The page is written for websites; nothing addresses desktop apps. |
 
-### 8.3 Other preview sources
+### 9.3 Other preview sources
 
 | Source | Status for Selecta |
 |---|---|
@@ -421,7 +539,7 @@ Verified by one request (`/search?term=bicep+glue&media=music&entity=song&countr
 | **Traxsource** | No public API (third-party listings agree). Track pages offer an embeddable player (iframe). → **Deep link only.** |
 | **Bandcamp** | The official API serves labels and merch partners only (Account, Sales Report, Merch Orders APIs; "Labels and merchandise fulfillment partners … contact us"). No catalogue or search API. The Acceptable Use policy (incorporated in the Terms, 2026-06-10) forbids scraping and data mining. Embedded player (iframe) and oEmbed exist; tracks stream in full when the artist allows it. spotDL's Bandcamp provider uses undocumented mobile-app endpoints — not acceptable. → **Deep link only.** |
 
-### 8.4 Suitability for electronic music (estimates — verify with experiment X5)
+### 9.4 Suitability for electronic music (estimates — verify with experiment X5)
 
 | Source | Coverage of DJ electronic catalogue | Clip | Quality | Latency to first audio | Use inside a third-party desktop app |
 |---|---|---|---|---|---|
@@ -431,9 +549,9 @@ Verified by one request (`/search?term=bicep+glue&media=music&entity=song&countr
 | Beatport | Highest | 2 min, middle of track | (site previews; not via API) | — | Partner agreement needed |
 | Traxsource / Bandcamp | Medium / long tail | site/embed | — | — | Embeds only (web view) |
 
-## 9. Alternative and complementary metadata sources
+## 10. Alternative and complementary metadata sources
 
-### 9.1 MusicBrainz + Cover Art Archive
+### 10.1 MusicBrainz + Cover Art Archive
 
 Verified by manual requests:
 
@@ -448,7 +566,7 @@ Verified by manual requests:
 | C++ client | **libmusicbrainz5**: LGPL-2.1-or-later (source headers), XML only, depends on neon + libxml2, last release 5.1.0 (2014-11-13), occasional commits (last push 2025-07-12). Not worth it: a JSON client on `QNetworkAccessManager` is ~300 lines. |
 | Electronic coverage | Good for artist albums and well-known labels; patchy for Beatport-only singles, small digital labels, white labels (community-maintained; medium confidence — measure in X5). |
 
-### 9.2 Discogs API
+### 10.2 Discogs API
 
 | Item | Documented |
 |---|---|
@@ -457,13 +575,13 @@ Verified by manual requests:
 | Data DJs value | Labels and **catalogue numbers**, **styles** (e.g. "Deep House", finer than Deezer's genres), formats (vinyl/digital), credits (remixers), master/release versions, year. Strongest for vinyl/physical electronic releases. |
 | Terms (API Terms of Use, last updated 2025-05-27; read via the Wayback copy of 2026-05-30 because the live page blocks automated reads) | **CC0 Data**: "Release titles, notes, dates, format, track listings, barcodes and other identifiers, credits, versions, URL links …", artist names, label names. **Restricted Data**: user data, marketplace data, images (user-contributed under public domain/CC0/fair-use bases). "You may not display in any format or to any audience the Content if it is more than six (6) hours older than the information on Our online properties … You may not cache or store the Content longer than is necessary to provide a service to Your application's users." Required notices: "This application uses Discogs' API but is not affiliated with, sponsored or endorsed by Discogs. 'Discogs' is a trademark of Zink Media, LLC." (prominent, may be in the docs/terms) and "Data provided by Discogs." next to Discogs data, hyperlinked, no `nofollow`. Prohibited: "Use Our API or the Content for illegal purposes"; commercial uses such as "Using Our API or the Content with the intent to drive traffic to other non-Discogs websites or services". No P2P-specific clause. |
 
-### 9.3 Deezer as a metadata source
+### 10.3 Deezer as a metadata source
 
 Deezer is the best **keyless** match for Spotify's catalogue: same distributors, ISRC in every search hit, label and
 UPC on albums, 1000-px covers, BPM, and the preview in the same response. Its terms carry the same P2P-association
 clause as Spotify's (D-T1) but no clause on storing metadata (only audio).
 
-### 9.4 Comparison of metadata sources for Selecta
+### 10.4 Comparison of metadata sources for Selecta
 
 | | Spotify (dev mode) | Deezer | MusicBrainz + CAA | Discogs | iTunes Search |
 |---|---|---|---|---|---|
@@ -482,7 +600,7 @@ clause as Spotify's (D-T1) but no clause on storing metadata (only audio).
 | P2P-context clause | **yes (S1, S2)** | **yes (D-T1)** | no | "illegal purposes" only | promo-only use |
 | DJ relevance | matching, playlists, deep link to full track | matching, label, cover, preview | identifiers, label/catno, links to stores | catno, styles, vinyl | preview |
 
-## 10. Deep links and purchases into the Inbox
+## 11. Deep links and purchases into the Inbox
 
 Deep links need no API, carry no terms beyond linking, and give the maintainer full-length listening (in the
 store's or service's own player) and a path to buying. Use `QDesktopServices::openUrl`; build query strings with
@@ -517,7 +635,7 @@ download manager — TODO(verify) current Beatport flow). Proposed flow:
 4. The History records the source as "Purchase (Bandcamp)" rather than a peer, so per-peer counters and the ratio
    are unaffected; the item can still be matched against the pending purchase's release for tags.
 
-## 11. Comparison table (all services)
+## 13. Comparison table (all services)
 
 | Service | Metadata | Preview | Auth | Rate limit | Electronic coverage | Terms risk in a Soulseek client | Role in Selecta |
 |---|---|---|---|---|---|---|---|
@@ -531,28 +649,28 @@ download manager — TODO(verify) current Beatport flow). Proposed flow:
 | Traxsource | Good for house | Site/embed | None (no API) | — | High (house) | — | Deep link |
 | Bandcamp | Long tail | Embed | Labels only | — | Long tail | Scraping forbidden | Deep link, purchase |
 
-## 12. Implications for Selecta
+## 14. Implications for Selecta
 
 Inputs to ADR-011 and to the `src/meta/` module (PLAN). PRD state at the time of writing: v0.4 (D19–D29, META-1…8).
 The full-track preview runner of D26 is a separate provider behind the same `PreviewService` interface; this note
 does not cover it (scope rule).
 
-### 12.1 Recommended decisions
+### 14.1 Recommended decisions
 
 | # | Recommendation | Why |
 |---|---|---|
 | R1 | **Keyless baseline, Spotify on top when connected.** Without any account: Deezer (match, ISRC, label, cover, clip) → MusicBrainz (identifiers, label/catno, store links, CAA artwork) → iTunes (clip fallback). When the user has connected their own Spotify app, Spotify ranks first for *matching* (SRCH-17, D29), and the keyless sources still supply label, catalogue number, artwork and clips. | Works for everyone with no Premium and no Client ID; Get tracks survives losing Spotify access; Deezer's catalogue is close to Spotify's. |
 | R2 | **Spotify via PKCE with a user-owned Client ID** (META-1). Personal builds may pre-fill the maintainer's Client ID (it is not a secret), but it serves at most 5 allow-listed users and needs the owner's Premium; public builds ask for the user's own. No client secret in releases. | §3.1, §3.2. |
-| R3 | **File tags come from open data by default:** MusicBrainz (CC0) for text and identifiers, Deezer/CAA for artwork, keyed by the ISRC found through any source. Writing **Spotify-sourced text or artwork into files** is a maintainer decision with a named risk (§4, S3–S5): if chosen (D29 as worded), make it an explicit setting, add a `WOAS` link-back to the Spotify track, and keep it to personal builds. | Spotify Terms forbid indefinite storage and permanent copies of Spotify Content; MusicBrainz data is public domain and built for tagging. In practice the strings are usually identical. |
+| R3 | **File tags come from open data by default:** MusicBrainz (CC0) for text and identifiers, Deezer/CAA for artwork, keyed by the ISRC found through any source. Writing **Spotify-sourced text or artwork into files** is a maintainer decision with a named risk (§5, S3–S5): if chosen (D29 as worded), make it an explicit setting, add a `WOAS` link-back to the Spotify track, and keep it to personal builds. | Spotify Terms forbid indefinite storage and permanent copies of Spotify Content; MusicBrainz data is public domain and built for tagging. In practice the strings are usually identical. |
 | R4 | **Clips are streamed, never stored.** Play Deezer/iTunes clips from memory (`QBuffer` or `QMediaPlayer` on the URL); derive the 30-s waveform in memory; do not put clip audio in the preview cache. Show the source logo/attribution and a store/"Open in" link next to the player. | Deezer forbids local storage of audio; Apple requires stream-only + badge + "provided courtesy of iTunes". |
-| R5 | **Every meta request through the governor** with per-host buckets, compile-time ceilings, the global pause switch, and an activity-log line per request (META-7, SAFE-1/4/5). | §12.3. |
-| R6 | **Release-first resolution** uses identifiers before text, rejects DJ-mix segments and derivative junk, and hands the chosen release's duration to the Soulseek ranker (D23, `library-matching-and-organization.md` §9.1/§17.5). | §12.5. |
+| R5 | **Every meta request through the governor** with per-host buckets, compile-time ceilings, the global pause switch, and an activity-log line per request (META-7, SAFE-1/4/5). | §14.3. |
+| R6 | **Release-first resolution** uses identifiers before text, rejects DJ-mix segments and derivative junk, and hands the chosen release's duration to the Soulseek ranker (D23, `library-matching-and-organization.md` §9.1/§17.5). | §14.5. |
 | R7 | **Playlist import** = (a) Spotify own/collab playlists, Liked Songs and any album link via the API; (b) for other playlists, tell the user to add them to a playlist they own in the Spotify app, or import an Exportify CSV; (c) plain text as today. | Dev-mode 403 on others' playlists (§3.3). |
-| R8 | **Full-length listening** = deep links (P1, no API); Web API playback only inside the opt-in Spotify integration (P2); Selecta pauses its own player first and never overlaps audio. | §5, S8/S9. |
+| R8 | **Full-length listening** = deep links (P1, no API); Web API playback only inside the opt-in Spotify integration (P2); Selecta pauses its own player first and never overlaps audio. | §6, S8/S9. |
 | R9 | **No unofficial endpoints** (Spotify web-player APIs à la SpotipyFree, Beatport docs client ID, Bandcamp mobile API, preview scrapers). | Terms; brittleness; D21. |
-| R10 | Write a **small in-house client per service** (Spotify ~800 lines, Deezer ~300, MusicBrainz+CAA ~400, iTunes ~150) on `QNetworkAccessManager` + `QJsonDocument`, with recorded HTTP fixtures for tests. Reuse no Spotify C++ library. | §6; testability (PLAN `meta/` agent). |
+| R10 | Write a **small in-house client per service** (Spotify ~800 lines, Deezer ~300, MusicBrainz+CAA ~400, iTunes ~150) on `QNetworkAccessManager` + `QJsonDocument`, with recorded HTTP fixtures for tests. Reuse no Spotify C++ library. | §7; testability (PLAN `meta/` agent). |
 
-### 12.2 Module design (`src/meta/`)
+### 14.2 Module design (`src/meta/`)
 
 ```mermaid
 flowchart LR
@@ -626,7 +744,7 @@ Threading: one meta worker thread owning the `QNetworkAccessManager` and the SQL
 delivered as `QFuture` continuations on the UI thread. Every parser treats every JSON field as optional (Spotify
 removed fields without versioning in 2026).
 
-### 12.3 Governor budgets (proposed)
+### 14.3 Governor budgets (proposed)
 
 Ceilings are `constexpr` (SAFE-2); defaults are what ships; settings can only lower them. Each host has its own
 bucket; all meta traffic stops with "Pause network activity" (SAFE-5).
@@ -646,7 +764,7 @@ Budget check for a 100-line Get tracks list: Spotify ≤ 2 searches/line ≈ 200
 search/line ≈ 1 min; MusicBrainz enrichment ≈ 2 calls per *chosen* line, done lazily at arrival ≈ 3–4 min spread over
 the downloads. Matching stays well ahead of Soulseek searches, which the Soulseek governor paces far more slowly.
 
-### 12.4 Caching and TTLs
+### 14.4 Caching and TTLs
 
 | Data | Store | TTL | Why |
 |---|---|---|---|
@@ -663,7 +781,7 @@ the downloads. Matching stays well ahead of Soulseek searches, which the Soulsee
 | "No match" results | SQLite | 24 h | Avoids re-querying unresolvable lines. |
 | Spotify/Deezer/iTunes 429/quota state | memory | until reset | — |
 
-### 12.5 Matching pipeline (line or result → release → ISRC → clip)
+### 14.5 Matching pipeline (line or result → release → ISRC → clip)
 
 ```mermaid
 flowchart TD
@@ -681,7 +799,7 @@ flowchart TD
   J --> K[Release card + confidence]
   K --> L[Rank Soulseek files against release<br/>length ±3 s first — library §9.1, §17.5]
   K --> M[Clip: Deezer preview by ISRC → iTunes by text+duration]
-  K --> N[Tag plan on arrival — §12.7]
+  K --> N[Tag plan on arrival — §14.7]
 ```
 
 **Candidate score** (same conventions as `library-matching-and-organization.md` §9: missing evidence leaves the
@@ -728,7 +846,7 @@ Rules learned from spotDL and from the requests made for this note:
 - spotDL's forbidden words are inverted for DJs: "remix", "extended", "dub", "instrumental" are versions, not noise.
 - spotDL takes the first Spotify hit for plain text; Selecta never does — it scores every hit.
 
-### 12.6 Playlist import (META-3)
+### 14.6 Playlist import (META-3)
 
 | Source | Works in dev mode? | What a line carries |
 |---|---|---|
@@ -740,7 +858,7 @@ Rules learned from spotDL and from the requests made for this note:
 
 `is_local` playlist entries (local files in Spotify) carry no ID or ISRC — import them as text lines.
 
-### 12.7 Tag plan on arrival (META-4, DL-3)
+### 14.7 Tag plan on arrival (META-4, DL-3)
 
 Two policies; the default is the left column (R3). The mapping to frames follows `conversion-and-metadata.md`.
 
@@ -757,7 +875,7 @@ Two policies; the default is the left column (R3). The mapping to frames follows
 | Artwork | Deezer `cover_xl` (1000 px) or CAA front-1200 → JPEG ≤ 800×800 (D29) | Spotify (≤ 640 px: never upscaled) → Deezer/CAA | `APIC` type 3 |
 | Provenance | `WOAS` = source page of the release; `TXXX:MusicBrainz Track Id`/`Release Id` (Picard names) | `WOAS` = Spotify track URL (link-back) | `WOAS`, `TXXX` |
 
-### 12.8 Privacy: what leaves the machine
+### 14.8 Privacy: what leaves the machine
 
 | Service | Sent | Tied to an identity? | Mitigation |
 |---|---|---|---|
@@ -772,7 +890,7 @@ Never sent to any of them: Soulseek usernames, peer names, raw remote paths, loc
 history. Queries derived from a Soulseek result are rebuilt from the parsed artist/title/version, never from the raw
 path (paths can contain peer usernames and private folder names). No telemetry (PRD NFR-5).
 
-### 12.9 Terms and legal risk
+### 14.9 Terms and legal risk
 
 | Service | Selecta use | Relevant clause | Risk | Mitigation |
 |---|---|---|---|---|
@@ -793,7 +911,7 @@ The practical consequence is not legal action against a personal tool but loss o
 owns the key; Selecta should be designed so that losing any one commercial source degrades features (no clip, fewer
 fields) rather than breaking Get tracks.
 
-### 12.10 Proposed defaults
+### 14.10 Proposed defaults
 
 | Setting | Default |
 |---|---|
@@ -803,17 +921,17 @@ fields) rather than breaking Get tracks.
 | Artwork | Deezer 1000 px or CAA 1200 → JPEG ≤ 800×800, quality 90; never upscale |
 | Confidence for auto-pick | Confident (≥ 0.92, margin 0.05) or Exact |
 | Duration tolerance vs release | ±3 s (D23) |
-| Meta cache TTLs | §12.4 |
-| Governor budgets | §12.3 |
+| Meta cache TTLs | §14.4 |
+| Governor budgets | §14.3 |
 | MusicBrainz User-Agent | `Selecta/<version> ( https://github.com/usr-ein/selecta )` (TODO: final repo URL) |
 
-## 13. Open questions and things to verify
+## 15. Open questions and things to verify
 
-### 13.1 Questions for the maintainer
+### 15.1 Questions for the maintainer
 
 | # | Question | Default until answered |
 |---|---|---|
-| MQ1 | D29 asks for "metadata from spotify in the mp3 id3v2, cover in there too". Spotify's Developer Terms forbid storing Spotify Content indefinitely and making permanent copies of it, and require attribution (§4, S3–S5). Accept that risk for personal builds ("Spotify first" tag policy), or tag from MusicBrainz/Deezer by ISRC and use Spotify only to match and display? | "Open data" tags (R3); Spotify used for matching and display |
+| MQ1 | D29 asks for "metadata from spotify in the mp3 id3v2, cover in there too". Spotify's Developer Terms forbid storing Spotify Content indefinitely and making permanent copies of it, and require attribution (§5, S3–S5). Accept that risk for personal builds ("Spotify first" tag policy), or tag from MusicBrainz/Deezer by ISRC and use Spotify only to match and display? | "Open data" tags (R3); Spotify used for matching and display |
 | MQ2 | Is the Spotify integration for personal builds only (your Client ID pre-filled, ≤ 5 users, your Premium), or should public builds ask every user for their own Client ID? | Settings field (META-1); a personal build may pre-fill your Client ID from `local/secrets.env`; public builds ship it empty |
 | MQ3 | Deezer's terms forbid association with unauthorised sharing (D-T1) too. Use Deezer keylessly for matching and clips anyway? | Yes, clips streamed only, Deezer logo shown |
 | MQ4 | Apply for Beatport partner API access (best electronic data and 2-min middle clips)? A P2P client is an unlikely candidate. | No; deep links only |
@@ -822,22 +940,22 @@ fields) rather than breaking Get tracks.
 | MQ7 | Was your existing Spotify app created before 2026-02-11? (Its endpoint restrictions were postponed; Premium and the 5-user cap apply anyway.) | Treat as a new app |
 | MQ8 | Purchases: may Selecta watch `~/Downloads` for 2 h after a "Buy on Bandcamp/Beatport" click (read-only, confirm before import)? | Ask on first use |
 
-### 13.2 Things to verify (none of these touch the Soulseek network)
+### 15.2 Things to verify (none of these touch the Soulseek network)
 
 | # | Experiment | How | Feeds |
 |---|---|---|---|
-| X1 | Spotify dev-mode limits | Log every 429 (`Retry-After`, `reason`) during normal manual use with the maintainer's app; do not try to exhaust the quota. | §12.3 budget |
-| X2 | Spotify fields for the maintainer's app | One `GET /albums/{id}`: is `label` present (app age, MQ7)? Image sizes? | §3.3, §12.7 |
-| X3 | Playlist access | `GET /playlists/{id}/items` on an editorial playlist and on a friend's public playlist → 403? | §12.6 |
-| X4 | Spotify search behaviour | Recall of `limit=10` with and without version words (`track:"Glue" artist:"Bicep"` vs `… extended`), on 20 lines with known versions. | §12.5 query plan |
-| X5 | Coverage and agreement | Run 100–200 lines from the maintainer's real tracklists through Spotify, Deezer, MusicBrainz, iTunes (and Discogs), at the governor's defaults; record hit rate per tier and ISRC agreement; label the correct release by hand. This is the labelled corpus for tuning §12.5. | weights, thresholds, source order |
+| X1 | Spotify dev-mode limits | Log every 429 (`Retry-After`, `reason`) during normal manual use with the maintainer's app; do not try to exhaust the quota. | §14.3 budget |
+| X2 | Spotify fields for the maintainer's app | One `GET /albums/{id}`: is `label` present (app age, MQ7)? Image sizes? | §3.3, §14.7 |
+| X3 | Playlist access | `GET /playlists/{id}/items` on an editorial playlist and on a friend's public playlist → 403? | §14.6 |
+| X4 | Spotify search behaviour | Recall of `limit=10` with and without version words (`track:"Glue" artist:"Bicep"` vs `… extended`), on 20 lines with known versions. | §14.5 query plan |
+| X5 | Coverage and agreement | Run 100–200 lines from the maintainer's real tracklists through Spotify, Deezer, MusicBrainz, iTunes (and Discogs), at the governor's defaults; record hit rate per tier and ISRC agreement; label the correct release by hand. This is the labelled corpus for tuning §14.5. | weights, thresholds, source order |
 | X6 | Clip positions | For ~30 owned tracks, fetch the Deezer and iTunes clips into memory and cross-correlate with the local file to find each clip's offset (store only the offsets). | Whether clips show the drop; waveform UX |
-| X7 | Deezer details | Preview URL lifetime, behaviour after expiry (403?), advanced search syntax status, quota error body, how often `bpm` is 0. | §8.1, §12.3 |
+| X7 | Deezer details | Preview URL lifetime, behaviour after expiry (403?), advanced search syntax status, quota error body, how often `bpm` is 0. | §9.1, §14.3 |
 | X8 | iTunes clip container | Is `moov` before `mdat` (progressive start)? Confirm it is unprotected AAC despite the `audio/x-m4p` content type. | PREV-1 streaming |
-| X9 | Spotify AppleScript | `play track` + `set player position` with the current macOS app; TCC prompt text. | §5 option C |
-| X10 | MusicBrainz release choice | On X5's corpus, how often the "original single/EP" rule picks the release the maintainer would file. | §12.5 |
+| X9 | Spotify AppleScript | `play track` + `set player position` with the current macOS app; TCC prompt text. | §6 option C |
+| X10 | MusicBrainz release choice | On X5's corpus, how often the "original single/EP" rule picks the release the maintainer would file. | §14.5 |
 
-## 14. Sources
+## 16. Sources
 
 All accessed 2026-10-19.
 
