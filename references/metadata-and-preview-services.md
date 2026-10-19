@@ -343,15 +343,16 @@ Other notes:
 ### 5.2 Reading for Selecta (inference, not legal advice)
 
 1. **Tagging downloaded files (on arrival, D29) with Spotify metadata or artwork is the clearest conflict** (S3 + S4 +
-   S5, on top of S1), and the tagged files are later shared on Soulseek from the collection (D12). Recommendation: by
-   default, write no Spotify-sourced text or artwork into files; tag from MusicBrainz/Cover Art Archive/Deezer by ISRC
-   (§14.7). If the maintainer accepts the risk for personal builds (MQ1), make "Spotify first" an explicit setting.
+   S5, on top of S1), and the tagged files are later shared on Soulseek from the collection (D12). D29 decides to do it
+   anyway; the exposure is the user's own developer app and Spotify API access. Keep it to personal builds with the
+   user's own Client ID, add a `WOAS` link-back, and offer "Deezer first" tags as the alternative (§14.7, MQ1).
 2. **Spotify as a lookup aid** (resolve a line to a canonical title/version/duration/ISRC for matching, show it in the
    UI with attribution and a link back, keep it in a short-TTL cache) is less exposed but still within S1/S2.
 3. **Playlist import** is the use the Policy itself half-allows (S7 exception), limited by dev mode to the user's own
    playlists and Liked Songs.
-4. Make every Spotify feature **opt-in, off by default, behind a BYO Client ID**, with a plain-language warning. Offer
-   the non-API routes first: "Open in Spotify" deep links (§11) and importing an exported CSV (§14.6).
+4. Make every Spotify feature **opt-in, behind the user's own Client ID** (§4.2), with a plain-language note on these
+   terms in Settings. The non-API routes stay available: "Open in Spotify" deep links (§11), oEmbed for pasted links
+   (§4.3) and importing an exported CSV (§14.6).
 
 ## 6. Listen in full: official players
 
@@ -686,7 +687,7 @@ Verified by manual requests:
 | Licence | **Core data CC0** ("effectively placing the data into the Public Domain"); supplementary data CC BY-NC-SA 3.0. Purpose-built for tagging (Picard). No clause about P2P use. |
 | Cover Art Archive | `/release/{mbid}/` → JSON index (via 307 to archive.org); `/release/{mbid}/front[-250|-500|-1200]` and `/release-group/{mbid}/front[-…]` redirect to the image; thumbnails 250/500/1200 px plus the original. "There are currently no rate limiting rules in place" (yet 503 is documented). Images remain the rights holders' property; the API carries no licence field (same position as every tagger that uses CAA). |
 | C++ client | **libmusicbrainz5**: LGPL-2.1-or-later (source headers), XML only, depends on neon + libxml2, last release 5.1.0 (2014-11-13), occasional commits (last push 2025-07-12). Not worth it: a JSON client on `QNetworkAccessManager` is ~300 lines. |
-| Electronic coverage | Good for artist albums and well-known labels; patchy for Beatport-only singles, small digital labels, white labels (community-maintained; medium confidence — measure in X5). |
+| Electronic coverage | Good for artist albums and well-known labels; patchy for club singles: in a 4-track sample only 1 ISRC was known (§4.4); Beatport-only singles, small digital labels and white labels are often missing (community-maintained; measure in X5). |
 
 ### 10.2 Discogs API
 
