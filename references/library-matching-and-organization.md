@@ -383,9 +383,11 @@ Proposed field similarities (all in [0, 1]):
 | beets / Lidarr | free up to 10 s, then linear to full penalty at +30 s (40 s) | Album identification against MusicBrainz. |
 | Picard | linear 1 → 0 over 30 s; extra multiplier 1 → 0.3 between 60 s and 600 s | Same. |
 
-Selecta's comparison is remote **integer seconds** (rounding varies by client; VBR MP3s without a Xing/VBRI header can
-have badly wrong durations if the peer's client estimated them) vs an exact local duration (TagLib). Versions differ
-by minutes, edits by seconds. Proposal:
+Selecta's comparison is remote **integer seconds** vs an exact local duration (TagLib). Verified for Nicotine+
+sharers (`pynicotine/shares.py`): duration is **truncated** (`int(duration)`, so remote ∈ [d − 1, d]) and bitrate
+rounded; for MP3s without a Xing/Info/VBRI header the bundled tinytag *estimates* the duration from the average size of
+the first frames (`pynicotine/external/tinytag.py`), which can be off for VBR files. Other clients: to measure (E4).
+Compare against `floor(d_local)`. Versions differ by minutes, edits by seconds. Proposal:
 
 ```
 Δ        = |d_remote − d_local|            (seconds; missing or 0 on either side → s_dur = unknown)
