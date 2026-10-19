@@ -323,7 +323,48 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
   requires each downstream app to pick a unique minor (100 legacy, 760 slskd, 9999 testing); SoulseekQt currently
   `101` (2024-02 onwards). "Experimental clients may use major version 177 and any minor version number they choose
   for each project."
-- What the server sends right after a successful login, and in which order: TODO (Soulfind + client code).
+- Values actually sent: Nicotine+ `Login(…, 160, 3)` ([N+] `slskproto.py:1332-1347`); aioslsk `175, 1`
+  (`src/aioslsk/client.py:38-39`); Soulseek.NET `170` + a per-application minor > 100 (slskd 760)
+  (`src/Common/Constants.cs:34`, `src/SoulseekClient.cs:112-115`).
+- **The server can restrict instead of reject.** aioslsk's server-behaviour notes: a client whose version is below an
+  unknown threshold is logged in but receives a private message from `server`: *"Your connection is restricted: You
+  cannot search or chat. Your client version is too old. You need to upgrade…"* (`docs/source/SOULSEEK.rst:823-825`).
+  So a Selecta login that "works" may still be crippled; surface every PM from `server` prominently.
+- Soulfind (the local test server) rejects `major == 0 || minor == 0` with `INVALIDVERSION`, does not check the hash,
+  rejects the name `server` (empty detail), treats usernames as case-sensitive and ≤ 30 bytes of printable ASCII,
+  registers unknown users automatically, and gives **no reply at all to banned users** (`src/server/user.d:104-153,
+  307-327`). An unauthenticated socket is closed after 60–75 s.
+- **Rapid reconnects get your IP banned.** aioslsk warns the server "has an anti-DDOS mechanism, be careful when
+  connecting and disconnecting too quickly or you will get banned" (`docs/source/USAGE.rst:8-11`), and its code
+  notes that a banned IP gets an immediate EOF after connecting and that "making any more connections will only
+  extend your ban period" (`src/aioslsk/network/network.py:1163-1176`). Hearsay from one maintainer, but consistent
+  with the official rules' "maximum 5 clients from the same IP" (slsknet.org/news/node/681). Treat *immediate EOF*
+  and *login timeout* as "possibly banned": stop, wait long, ask the user.
+
+### 4.3 What happens around login
+
+Server → client after a successful `Login` (order matters only loosely; parse whatever arrives):
+
+| Server | Sequence |
+|---|---|
+| Official (aioslsk's notes, `SOULSEEK.rst:865-879`) | Login reply · queued PMs · RoomList · ParentMinSpeed · ParentSpeedRatio · WishlistInterval · PrivilegedUsers · ExcludedSearchPhrases |
+| Soulfind (`user.d:383-388`, `server.d:730-802`) | Login reply · RoomList (+ RoomMembers, RoomOperators) · WishlistInterval (720/120) · PrivilegedUsers · ExcludedSearchPhrases · queued PMs (`new=false`) · then online status to watchers. **No** ParentMinSpeed/ParentSpeedRatio/PossibleParents/CheckPrivileges |
+
+Client → server, as implemented:
+
+| Client | Sequence |
+|---|---|
+| Nicotine+ ([N+] `slskproto.py:1332-1411, 2316-2338`; `users.py:96-109, 260-262`; `shares.py:1106-1124`) | Login · SetWaitPort (pipelined, before the reply) · on success: port mapping · HaveNoParent(1) · BranchRoot(self) · BranchLevel(0) · AcceptChildren(0) · SharedFoldersFiles · CheckPrivileges · SetStatus · WatchUser(self) + GetUserStatus(self) · WatchUser for buddies / users with pending transfers · interests · RoomList, rooms. Never ServerPing. |
+| aioslsk (`client.py:173-210`, `distributed.py:249-269`, `user/manager.py:467-483`) | Login · wait for reply · SetListenPort · BranchLevel(0) · BranchRoot(self) · HaveNoParent(1) · CheckPrivileges · SetStatus(2) · AddUser(self, friends) · … · SharedFoldersFiles · ServerPing every 300 s |
+| Soulseek.NET (`SoulseekClient.cs:3418-3426, 4699-4708`) | Login + SetListenPort in one write · on success: SetListenPort · private-room toggle · BranchLevel · BranchRoot · AcceptChildren · HaveNoParent (one write) |
+
+Soulfind quirk: messages that arrive **before authentication completes stay unread in its buffer** until more bytes
+arrive (password hashing is asynchronous) — `msghandler.d:34-35`, `conns.d:288-289, 434-438`. Pipelining
+`SetWaitPort` right after `Login` (as Nicotine+ does) therefore works only by luck there. **Selecta: send `Login`,
+wait for its reply, then send the post-login burst.** Recommended burst (§12): `SetWaitPort(port)` ·
+`SetStatus(2)` · `SharedFoldersFiles(dirs, files)` · `CheckPrivileges` · `WatchUser(self)` (own `avgspeed` for
+the ratio UI and child limit) · `HaveNoParent(1)` · `BranchRoot(self)` · `BranchLevel(0)` · `AcceptChildren(0)`
+(switch to 1 once eligible, §8) · `MessageAcked` for every queued PM.
 
 ## 5. Peer-init messages
 
@@ -333,7 +374,14 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 1 | PeerInit | `str own_username, str type ("P"/"F"/"D"), u32 token (=0)` | Direct connection |
 
 Validation on accept (from [N+] `slskproto.py:1714-1730`): username length 1–256 bytes, printable, not `server`;
-type ∈ {P, F, D}; otherwise close. A `PierceFireWall` whose token doesn't match a pending `ConnectToPeer` is closed.
+type ∈ {P, F, D}; otherwise close. A `PierceFireWall` whose token doesn't match a pending `ConnectToPeer` is closed
+(Nicotine+ `slskproto.py:1678-1711`; aioslsk `network.py:1234-1243`). An unknown init code closes the socket.
+
+Quirks: aioslsk puts its real connection ticket in `PeerInit` instead of 0 and parses the token as `u64` if more
+than 4 bytes remain (`protocol/messages.py:1811-1852`) — read the token, ignore its value. Nicotine+ moves queued
+messages from an older connection of the same type to a newly accepted `PeerInit` connection and closes the old
+one; when a `PierceFireWall` arrives while a direct connect is still pending, the indirect socket becomes primary
+(`slskproto.py:1678-1735, 955-973`).
 
 ## 6. Peer messages
 
@@ -351,7 +399,7 @@ type ∈ {P, F, D}; otherwise close. A `PierceFireWall` whose token doesn't matc
 | 16 | UserInfoResponse | ← | `str description, bool has_pic, [bytes pic], u32 total_uploads, u32 queue_size, bool slots_free` [opt: `u32 upload_permitted`] | P1 receive, P0 send |
 | 33, 34 | Send connect token, Move download to top | | | obsolete, drop |
 | 36 | FolderContentsRequest | → | `u32 token, str folder` | P0 both (album download needs it) |
-| 37 | FolderContentsResponse | ← | zlib: `u32 token, str folder, [str dir, [file]]` (folder **with all subfolders**) | P0 both |
+| 37 | FolderContentsResponse | ← | zlib: `u32 token, str folder, [str dir, [file]]` — N+doc: folder "with all subfolders"; **Nicotine+ code returns only that one folder (no subfolders) or an empty list** ([N+] `shares.py:1386-1409`). Request sub-folders (CD1/CD2…) explicitly | P0 both |
 | 40 | TransferRequest | uploader → downloader | `u32 direction (0 download, 1 upload), u32 token, str path` [+ `u64 size` if direction 1] | P0 both |
 | 41 | TransferResponse | ← | `u32 token, bool allowed`; allowed & answering a legacy download request: `u64 size`; not allowed: `str reason` | P0 both |
 | 42 | PlaceholdUpload | | `str path` | obsolete, drop |
@@ -390,16 +438,30 @@ attribute can be missing. Strict mode must treat "no VBR attribute" as "unknown 
 
 `SharedFileListResponse` body (after inflate): `u32 n_dirs, (str dir, u32 n_files, file×n)×n_dirs, u32 unknown (0),
 u32 n_private_dirs, (dir…)×n` — the second list holds folders the peer shares only with some users (buddy-only /
-"private"); they are visible but may be locked (TODO: what the official client does when requesting a private file).
-`FileSearchResponse` trailing private-results list likewise. Older clients omit the trailing fields: parse them only
-if bytes remain (TODO confirm in [N+] parsers).
+"locked"); they are visible to us but requesting them will be denied. Nicotine+ only puts restricted folders there when
+the user enables "reveal buddy/trusted shares"; otherwise they are simply omitted ([N+] `shares.py:408-412,
+764-769`). `FileSearchResponse` has the same trailing private-results list. **Parse every trailing field only if
+bytes remain** (aioslsk and Soulseek.NET treat them as optional; aioslsk requires the `unknown` u32) and ignore
+extra trailing bytes (Soulseek.NET always writes optional fields, e.g. a `u64` size in direction-0
+`TransferRequest`s — `TransferRequest.cs:81-112`).
+
+How sharers build these (for SHARE-1/2): Nicotine+ virtual path = `<virtual folder name>\<relative path>` with `/`
+→ `\`; a literal backslash inside a file name becomes `@@BACKSLASH@@`; default exclusions `.*`, `@eaDir\`,
+`#recycle\`, `#snapshot\`, `desktop.ini`, `Thumbs.db`; extension field sent empty; attributes from TinyTag
+([N+] `shares.py:449-468, 596-601, 685-738, 1027-1052`; `config.py:186-194`). aioslsk sends `@@alias\…` paths and
+fills the extension. `GetShareFileList` requests closer than 0.4 s from the same user are ignored by Nicotine+
+(`shares.py:1370-1373`). aioslsk notes that some Windows clients send/expect an optional `u32` ticket in
+`GetShareFileList` (`messages.py:1857-1873`) — send it empty, accept a 4-byte body.
 
 ### 6.3 Search response flow
 
 The responder connects to the searcher (P connection, direct or indirect) and sends `FileSearchResponse` with the
-search token. `slotfree`, `avgspeed` (bytes/s as reported by the server stats — TODO verify unit) and `queue_len` are
-the responder's current upload state; they feed Selecta's "free slot / queue / speed" filters and ranking (SRCH-5,
-SRCH-10).
+search token. `slotfree`, `avgspeed` and `queue_len` are the responder's current upload state; they feed Selecta's
+"free slot / queue / speed" filters and ranking (SRCH-5, SRCH-10). `avgspeed` is the server's figure for the
+responder (bytes/s; Nicotine+ reports the server value, `uploads.py:827-831`; aioslsk its own mean of completed
+uploads). `queue_len` is unreliable (aioslsk always sends 0 due to a bug, `transfer/manager.py:388-393`). Both
+Nicotine+ (after sending, `slskproto.py:1987-1991`) and aioslsk (after receiving, `search/manager.py:403`) close
+the `P` connection right after a search response: search-result connections are short-lived by convention.
 
 ### 6.4 Transfer negotiation (queue-based, current)
 
@@ -412,7 +474,21 @@ SRCH-10).
 Legacy request: `TransferRequest(direction=0, token, path)` sent by the *downloader* (still used by slskd and Seeker,
 so Selecta must understand it when acting as uploader). Accepting it directly is discouraged because the peer could be
 spoofed; instead answer `TransferResponse(token, false, "Queued")`, queue the file, and start the upload normally
-[N+doc §41a].
+[N+doc §41a]. All three libraries do exactly that (N+ `uploads.py:1068`; aioslsk `transfer/manager.py:1309-1381`;
+Soulseek.NET `PeerMessageHandler.cs:301-315`).
+
+Who uses what as **downloader**: Nicotine+, aioslsk, SoulseekQt send `QueueUpload`; **Soulseek.NET (slskd, Seeker)
+sends the legacy `TransferRequest(direction=0)`**, accepts `TransferResponse(false, "Queued")` (compared
+case-insensitively with the trailing dot trimmed) and then waits indefinitely for the uploader's
+`TransferRequest(direction=1)` (`src/SoulseekClient.cs:3554-3711`). Selecta sends `QueueUpload` only.
+
+Downloader-side details worth copying from Nicotine+ ([N+] `downloads.py`):
+- Reply `TransferResponse(token, true)` (no size) to a `TransferRequest(1)` for a file we queued; take the uploader's
+  size if > 0 (SoulseekQt sends 0 for files > 2 GB — keep the size from the search result) (`:1106-1130`).
+- Reply `Complete` or `Cancelled` to a `TransferRequest(1)` we don't want (`:1132-1164`); never accept unsolicited
+  uploads ("remote downloads") from strangers (`:641-672`).
+- `PlaceInQueueRequest` for each queued download every 300 s (`:125-127, 603-609`).
+- Abort = close the `F` socket; no message (`transfers.py:410-411`). Same in aioslsk and Soulseek.NET.
 
 ### 6.5 Transfer rejection reasons [N+doc §Transfer Rejection Reasons]
 
@@ -434,6 +510,17 @@ path; `Too many files` / `Too many megabytes` / `User limit of…` → show as *
 `max(5, queued − 1)` files and re-queue later automatically. Selecta's FAIR-4 should be at least as polite: treat
 these as "back off from this peer", never as "retry now".
 
+When Nicotine+ sends each reason as **uploader** ([N+] `uploads.py`): `Banned` (user/IP ban; may carry a custom
+suffix `Banned (<message>)`), `Pending shutdown.`, `Too many files` (queued count ≥ `filelimit`, default 100),
+`Too many megabytes` (queued bytes ≥ `queuelimit`, default 10 000 MB), `File not shared.` (unknown path or file
+vanished), `File read error.`, `Queued` (legacy request). The strings never contain the numbers.
+
+The reason space is open-ended: Soulseek.NET only *recognises* `Queued` and lets applications send arbitrary text
+(its own `"Enqueue failed due to internal error"`), aioslsk stores reasons verbatim. Selecta: match the known strings
+exactly (case-sensitive, with the dot), map known synonyms (`File not shared`, `Remote file error`, `Disallowed
+extension`, `Blocked country`, `User limit of …`, `Banned (…)`), and treat anything else as a generic denial with
+back-off; record the raw string (FAIR-4, SAFE-4).
+
 ## 7. File connections and transfers
 
 1. The **uploader** opens the `F` connection (direct `PeerInit(type F)` or, if that fails, the downloader receives a
@@ -446,14 +533,42 @@ these as "back off from this peer", never as "retry now".
    connection and the downloader re-queues.
 
 Notes:
+- `FileTransferInit` is always sent by the **uploader**, whichever side dialled: direct = `PeerInit(U, "F", 0)` +
+  token; indirect = the downloader dials back with `PierceFireWall(solicitation token)` and *then* the uploader sends
+  the 4-byte transfer token (Soulseek.NET `PeerConnectionManager.cs:564-598, 644-653`; the solicitation token is a
+  fresh one, not the transfer token, `:822-830`). An unknown or reused transfer token closes the socket (Nicotine+
+  `downloads.py:1187-1236`; aioslsk reads it within 5 s, `transfer/manager.py:1238-1271`).
+- Resume: Nicotine+ downloads into `INCOMPLETE<md5(path+user)>…`, opened in append mode, and sends its current size as
+  the offset (`downloads.py:197-240, 769-789`); aioslsk and Soulseek.NET do the same with their partial files.
+  Uploaders reject offsets > size (Soulseek.NET `SoulseekClient.cs:4938-4994`).
 - The offset is for **resume only**. Do not use it to fetch chunks or ranges: no chunk hashing, every request holds an
-  upload slot, and an aborted transfer shows as failed for the uploader [N+doc §File Offset]. This matters for
-  previews (PREV-6): cancelling a preview mid-transfer looks like a failed upload on the other side (see etiquette
-  note).
+  upload slot, and an aborted transfer shows as failed for the uploader [N+doc §File Offset].
 - Soulseek NS sends offset `-1` (as `u64`, i.e. 0xFFFF…) when resuming beyond 2 GB — treat as invalid.
-- Downloader-side cancel mid-transfer: close the `F` socket; the uploader sends `UploadFailed` (TODO: verify what
-  Nicotine+/Soulseek.NET send when the *downloader* cancels, e.g. `TransferResponse`/`UploadDenied` `Cancelled`).
+- **End of transfer.** The downloader closes after the last byte. Soulseek.NET's uploader lingers up to 3 s doing
+  1-byte reads until the downloader closes, then force-closes (`SoulseekClient.cs:5016-5057`, `TransferOptions.cs:82`).
+  The uploader then sends `SendUploadSpeed` (Nicotine+: only when a completed upload's `F` connection closes
+  normally, `uploads.py:1247-1256`).
+- **Cancel by the downloader** (relevant to PREV-6): every implementation just closes the `F` socket without a
+  message (Nicotine+ `transfers.py:410-411`; aioslsk `transfer/manager.py:1131-1136`; Soulseek.NET
+  `SoulseekClient.cs:3847-3859`). The uploader then marks the upload failed/cancelled and usually sends
+  `UploadFailed(path)` (Nicotine+ `uploads.py:1260-1272`; Soulseek.NET sends `UploadDenied(path, "Cancelled")` for its
+  own cancels, else `UploadFailed`, `:5150-5178`). **Nicotine+ as downloader re-queues once on the first
+  `UploadFailed`** (with a Latin-1 path) — so Selecta must mark a cancelled preview as cancelled *before* closing and
+  ignore the `UploadFailed` that follows, or it would re-request what it just abandoned.
+- **Withdrawing a queued request** (not yet started): there is no "dequeue" message (peer code 14 is obsolete). When the
+  uploader eventually sends `TransferRequest(1)`, reply `TransferResponse(token, false, "Cancelled")`; the uploader
+  then moves on to the next user immediately (aioslsk and Nicotine+ do this for unknown/aborted transfers).
+- Timers: Nicotine+ marks "Connection timeout" if no progress within 45 s of activation (`transfers.py:553-561`);
+  aioslsk waits 60 s for the `F` connection after allowing a transfer, 180 s for data stalls; Soulseek.NET waits 10 s
+  for the `F` connection, then tries to open it itself ("second chance", `SoulseekClient.cs:3634-3711`).
 - There is no integrity check in the protocol: verify size, and decode the audio afterwards (DL-10).
+
+Upload-side conventions (for SHARE-3): one active upload per user at a time (Nicotine+ `uploads.py:351-353,
+527-559`; aioslsk; Soulseek.NET `MaximumConcurrentUploadsPerUser = 1`, "must remain 1 … Soulseek NS",
+`SoulseekClientOptions.cs:329-337`); round-robin across users; privileged users first (Nicotine+ considers only
+privileged users while any is queued, `uploads.py:498-547`); defaults: Nicotine+ 3 slots, aioslsk 2, Soulseek.NET 10
+global. Nicotine+ answers `PlaceInQueueRequest` only when the position is > 0; aioslsk answers with a 0-based index and
+never for index 0 — so "no answer" is normal.
 
 ## 8. Distributed network
 
@@ -478,34 +593,328 @@ Distributed messages [N+doc §Distributed Messages]:
 | 7 | DistribChildDepth | `u32 depth` | obsolete |
 | 93 | DistribEmbeddedMessage | `u8 code` + raw message | Only from older SoulseekQt roots (bug fixed early 2026); unpack, forward if code 3, else ignore |
 
-Joining (outline; details and timers TODO from code):
+Joining:
 
-1. After login send `HaveNoParent(true)` (and `AcceptChildren`, `BranchRoot`/`BranchLevel` — TODO exact order).
-2. Server sends `PossibleParents` (≤ 10 candidates with higher upload speed than ours) periodically while we have no
-   parent. If there are no candidates, we become a branch root and start receiving `EmbeddedMessage`.
-3. Connect `D` to candidates; each sends `DistribBranchLevel` + `DistribBranchRoot`. Adopt as parent the first one
-   that sends a `DistribSearch` *in addition to* level/root (older clients adopt on level/root alone) [N+doc §3].
-   Close the others.
-4. Tell the server `HaveNoParent(false)`, `BranchLevel(parent+1)`, `BranchRoot(root)`; tell children the same via
-   distrib 4/5.
-5. On parent loss or `ResetDistributed` (130): drop children, `HaveNoParent(true)`, repeat.
+1. After login send `HaveNoParent(true)`, `BranchRoot(self)`, `BranchLevel(0)`, `AcceptChildren(false)` (Nicotine+
+   `slskproto.py:2316-2338`; aioslsk and Soulseek.NET send the same set, minor order differences).
+2. Server sends `PossibleParents` (≤ 10 candidates whose upload speed is higher than ours) about every 60 s while we
+   have no parent. If there are no candidates, we become a branch root and start receiving `EmbeddedMessage`.
+3. Connect `D` to **all** candidates at once (Nicotine+ `slskproto.py:1481-1496`; Soulseek.NET races direct/indirect
+   per candidate). Each sends `DistribBranchLevel` and `DistribBranchRoot` (level 0 ⇒ the candidate is the root; it
+   may omit the root message). Parent selection differs:
+   - Nicotine+ / SoulseekQt: the **first candidate that sends a `DistribSearch` after level and root are known**
+     (`slskproto.py:2340-2373, 2434-2440`).
+   - Soulseek.NET: every candidate must deliver level + a first search within 5 s; **lowest branch level wins**; the
+     losers are closed with "Not selected." but kept as fallbacks (`DistributedConnectionManager.cs:360-458,
+     1097-1142`).
+   - aioslsk: first candidate with level + root known (`distributed.py:428-473`); its docs admit this differs from
+     the official clients.
+   Close the other candidates.
+4. Tell the server `HaveNoParent(false)`, `BranchLevel(parent+1)`, `BranchRoot(parent's root)`, then
+   `AcceptChildren(true)` if we can take children; tell children the same via distrib 4/5. Pass later level/root
+   changes from the parent on (Nicotine+ forwards them to server and children).
+5. Only the parent may send us distributed messages; Nicotine+ closes any other peer that does, and a negative level
+   (`slskproto.py:2303-2314, 2444-2446, 2473-2478`).
+6. On parent loss: back to step 1 (`HaveNoParent(true)`, level 0, root self). Nicotine+ keeps its children and does
+   not notify them; aioslsk keeps them and sends them level 0 / root self. On `ResetDistributed` (130): close parent
+   **and** children, back to step 1.
+7. No distributed keep-alive exists (DistribPing is NS-only); a silent parent is detected by the idle timeout
+   (Nicotine+ 60 s, Soulseek.NET 15 s inactivity, aioslsk 60 s read timeout).
+
+Branch root: receiving `EmbeddedMessage(93)` with distrib code 3 (Nicotine+ accepts it only when it has no peer
+parent) means the server feeds us directly: level stays 0, root = self; unpack the `DistribSearch`, forward it to
+children as a normal code-3 message, and process it locally (Nicotine+ `slskproto.py:1369-1390, 740-769`;
+Soulseek.NET `DistributedMessageHandler.cs:267-293`). Also accept code 93 *from a parent* (older SoulseekQt roots)
+and unpack it the same way.
+
+How many children (the server decides eligibility through `ParentMinSpeed`/`ParentSpeedRatio` and our `avgspeed`):
+
+| Implementation | Formula / limit |
+|---|---|
+| Nicotine+ (`slskproto.py:2397-2414`) | if `avgspeed ≥ ParentMinSpeed` and ratio > 0: `min(avgspeed // ratio // 100, 10)` ("limit to 10 for now due to socket limit concerns"), else 0 |
+| aioslsk (`SOULSEEK.rst:343-393`) | if `avgspeed ≥ ParentMinSpeed × 1024`: `floor(avgspeed / ((ratio / 10) × 1024))`, else `AcceptChildren(false)`; recomputed on each `GetUserStats(self)` |
+| Soulseek.NET (`SoulseekClientOptions.cs:112-145`) | fixed default 25, only when it has a parent or is a root |
+
+aioslsk's notes give the server's presumed defaults: `parent_min_speed = 1`, `parent_speed_ratio = 50`,
+`min_parents_in_cache = 10`, `parent_inactivity_timeout = 300`, `wishlist_interval = 720`
+(`SOULSEEK.rst:582-595`). Server-side, a `BranchRoot` naming an offline user triggers `ResetDistributed`
+(`SOULSEEK.rst:1211-1225`).
 
 **What a sharer must do to receive searches:** have a parent (or be a root) — a client with no parent receives no
 global searches at all, only `UserSearch`/`RoomSearch` via server code 26. Then match each `DistribSearch` locally,
 skip our own username, and on a hit connect to `username` and send `FileSearchResponse(token)`. Forward every
-search to children regardless of local matches.
+search to children **as the raw bytes received** (never re-serialise: Soulseek.NET's builder writes 0 in the
+identifier field that Nicotine+ requires to be 49), regardless of local matches. Soulseek.NET also drops a message
+identical to the previous one (`DistributedMessageHandler.cs:147-157`) — a cheap loop/duplicate guard worth copying.
+
+**Testing caveat:** Soulfind implements **none** of the distributed network (no `PossibleParents`, no
+`EmbeddedMessage`; it parses and ignores 71/100/126/127/129 and delivers every search to every connected user as
+server code 26 — `msghandler.d:465-501, 610-632`). The D-connection code path must be tested with Selecta's own
+fake peers/fixtures (§13).
 
 ## 9. Sequence diagrams
 
-TODO.
+Solid arrows = messages, `[P]`/`[F]`/`[D]` = connection type, `-x` = socket close.
+
+### 9.1 Login
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Selecta
+    participant S as Server
+    C->>S: TCP connect
+    C->>S: Login(user, pass, major, md5hex(user+pass), minor)
+    alt accepted
+        S-->>C: Login(true, MOTD, own IP, md5hex(pass), supporter)
+        S-->>C: RoomList, ParentMinSpeed, ParentSpeedRatio, WishlistInterval
+        S-->>C: PrivilegedUsers, ExcludedSearchPhrases
+        S-->>C: MessageUser x n (queued PMs, new=false)
+        C->>S: SetWaitPort(port), SetStatus(2), SharedFoldersFiles(dirs, files)
+        C->>S: CheckPrivileges, WatchUser(self)
+        C->>S: HaveNoParent(true), BranchRoot(self), BranchLevel(0), AcceptChildren(false)
+        C->>S: MessageAcked(id) for each PM
+        loop every 5 min
+            C->>S: ServerPing
+        end
+    else rejected
+        S-->>C: Login(false, reason, detail if INVALIDUSERNAME)
+        Note over C: no auto-retry, ask the user
+    else banned or IP-throttled
+        Note over C,S: no reply (timeout) or immediate EOF
+        Note over C: stop, long back-off, tell the user
+    end
+```
+
+### 9.2 Connection race (direct vs indirect)
+
+```mermaid
+sequenceDiagram
+    participant A as Selecta (A)
+    participant S as Server
+    participant B as Peer B
+    par indirect
+        A->>S: ConnectToPeer(t, B, "P")
+        S->>B: ConnectToPeer(A, "P", ipA, portA, t, privileged)
+    and direct
+        A->>S: GetPeerAddress(B)
+        S-->>A: GetPeerAddress(B, ipB, portB)
+        A->>B: TCP connect, PeerInit(A, "P", 0)
+    end
+    alt direct connect succeeded
+        Note over A,B: use it, close any later duplicate
+    else B can dial A
+        B->>A: TCP connect, PierceFireWall(t)
+        Note over A: token t maps to (B, "P"), socket ready
+    else nobody can connect
+        B->>S: CantConnectToPeer(t, A)
+        S-->>A: CantConnectToPeer(t)
+        Note over A: or local timeout (20 s), fail queued requests
+    end
+```
+
+### 9.3 Search (distributed network)
+
+```mermaid
+sequenceDiagram
+    participant A as Selecta (searcher)
+    participant S as Server
+    participant R as Branch root
+    participant P as Intermediate parents
+    participant B as Sharer B
+    A->>S: FileSearch(token, query)
+    S->>R: EmbeddedMessage(3, DistribSearch(49, A, token, query))
+    R->>P: DistribSearch (raw bytes) [D]
+    P->>B: DistribSearch (raw bytes) [D]
+    Note over B: match locally, skip excluded phrases, cap results
+    B->>A: connect [P] (direct, or via server + PierceFireWall)
+    B->>A: FileSearchResponse(B, token, files, slotfree, avgspeed, queue) zlib
+    B-xA: close (short-lived connection)
+    Note over A: keep token open for a window (e.g. 15 s idle, N results), then drop late replies
+```
+
+### 9.4 Browse and folder contents
+
+```mermaid
+sequenceDiagram
+    participant A as Selecta
+    participant B as Peer B
+    Note over A,B: P connection via the race in 9.2
+    A->>B: GetShareFileList [P]
+    B-->>A: SharedFileListResponse (zlib, may be hundreds of MB)
+    A->>B: FolderContentsRequest(token, folder) [P]
+    B-->>A: FolderContentsResponse(token, folder, dirs) (zlib)
+    Note over A: unsolicited big responses are refused (close)
+```
+
+### 9.5 Queue-based download
+
+```mermaid
+sequenceDiagram
+    participant D as Selecta (downloader)
+    participant U as Uploader
+    participant S as Server
+    D->>U: QueueUpload(path) [P]
+    opt refused now or later
+        U-->>D: UploadDenied(path, reason) [P]
+    end
+    loop at most every 5 min while queued
+        D->>U: PlaceInQueueRequest(path)
+        U-->>D: PlaceInQueueResponse(path, place) (may never answer)
+    end
+    U->>D: TransferRequest(1, token, path, size) [P]
+    D-->>U: TransferResponse(token, true) [P]
+    U->>D: open F: PeerInit(U, "F", 0) or ConnectToPeer(F) then PierceFireWall from D
+    U->>D: FileTransferInit(token) raw u32 [F]
+    D->>U: FileOffset(offset) raw u64 [F]
+    U->>D: bytes offset..size [F]
+    D-xU: downloader closes after the last byte
+    U->>S: SendUploadSpeed(bytes per s)
+    opt F dropped early
+        U->>D: UploadFailed(path) [P], D re-queues later
+    end
+```
+
+### 9.6 Upload (Selecta as uploader)
+
+```mermaid
+sequenceDiagram
+    participant D as Remote downloader
+    participant U as Selecta (uploader)
+    participant S as Server
+    D->>U: QueueUpload(path) [P]
+    alt not shared, banned or over limits
+        U-->>D: UploadDenied(path, "File not shared." / "Too many files" / ...)
+    else accepted
+        Note over U: per-user queue, privileged first, round-robin, 1 active per user
+    end
+    opt legacy downloader (slskd, Seeker)
+        D->>U: TransferRequest(0, t0, path)
+        U-->>D: TransferResponse(t0, false, "Queued")
+    end
+    Note over U: a slot frees up
+    U->>D: TransferRequest(1, token, path, size) [P]
+    D-->>U: TransferResponse(token, true)
+    U->>D: F connection, FileTransferInit(token)
+    D->>U: FileOffset(offset)
+    U->>D: file bytes
+    D-xU: downloader closes
+    U->>S: SendUploadSpeed(avg bytes per s)
+```
+
+### 9.7 Joining the distributed network
+
+```mermaid
+sequenceDiagram
+    participant C as Selecta
+    participant S as Server
+    participant P1 as Candidate 1
+    participant P2 as Candidate 2
+    participant K as Our children
+    C->>S: HaveNoParent(true), BranchRoot(self), BranchLevel(0), AcceptChildren(false)
+    S-->>C: PossibleParents([P1, P2, ...]) about every 60 s
+    par
+        C->>P1: connect [D], PeerInit(C, "D", 0)
+        P1-->>C: DistribBranchLevel(n1), DistribBranchRoot(r1)
+    and
+        C->>P2: connect [D]
+        P2-->>C: DistribBranchLevel(n2), DistribBranchRoot(r2)
+    end
+    P1-->>C: DistribSearch (first search, adopt P1)
+    C-xP2: close, not selected
+    C->>S: HaveNoParent(false), BranchLevel(n1+1), BranchRoot(r1), AcceptChildren(true if eligible)
+    C->>K: DistribBranchLevel(n1+1), DistribBranchRoot(r1)
+    loop every search
+        P1-->>C: DistribSearch
+        C->>K: same raw bytes
+    end
+    Note over C,S: no candidates, so the server sends EmbeddedMessage(3, ...): we are a branch root (level 0)
+```
 
 ## 10. Search semantics
 
-TODO.
+### 10.1 Query syntax — what responders actually match
+
+The server only routes the query string; **each responder's client does the matching**, so semantics vary
+slightly by client. Consensus behaviour (aioslsk `docs/source/SOULSEEK.rst:2528-2556` describing the official
+clients; Nicotine+ `search.py:757-900`; aioslsk `shares/utils.py:25-36`):
+
+| Syntax | Meaning |
+|---|---|
+| `word` | the virtual path (folders + file name) contains `word` as a **whole word**, case-insensitive. Word boundaries are non-alphanumeric characters (`_` counts as a separator in Nicotine+ and aioslsk) |
+| `a b c` | all terms must match (AND); order irrelevant |
+| `-word` | exclude paths containing the word; position irrelevant |
+| `*ord` | **suffix wildcard**: any word ending in `ord` (zero or more leading characters, so `*song` matches `song`). Only valid at the start of a term; `wo*`, `w*rd` are not wildcards (Nicotine+ treats a trailing `*` as punctuation) |
+| `"two words"` | quotes are ignored by the official clients today (phrase search "no longer seems to be implemented") |
+| exclusions only (`-mp3`) | unofficial: few, odd results (aioslsk returns nothing) — don't rely on it |
+| `\` or `/` in a term | matches across directory components only (`my\cool` matches `my\cool\band\song.mp3`) |
+
+Outgoing query hygiene seen in clients: Nicotine+ replaces special characters by spaces (except leading `*`/`-`),
+keeps quoted phrases as one unit, drops lone `-` (`search.py:117-122, 394-464`; `slskmessages.py:1194-1195`);
+Soulseek.NET removes single-character terms by default (`SearchOptions.cs:52-64`). Responders ignore very short
+queries: Nicotine+ drops the whole request if the query string is shorter than `min_search_chars = 3`
+(`search.py:868-870`, `config.py`). No source documents an official minimum term length or diacritic folding:
+Nicotine+ and aioslsk do **no** accent folding, so `Beyoncé` and `Beyonce` are different words to most responders.
+
+### 10.2 Routing
+
+| Search | Client sends | Delivered to responders as | Who receives it |
+|---|---|---|---|
+| Global | `FileSearch(26)` | `EmbeddedMessage(93)` to branch roots → `DistribSearch(3)` down the tree | every client with a parent (or root) |
+| User | `UserSearch(42)` | server `FileSearch(26)` | that user only |
+| Room | `RoomSearch(120)` | server `FileSearch(26)` | room members |
+| Wishlist | `WishlistSearch(103)` | presumably like a global search (not documented) | everyone; at most one per `WishlistInterval` |
+| Soulfind (test) | any | server `FileSearch(26)`, batched every 650 ms; queries > 256 bytes dropped; filter phrases | every connected user **including the searcher** |
+
+Responder rules for Selecta (SHARE-2): ignore our own searches (unless it is our own user-search), ignore queries
+shorter than 3 characters, match on folder + file name, **drop paths containing any excluded phrase**
+(case-insensitive substring; both Nicotine+ and aioslsk lowercase only the path, not the phrase — do both), put
+buddy-only files in the private list or omit them, cap results (Nicotine+ `maxresults = 300`, aioslsk 100), reply
+only if ≥ 1 file matches, and close the `P` connection once the response is flushed. Never answer from files that
+are not in the share index.
+
+### 10.3 Searcher side: tokens, windows, caps
+
+- There is **no end-of-search message**. Results trickle in for many seconds; the searcher decides when to stop.
+  Defaults in the wild: Soulseek.NET stops 15 s after the *last* response, at 250 responses or 25 000 files
+  (`SearchOptions.cs:52-64`, `SearchInternal.cs:196-199, 266`); Nicotine+'s GUI stops displaying at 2 500 results
+  (`gtkgui/search.py:364-367`), its core has no timeout; aioslsk stores 500 and never times out.
+- Accept `FileSearchResponse` only for open tokens. Nicotine+ inflates just the username and token first and only
+  inflates the rest for a wanted token (`slskmessages.py:3504-3526`) — copy this to make late/unknown results cheap.
+- De-duplicate per (user, token); expect the same peer to answer twice when it is reachable through several paths.
+- Responses carry per-peer state (slot free, speed, queue) — store it with the result for filtering (SRCH-5).
+- Soulseek.NET filters responses client-side (`minimumResponseFileCount 1`, `maximumPeerQueueLength`,
+  `minimumPeerUploadSpeed`); Selecta's filters live above the protocol layer (SRCH-2…9).
+- Server-side search rate limits are not documented by any source read here; see
+  `network-etiquette-and-safe-development.md`. The wishlist interval (12 min, 2 min privileged) is the only
+  server-published pacing number.
 
 ## 11. Keep-alives, timeouts and reconnect
 
-TODO.
+| Timer | Nicotine+ | Soulseek.NET | aioslsk | Soulfind (server) |
+|---|---|---|---|---|
+| Server keep-alive | TCP keepalive on the server socket: idle 10 s, interval 2 s, 10 probes, `TCP_USER_TIMEOUT` 30 s; **never sends ServerPing** (`slskproto.py:1206-1253`) | none by default (`PingServerAsync` on demand) | `ServerPing` every 300 s | TCP keepalive 60 s / 5 s / 10 probes; no ping needed, none answered (`conns.d:379-409`) |
+| TCP connect | 2 s (`CONNECTION_INIT_TIMEOUT`) | 10 s | 10 s peers, 30 s server | — |
+| Indirect (PierceFireWall) wait | 20 s | = connect timeout | 60 s | — |
+| Idle peer connection | 60 s; 10 s if nothing after init | 15 s inactivity | 60 s per-message read timeout | — |
+| Request/response waits | — | 5 s messages, 15 s TransferResponse | 30 s TransferResponse, 15 s place-in-queue | unauthenticated socket closed after 60–75 s |
+| Download retries | every 180 s (connection closed/timeout, pending shutdown), 900 s (file errors), and when the user comes online (`downloads.py:129-135, 611-639`) | application's job | each management cycle, no backoff | — |
+| Server reconnect | first delay random 5–15 s, doubling while < 300 s (so 300–598 s cap); reset on TCP connect; **none** after manual disconnect, login rejection, Relogged, oversized message (`slskproto.py:1188-1204, 1643-1648`) | none (example app: backoff, never after Kicked) | off by default; fixed 10 s; **none after server EOF** (possible IP ban) | kicked users: login silently times out; login timeout jitter 0–15 s |
+
+Selecta proposal (governor-owned, compile-time ceilings, SAFE-1/2):
+- Server: TCP keepalive (idle 60 s, interval 10 s, 6 probes) **and** `ServerPing` every 5 min (harmless, matches
+  the doc's "at most once per minute" bound and aioslsk).
+- Login: wait ≤ 30 s for the reply. Timeout or EOF before/right after Login ⇒ assume throttled/banned: no automatic
+  retry for ≥ 30 min, notify the user.
+- Reconnect after an unexpected drop of an *established* session: exponential backoff with full jitter, 30 s → 60 s
+  → … capped at 15 min; reset only after a session that stayed logged in ≥ 5 min (not on mere TCP connect, unlike
+  Nicotine+ — an IP ban answers TCP and then closes). Never auto-reconnect after `Relogged`, a login rejection,
+  a user-initiated disconnect, or an oversized/malformed server frame (NET-4).
+- Peers: connect 10 s; indirect wait 20 s; idle `P` close 60 s (immediately after a search response); `D` idle
+  60 s; `F` stall 60–120 s.
+- Re-polls: `PlaceInQueueRequest` ≥ 5 min apart and only for downloads the user is looking at; failed downloads
+  retry with per-peer backoff (3 min → 15 min → 1 h), and immediately when the peer comes back online
+  (`GetUserStatus` push) — through the governor.
 
 ## 12. Implications for Selecta
 
