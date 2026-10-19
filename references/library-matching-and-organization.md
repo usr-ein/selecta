@@ -132,7 +132,7 @@ Selecta has to combine their ideas. Code read at the commits listed in Sources.
 | **soularr** (GPL-3.0) | Bridge Lidarr wanted list → slskd | `difflib` ratio between expected title and remote filename with "strip leading junk" retries; album accepted only if every track matches ≥ 0.8. |
 | **Lidarr** (GPL-3.0) | Album manager / importer | Release-name parser (folder regexes incl. scene names), a C# port of beets' distance with its own thresholds, folder-based release grouping, multi-disc folder detection, AcoustID fallback. |
 | **Nicotine+** (GPL-3.0-or-later) | Soulseek client | "Already downloaded" = same basename **and** same byte size in the download folder. |
-| **rapidfuzz-cpp** (MIT, v3.3.4) | String similarity library | Header-only C++17 implementations of Levenshtein/Indel/Jaro-Winkler and `fuzz::ratio/partial_ratio/token_sort_ratio/token_set_ratio/WRatio`, with cached one-to-many scorers. TODO: confirm API names in §6. |
+| **rapidfuzz-cpp** (MIT, v3.3.4) | String similarity library | Header-only C++ (CMake interface target requires C++11) implementations of Levenshtein/Indel/Jaro-Winkler/… and `fuzz::ratio/partial_ratio/token_sort_ratio/token_set_ratio/WRatio`, with cached one-to-many scorers (§6). |
 
 ### 3.1 beets (`beets/autotag/distance.py`, `match.py`, `config_default.yaml`, `beetsplug/fromfilename.py`)
 
