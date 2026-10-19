@@ -15,13 +15,63 @@
 
 ## 1. TL;DR
 
-- TODO — written last.
+- **Spotify's Web API is now a 5-user sandbox for apps like Selecta.** Extended quota is reserved for registered
+  organisations with ≥ 250k monthly users (since 2025-05-15). Development Mode (2026) requires the app owner to have
+  **Premium**, allows **5 users**, caps search at **10 results**, removed batch lookups, album `label`, `popularity`
+  and genres, limits playlist reading to the user's **own or collaborative playlists**, and refresh tokens now expire
+  after **6 months**. ISRCs (`external_ids`) survived (restored March 2026). `preview_url` is gone since 2024-11.
+  → Spotify works for the maintainer (he has Premium) through **PKCE with a user-owned Client ID**; it cannot be a
+  feature that "just works" for other users.
+- **Spotify's terms conflict with a Soulseek client** (quotes in §4): no use of Spotify Content in an app that
+  "facilitates … the illegal or unauthorized use or sharing of audio" (Terms §IV); no product "integrated with streams
+  or content from another service" (Policy §III.5); no storing Spotify Content "indefinitely", only "temporary caching
+  of metadata and cover art", and no functionality that makes "permanent copies of Spotify Content" (Terms §IV) —
+  which is what **writing Spotify tags and artwork into MP3s** does; attribution with the Spotify logo and a link back
+  wherever Spotify data shows (Policy §II.4). The realistic consequence is revocation of the user's developer app or
+  API access, not a lawsuit — but it is a real, named risk for D29 (MQ1).
+- **Recommended split:** use Spotify (opt-in) to *match and display*; write file tags from **MusicBrainz** (CC0
+  core data, built for tagging) and artwork from **Deezer** (1000 px) or the **Cover Art Archive** (1200 px), keyed by
+  the ISRC. Keep "Spotify-first tags" as an explicit maintainer setting with a `WOAS` link-back.
+- **Deezer is the best keyless source** and the default clip source: search hits already carry the ISRC, albums carry
+  label + UPC + 1000-px covers, tracks carry BPM, and `preview` is a **30-s MP3 at 128 kbps** behind a URL signed for
+  ~15 minutes. Its terms carry the same P2P-association clause and forbid storing audio → stream clips from memory.
+  **iTunes** is the fallback clip (30-s AAC ~256 kbps, no ISRC, ~20 calls/min, promo-only terms with a store badge).
+- **MusicBrainz** turns an ISRC into recordings and releases with **label, catalogue number, barcode and direct store
+  links** (Bandcamp, Beatport, Traxsource, Spotify, Deezer); 1 request/s with a contact User-Agent. **Discogs** adds
+  styles and catalogue numbers (token, 60/min, 6-hour freshness rule). **Beatport** (partner-only API),
+  **Traxsource** (no API) and **Bandcamp** (API for labels only; scraping forbidden) are deep links and purchase
+  sources, with purchases imported into the Inbox.
+- **No C++ Spotify library fits:** spotify-qt's `lib` is GPL-3.0 and active but uses a client secret, misses ISRCs
+  and is tied to its app; the others are stale MIT/libcurl code. Write a small Qt client on
+  `QOAuth2AuthorizationCodeFlow` (PKCE since Qt 6.8; Qt Network Authorization is GPLv3/commercial).
+- **spotDL** (MIT) searches by ISRC first, then "artists - title"; scores with RapidFuzz on slugified, token-sorted
+  strings; drops candidates with title ≤ 60, artists < 70 or a duration score `100·exp(−0.1·Δs)` < 25; and tags
+  ID3v2.3 (with the label wrongly in `TENC`). Since March 2026 its default Spotify backend is an **unofficial**
+  web-player client — not an option for Selecta (D21).
+- **Matching:** identifiers before text, but an **ISRC is not a release** (one ISRC sat on 20 MusicBrainz releases;
+  Deezer's ISRC lookup returned the album copy); reject DJ-mix "(Mixed)" segments and derivative junk; the chosen
+  release's duration drives the ±3 s Soulseek ranking (D23).
 
 ## 2. Key findings
 
 | # | Finding | Confidence | Source |
 |---|---|---|---|
-| — | TODO | | |
+| K1 | Dev mode (2026): owner Premium, 5 users per app, search `limit` ≤ 10, no batch endpoints, no album `label`, playlist items only for own/collab playlists. | High (official changelog + migration guide) | Spotify Feb 2026 changelog |
+| K2 | Extended quota: organisations only, ≥ 250k MAU, since 2025-05-15. | High | Spotify quota-modes page |
+| K3 | `external_ids` (ISRC, UPC) remain available (removal reverted March 2026). | High | Spotify March 2026 changelog |
+| K4 | Refresh tokens expire 6 months after authorisation (PKCE included); refreshing does not extend them. | High | Spotify blog 2026-06-18 |
+| K5 | Spotify Terms prohibit Spotify Content in apps that facilitate unauthorised sharing of audio, integration with content from other services, indefinite storage, and permanent copies; Spotify Content includes metadata and cover art. | High (verbatim); application to Selecta is inference | Developer Terms v10, Policy (2025-05-15) |
+| K6 | `preview_url` deprecated/null for new apps; no official Spotify preview remains. | High | Spotify blog 2024-11-27, reference pages |
+| K7 | Deezer keyless: search hits include `isrc`; album has `label`, `upc`, `cover_xl` 1000 px; preview = 30-s MP3 128 kbps, URL signed ~15 min. | High (observed) | Manual requests |
+| K8 | Deezer terms: no association with unauthorised download/sharing; non-commercial, private use; no local audio storage; logo required. | High (verbatim) | developers.deezer.com terms + guidelines |
+| K9 | iTunes Search: 30-s AAC ~256 kbps clips, no ISRC/label, ~20 calls/min; previews only to promote purchases, stream-only, with badge and attribution. | High | Manual request; Apple Search API page |
+| K10 | MusicBrainz: ISRC → recordings → releases with label, catalogue number, barcode and store URLs; core data CC0; 1 req/s per IP; UA with contact. | High | Manual requests; MB docs |
+| K11 | Discogs: search needs a token; 60/min; CC0 catalogue data but a 6-hour display-freshness and no-longer-than-needed caching rule; mandatory notices. | High (archived terms of 2025-05-27) | Discogs API ToU |
+| K12 | spotify-qt `lib`: GPL-3.0, active (2026-10-05), secret-based auth, no ISRC parsing, coupled to the app. Other C++ clients are MIT and stale. | High | Source read |
+| K13 | spotDL thresholds and formula as in §7.3; default metadata backend since 2026 is the unofficial SpotipyFree. | High | Source read @ `cd4a420`; PR #2626 |
+| K14 | Beatport API v4 is partner-only; Traxsource has no API; Bandcamp's API serves labels/merch partners only and its policy forbids scraping. | Medium–high | Beatport discussion, Bandcamp developer page and policy |
+| K15 | Beatport site previews are 2 minutes from the middle of the track. | Medium (third-party, consistent) | Proton Radio, Label Engine; Beatport support (length only) |
+| K16 | One ISRC maps to many releases (and a recording can carry several ISRCs); an ISRC lookup does not pick the original release. | High (observed on one track; general pattern known) | MusicBrainz + Deezer requests |
 
 ## 3. Spotify Web API (state on 2026-10-19)
 
