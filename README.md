@@ -2,7 +2,8 @@
 
 A native, quality-first Soulseek client for DJs and music collectors — C++/Qt 6, macOS-first, cross-platform, GPLv3.
 
-> **Status:** pre-alpha — product definition and design phase. There is nothing to build or run yet.
+> **Status:** pre-alpha. The app shell builds and runs; the Soulseek, metadata, audio and matching libraries are
+> being built. See [docs/STATUS.md](docs/STATUS.md) and [docs/BUILDING.md](docs/BUILDING.md).
 
 | What | Where |
 |---|---|
@@ -10,6 +11,8 @@ A native, quality-first Soulseek client for DJs and music collectors — C++/Qt 
 | Implementation plan | [docs/PLAN.md](docs/PLAN.md) |
 | Interactive UI mock (HTML/JS/CSS) | [mock/index.html](mock/index.html) |
 | Research notes | [references/](references/) |
+| Building and inspecting | [docs/BUILDING.md](docs/BUILDING.md) |
+| Progress | [docs/STATUS.md](docs/STATUS.md) |
 
 ## Why another Soulseek client?
 
