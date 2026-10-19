@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Selecta (mock)</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 20 20"><circle cx="8.6" cy="8.6" r="5.4"/><path d="M12.6 12.6 16.8 16.8"/></symbol>
+  <symbol id="i-batch" viewBox="0 0 20 20"><path d="M7.5 5.5h9M7.5 10h9M7.5 14.5h9"/><circle cx="4" cy="5.5" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="14.5" r="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-star" viewBox="0 0 20 20"><path d="M10 3.2l2.1 4.3 4.7.7-3.4 3.3.8 4.7L10 14l-4.2 2.2.8-4.7-3.4-3.3 4.7-.7z"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 20 20"><path d="M2.8 6.2c0-.9.7-1.6 1.6-1.6h3.3l1.7 1.8h6.2c.9 0 1.6.7 1.6 1.6v6.4c0 .9-.7 1.6-1.6 1.6H4.4c-.9 0-1.6-.7-1.6-1.6z"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 20 20"><path d="M3 11.6 4.9 6h2.3M12.8 6h2.3l1.9 5.6v3.6c0 .7-.5 1.2-1.2 1.2H4.2c-.7 0-1.2-.5-1.2-1.2z"/><path d="M3 11.6h4l1 1.8h4l1-1.8h4"/><path d="M10 2.8v6.4M7.6 7l2.4 2.4L12.4 7"/></symbol>
+  <symbol id="i-tray" viewBox="0 0 20 20"><path d="M3 11.2 4.9 5.2h10.2l1.9 6v3.9c0 .7-.5 1.2-1.2 1.2H4.2c-.7 0-1.2-.5-1.2-1.2z"/><path d="M3 11.2h4l1 1.8h4l1-1.8h4"/></symbol>
+  <symbol id="i-music" viewBox="0 0 20 20"><path d="M7.5 14.6V5.1l8.5-2v9.6"/><circle cx="5.6" cy="14.7" r="1.9"/><circle cx="14.1" cy="12.8" r="1.9"/></symbol>
+  <symbol id="i-history" viewBox="0 0 20 20"><path d="M3.6 10.2a6.4 6.4 0 1 0 1.9-4.6"/><path d="M3.4 3.6v3.2h3.2"/><path d="M10 6.6V10l2.4 1.5"/></symbol>
+  <symbol id="i-transfers" viewBox="0 0 20 20"><path d="M6.5 16V4M3.6 6.9 6.5 4l2.9 2.9M13.5 4v12M10.6 13.1l2.9 2.9 2.9-2.9"/></symbol>
+  <symbol id="i-peers" viewBox="0 0 20 20"><circle cx="7.6" cy="7" r="2.6"/><path d="M2.6 16.2c.6-2.7 2.5-4.2 5-4.2s4.4 1.5 5 4.2"/><circle cx="14" cy="7.6" r="2.1"/><path d="M13.6 11.9c2 .1 3.4 1.4 3.9 3.6"/></symbol>
+  <symbol id="i-msg" viewBox="0 0 20 20"><path d="M4.2 4.4h11.6c.9 0 1.6.7 1.6 1.6v6.4c0 .9-.7 1.6-1.6 1.6H9.4l-3.6 2.8v-2.8H4.2c-.9 0-1.6-.7-1.6-1.6V6c0-.9.7-1.6 1.6-1.6z"/></symbol>
+  <symbol id="i-share" viewBox="0 0 20 20"><circle cx="10" cy="10" r="1.6"/><path d="M6.7 13.3a4.7 4.7 0 0 1 0-6.6M13.3 6.7a4.7 4.7 0 0 1 0 6.6M4.2 15.8a8.2 8.2 0 0 1 0-11.6M15.8 4.2a8.2 8.2 0 0 1 0 11.6"/></symbol>
+  <symbol id="i-convert" viewBox="0 0 20 20"><path d="M4.2 9.2a6 6 0 0 1 10.4-3.6"/><path d="M15.3 2.9v3.3H12"/><path d="M15.8 10.8a6 6 0 0 1-10.4 3.6"/><path d="M4.7 17.1v-3.3H8"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 20 20"><path d="M3 6h7.6M14.4 6H17M3 14h2.6M9.4 14H17"/><circle cx="12.5" cy="6" r="1.9"/><circle cx="7.5" cy="14" r="1.9"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 20 20"><rect x="2.6" y="3.8" width="14.8" height="12.4" rx="2.2"/><path d="M7.6 3.8v12.4"/></symbol>
+  <symbol id="i-inspector" viewBox="0 0 20 20"><rect x="2.6" y="3.8" width="14.8" height="12.4" rx="2.2"/><path d="M12.4 3.8v12.4"/></symbol>
+  <symbol id="i-play" viewBox="0 0 20 20"><path d="M6.4 4.2v11.6c0 .5.5.8.9.5l9.2-5.8c.4-.3.4-.8 0-1.1L7.3 3.7c-.4-.3-.9 0-.9.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 20 20"><rect x="5.2" y="4" width="3.4" height="12" rx="1" fill="currentColor" stroke="none"/><rect x="11.4" y="4" width="3.4" height="12" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-back" viewBox="0 0 20 20"><path d="M5.2 8.3a5.9 5.9 0 1 1-.3 4.4"/><path d="M4.7 4.4v3.9h3.9"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 20 20"><path d="M14.8 8.3a5.9 5.9 0 1 0 .3 4.4"/><path d="M15.3 4.4v3.9h-3.9"/></symbol>
+  <symbol id="i-prev" viewBox="0 0 20 20"><path d="M5.2 4.6v10.8"/><path d="M15.4 5.2v9.6c0 .4-.4.6-.8.4L7.7 10.4c-.3-.2-.3-.6 0-.8l6.9-4.8c.4-.2.8 0 .8.4z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-next" viewBox="0 0 20 20"><path d="M14.8 4.6v10.8"/><path d="M4.6 5.2v9.6c0 .4.4.6.8.4l6.9-4.8c.3-.2.3-.6 0-.8L5.4 4.8c-.4-.2-.8 0-.8.4z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-download" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M10 6.2v7.2M7.2 10.8 10 13.6l2.8-2.8"/></symbol>
+  <symbol id="i-check-c" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M6.8 10.3l2.2 2.2 4.2-4.6"/></symbol>
+  <symbol id="i-check" viewBox="0 0 20 20"><path d="M5 10.5l3.2 3.2L15 6.6"/></symbol>
+  <symbol id="i-up-c" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M10 13.8V6.6M7.2 9.2 10 6.4l2.8 2.8"/></symbol>
+  <symbol id="i-approx-c" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M6.6 8.6c1.1-1 2.3-1 3.4 0s2.3 1 3.4 0M6.6 12c1.1-1 2.3-1 3.4 0s2.3 1 3.4 0"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M10 6.2V10l2.6 1.6"/></symbol>
+  <symbol id="i-hourglass" viewBox="0 0 20 20"><path d="M6 3.4h8M6 16.6h8M7 3.4c0 3.3 6 3.7 6 6.6s-6 3.3-6 6.6M13 3.4c0 3.3-6 3.7-6 6.6s6 3.3 6 6.6"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 20 20"><path d="M10 3.4 17.2 16H2.8z"/><path d="M10 8.2v3.6"/><circle cx="10" cy="13.9" r=".8" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-info" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M10 9.2v4.6"/><circle cx="10" cy="6.6" r=".8" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-x" viewBox="0 0 20 20"><path d="M6 6l8 8M14 6l-8 8"/></symbol>
+  <symbol id="i-x-c" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M7.4 7.4l5.2 5.2M12.6 7.4l-5.2 5.2"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 20 20"><path d="M8 5.5 12.5 10 8 14.5"/></symbol>
+  <symbol id="i-chevd" viewBox="0 0 20 20"><path d="M5.5 8 10 12.5 14.5 8"/></symbol>
+  <symbol id="i-chevu" viewBox="0 0 20 20"><path d="M5.5 12 10 7.5l4.5 4.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 20 20"><path d="M10 4.6v10.8M4.6 10h10.8"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 20 20"><path d="M4.6 10h10.8"/></symbol>
+  <symbol id="i-pause-c" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M8.4 7.2v5.6M11.6 7.2v5.6"/></symbol>
+  <symbol id="i-play-c" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M8.6 7.2v5.6l4.4-2.8z" fill="currentColor"/></symbol>
+  <symbol id="i-appearance" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7"/><path d="M10 3a7 7 0 0 0 0 14z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-volume" viewBox="0 0 20 20"><path d="M3.4 7.9h2.8l3.8-3.2v10.6l-3.8-3.2H3.4z"/><path d="M13 7.6a3.4 3.4 0 0 1 0 4.8M15.2 5.6a6.2 6.2 0 0 1 0 8.8"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 20 20"><path d="M4 5.6h12M8.2 5.6V4h3.6v1.6M5.6 5.6l.7 10.2c.1.6.5 1 1.1 1h5.2c.6 0 1-.4 1.1-1l.7-10.2"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 20 20"><path d="M5.2 17V3.6M5.2 4.2h9.4l-2.1 3.1 2.1 3.1H5.2"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 20 20"><path d="M3.6 14.2a6.6 6.6 0 1 1 12.8 0"/><path d="M10 13.6l3.2-4.4"/><circle cx="10" cy="13.8" r="1" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 20 20"><path d="M3.5 8.5v3M6.5 5.5v9M9.5 3v14M12.5 6v8M15.5 8v4"/></symbol>
+  <symbol id="i-user" viewBox="0 0 20 20"><circle cx="10" cy="7" r="3"/><path d="M4.4 16.6c.8-3 3-4.5 5.6-4.5s4.8 1.5 5.6 4.5"/></symbol>
+  <symbol id="i-file" viewBox="0 0 20 20"><path d="M5.4 2.8h6l3.2 3.2v11.2H5.4z"/><path d="M11.4 2.8V6h3.2"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 20 20"><path d="M7.2 4.8 3.8 8.2l3.4 3.4"/><path d="M3.8 8.2h8.4a4.2 4.2 0 0 1 0 8.4H9.4"/></symbol>
+  <symbol id="i-more" viewBox="0 0 20 20"><circle cx="5" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.3" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-ban" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.2"/><path d="M5 5l10 10"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 20 20"><rect x="4.6" y="8.6" width="10.8" height="8" rx="1.6"/><path d="M7 8.6V6.4a3 3 0 0 1 6 0v2.2"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 20 20"><path d="M10 2.8l6 2.4v4.6c0 3.6-2.6 6.2-6 7.4-3.4-1.2-6-3.8-6-7.4V5.2z"/><path d="M7.4 10l1.8 1.8 3.6-3.8"/></symbol>
+</svg>
+
+<div class="desk">
+  <div class="window" id="win">
+    <aside class="sidebar" id="sidebar" aria-label="Sidebar">
+      <div class="sb-head"><div class="lights" aria-hidden="true"><i></i><i></i><i></i></div></div>
+      <form class="sb-search" id="searchForm" role="search" autocomplete="off">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="q" type="search" placeholder="Search Soulseek" aria-label="Search Soulseek" spellcheck="false">
+        <kbd>⌘F</kbd>
+      </form>
+      <nav class="nav" id="nav" aria-label="Sections"></nav>
+      <div class="sb-foot" id="sbfoot"></div>
+    </aside>
+    <div class="main">
+      <header class="toolbar" id="toolbar"></header>
+      <div class="middle" id="middle">
+        <main class="content" id="content" tabindex="-1"></main>
+        <aside class="inspector" id="inspector" aria-label="Inspector"></aside>
+      </div>
+      <section class="player" id="player" aria-label="Preview player">
+        <div class="pl-row">
+          <div class="pl-art" id="plArt"></div>
+          <div class="pl-meta"><div class="pl-title" id="plTitle"></div><div class="pl-sub" id="plSub"></div></div>
+          <div class="pl-transport">
+            <button class="pbtn" data-act="prev-result" aria-label="Previous result" title="Previous result (↑)"><svg class="ic"><use href="#i-prev"/></svg></button>
+            <button class="pbtn" data-act="seek-rel" data-v="-5" aria-label="Back 5 seconds" title="Back 5 s (←)"><svg class="ic"><use href="#i-back"/></svg></button>
+            <button class="pbtn big" id="plPlay" data-act="toggle-play" aria-label="Play" title="Play / pause (Space)"><svg class="ic"><use href="#i-play"/></svg></button>
+            <button class="pbtn" data-act="seek-rel" data-v="5" aria-label="Forward 5 seconds" title="Forward 5 s (→)"><svg class="ic"><use href="#i-fwd"/></svg></button>
+            <button class="pbtn" data-act="next-result" aria-label="Next result" title="Next result (↓)"><svg class="ic"><use href="#i-next"/></svg></button>
+          </div>
+          <div class="pl-time" id="plTime"><b>0:00</b> / 0:00</div>
+          <div class="pl-actions" id="plActions"></div>
+          <div class="pl-vol"><svg class="ic" aria-hidden="true"><use href="#i-volume"/></svg><input type="range" id="vol" min="0" max="1" step="0.01" value="0.8" aria-label="Preview volume"></div>
+        </div>
+        <div class="screen" id="screen">
+          <div class="scr-top">
+            <span class="st" id="scrStatus"></span>
+            <span class="scr-seg"><button data-act="auto-preview" id="autoBtn" aria-pressed="false" title="Start a preview when the selection rests on a track">Auto-preview</button></span>
+            <span class="scr-seg" role="group" aria-label="Waveform style" id="wfModes">
+              <button data-act="wf-mode" data-v="layered" title="Bands layered from the centre: lows behind, highs in front">Layered</button>
+              <button data-act="wf-mode" data-v="stacked" title="Bands stacked end to end: lows at the centre, highs on the outside">Stacked</button>
+              <button data-act="wf-mode" data-v="lanes" title="One lane per band">Lanes</button>
+            </span>
+            <span class="scr-seg" role="group" aria-label="Zoom">
+              <button data-act="zoom" data-v="out" aria-label="Zoom out" title="Zoom out">−</button>
+              <button data-act="zoom" data-v="in" aria-label="Zoom in" title="Zoom in">+</button>
+            </span>
+          </div>
+          <canvas class="cv" id="cvZoom" aria-label="Zoomed waveform. Drag to scrub." role="img"></canvas>
+          <canvas class="cv" id="cvOver" aria-label="Track overview. Click to seek." role="img"></canvas>
+          <div class="scr-tip" id="scrTip" hidden></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="sheet-bg" id="sheet" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>

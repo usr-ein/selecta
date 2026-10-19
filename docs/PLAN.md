@@ -155,7 +155,7 @@ flowchart LR
 ### M0 — Definition and design *(now)*
 - PRD v0.2 drafted with the Q&A decisions. ✅
 - Research team: 8 notes in `references/`. ⏳ In progress.
-- **Mock v1** → maintainer feedback rounds → validated mock.
+- **Mock v1** (local HTML in `mock/`, see its README) ✅ → maintainer feedback rounds → validated mock.
 - ADR-001 … ADR-010 drafted from the research (section 8). PRD v1.0 with research-based defaults (limits, caps, TTLs).
 - **Exit:** the maintainer validates the mock and PRD v1.0; the ADRs are accepted.
 
