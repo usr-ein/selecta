@@ -89,21 +89,112 @@ open.
 
 ## 2. Official client: SoulseekQt
 
-TODO
+| Aspect | Facts (confidence) |
+|---|---|
+| Who / licence | Written by Nir Arbel, the Soulseek network's operator; closed-source freeware; Qt; Windows, macOS, Linux (AppImage). (high) |
+| Activity | Builds 2024-2-01 and **2026-4-30**, both login minor version **101** under major **157** (`nicotine-plus@f3b9d4d:doc/SLSKPROTOCOL.md:290-308`; FileHorse lists 2026.4.30 with "distributed network bug" fixes). macOS builds lag: last macOS-specific news post is the 2021-2-6 build ("newer Qt build with a redesigned interface"; 2020 fix for invisible text in Catalina dark mode). (medium) |
+| Server address | **Not configurable** (Soulfind #50: a user patched the binary to replace `server.slsknet.org`; aioslsk suggests a hosts-file redirect). → not usable in Selecta's automated test network. (medium) |
+| Search filter language | Typed into a box under every result/browse window (slsknet.org "On-the-fly filtering", node/103), then "Fun with Filters" (2011-11-09, node/267): words to require, `-word` to exclude, `isvbr`, `iscbr`, `minbitrate:N` (`mbr`), `minfilesize:MB` (`mfs`), `minfilesinfolder:N` (`mfif`, folder-level), `.ext` (per Nir's comment). Saved filters + "search correlations" + separate wishlist tabs added 2011-12-14 (node/303). The audio filters relied on attributes the official clients then extracted **only from MP3s**. (high for 2011 behaviour; current behaviour unverified) |
+| Attributes it sends today | Contested: sldl's author says it "does not broadcast the bitrate"; slskd PR #402 discussion says it no longer sends the VBR flag; aioslsk's investigation lists bitrate/VBR for lossy and sample rate/bit depth for lossless. → measure on fixtures captured from real traffic by the maintainer (protocol note). (low) |
+| Other features | Search tabs, wishlist (server-paced), "Download containing folder", browse shares, user info, PMs, chat rooms, interests/recommendations, upload/download panels, privileges. No preview, no collection awareness, no conversion. (high) |
+| Role for Selecta | UX baseline that users know (the filter syntax is the lingua franca: slskd copies it); behavioural reference for what the server expects of a "full feature set" client. |
+
+Recommendation: accept a **SoulseekQt/slskd-compatible text filter syntax** in Selecta's search field as a power-user
+shortcut that maps onto the structured filters of SRCH-2…5 (slskd's parser and tests are a ready-made spec:
+`slskd/slskd@6a450e4:src/web/src/lib/searches.js` and `searches.test.js`; slskd adds `islossless`, `islossy`,
+`minbitdepth:N`, `minlength:N`, and `a|b` alternatives).
 
 ## 3. Open-source clients and libraries
 
 ### 3.1 Nicotine+
-TODO
+
+`nicotine-plus/nicotine-plus@f3b9d4d` (main = 3.4.0.dev2; release 3.3.11). Python 3 + GTK 3/4, GPL-3.0-or-later,
+~22.5k lines in `pynicotine/*.py` without the GUI. The maintainers also maintain the **protocol documentation**
+(`doc/SLSKPROTOCOL.md`, published at nicotine-plus.org) and Soulfind — this is the centre of gravity of open Soulseek
+knowledge.
+
+- **Architecture:** one networking thread (`slskproto.py`, ~3k lines: selectors-based event loop, all server/peer/
+  distributed/file connections, indirect connection handling, timeouts) exchanging message objects (`slskmessages.py`,
+  ~4.5k lines, every message with `make_network_message`/`parse_network_message` and docstrings) with a core event bus
+  (`events.py`); feature components per file: `search.py`, `downloads.py`, `uploads.py`, `transfers.py` (shared base),
+  `shares.py` (scanner + word index for answering searches), `userbrowse.py`, `privatechat.py`, `networkfilter.py`
+  (ban/ignore by user and IP), `portmapper.py` (UPnP + NAT-PMP in pure Python), `pluginsystem.py`. GUI in `gtkgui/`,
+  `headless/` for no-GUI runs (`--headless`).
+- **Identification:** sends major **160**, minor **3** (3.4.0+) — `slskproto.py:1333-1347`. The protocol doc keeps the
+  **registry of major versions** (`doc/SLSKPROTOCOL.md:225-283`): 157 NS/SoulseekQt, 158/159 reserved for SoulseekQt
+  development, 160 Nicotine+, 169 seeleseek, 170 Soulseek.NET, 175 aioslsk, 176 soulseek-rs, **177 "experimental
+  development and testing"**; obsolete 178/182 Museek+, 180 PySoulSeek, 181/198/200 old Nicotine. The `Login` docstring
+  (`slskmessages.py:643-659`): "Numbers are chosen that avoid impersonating clients with reserved major versions …
+  Experimental clients may use major version 177" and "It is unacceptable to use randomly generated usernames, as such
+  automated scripting is disallowed by the official server rules".
+- **Design ideas worth copying:** wishlist sends **at most one item per server-provided interval**
+  (`search.py:542-557`); answering others' searches is capped (`maxresults` 300, `config.py:311`); results display cap
+  2500 (`config.py:325`); search history capped at 200; the whole client is driven by message objects + events, which
+  makes record/replay of protocol fixtures straightforward.
+- **Tests:** unit tests for message round-trips and the network thread with mocked sockets
+  (`pynicotine/tests/unit/protocol/test_slskmessages.py`, `test_slskproto.py`), search/wishlist, shares, transfer queues
+  (`tests/unit/transfers/test_uploads.py`, `test_get_upload_candidate.py`). No server-based e2e.
+- **Reuse:** port logic and message definitions freely (GPL-3.0-or-later), keeping notices on ported fragments.
 
 ### 3.2 Soulseek.NET
-TODO
+
+`jpdillingham/Soulseek.NET@c07c187` (10.0.2), C#, ~111k lines incl. tests; **GPL-3.0-only + §7 Additional Terms**
+(§1.1). Powers slskd, sockseek, Seeker (fork), many *arr tools.
+
+- **Architecture:** async/await throughout; `SoulseekClient.cs` (~5.3k lines) as the façade; `Network/` with
+  `PeerConnectionManager` (message connections, transfer connections; **races direct and indirect connections in
+  parallel and cancels the loser**, lines ~200-250), `DistributedConnectionManager` (parent/children), `MessageConnection`,
+  TCP adapters behind interfaces (testable); `Messaging/` with `MessageBuilder`/`MessageReader`, per-family handlers
+  (`ServerMessageHandler`, `PeerMessageHandler`, `DistributedMessageHandler`) and `Compression/`; `Common/Waiter.cs`
+  — **"await-able server messages"**: callers wait on a `WaitKey` (message code + username/token…) with a timeout; the
+  handler completes the oldest matching wait. This pattern maps directly onto a C++/Qt "pending replies" registry.
+  `Common/TokenBucket.cs` for speed limits.
+- **Search defaults** (`src/Options/SearchOptions.cs`): `SearchTimeout` 15 000 ms **measured from the last response**,
+  `ResponseLimit` 250 responses, `FileLimit` 25 000 files, `FilterResponses` true, `MinimumResponseFileCount` 1,
+  `RemoveSingleCharacterSearchTerms` true; client option `MaximumConcurrentSearches` **2** (`SoulseekClientOptions.cs:120`;
+  lowered from 10 in PR #883, 2025-10-15). No time-window search rate limit.
+- **Tests:** large unit suite with mocks behind every network interface (`tests/Soulseek.Tests.Unit`), plus
+  `Soulseek.Tests.Integration`. The author tests against Soulfind (§5.1).
+- **Reuse:** behaviour reference only (licence).
 
 ### 3.3 slskd
-TODO
+
+`slskd/slskd@6a450e4` (0.26.1), C# ASP.NET Core daemon + React web UI, ~4.1k★, **AGPL-3.0-only + §7 Additional Terms**.
+A headless "client-server" Soulseek app (Docker-first) with REST API, Swagger, webhooks/scripts on events, Prometheus
+metrics, a "relay" mode (one instance controls shares of others) and SQLite for transfers/searches.
+
+Design ideas worth taking (not code) — all documented in `docs/config.md`:
+
+| Idea | slskd detail | Selecta use |
+|---|---|---|
+| Upload governance by **groups** | Built-in `privileged` (priority 0), `default`, `leechers` (share count < threshold), `blacklisted`, plus user-defined groups; each with priority, `roundrobin`/`firstinfirstout` strategy, slots, speed limit, and **limits** on queued/daily/weekly files, megabytes and failures (`config.md:325-605`). Rejections like "Too many files this week". Example values: default group queued 150 files/1500 MB, weekly 1500 files; leechers 1 slot, 15 queued files. | SHARE-3 / SHARE-4 upload manager design; also tells Selecta what *other* sharers enforce → keep per-peer download caps well under these (FAIR-2). |
+| Incoming-search **circuit breaker** | `throttling.search.incoming`: concurrency 10, max 500 pending requests (excess discarded), ≤ 500 files per response (`config.md:1053-1080`). Regex filters on incoming queries (e.g. drop queries < 3 chars). | SHARE-2 search answering under load. |
+| **Retention** | Searches deleted after 1 day by default; transfers by state; files by age (`config.md:1018-1050`). | CACHE-1 TTLs. |
+| Download retry | resume partial downloads by default; example config: 3 attempts, 5 s initial delay, 60 s max delay (`config.md:350-372`). | DL-2 defaults. |
+| One search at a time via API | `SearchesController.cs:67-96` returns HTTP 429 "Only one concurrent operation is permitted". | Governor at the service boundary, not only at the socket. |
+| Text search filters (web UI, client-side) | SoulseekQt syntax + `islossless`/`islossy`/`minbitdepth`/`minlength`, `a|b` (`src/web/src/lib/searches.js`, tests alongside). | Power-user filter syntax (§2). |
+
+slskd does **not** rate-limit outgoing searches over time (only the API concurrency guard), and it is a daemon + web UI,
+which the PRD rules out for v1. Running it as Selecta's backend was rejected (§6).
 
 ### 3.4 aioslsk
-TODO
+
+`JurgenR/aioslsk@a90ad82` (v1.7.1, 2026-10-11), Python ≥ 3.11 asyncio library, **GPL-3.0-or-later**, ~15k lines,
+reserved major version **175**. The best-*documented* implementation:
+
+- `docs/source/SOULSEEK.rst` (~2.6k lines) — protocol **flows**: direct vs indirect peer connections, obfuscation,
+  delivering search results, distributed network (obtaining a parent, children, max children, how searches travel),
+  transfer flows (incl. deprecated upload flow, "upload not allowed"), logon, and a server-side behaviour model per
+  message ("Server Flows"), plus **search query rules** (exclusions, prefix-only wildcards `*oney`, case-insensitive,
+  order-independent, path-separator matching only on directories, term-boundary matching algorithm) and the
+  **attribute table** (0 bitrate, 1 length, 2 VBR, 4 sample rate, 5 bit depth; lossless vs compressed categories) —
+  lines 2525-2595. `DESIGN.rst` (client init, distributed network roles), `MESSAGES.rst`, `SETTINGS.rst`.
+- Code: manager per subsystem (`network/network.py` connection establishment, `distributed.py`, `search/manager.py`,
+  `shares/manager.py` (index + query matching), `transfer/manager.py` + `transfer/state.py` (**explicit transfer state
+  machine**), `network/rate_limiter.py` (token-bucket transfer speed), `network/upnp.py`), typed `events.py`,
+  `protocol/messages.py` + `primitives.py` (declarative message fields).
+- `tests/e2e/mock/server.py` — the mock server with a distributed network (§5.2).
+- **Reuse:** port logic freely (keep notices); excellent cross-check for message layouts.
 
 ### 3.5 museek+ / museekd / newsoul
 museek+ README: "No longer maintained!" and points users to slskd, Nicotine+ and Seeker. Architecture: `museekd` daemon
