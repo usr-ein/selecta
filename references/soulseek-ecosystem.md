@@ -469,11 +469,11 @@ Commits: Nicotine+ `f3b9d4d`, aioslsk `a90ad82`, soulseek-rs `20bd676`, Soulseek
 |---|---|---|---|---|---|---|---|
 | Native macOS look (UI-1) | ~ (Qt, own look) | ✗ (GTK) | ✗ (browser) | ✓ (SwiftUI) | ~ (Tauri web view) | n/a | ✓ (Qt Widgets, native style) |
 | Hard format/quality filters (SRCH-2…4) | ~ (text: `iscbr`, `minbitrate`; no lossless rules) | ~ (filter bar: in/out words, type, size, bitrate, length, country) | ~ (text: + `islossless`, `minbitdepth`, `minlength`) | ✓ (format, bitrate ≥, sample rate ≥, bit depth ≥, free slot) | ? | ✓ (necessary vs preferred conditions) | ✓ incl. `=`/≤ operators, CBR/VBR classes |
-| Named presets (SRCH-8) | ✓ saved filters | ~ (filter history) | ✗ | ✓ quick presets (MP3 320, FLAC, Lossless, Hi-Res) | ? | ✓ (profiles) | ✓ |
+| Named presets (SRCH-8) | ✓ saved filters | ~ (filter history) | ✗ | ✓ quick presets (MP3 320, FLAC, Lossless, Hi-Res) | ? | ✓ (config profiles, `--profile`) | ✓ |
 | Unknown-quality policy (SRCH-6) | ✗ (MP3-only attrs hide others) | ✗ | ~ (`islossless` drops files without SR/BD) | ? | ? | ✓ `--strict-conditions` | ✓ strict mode + "unknown" marker |
 | Plausibility / fake detection (SRCH-7, PREV-9) | ✗ | ✗ | ✗ | ✗ | ✓ spectrogram + confidence | ✗ | ✓ |
 | Folder (release) grouping, whole-folder download | ✓ "Download containing folder" | ✓ | ✓ (by user) | ✓ | ✓ (record-centric) | ✓ album mode | ✓ |
-| Audition before download (PREV-1…4) | ✗ | ✗ | ✗ | ~ (plays *downloaded* files) | ~ ("Preview before you commit"; mechanism ?) | ✗ | ✓ progressive, keyboard-driven |
+| Audition before download (PREV-1…4) | ✗ | ✗ | ✗ | ~ (plays *downloaded* files, `RowAudioPreview.swift`) | ~ (20 s excerpt of an already-downloaded file, `sidecar/seek_sidecar/core_host.py:1026-1053`) | ✗ | ✓ progressive, keyboard-driven |
 | Waveform | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ 3-band |
 | Owned / Inbox / history badges (SRCH-11) | ✗ | ✗ | ✗ | ? | ✓ ("not in my library") | ~ (skip-existing index) | ✓ |
 | Batch from tracklist (BATCH) | ✗ | ✗ (plugins) | ✗ (API tools) | ✗ | ~ (links/catalogues) | ✓ (core feature) | ✓ review-first |
