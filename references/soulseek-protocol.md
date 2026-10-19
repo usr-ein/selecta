@@ -918,12 +918,165 @@ Selecta proposal (governor-owned, compile-time ceilings, SAFE-1/2):
 
 ## 12. Implications for Selecta
 
-TODO.
+### 12.1 MVP message subset
+
+| Channel | P0 (M2) | P1 | Decode and drop |
+|---|---|---|---|
+| Server | 1 Login, 2 SetWaitPort, 3 GetPeerAddress, 5/6 Watch/UnwatchUser, 7 GetUserStatus, 18 ConnectToPeer, 22 MessageUser (receive), 23 MessageAcked, 26 FileSearch (both ways), 28 SetStatus, 32 ServerPing, 35 SharedFoldersFiles, 36 GetUserStats (parse), 41 Relogged, 66 AdminMessage, 69 PrivilegedUsers, 71 HaveNoParent, 83/84 ParentMinSpeed/Ratio, 92 CheckPrivileges, 93 EmbeddedMessage, 100 AcceptChildren, 102 PossibleParents, 104 WishlistInterval, 121 SendUploadSpeed, 126/127 BranchLevel/Root, 130 ResetDistributed, 160 ExcludedSearchPhrases, 1001 CantConnectToPeer | 22 send, 36 request, 42 UserSearch, 103 WishlistSearch | 64 RoomList and everything chat/interest/ticker/private-room; all obsolete codes |
+| Peer-init | 0 PierceFireWall, 1 PeerInit | | — |
+| Peer | 4/5 answer (send our share list), 9 both, 15/16 answer, 36/37 both, 40, 41, 43, 44, 46, 50, 51 | 4/5 request (browse, BRWS-1), 15/16 request | 1, 8, 10, 14, 33, 34, 42, 47–49, 52 |
+| Distributed | 3 DistribSearch, 4 BranchLevel, 5 BranchRoot, 93 (unpack) | | 0, 7 |
+| File | FileTransferInit, FileOffset, raw stream | | — |
+
+### 12.2 Honest identification (NET-9)
+
+- Log in with **major 177** ("experimental development and testing") and a non-zero minor (start at 1, bump on new
+  network capabilities, as Nicotine+ does). Never use 157 (official client), 160, 169, 170, 175, 176 or the obsolete
+  numbers.
+- Before a public release, ask the maintainers of the Nicotine+ protocol document (they curate the registry, and
+  ask that the protocol not be extended without the Soulseek administrators' approval) for a reserved major.
+  Record it in ADR-002/NET-9.
+- Do not add messages or attributes. Answer the `\x01VERSION\x01` private-message probe with "Selecta <version>"
+  like Nicotine+ (rate-limited, `privatechat.py:305-324`) — P1.
+- Watch for PMs from `server` after login ("connection is restricted…") and show them; they are the only feedback
+  if the server dislikes our version.
+
+### 12.3 Design recommendations for `src/slsk` (Qt Core + Network + zlib)
+
+1. **Codec**: a bounds-checked little-endian `Reader`/`Writer` over `QByteArray` (not `QDataStream` strings; not
+   `qUncompress`, which expects Qt's own 4-byte big-endian length header — call zlib `inflate` directly with an
+   output cap). Readers never throw; they set a failure flag; a failed parse drops the message, not the connection
+   (Nicotine+ behaviour), except framing violations, which close it. Optional trailing fields are parsed only if
+   bytes remain; extra bytes are ignored.
+2. **Strings**: decode UTF-8, fall back to Latin-1 for display; keep `RemotePath{QByteArray raw; QString display}`
+   and always echo `raw` back to the peer. Remote separators are `\`; never map remote paths to local paths except
+   through the Inbox naming code.
+3. **Framing caps** (NFR-4): per channel and per message as in §2.5, "solicited only" for share lists and user
+   info, streaming inflate with caps, and a cheap token check before inflating a search response fully.
+4. **ServerSession**: Login → wait for reply → burst (§4.3) → keepalive; emits typed events; Relogged / rejection /
+   immediate EOF / login timeout are distinct terminal states the governor uses to decide reconnects.
+5. **PeerConnectionManager**: one `P` and one `D` connection per user; keyed pending-message queues; direct and
+   indirect attempts **raced**; tokens from a random start, incremented, wrapping and skipping 0; PierceFireWall
+   matched against `{token → (user, type, deadline)}`; `CantConnectToPeer` sent when our dial-back fails; idle
+   timers; global socket cap; every new outbound attempt asks the governor first.
+6. **Transfers**: explicit state machines (download: queued-remote → requested → connecting-F → transferring →
+   verifying → done/failed/cancelled; upload mirrors it). The download side accepts the `F` connection from either
+   direction, sends the resume offset from the `.part` file size, closes after `size` bytes, and ignores the
+   `UploadFailed` that follows a local cancel. Previews use the same machine with a "preview" flag (counted in
+   per-peer stats, PREV-7).
+7. **Distributed**: `DistributedNode` owns parent candidates, parent, children, branch level/root; forwards raw
+   `DistribSearch` bytes; accepts children only when eligible (§8); always reports level/root to server and
+   children; treats code 93 from server or parent identically.
+8. **Search**: `SearchService` (searcher) keeps a token table with per-token caps and deadlines (SRCH-16);
+   `ShareResponder` (responder) implements §10.1/10.2 on the share index, applies excluded phrases, caps results and
+   closes the connection after sending.
+9. **No range requests**: the protocol only resumes from an offset, so a preview always downloads from byte 0 and
+   seeking past the downloaded part has to wait (PREV-3). Starting a second transfer at an offset to "jump ahead"
+   would abuse an upload slot and is explicitly discouraged by the Nicotine+ doc.
+
+### 12.4 Proposed protocol-level defaults (inputs to the governor ADR)
+
+| Item | Proposal | Basis |
+|---|---|---|
+| Listen port | 2234, one port, no obfuscation; bind `0.0.0.0` (IPv4) | N+doc §2; Soulfind loopback substitution (§13) |
+| Server keep-alive | TCP keepalive (60 s idle, 10 s interval, 6 probes) + `ServerPing` every 300 s | N+doc §32, aioslsk, Nicotine+ |
+| Login reply timeout | 30 s, then "possibly banned" state | aioslsk constant; Soulfind 60–75 s unauthenticated close |
+| Server reconnect | 30 s base, ×2, full jitter, cap 15 min, reset after ≥ 5 min logged in; never after Relogged/rejection/manual/oversized frame; ≥ 30 min after immediate EOF or login timeout | §11 |
+| Peer connect / indirect wait | 10 s / 20 s | Soulseek.NET, aioslsk / Nicotine+ |
+| Idle `P` / `D` | 60 s / 60 s; close `P` right after a search response | Nicotine+ |
+| Sockets | ≤ 512 total (raise RLIMIT_NOFILE at start-up, as Nicotine+ does) | Nicotine+ 2048 cap |
+| Inbound caps | server 16 MiB; peer-init 16 KiB; peer 1 MiB; search/folder 16 MiB (128 MiB inflated); share list 256 MiB (1 GiB inflated, solicited only); user info 16 MiB (solicited only); distributed 16 KiB | Nicotine+ §2.5, tightened |
+| Search collection window | until 120 s after sending, or 15 s without new responses, or 5 000 files / 500 peers, whichever first; then drop late results by token | Soulseek.NET 15 s idle, 250/25 000; Nicotine+ 2 500 shown |
+| Answering searches | ignore < 3 chars; ≤ 300 files per reply (sharing note decides) | Nicotine+ |
+| Distributed children | accept when eligible, ≤ `min(avgspeed // ratio // 100, 10)` | Nicotine+ |
+| Place in queue | ≤ 1 request per file per 5 min, only for downloads on screen | Nicotine+ 300 s |
+| Download retries | per peer 3 → 15 → 60 min, plus on "user online" | Nicotine+ 180/900 s |
+| Uploads | 1 active per user; privileged first; round-robin | all implementations |
+
+Search budgets, per-peer caps and batch pacing are in `network-etiquette-and-safe-development.md`.
+
+### 12.5 Implementation order (M2)
+
+1. **Codec + test vectors** (pure, no sockets): primitives, every P0 message, zlib with caps, unknown-code skipping.
+   Use the Login hex example in [N+doc §1] as the first golden test; round-trip tests; one libFuzzer target per
+   decoder.
+2. **ServerSession on Soulfind**: login, burst, keepalive, PM ack, `AdminMessage` (Soulfind `announcement`
+   command), `ExcludedSearchPhrases` (Soulfind filter phrases), `Relogged` (log in twice), reconnect policy under
+   an injectable clock.
+3. **Listener + PeerConnectionManager**: direct and indirect paths between two `selecta-cli` instances on
+   Soulfind; force the indirect path by advertising a closed port; force failure to get `CantConnectToPeer`.
+4. **Search out/in**: Soulfind delivers every search as server code 26 to every client, so responder and searcher
+   can both be tested with `selecta-cli` plus a reference client (Nicotine+ accepts a custom server address).
+5. **Browse, folder contents, user info** (both directions).
+6. **Downloads and uploads**: queue flow, resume after a kill, preview cancel, denials (`Too many files` via the
+   reference client's limits), legacy direction-0 requests from a Soulseek.NET client (slskd) acting as downloader.
+7. **Distributed membership** against an in-repo **FakeServer + FakePeer** fixture (Soulfind has no distributed
+   network): `PossibleParents`, parent selection, branch messages, raw forwarding, children, `ResetDistributed`,
+   code 93 from server and from a parent.
+8. **Hardening**: caps, idle timers, socket limits, overnight fuzzing, interop matrix (Nicotine+, slskd, aioslsk)
+   on the local network.
+
+### 12.6 Decisions to make
+
+| # | Decision | Recommendation |
+|---|---|---|
+| P-1 | Login identity | 177 + minor 1 now; request a reserved major before public release (§12.2) |
+| P-2 | Own protocol layer vs reuse | Own C++/Qt layer: there is no maintained C++ library (museek+ is legacy, GPL-2.0-or-later, last commit 2022, obsolete major 178). Use Nicotine+, Soulseek.NET and aioslsk as references (see ecosystem note / ADR-002) |
+| P-3 | Distributed-network tests | In-repo fake server/peers now; consider contributing distributed support to Soulfind later |
+| P-4 | Parent selection rule | Nicotine+/SoulseekQt rule (first `DistribSearch` after level+root) |
+| P-5 | Accept distributed children | Yes, when eligible, ≤ 10 (good citizenship; Selecta forwards searches) |
+| P-6 | Obfuscation | Not supported |
+| P-7 | Legacy download request | Never send; accept as uploader by answering `Queued` |
+| P-8 | Remote path encoding | Raw bytes + display string; one Latin-1 retry on `File not shared.` |
+| P-9 | Search collection window | §12.4 proposal; confirm with the etiquette note |
+| P-10 | Chat rooms | Out of v1 (PRD). Note that the official rules ask alternative clients to implement "the full range of Soulseek features (including chat, search, wishlist, download, upload, and respect / recognition of privileges)" (slsknet.org/news/node/681): PMs, wishlist and privilege-aware uploads are planned; rooms are the gap. Maintainer's call |
 
 ## 13. Open questions / verify on a local test server
 
-TODO.
+Verify on the local network (Soulfind + reference clients), never on the live server:
+
+1. Soulfind's real behaviour for our login burst: does anything sent before the Login reply get stuck
+   (`msghandler.d:34-35`)? Does `GetUserStatus` for ourselves ever arrive?
+2. **Loopback substitution**: Soulfind reports clients connecting from 127.0.0.1 with the host's LAN IP (UDP-connect
+   trick, `conns.d:294-313`), so peers must listen on `0.0.0.0`. Check this works with Docker networking and on a
+   machine with no default route (it may throw there — inferred, untested).
+3. Indirect path: `ConnectToPeer` relay, `PierceFireWall` matching, `CantConnectToPeer` relay; duplicate sockets
+   when both directions succeed.
+4. Interop matrix, per reference client (Nicotine+, slskd/Soulseek.NET, aioslsk): search replies (trailing fields),
+   browse, folder contents (does it include sub-folders?), queue flow vs legacy flow, resume after kill, what each
+   uploader sends when *we* close `F` mid-transfer (`UploadFailed`? `UploadDenied("Cancelled")`?), denial strings,
+   place-in-queue behaviour, idle timeouts (slskd drops idle `P` after 15 s).
+5. Share list size limits against a large synthetic share (≥ 200 k files): compressed/inflated sizes, parse time,
+   memory.
+6. Attribute coverage from each reference client for MP3 CBR/VBR, FLAC, WAV, AIFF, M4A/ALAC, OGG, OPUS (which
+   attributes, VBR flag, extension field) — feeds SRCH-3/4/6.
+7. Excluded-phrase semantics with Soulfind's filter phrases (case, substring vs word).
+
+Cannot be verified locally (needs reading other sources or one careful, manual, maintainer-run live session in M9):
+
+8. Whether the official server treats major 177 differently (restricted connection?) — ask the Nicotine+ maintainers
+   first.
+9. Official distributed behaviour: real `ParentMinSpeed`/`ParentSpeedRatio` values, `PossibleParents` cadence,
+   how often a desktop client ends up a branch root. Log these in M9.
+10. Official search rate limits, ban triggers and durations, and whether `WishlistSearch` is routed like a global
+    search — etiquette note; never probe.
+11. Which server port to use for release builds (Nicotine+ 2242, Soulseek.NET 2271, aioslsk/SoulseekQt 2416 — all
+    `server.slsknet.org`); pick the one Nicotine+ uses unless the official client documentation says otherwise.
+12. SoulseekQt's share-list and folder-contents quirks (extension blank, no VBR attribute, sizes 0 for > 2 GB in
+    `TransferRequest`) are documented second-hand only; SoulseekQt cannot be run against Soulfind if it has no
+    server-address setting (unknown).
 
 ## 14. Sources
 
-TODO (accessed 2026-10-19).
+All accessed 2026-10-19. Repositories were shallow-cloned read-only into `local/research-clones/protocol/`.
+
+| Source | Commit / version | Used for |
+|---|---|---|
+| Nicotine+ protocol doc — https://nicotine-plus.org/doc/SLSKPROTOCOL.html, `doc/SLSKPROTOCOL.md` in https://github.com/nicotine-plus/nicotine-plus | `f3b9d4d` (2026-10-18; doc "last updated August 27, 2026") | Primary message reference: packing, constants, version registry, every message layout, connection order, transfer flow, distributed messages |
+| Nicotine+ code — `pynicotine/slskmessages.py`, `slskproto.py`, `downloads.py`, `uploads.py`, `transfers.py`, `search.py`, `shares.py`, `users.py`, `config.py`, `privatechat.py` | `f3b9d4d` | Size caps, timers, keepalive, reconnect, connection race details, parent selection, child limit, rejection-reason usage, search matching, share list construction, Latin-1 retries |
+| Soulseek.NET — https://github.com/jpdillingham/Soulseek.NET | `c07c187` (2026-10-11) | Race implementation, defaults/timeouts, legacy download flow, field layouts, distributed parent selection, absence of size caps |
+| aioslsk — https://github.com/JurgenR/aioslsk, docs https://aioslsk.readthedocs.io/en/latest/SOULSEEK.html (`docs/source/SOULSEEK.rst`, `MESSAGES.rst`, `USAGE.rst`) | `a90ad82` (2026-10-11, v1.7.1) | Official-server behaviour notes (post-login burst, restricted-version PM, presumed server defaults), search syntax, obfuscation algorithm, max-children formula, reconnect/ban warnings |
+| Soulfind — https://github.com/soulfind-dev/soulfind | `5a256f5` (2026-10-15) | Local test server behaviour and limitations (no distributed network, 8 KiB frame cap, login validation, post-login order, PM storage, search delivery) |
+| museek+ — https://github.com/eLvErDe/museek-plus (mirror) | `36c3e9b` (2022-03-08) | Legacy C++ reference: obsolete major 178, `u64` queue length in search replies, index-based attribute codes; confirms it is not a reuse candidate |
+| Soulseek rules — https://www.slsknet.org/news/node/681 | page as of 2026-10-19 | Third-party client expectations ("full range of features"), bots barred, max 5 clients per IP, admins may close connections |
+| Soulseek FAQ — https://www.slsknet.org/news/faq-page | page as of 2026-10-19 | Checked for search syntax and limits: nothing protocol-relevant (privileges and IP bans only) |
