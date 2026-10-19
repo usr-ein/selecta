@@ -160,7 +160,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | SRCH-13 | P0 | Every network search goes through the governor's rate limiter. The UI always shows the remaining search budget and when it refills. |
 | SRCH-14 | P1 | **Wishlist:** saved searches (each with a preset) re-run in the background at the server-provided interval; new matching results raise a notification. |
 | SRCH-15 | P1 | Search history: recent queries with their presets. |
-| SRCH-16 | P0 | Per-search caps (stop collecting after N results or T seconds) to bound memory and peer load. |
+| SRCH-16 | P0 | Per-search caps bound memory and peer load. Collecting stops at the first of: 15 s without a new response, 120 s in total, 300 responding peers or 10 000 files. Later results are dropped by token. |
 | SRCH-17 | P0 | **Release first.** Each search is resolved to release candidates (Spotify when signed in, otherwise Deezer or MusicBrainz), shown above the results with artwork, title, artist, album, year, length and label. When the query names a track, the best release is chosen automatically. Otherwise the user picks one, or "Any (name only)". The chosen release becomes the reference for ranking and filtering (D23). |
 | SRCH-18 | P0 | **Length identifies the track.** Each file's length is compared with the release's: within ±3 s counts as the same recording; beyond that, the file is flagged as another version or track. "Only this release" (on by default) hides files whose length or name doesn't fit. "Best match" ranks by fit to the release (length first, then artist, title and version), then quality, availability and peer fairness. It never ranks by name alone. |
 | SRCH-19 | P0 | **Typo-tolerant matching** (D28): names match word by word with Damerau–Levenshtein (OSA) distance scaled to word length, wherever the words appear in the path (artist, title or album folder); joined words count ("okumadrift"). A misspelled query is sent to the network spelled as the matched release, and the summary says so. "Search wider" sends fewer words, to catch misspelled file names, for one search from the budget. |
@@ -191,13 +191,13 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | ID | Pri | Requirement |
 |---|---|---|
 | PREV-1 | P0 | Preview downloads the file into the preview cache (not the Inbox). Playback starts as soon as enough is buffered (progressive) for formats that allow it: MP3, FLAC, WAV, AIFF; M4A only when its index is at the start of the file. |
-| PREV-2 | P0 | **3-band waveform:** low = blue, mid = orange, high = white, stacked Pioneer-style. It has an overview of the whole track and a zoomed, scrolling view around the playhead. The part not downloaded yet is visibly distinct. The final rendering style is settled on the mock. |
+| PREV-2 | P0 | **3-band waveform**, Pioneer 3Band style: low = blue, mid = amber, high = white. The **overview** of the whole track is a single-sided cumulative stack. The **zoomed**, scrolling view around the playhead is mirrored and layered: a brown low∩mid overlap, with white highs in front at about 85 % opacity. The part not downloaded yet is visibly distinct. Other styles stay available in Settings. |
 | PREV-3 | P0 | Transport: play/pause, click/drag to seek on either waveform, jump ±5 s / ±30 s, volume. Seeking beyond the downloaded range waits for data. |
 | PREV-4 | P0 | **Keyboard audition:** ↑/↓ moves through results and (optionally) auto-previews the selection; Space previews from the configured source or plays/pauses; ⇧Space previews the peer's file; ←/→ seeks; Return downloads; K keeps the preview. |
 | PREV-5 | P0 | **Keep** moves the cached file into the Inbox without re-downloading, and it counts as a download. **Discard** deletes it from the cache. |
 | PREV-6 | P0 | Skipping a preview before its transfer completes cancels the transfer, saving the peer's bandwidth (D13). Settings can switch this to "let it finish". |
 | PREV-7 | P0 | Previews are real transfers: they count in per-peer counters and the ratio, and respect per-peer caps. |
-| PREV-8 | P0 | The preview cache is size-bounded (default 2 GB, LRU) and expires old files. Waveform analysis is cached separately (a few KB per track), so re-opening a preview is instant. |
+| PREV-8 | P0 | The preview cache is size-bounded (default 2 GB, LRU) and expires old files. Waveform analysis is cached separately: a ~3.6 KB overview kept long-term and the full detail (~0.1–0.3 MB per track) in an LRU, so re-opening a preview is instant. |
 | PREV-9 | P1 | **Spectrum check:** detect likely transcodes / fake lossless (spectral cut-off) and show a badge and a spectrogram. |
 | PREV-10 | P2 | BPM and key detection. |
 | PREV-11 | P1 | **Preview through yt-dlp** (D26). When the user has yt-dlp installed (found on `PATH` or in Homebrew, or set in Settings), a preview can fetch the full track from YouTube Music for the matched release. The search uses artist and title, and the duration must be within ±3 s of the release. The waveform is the same as for peer previews. Selecta runs yt-dlp as an external process: an argument list with no shell, audio only, no cookies or account, writing into the preview cache, with a timeout and one process at a time. The audio is never filed, shared, converted or tagged, and it isn't a download. Selecta doesn't bundle, install, update or reimplement yt-dlp. |
@@ -253,7 +253,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 |---|---|---|
 | SHARE-1 | P0 | Choose shared folders. The whole collection is shared by default (D12); the Inbox and the preview cache never are. Scan and index the shares, excluding hidden and system files. |
 | SHARE-2 | P0 | Answer browse, folder-contents and search requests from the index. Honour the server's excluded search phrases. Never reveal full local paths. |
-| SHARE-3 | P0 | Upload queue with slots, bandwidth limit, per-user queue limits and fair round-robin (defaults from research). |
+| SHARE-3 | P0 | Upload queue: 3 slots, one active upload per user, **privileged users first**, round-robin between users, per-user limits (100 files / 10 000 MB) answered with the standard denial strings, optional bandwidth limit. |
 | SHARE-4 | P1 | Buddy-only shared folders; ban / ignore users. |
 | SHARE-5 | P0 | Upload statistics (files and bytes, per user) feed the ratio. |
 
@@ -262,7 +262,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | ID | Pri | Requirement |
 |---|---|---|
 | FAIR-1 | P0 | **Per-peer counters:** files and bytes downloaded (this session, today, 7 days, all time), files currently queued, last download. Shown in the results (peer column), the inspector and the Peers view. |
-| FAIR-2 | P0 | **Per-peer limits:** max concurrent transfers per peer, max queued files per peer, a daily soft cap (warning) and a hard cap (blocked unless overridden for that one item). Defaults come from the etiquette research. |
+| FAIR-2 | P0 | **Per-peer limits:** max concurrent transfers per peer, max queued files per peer, a daily soft cap (warning) and a hard cap (blocked unless overridden for that one item). Defaults: 1 active and 20 queued files; a warning at 20 files or 1 GB a day; a stop at 50 files or 3 GB a day, or 150 files in 7 days (`docs/RESEARCH-SYNTHESIS.md` §3). |
 | FAIR-3 | P0 | **Ratio:** uploaded vs downloaded (files and bytes; this session / 30 days / all time) next to the number of files shared. Always visible in the toolbar, with a status (healthy / low) and guidance. |
 | FAIR-4 | P0 | **Respect peer signals:** after a denial ("Too many files", "Banned", queue full…), back off from that peer automatically and record why. |
 | FAIR-5 | P1 | Ranking prefers peers you have downloaded less from, all else being equal. |

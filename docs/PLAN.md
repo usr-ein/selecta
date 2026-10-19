@@ -31,13 +31,13 @@ setup, testing, risks, and the decisions still to record. Requirement IDs (e.g. 
 | Concern | Proposal | Notes |
 |---|---|---|
 | Language | C++20 | C++23 features only if Apple clang and MSVC both support them. |
-| Framework | Qt 6 (6.11 is installed locally) | Pin to the latest stable at M1; track LTS for releases. |
+| Framework | Qt 6.12.x (LTS; 6.11 is installed locally) | Open-source LTS patches stop around 2027-04, so bump minors about every 6 months (RESEARCH-SYNTHESIS C9). |
 | UI toolkit | **Qt Widgets** with the native macOS style; custom-painted widgets for the waveform | "Native, not flashy" (UI-1) favours Widgets: native controls, mature large tables, accessibility. Qt Quick remains an option for isolated views. **ADR-001.** |
 | Build | CMake (≥ 3.28) + Ninja + CMakePresets | Modern Qt CMake API. |
-| Persistence | SQLite via Qt SQL (WAL), FTS5 for text search | One DB file plus file-based caches. |
+| Persistence | Own pinned SQLite (amalgamation) behind a thin wrapper; WAL; FTS5 for UI text search | Qt SQL's SQLite depends on the Qt build. Hot paths use in-memory snapshots. **ADR-005.** |
 | Audio decode | FFmpeg (libavformat/libavcodec/libswresample) | Covers every format; GPL build is fine for a GPLv3 app. **ADR-003.** |
-| Playback | Qt Multimedia `QAudioSink`, or CoreAudio directly if latency or position accuracy requires | **ADR-003.** |
-| Encoding | LAME (MP3) via FFmpeg or directly; FLAC/AIFF/WAV via FFmpeg | **ADR-003.** |
+| Playback | `QAudioSink` callback API first (M5), CoreAudio AUHAL before v1.0 for latency-compensated position | **ADR-003.** |
+| Encoding | libmp3lame called directly (genuine LAME Info tag); FLAC/ALAC via FFmpeg; AIFF via FFmpeg's muxer; WAV via Selecta's own PCM writer; libsoxr for resampling | **ADR-003.** |
 | Tags | TagLib 2.x | Vorbis / ID3v2.3 / ID3v2.4 / MP4 / RIFF / AIFF. |
 | Credentials | QtKeychain → macOS Keychain | Also holds the Spotify client ID and secret (PRD META-1). |
 | Metadata & previews | Spotify Web API (own Qt client, or the `lib` of spotify-qt if its licence fits); official 30-s preview clips (Deezer, iTunes); full-track preview audio through the user's installed yt-dlp, run with `QProcess` (PRD D26) | Requests go through the governor. yt-dlp is optional, never bundled or reimplemented. **ADR-011.** |
@@ -321,6 +321,8 @@ one manual download · observe for bans/denials · escalate gradually.
 | ADR-009 | File-safety model, Inbox (conversion on arrival) and filing | PRD D2/D3/D7/D29 |
 | ADR-010 | Dependency licence policy (the licence itself is decided: GPL-3.0-or-later, PRD D14) | qt-app-architecture.md |
 | ADR-011 | Metadata and preview services: Spotify vs Deezer/MusicBrainz/Discogs, the yt-dlp preview runner, credentials handling | metadata-and-preview-services.md, PRD D26 |
+| ADR-012 | Sharing and uploads: ShareIndex, UploadManager, privileged first, limits, FSEvents | sharing-and-uploads.md |
+| ADR-013 | Test network: Soulfind + reference peers, FakeServer/FakePeer, counting proxy, per-test Soulfind in CTest | soulseek-ecosystem.md, network-etiquette-and-safe-development.md |
 
 ## 9. How work gets done
 
@@ -358,7 +360,7 @@ boundaries (maintainer's direction, 2026-10-19: one agent with the whole context
 
 ## 10. Immediate next steps
 
-1. Research notes land (9 topics) → `docs/RESEARCH-SYNTHESIS.md` → ADR drafts → PRD v1.0 defaults (limits, caps, TTLs) → next question round.
+1. Research synthesis ✅ (`docs/RESEARCH-SYNTHESIS.md`, draft v1) → ADR drafts (ADR-001…013, §4 of the synthesis) → ADR-011 once the metadata note lands.
 2. Before the first push: rewrite the early commits to the author identity `usr-ein <usr-ein@pm.me>` (PRD D16), then create the GitHub repository.
 3. M1 Foundations, built by the head implementer: CMake skeleton, CI, the Qt app shell following the mock, `devenv/`
    with the local test server. Then the `slsk/` contract, so its library agent can start while the shell grows.
