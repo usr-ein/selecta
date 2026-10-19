@@ -1,0 +1,26 @@
+# Build output
+/build*/
+/out/
+CMakeUserPresets.json
+compile_commands.json
+.cache/
+
+# Qt
+*.qm
+*.user
+*.user.*
+.qmake.stash
+.qtcreator/
+
+# macOS
+.DS_Store
+._*
+
+# Editors / IDEs
+.idea/
+.vscode/
+*.swp
+
+# Local dev environment data (test server state, test shares, caches)
+/devenv/data/
+/local/
