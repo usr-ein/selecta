@@ -27,7 +27,8 @@
   `QT_ENABLE_STRICT_MODE_UP_TO=0x060C00`, C++20 (23 if CI allows), ASan/UBSan and TSan presets (Apple clang has no
   libFuzzer → fuzz with Homebrew LLVM or on Linux), clang-tidy + clazy from Homebrew, ccache.
 - **Dependencies:** Homebrew for local dev only — its FFmpeg/LAME dylibs are built with **`minos 27.0`** and Homebrew
-  FFmpeg links 22 extra codec/network dylibs, so a bundle that copies them runs only on macOS 27+. CI/release: official
+  libavcodec/libavformat link 10 extra Homebrew libraries (x264, x265, SVT-AV1, dav1d, libvpx, opus, LAME, OpenSSL,
+  xz) plus their dependencies, so a bundle that copies them is large and runs only on macOS 27+. CI/release: official
   Qt via aqtinstall, an **audio-only FFmpeg + LAME + soxr from vcpkg** (pinned baseline), small CMake deps via
   FetchContent (TagLib, QtKeychain, miniupnpc, libnatpmp, SQLite, test frameworks). Prefer **our own SQLite** over Qt SQL
   (Homebrew's Qt SQL plugin uses the system SQLite; official Qt bundles 3.53.4).
@@ -134,7 +135,7 @@ So "native" decomposes into three layers with different Qt answers:
 |---|---|---|---|
 | **Controls** | buttons, pop-up buttons, checkboxes, sliders, text fields, scroll bars, table headers | Drawn by AppKit cells through `QMacStyle` → genuinely native, Liquid-Glass-aware (high) | Drawn by a fork of `QMacStyle` (`quicknativestyle/qstyle/mac/qquickmacstyle_mac.mm`) — same quality for the controls it covers; **no header view, toolbar, tab bar** (high) |
 | **Content views** | 10 000-row sortable grouped results, source list, transfer list, inspector forms | `QTreeView`/`QTableView`/`QHeaderView`: sorting, resizable/movable/hideable columns, multi-selection, type-ahead, keyboard navigation, uniform row heights, persistent editors — mature (high) | `TableView`/`TreeView`/`HorizontalHeaderView`: fast and virtualised but lower level; sort indicators, column moving/hiding, header context menus and native look are DIY (medium-high) |
-| **Window chrome** | unified toolbar + search field, floating sidebar, inspector, menus, context menus | Menu bar native; context menus Qt-drawn unless `toNSMenu()`; toolbar Qt-drawn on a transparent title bar; no sidebar material (high) | Menus native (`Popup.Native`); no toolbar, no sidebar material (high) |
+| **Window chrome** | unified toolbar + search field, sidebar material, inspector, menus, context menus | Menu bar native; context menus Qt-drawn unless `toNSMenu()`; toolbar Qt-drawn on a transparent title bar; no sidebar material (high) | Menus native (`Popup.Native`); no toolbar, no sidebar material (high) |
 
 ### 2.2 Requirement-by-requirement comparison
 
@@ -165,7 +166,7 @@ Why: Selecta's core surface is dense, sortable, keyboard-driven, accessible tabl
 gives native-drawn table headers, a complete item-view keyboard model and VoiceOver table semantics out of the box.
 Qt Quick's only real advantage here — vsync-driven GPU animation — matters for one widget (the waveform), which can be
 done in Widgets (section 4). Hybrid `QQuickWidget` embedding adds a second language and a render-to-texture composition
-path that also conflicts with the unified toolbar (finding 3).
+path of the kind the unified-toolbar docs warn about for GL content (finding 3; unverified for QRhi-based widgets).
 
 Add a **mac shell** (`src/app/platform/mac/*.mm`, Objective-C++, behind small C++ interfaces with plain-Qt fallbacks for
 Linux/Windows):
@@ -176,7 +177,7 @@ Linux/Windows):
 | Native context menus via `QMenu::toNSMenu()` + `-[NSMenu popUpMenuPositioningItem:atLocation:inView:]` | Glass/material menus, SF Symbol images, native keyboard handling | S | P0 |
 | Vsync ticker (`-[NSView displayLinkWithTarget:selector:]`, macOS 14+) driving waveform `update()` | Judder-free 120 Hz scrolling | S | P0 (M5) |
 | Notifications (`UNUserNotificationCenter`) | No Qt API | S | P1 (UI-6) |
-| Sidebar material (`NSVisualEffectView` / `NSGlassEffectView` behind a transparent `QTreeView`) | Floating glass sidebar look | M, fragile | P2 — spike only; accept a solid sidebar until then |
+| Sidebar material (`NSVisualEffectView` / `NSGlassEffectView` behind a transparent `QTreeView`) | Sidebar material with content flowing behind (edge-to-edge on macOS 27) | M, fragile | P2 — spike only; accept a solid sidebar until then |
 | Keychain (via QtKeychain), Trash (`QFile::moveToTrash`), quarantine xattr | Platform services | S | P0 |
 
 Fallbacks: on Linux/Windows the same interfaces map to `QToolBar`, `QMenu::exec`, `QTimer`, `QSystemTrayIcon`.
@@ -269,8 +270,8 @@ range overlay. Analysis (bands, peaks) is the audio note's job; this section is 
 | D. `QQuickWidget`/window container with a scene-graph item | Quick render loop, vsync animation | Smoothest animation model | Second stack (QML), composition caveats; a `createWindowContainer` child is an opaque native view (fine for a dark screen) with focus/a11y quirks | Fallback for the waveform only |
 
 Frame pacing: `update()` is not vsync-aligned (finding 10). Drive the playhead animation from a display link —
-on macOS 14+ `-[NSView displayLinkWithTarget:selector:]` (CADisplayLink for AppKit; Qt 6.12's minimum macOS 14.4
-guarantees it) — calling `update()` on the waveform only, and compute the playhead position from the audio clock at
+on macOS 14+ `-[NSView displayLinkWithTarget:selector:]` (CADisplayLink for AppKit, macOS 14 API — medium, from prior
+knowledge; Qt 6.12's minimum macOS 14.4 covers it) — calling `update()` on the waveform only, and compute the playhead position from the audio clock at
 paint time (never accumulate per-frame deltas). Fallback elsewhere: `QTimer` at `QScreen::refreshRate()` with
 `Qt::PreciseTimer`. TODO(verify experimentally): ProMotion actually presents at 120 Hz for a raster-backed Qt window.
 
@@ -394,7 +395,7 @@ Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset 
 |---|---|---|---|---|
 | Qt 6.12 | everything | `qtbase` etc. **6.12.0** (split formulae; 6.11.1 installed) | `qtbase` **6.11.2** (lags) | Official binaries via aqtinstall have the documented min macOS; Homebrew bottle `minos` 14.0 |
 | zlib | protocol (compressed messages) | macOS SDK `libz` | `zlib` 1.3.2 | Use the system zlib on macOS (always present) |
-| FFmpeg (avformat/avcodec/swresample) | decode, transcode | `ffmpeg` 9.0.2 — **GPL-3.0-or-later build** (`--enable-gpl --enable-version3 --enable-libmp3lame`), links 22 dylibs (x264, x265, dav1d, libvpx, svt-av1, openssl…) | `ffmpeg` 9.0.2 with features `gpl`, `version3`, `mp3lame`, `soxr`, `opus`; `nonfree` exists — never enable | For release: a minimal audio-only FFmpeg (see 6.3) |
+| FFmpeg (avformat/avcodec/swresample) | decode, transcode | `ffmpeg` 9.0.2 — **GPL-3.0-or-later build** (`--enable-gpl --enable-version3 --enable-libmp3lame`); libavcodec + libavformat directly link 10 non-FFmpeg Homebrew dylibs (dav1d, libmp3lame, libvpx, libcrypto/libssl (OpenSSL 4), libopus, SVT-AV1, x264, x265, liblzma) | `ffmpeg` 9.0.2 with features `gpl`, `version3`, `mp3lame`, `soxr`, `opus`; `nonfree` exists — never enable | For release: a minimal audio-only FFmpeg (see 6.3) |
 | LAME | MP3 encode (CONV) | `lame` 4.0 | `mp3lame` 3.100; ConanCenter 3.100 | LAME 4.0 (2026-07-11) is a maintenance/security release — encoding unchanged from 3.100, version string in the LAME tag changed (medium — SourceForge listing + secondary reports; matters to the conversion note). Licence: Homebrew LGPL-2.0-or-later, vcpkg metadata LGPL-2.0-only |
 | libFLAC | FLAC encode/verify (if not via FFmpeg) | `flac` 1.5.0 | `libflac` 1.5.0 (BSD-3-Clause) | |
 | libsoxr | resampling | `libsoxr` 0.1.3 (LGPL-2.1-or-later) | `soxr` 0.1.3 | or FFmpeg's swresample with soxr engine |
@@ -402,16 +403,16 @@ Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset 
 | Chromaprint | fingerprints (P2) | `chromaprint` 1.6.2 (depends on ffmpeg) | `chromaprint` 1.6.1 | |
 | miniupnpc / libnatpmp | port mapping (P1) | 2.3.3 / 20230423 (BSD-3-Clause) | 2.3.2 / 2025-04-03 | Small, CMake; FetchContent or vcpkg |
 | QtKeychain | Keychain | `qtkeychain` **0.17.0** (BSD-2-Clause per Homebrew metadata) | `qtkeychain-qt6` **0.14.3** (old) | Upstream: 0.17.0 released 2026-07-06 (Qt 6 by default; 0.16.0 fixed a macOS keychain-timeout crash); `COPYING` is 3-clause BSD. On macOS it uses `SecItem*` without `kSecUseDataProtectionKeychain`, i.e. the legacy login keychain with ACLs (`qtkeychain/keychain_apple.mm`). FetchContent tag `0.17.0` |
-| SQLite | storage | `sqlite` 3.54.1 | `sqlite3` 3.53.4 | See 7.x: own copy vs Qt SQL |
+| SQLite | storage | `sqlite` 3.54.1 | `sqlite3` 3.53.4 | See 7.3: own copy vs Qt SQL |
 | Sparkle 2 | updates (P2) | cask `sparkle` 2.9.6 | — | Binary framework from Sparkle releases; MIT |
 | Catch2 / GoogleTest / RapidCheck | tests | 3.16.1 / 1.18.0 / — | 3.16.0 / 1.18.0 / 2023-12-14 | FetchContent is simplest |
-| KDSingleApplication | single instance (optional) | — | 1.2.1 (MIT) | macOS already enforces single instance for bundles |
+| KDSingleApplication | single instance (optional) | — | 1.2.1 (MIT) | LaunchServices normally reuses a running bundle, but `open -n` or launching the binary directly starts a second instance — guard with a lock on the database directory either way |
 
 ### 6.2 Options compared
 
 | Approach | Pros | Cons | Fit |
 |---|---|---|---|
-| **Homebrew** | Zero build time; current versions (Qt 6.12.0, FFmpeg 9.0.2); maintainer already uses it | **Not reproducible** (no version pinning; upgrades under your feet); bottles are built for the host OS — local FFmpeg/LAME dylibs have **`minos 27.0`**, so a bundle that copies them runs only on macOS 27+; Homebrew FFmpeg drags in 22 codec/network dylibs | Local dev; "me first" builds |
+| **Homebrew** | Zero build time; current versions (Qt 6.12.0, FFmpeg 9.0.2); maintainer already uses it | **Not reproducible** (no version pinning; upgrades under your feet); bottles are built for the host OS — local FFmpeg/LAME dylibs have **`minos 27.0`**, so a bundle that copies them runs only on macOS 27+; Homebrew FFmpeg drags in video codecs and OpenSSL that an audio app never uses | Local dev; "me first" builds |
 | **vcpkg (manifest mode)** | Version baseline pinning in `vcpkg.json`; feature selection (audio-only FFmpeg); sets `VCPKG_OSX_DEPLOYMENT_TARGET`; same recipe on macOS/Linux/Windows; CMake toolchain integration | First build is slow (FFmpeg minutes; Qt tens of minutes — avoid Qt from vcpkg); binary cache needs NuGet/GitHub Packages or `files` + `actions/cache` (`x-gha` was removed in vcpkg 2025.06) | Release + CI for non-Qt deps |
 | **Conan 2** | Similar pinning; good binary model | Second ecosystem to learn; ConanCenter (2026-10-19) has `qt` 6.11.1, `ffmpeg` 9.0.1, `libmp3lame` 3.100 but `taglib` only 2.0 and no QtKeychain recipe; less common in Qt desktop apps | Not recommended |
 | **FetchContent** | Pure CMake; ideal for small CMake-native libs (TagLib, QtKeychain, miniupnpc, libnatpmp, Catch2, SQLite amalgamation) | Builds from source every clean configure; wrong tool for autotools projects (FFmpeg, LAME) | Small deps |
@@ -424,12 +425,12 @@ Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset 
 2. **Small CMake-native deps** (TagLib, QtKeychain, miniupnpc, libnatpmp, Catch2/GoogleTest, SQLite amalgamation):
    `FetchContent` with pinned tags/hashes and `FIND_PACKAGE_ARGS` so a system/Homebrew copy can be used instead
    (`FetchContent_Declare(... FIND_PACKAGE_ARGS)` — CMake ≥ 3.24).
-3. **FFmpeg + LAME (+ soxr):** Homebrew for local dev; for release a **minimal FFmpeg built by vcpkg** (features:
-   `avcodec`, `avformat`, `swresample`, `mp3lame`, `soxr`, `gpl`? — only if a GPL-only component is needed;
-   `default-features: false` to drop avdevice/avfilter/swscale) or a scripted `./configure --disable-everything
-   --enable-decoder=mp3*,flac,alac,aac,pcm_*,vorbis,opus --enable-demuxer=… --enable-encoder=libmp3lame,flac,pcm_*
-   --enable-muxer=mp3,flac,wav,aiff,ipod` build with `-mmacosx-version-min` = the app's deployment target.
-   Either way the bundle stays small and runs on every macOS the app claims to support.
+3. **FFmpeg + LAME (+ soxr):** Homebrew for local dev; for release a **minimal FFmpeg built by vcpkg** (features
+   `avcodec`, `avformat`, `swresample`, `mp3lame`, `soxr` with `default-features: false` to drop
+   avdevice/avfilter/swscale; no `gpl` feature needed — LAME and soxr are LGPL, so an LGPL FFmpeg suffices) or a scripted
+   `./configure --disable-everything` build that enables only the audio decoders/demuxers/encoders/muxers Selecta uses
+   (MP3, FLAC, ALAC, AAC, PCM/WAV/AIFF, Vorbis, Opus; encoders libmp3lame, FLAC, PCM), with `-mmacosx-version-min` = the
+   app's deployment target. Either way the bundle stays small and runs on every macOS the app claims to support.
 4. Keep a `Brewfile` for contributors and a `vcpkg.json` (+ `vcpkg-configuration.json` baseline) for CI/release.
    Document both in `docs/BUILDING.md` (Phase 1).
 
@@ -504,7 +505,7 @@ documented corruption hazard when both open the same file — sqlite.org "How To
   and preferences, behind a typed `Settings` class with defaults and validation; governor-related values are clamped
   to the compile-time ceilings at read time (SAFE-2: "settings can only make limits stricter"). Domain data (history,
   caches, peer stats) live in SQLite, not `QSettings`. Do not edit the plist while the app runs (cfprefsd caches).
-- **Secrets:** QtKeychain → macOS Keychain (NET-1); see 10.4 for the signing pitfall (prompts after every rebuild).
+- **Secrets:** QtKeychain → macOS Keychain (NET-1); see 10.3 for the signing pitfall (prompts after every rebuild).
 - **Logging:** one `Q_LOGGING_CATEGORY` per module (`selecta.slsk.server`, `selecta.governor`, …). On macOS Qt
   already routes messages to the **unified log (os_log)** with the bundle id as subsystem
   (`AppleUnifiedLogger` in `qcore_mac.mm`; `QT_FORCE_STDERR_LOGGING=1` forces stderr) — so
@@ -608,7 +609,7 @@ the outputs. (medium — several third-party write-ups, Sept 2025–2026.) Wire 
 |---|---|---|---|
 | **Local build, ad-hoc signed** (linker/macdeployqt default) | none | Runs on the machine that built it (no quarantine flag on locally built files) | **"Me first" default** |
 | Local build, signed with a stable identity (Apple Development cert from a free Apple ID, or self-signed) | one-time setup | Same + Keychain/TCC/firewall grants survive rebuilds | Recommended for the maintainer's daily builds |
-| Downloaded unsigned/ad-hoc build | — | Quarantined: macOS 15 removed the Control-click "Open" bypass (System Settings › Privacy & Security › Open Anyway); a Howard Oakley test on macOS 26.6.1 got "Move to Trash" for an ad-hoc, quarantined app (medium); `xattr -dr com.apple.quarantine` works | Friends/testers only |
+| Downloaded unsigned/ad-hoc build | — | Quarantined: since macOS 15 the Control-click "Open" bypass is gone — users go to System Settings › Privacy & Security › Open Anyway (medium, prior knowledge); a Howard Oakley test on macOS 26.6.1 got "Move to Trash" for an ad-hoc, quarantined app (medium); `xattr -dr com.apple.quarantine` works | Friends/testers only |
 | **Developer ID + hardened runtime + notarisation** | Apple Developer Program (99 USD/yr), Developer ID Application cert, `--options runtime --timestamp`, no `get-task-allow`, `xcrun notarytool submit --wait`, `xcrun stapler staple` (app and DMG) | Opens normally anywhere | Needed for any public binary (PRD OQ-8) |
 
 Notes:
@@ -656,7 +657,7 @@ GFDL-1.3-no-invariants-only AND GPL-2.0-only AND (GPL-3.0-only WITH Qt-GPL-excep
 | libFLAC | BSD-3-Clause (tools GPL-2.0-or-later — not linked) | Yes | |
 | libsoxr | LGPL-2.1-or-later | Yes | |
 | TagLib | LGPL-2.1-only OR MPL-1.1 | Yes, under LGPL-2.1 | MPL-1.1 alone is not GPL-compatible — take the LGPL branch |
-| Chromaprint | LGPL-2.1-or-later | Yes | P2; on macOS uses Accelerate for FFT |
+| Chromaprint | LGPL-2.1-or-later | Yes | P2; FFT backend selectable (Accelerate/vDSP on macOS — medium); avoid the FFTW (GPL) backend only if a non-GPL build were ever needed |
 | miniupnpc, libnatpmp | BSD-3-Clause | Yes | |
 | QtKeychain | BSD-3-Clause (upstream `COPYING` has 3 clauses; Homebrew metadata says BSD-2-Clause) | Yes | |
 | SQLite | blessing (public domain) | Yes | |
