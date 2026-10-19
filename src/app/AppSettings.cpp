@@ -12,6 +12,7 @@ const QString kSplitterPrefix = u"window/splitter/"_s;
 const QString kSidebar = u"window/sidebarShown"_s;
 const QString kInspector = u"window/inspectorShown"_s;
 const QString kLastView = u"window/lastView"_s;
+const QString kNetworkPaused = u"network/paused"_s;
 
 } // namespace
 
@@ -77,6 +78,16 @@ QString AppSettings::lastView() const
 void AppSettings::setLastView(const QString &id)
 {
     m_settings.setValue(kLastView, id);
+}
+
+bool AppSettings::networkPaused() const
+{
+    return m_settings.value(kNetworkPaused, false).toBool();
+}
+
+void AppSettings::setNetworkPaused(bool paused)
+{
+    m_settings.setValue(kNetworkPaused, paused);
 }
 
 bool AppSettings::sync()

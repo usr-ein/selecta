@@ -5,6 +5,7 @@
 #include "base/Logging.h"
 #include "base/Paths.h"
 #include "base/Version.h"
+#include "core/EngineHost.h"
 #include "governor/ServerGuard.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
@@ -17,6 +18,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDateTime>
+#include <QImageReader>
 #include <QLockFile>
 #include <QLoggingCategory>
 #include <QMessageBox>
@@ -109,6 +111,9 @@ QString buildType()
 int main(int argc, char *argv[])
 {
     const QApplication app(argc, argv);
+    // Cover art comes from untrusted files and services: cap what any single image decode may allocate (process-wide;
+    // the artwork code also checks dimensions before decoding).
+    QImageReader::setAllocationLimit(256);
     QApplication::setApplicationName(u"Selecta"_s);
     QApplication::setApplicationDisplayName(u"Selecta"_s);
     QApplication::setOrganizationDomain(u"usr-ein.github.io"_s);
@@ -173,7 +178,21 @@ int main(int argc, char *argv[])
         .dataDir = dataDir,
         .logDir = paths::logDir(),
     };
-    selecta::app::MainWindow window({sessions, settings, build, startedAt});
+    // The engine thread: governor, network, metadata and the arrival pipeline. It opens its own database connection.
+    selecta::core::EngineOptions engineOptions;
+    engineOptions.databasePath = paths::databaseFile();
+    engineOptions.startPaused = settings.networkPaused();
+    selecta::core::EngineHost engine(engineOptions);
+    QObject::connect(&engine, &selecta::core::EngineHost::started, &engine,
+                     [headless = options.headless](bool ok, const QString &error) {
+                         if (!ok) {
+                             reportFatal(QApplication::translate("main", "Selecta's network engine didn't start"),
+                                         error, headless);
+                         }
+                     });
+    engine.start();
+
+    selecta::app::MainWindow window({database, sessions, settings, engine, build, startedAt});
     if (options.headless) {
         window.setAttribute(Qt::WA_DontShowOnScreen);
     }
@@ -193,6 +212,7 @@ int main(int argc, char *argv[])
 #endif
 
     const int exitCode = QApplication::exec();
+    engine.stop();
 
     if (session > 0 && !sessions.end(session, QDateTime::currentMSecsSinceEpoch())) {
         qCWarning(lcApp) << "couldn't close session" << session << ':' << database.lastError();

@@ -7,8 +7,11 @@
 #include "app/NavModel.h"
 #include "app/PlayerBar.h"
 #include "app/Sidebar.h"
+#include "app/views/ActivityView.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/HistoryView.h"
+#include "core/EngineHost.h"
+#include "governor/Limits.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -27,6 +30,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -81,6 +85,13 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     createMenus();
     createToolBar();
     restoreSavedState();
+
+    connect(&m_services.engine, &core::EngineHost::pausedChanged, this, [this](bool paused) {
+        m_services.settings.setNetworkPaused(paused);
+        refreshNetworkState();
+    });
+    connect(&m_services.engine, &core::EngineHost::searchBudgetChanged, this, &MainWindow::refreshNetworkState);
+    refreshNetworkState();
 
     // QCoreApplication::quit() doesn't close windows, so closeEvent isn't enough to keep the window state.
     connect(qApp, &QCoreApplication::aboutToQuit, this, &MainWindow::saveState);
@@ -182,11 +193,13 @@ void MainWindow::createViews()
         QLocale().toString(QDateTime::fromMSecsSinceEpoch(m_services.sessionStartedAtMs).time(), QLocale::ShortFormat);
     addView(u"history"_s, history, fixed(tr("Session %1 started at %2").arg(m_services.build.session).arg(started)));
 
-    addView(u"activity"_s,
-            emptyState(u"arrow.up.arrow.down"_s, u"network-transmit-receive"_s, tr("Nothing is transferring"),
-                       tr("Downloads, uploads, your ratio and how much you took from each peer today appear here."),
-                       tr("Not built yet (milestones M2 and M7).")),
-            fixed(tr("Not connected")));
+    m_activityView = new ActivityView(m_services.engine, m_services.database, m_stack);
+    addView(u"activity"_s, m_activityView, [this] { return m_activityView->summary(); });
+    connect(m_activityView, &ActivityView::summaryChanged, this, [this] {
+        if (m_currentId == u"activity"_s) {
+            refreshTitle();
+        }
+    });
     addView(u"shares"_s,
             emptyState(u"dot.radiowaves.left.and.right"_s, u"folder-publicshare"_s, tr("Nothing shared yet"),
                        tr("Selecta shares your collection, read-only, with other Soulseek users."),
@@ -233,6 +246,17 @@ void MainWindow::createActions()
     m_toggleInspector->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     m_toggleInspector->setToolTip(tr("Show or hide the inspector"));
     connect(m_toggleInspector, &QAction::triggered, this, [this] { setInspectorShown(!isInspectorShown()); });
+
+    // "Pause network activity" (SAFE-5). Checked means paused; the engine confirms through pausedChanged.
+    m_togglePause = new QAction(tr("Pause Network Activity"), this);
+    m_togglePause->setObjectName(u"action.togglePause"_s);
+    m_togglePause->setCheckable(true);
+    m_togglePause->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
+    connect(m_togglePause, &QAction::triggered, this, [this](bool paused) { m_services.engine.setPaused(paused); });
+
+    m_budget = new QAction(icons::symbol(u"magnifyingglass"_s, u"edit-find"_s), QString(), this);
+    m_budget->setObjectName(u"action.searchBudget"_s);
+    connect(m_budget, &QAction::triggered, this, [this] { navigateTo(u"activity"_s); });
 
     m_appearanceGroup = new QActionGroup(this);
     m_appearanceGroup->setExclusive(true);
@@ -314,6 +338,9 @@ void MainWindow::createMenus()
     QMenu *goMenu = menuBar()->addMenu(tr("&Go"));
     goMenu->addActions(m_goActions);
 
+    QMenu *network = menuBar()->addMenu(tr("&Network"));
+    network->addAction(m_togglePause);
+
     QMenu *window = menuBar()->addMenu(tr("&Window"));
     window->addAction(minimize);
     window->addAction(zoom);
@@ -355,6 +382,14 @@ void MainWindow::createToolBar()
     spacer->setObjectName(u"toolbar.spacer"_s);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     bar->addWidget(spacer);
+
+    auto *budgetButton = new QToolButton(bar);
+    budgetButton->setObjectName(u"toolbar.budget"_s);
+    budgetButton->setDefaultAction(m_budget);
+    budgetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    budgetButton->setAutoRaise(true);
+    bar->addWidget(budgetButton);
+    bar->addAction(m_togglePause);
 
     auto *cycleAppearance =
         new QAction(icons::symbol(u"circle.lefthalf.filled"_s, u"weather-clear-night"_s), tr("Appearance"), this);
@@ -457,6 +492,28 @@ void MainWindow::refreshTitle()
     const View &view = m_views.at(found.value());
     m_title->setText(m_navModel->titleOf(view.id));
     m_subtitle->setText(view.subtitle ? view.subtitle() : QString());
+}
+
+void MainWindow::refreshNetworkState()
+{
+    const bool paused = m_services.engine.isPaused();
+    {
+        const QSignalBlocker blocker(m_togglePause);
+        m_togglePause->setChecked(paused);
+    }
+    m_togglePause->setIcon(paused ? icons::symbol(u"play.circle"_s, u"media-playback-start"_s)
+                                  : icons::symbol(u"pause.circle"_s, u"media-playback-pause"_s));
+    m_togglePause->setToolTip(paused ? tr("Resume network activity")
+                                     : tr("Pause network activity (no new searches or transfers)"));
+
+    const int available = m_services.engine.searchesAvailable();
+    m_budget->setText(QString::number(available));
+    m_budget->setToolTip(tr("Searches you can run now: %1 of %2, one more every %3 s")
+                             .arg(available)
+                             .arg(governor::limits::kSearchBurst)
+                             .arg(governor::limits::kSearchRefill.count()));
+
+    m_sidebar->setConnectionStatus(paused ? tr("Network paused") : tr("Not connected"), false);
 }
 
 bool MainWindow::isSidebarShown() const

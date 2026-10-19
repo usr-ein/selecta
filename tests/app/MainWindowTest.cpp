@@ -2,6 +2,7 @@
 #include "app/MainWindow.h"
 
 #include "app/AppSettings.h"
+#include "core/EngineHost.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
@@ -36,6 +37,9 @@ protected:
         ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
         session = sessions.start(1'000);
         settings = std::make_unique<AppSettings>(dir.filePath(u"settings.ini"_s));
+        selecta::core::EngineOptions options;
+        options.databasePath = dir.filePath(u"engine.sqlite3"_s);
+        engine = std::make_unique<selecta::core::EngineHost>(options); // started only by the tests that need it
     }
 
     std::unique_ptr<MainWindow> makeWindow()
@@ -43,7 +47,8 @@ protected:
         selecta::app::BuildInfo build;
         build.version = u"0.0.0-test"_s;
         build.session = session;
-        auto window = std::make_unique<MainWindow>(selecta::app::AppServices{sessions, *settings, build, 1'000});
+        auto window =
+            std::make_unique<MainWindow>(selecta::app::AppServices{db, sessions, *settings, *engine, build, 1'000});
         window->setAttribute(Qt::WA_DontShowOnScreen);
         window->show();
         return window;
@@ -54,6 +59,7 @@ protected:
     selecta::storage::SessionLog sessions{db};
     int session = 0;
     std::unique_ptr<AppSettings> settings;
+    std::unique_ptr<selecta::core::EngineHost> engine;
 };
 
 } // namespace
@@ -148,4 +154,26 @@ TEST_F(MainWindowTest, HistoryListsTheCurrentSession)
     ASSERT_NE(table, nullptr);
     ASSERT_EQ(table->model()->rowCount(), 1);
     EXPECT_TRUE(table->model()->index(0, 0).data().toString().startsWith(QString::number(session)));
+}
+
+TEST_F(MainWindowTest, PauseActionDrivesTheEngineAndIsRemembered)
+{
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    auto *pause = window->findChild<QAction *>(u"action.togglePause"_s);
+    ASSERT_NE(pause, nullptr);
+    EXPECT_FALSE(pause->isChecked());
+
+    QSignalSpy paused(engine.get(), &selecta::core::EngineHost::pausedChanged);
+    pause->trigger();
+    ASSERT_TRUE(paused.wait(5000));
+    EXPECT_TRUE(engine->isPaused());
+    EXPECT_TRUE(pause->isChecked());
+    EXPECT_TRUE(settings->networkPaused());
+
+    ASSERT_TRUE(window->navigateTo(u"activity"_s));
+    EXPECT_EQ(window->currentSubtitle(), u"Network paused"_s);
+    engine->stop();
 }

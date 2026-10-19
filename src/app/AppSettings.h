@@ -32,6 +32,10 @@ public:
     QString lastView() const;
     void setLastView(const QString &id);
 
+    // "Pause network activity" (SAFE-5) stays on across restarts until the user resumes.
+    bool networkPaused() const;
+    void setNetworkPaused(bool paused);
+
     // Writes pending changes to disk. Returns false if the file can't be written.
     bool sync();
     QString fileName() const { return m_settings.fileName(); }

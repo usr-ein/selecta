@@ -30,6 +30,7 @@ selecta_add_test_suite(selecta_unit_tests
         base/LoggingTest.cpp
         base/PathsTest.cpp
         core/ActivityLogTest.cpp
+        core/EngineTest.cpp
         core/GovernorStoreTest.cpp
         governor/GovernorTest.cpp
         governor/PeerLedgerTest.cpp

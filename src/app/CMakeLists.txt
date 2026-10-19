@@ -10,6 +10,8 @@ qt_add_library(selecta_app STATIC
     PlayerBar.h PlayerBar.cpp
     Sidebar.h Sidebar.cpp
     SourceListView.h SourceListView.cpp
+    models/ActivityModel.h models/ActivityModel.cpp
+    views/ActivityView.h views/ActivityView.cpp
     views/EmptyStateView.h views/EmptyStateView.cpp
     views/HistoryView.h views/HistoryView.cpp
     views/SettingsView.h views/SettingsView.cpp)
@@ -18,7 +20,8 @@ if(SELECTA_DEVTOOLS)
     target_sources(selecta_app PRIVATE devtools/DebugServer.h devtools/DebugServer.cpp)
     target_compile_definitions(selecta_app PUBLIC SELECTA_DEVTOOLS=1)
 endif()
-target_link_libraries(selecta_app PUBLIC selecta_base selecta_governor selecta_storage Qt6::Widgets Qt6::Network)
+target_link_libraries(selecta_app PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_core
+    Qt6::Widgets Qt6::Network)
 selecta_set_warnings(selecta_app)
 
 # The application bundle.
