@@ -75,7 +75,9 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 - Reading rekordbox, Apple Music or other DJ-software libraries; writing to rekordbox. The collection = folders on disk.
 - Windows/Linux packages (they must compile and pass unit tests in CI).
 - Mobile apps, web UI, headless daemon mode.
-- Online auto-tagging (MusicBrainz, Discogs, Beatport) — P2.
+- Fully automatic online tagging: metadata from online sources is applied only with confirmation (META-4).
+- Downloading or ripping audio from streaming services (YouTube, YouTube Music, Spotify and the like). Selecta
+  downloads only from Soulseek peers (D20).
 - Anything that circumvents the server's or peers' rules: multiple accounts, ban evasion, impersonating the official
   client, queue jumping.
 - Telemetry of any kind.
@@ -146,6 +148,8 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | SRCH-14 | P1 | **Wishlist:** saved searches (each with a preset) re-run in the background at the server-provided interval; new matching results raise a notification. |
 | SRCH-15 | P1 | Search history: recent queries with their presets. |
 | SRCH-16 | P0 | Per-search caps (stop collecting after N results or T seconds) to bound memory and peer load. |
+| SRCH-17 | P0 | **Release first.** Each search is resolved to release candidates (Spotify when signed in, otherwise Deezer or MusicBrainz), shown above the results with artwork, title, artist, album, year, length and label. When the query names a track, the best release is chosen automatically. Otherwise the user picks one, or "Any (name only)". The chosen release becomes the reference for ranking and filtering (D23). |
+| SRCH-18 | P0 | **Length identifies the track.** Each file's length is compared with the release's: within ±3 s counts as the same recording; beyond that, the file is flagged as another version or track. "Only this release" (on by default) hides files whose length or name doesn't fit. "Best match" ranks by fit to the release (length first, then artist, title and version), then quality, availability and peer fairness. It never ranks by name alone. |
 
 ### 7.3 Browse user shares (BRWS)
 
@@ -162,7 +166,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | BATCH-2 | P0 | One filter preset applies to every line (e.g. "MP3 = 320 kbps CBR"). |
 | BATCH-3 | P0 | Lines already in the collection or the Inbox are marked and skipped by default. |
 | BATCH-4 | P0 | Searches queue through the governor and are paced. The UI shows progress, ETA and the current budget, with pause / resume / cancel. Cached results are reused without spending budget. |
-| BATCH-5 | P0 | **Review first:** each line shows its best match and alternatives. The score combines title/artist similarity, duration plausibility, quality, availability and peer fairness. The user auditions and approves; nothing downloads without approval. |
+| BATCH-5 | P0 | **Release first, then review.** Each line is first resolved to a release (title, artist, length, ISRC), shown before any network search. Files are then scored against that release: length first, then name and version, quality, availability and peer fairness. The line shows its best match and alternatives. The user auditions and approves; nothing downloads without approval. |
 | BATCH-6 | P0 | "Approve all confident" approves every line above the confidence threshold in one click. It is still a user action. |
 | BATCH-7 | P1 | Approved downloads are spread across peers, respecting per-peer caps. |
 | BATCH-8 | P1 | Export unresolved lines (not found / ambiguous) as text. |
@@ -198,6 +202,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | DL-10 | P1 | Post-download verification: the file decodes fully and its duration matches the search result; mismatches are flagged. |
 | DL-11 | P0 | **Duplicate guard:** warn before downloading something already in the collection (same or better quality), in the Inbox, or queued. Downloading a single that is already on an album you own also warns. |
 | DL-12 | P1 | When several tracks of one remote folder are selected for download, offer "Download the whole folder as an album". |
+| DL-13 | P0 | **Naming templates and the name cleaner.** Settings → Filing has templates for single files (default `{artist} - {title}`), album folders (`{albumartist} - {album} ({year})`) and album track files (`{track} - {title}`), with a live preview. The cleaner makes every name path-safe while keeping Unicode letters: it normalises to NFC, drops quotes, turns `&` into `and`, and turns spaces, brackets and other symbols (`%`, `$`, `/`, `:`, `*`, `?`, `\|`, …) into the separator (default `_`). It then collapses repeats, trims separators and dots at both ends, and caps the length. Example: `Halden & Rue - Tidewater (Original Mix)` → `Halden_and_Rue_-_Tidewater_Original_Mix.mp3` (D22). |
 
 ### 7.7 Collection awareness (LIB)
 
@@ -262,6 +267,22 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | CACHE-1 | P0 | Persistent caches: search results (TTL 24 h), browsed share lists (TTL 24 h), preview audio (2 GB LRU), waveform and spectrum analysis (keyed by content hash), peer statistics and the library index. Default values are configurable. |
 | CACHE-2 | P0 | Each cache can be inspected (size) and cleared from Settings. |
 
+### 7.13 Metadata services and quick previews (META)
+
+Added on 2026-10-19 at the maintainer's request (D19). The source choices follow
+`references/metadata-and-preview-services.md` and ADR-011.
+
+| ID | Pri | Requirement |
+|---|---|---|
+| META-1 | P1 | **Spotify access without a secret:** sign in once in the browser (Authorization Code with PKCE). Only a client ID is needed, and it isn't a secret, so it may ship with the app; the refresh token lives in the Keychain. Settings → Integrations has fillable Client ID and optional Client secret fields; a secret enables the client-credentials flow for development. Without a Spotify sign-in, metadata and previews come from keyless sources (Deezer, MusicBrainz). Credentials and tokens never appear in the repo, logs or settings files; development builds may read the git-ignored `local/secrets.env` (D21). |
+| META-2 | P1 | **Match** a result, Inbox item or batch line to a Spotify track. Search by artist and title, plus ISRC when known, scored with the matcher of LIB-3 (duration tolerance, version awareness). The inspector shows the canonical metadata (title, artists, album, label, release date, ISRC, artwork) and the match confidence. |
+| META-3 | P1 | **Playlist import:** a Spotify playlist or album link fills Batch search. Lines carry artist, title, duration and ISRC, which sharpens Soulseek matching. |
+| META-4 | P1 | At filing and in the converter, offer canonical metadata and artwork from the matched source to fill missing tags. Show where each value came from; apply only with confirmation or a remembered choice. |
+| META-5 | P1 | **Quick preview:** play an official 30-second clip (e.g. Deezer by ISRC, iTunes) with no Soulseek transfer, so the audition costs peers nothing. The player names the clip's source; the full preview from the peer stays one key away. |
+| META-6 | P2 | **Full-length listening:** "Open in Spotify / YouTube Music" in their own apps. Optionally start playback in the user's Spotify app (Premium, with the user's authorisation). |
+| META-7 | P1 | Every request to these services goes through the network governor (rate limits, cached results with TTLs). The inspector says what was sent where. |
+| META-8 | P2 | Additional metadata sources (MusicBrainz, Discogs, Deezer), chosen by research. |
+
 ## 8. UX and UI requirements
 
 ### 8.1 Look and feel (UI)
@@ -274,6 +295,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | UI-4 | P0 | Colour is never the only carrier of meaning: badges pair a symbol with a label (colour-blind safety). |
 | UI-5 | P0 | Full keyboard navigation; VoiceOver labels on controls, badges and the waveform (position/duration). |
 | UI-6 | P1 | Dock badge and system notifications for unread messages and completed batches / albums. |
+| UI-7 | P0 | **Essentials first.** Each screen opens with only what's needed to act. For search: the preset, the formats, the release, and results with status, title, quality, length, peer and availability. Extra filters, columns and inspector details open on demand (D24). |
 
 ### 8.2 Window and navigation
 
@@ -300,7 +322,8 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 | ⌘F / ⌘T | Focus search field / new search |
 | ↑ / ↓ | Previous / next result (auto-preview when enabled) |
 | → / ← on a folder row | Expand / collapse |
-| Space | Play / pause preview |
+| Space | Preview the selection (the 30-s clip or the full file, per Settings), or play / pause |
+| ⇧Space | The other kind of preview (full file from the peer, or the 30-s clip) |
 | ← / → on a track, ⇧← / ⇧→ | Seek −5 s / +5 s, −30 s / +30 s |
 | Return | Download selection (folder row: download the whole folder as an album) |
 | K / ⌫ | Keep preview (to Inbox) / discard preview |
@@ -339,10 +362,11 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 | OQ-4 | Default per-peer caps and search pacing. | From `references/network-etiquette-and-safe-development.md` |
 | OQ-6 | Waveform style: cumulative stack vs overlaid layers vs separate lanes. | Decide on the mock |
 | OQ-8 | Is there an Apple Developer ID for signing and notarisation? | Unsigned / ad-hoc signed personal builds |
-| OQ-11 | Singles file-naming template. | `<Artist> - <Title> (<Version>).<ext>` |
 | OQ-12 | Should files from outside Soulseek (e.g. Bandcamp purchases) dropped into the Inbox use the same filing pipeline? | Yes (P1) |
+| OQ-13 | Should Space play the 30-s clip or the full file from the peer? | The clip when one exists (it costs peers nothing) |
+| OQ-14 | Which metadata source should rank first (Spotify, Deezer, MusicBrainz, Discogs)? | Spotify, pending ADR-011 and Spotify's developer terms |
 
-Resolved in round 3: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12.
+Resolved: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12, OQ-11 → D22, OQ-15 (Spotify credentials) → D21.
 
 ---
 
@@ -370,6 +394,13 @@ Answers given by the maintainer on 2026-10-19.
 | D16 | Git author identity | **usr-ein <usr-ein@pm.me>.** |
 | D17 | First working slice after the mock | **Search + preview** (protocol on a local test server, strict filters, preview with waveform). |
 | D18 | Mock format | A **local HTML** mock in `mock/`, not a hosted page; it exists to decide what goes where in the Qt UI, in macOS visual language. |
+| D19 | Spotify integration | **Yes:** a matcher for quality metadata, playlist import, and quick previews from official 30-s clips. It needs no secret: PKCE sign-in with a client ID, or keyless sources (D21). Any credentials stay out of the repo and are fillable in Settings (META-1…8). |
+| D20 | Downloading audio from YouTube Music or Spotify, spotDL-style, with a Premium cookie | **Not built** (architect's call, 2026-10-19). Stream ripping breaks those services' terms, means working around their stream protection, puts the maintainer's accounts at risk, and exposes the open-source project legally. Full-length listening goes through the services' own apps (META-6); purchases (Bandcamp, Beatport) can enter through the Inbox (OQ-12). |
+| D21 | Spotify metadata "without the API secrets", like spotDL | spotDL ships its own client ID and secret inside its source code (`spotdl/utils/config.py`). Selecta won't publish a secret or reuse anyone else's. It gets the same convenience officially: **PKCE sign-in** (client ID only, one browser login) plus **keyless sources** (Deezer, MusicBrainz). It won't reverse-engineer Spotify's web-player tokens. The maintainer's working credentials (verified 2026-10-19) stay only in the git-ignored `local/secrets.env` for development. |
+| D22 | File names | Template **`{artist} - {title}`** for singles, editable in Settings. A **name cleaner** keeps Unicode but removes or replaces spaces, quotes, `%`, `$` and other characters that are awkward in paths (DL-13). |
+| D23 | How search and batch find the right file | **Release first, length as the key signal.** Show the matched release (Spotify or Deezer) first, then rank network files against it by length (±3 s), name and version, never by name alone (SRCH-17, SRCH-18, BATCH-5). |
+| D24 | How much to show | **Start with the essentials** and reveal more on demand (UI-7). |
+| D25 | Mock review | The design language and layout are approved ("spot on", "well native"). Building starts once the preliminary research is done. |
 
 ## Appendix B — Raw brief (verbatim)
 
@@ -417,4 +448,47 @@ Also, include dark theme in the requirements. I want the UI to feel macOS native
 
 ```text
 Get ready to ask me the largest questions unanswered you need to come up with a well defined plan. I will answer rounds of questions initially, then you work, then more questions as you go.
+```
+
+Later request (2026-10-19; credentials redacted):
+
+```text
+I want you to integrate a spotify downloader and matcher for getting quality metadata, and also for getting a quick preview without downloading the quality track from soulseek. Look into how spotdl does it. I want that but in C++. A library would be best. If not, build it too. I have a spotify API key if need be.
+
+Keep these uncomitted, and as fillable fields in the settings:
+client id <redacted>
+client secret <redacted>
+
+For actual download, I also have youtube music premium. I can give you my cookie.
+```
+
+Further messages the same day (credentials redacted):
+
+```text
+Also for the file names to save, offer a setting to choose how to write them. I like the format "{artist} - {title}". I want a track name "cleaner" to be implemented which turns spaces and quotes and weird chars to have in a path into path safe versions (unicode okay though, just not spaces, quotes, double quotes, percentages, dollars etc etc).
+```
+
+```text
+secret is <redacted>
+id is <redacted>
+```
+
+```text
+But I want you to make the spotify metadata scraper without those api secrets actually, shouldnt be that hard
+```
+
+```text
+look at spotdl approach
+```
+
+```text
+For the download and search, I want the length of the track to be used as an indicator of quality, because sometime names are too generic, and that helps to differentiate the possible good candidates from the unrelated tracks. Also cross checking with the spotify metadata first help. When batch searching, or even just searching, it should show me the spotify metadata matched first, then based on that, suggest the right matching tracks on the network, and not just match by track name.
+```
+
+```text
+The UI is pretty good. There is a lot of information, so perhaps only starting with the essential and adding is better than starting with a super full one like this.
+```
+
+```text
+The mock design language is spot on. The layout is good and well native. You can start building it when the prelimenary research work is done.
 ```

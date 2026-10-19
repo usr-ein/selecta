@@ -39,7 +39,8 @@ setup, testing, risks, and the decisions still to record. Requirement IDs (e.g. 
 | Playback | Qt Multimedia `QAudioSink`, or CoreAudio directly if latency or position accuracy requires | **ADR-003.** |
 | Encoding | LAME (MP3) via FFmpeg or directly; FLAC/AIFF/WAV via FFmpeg | **ADR-003.** |
 | Tags | TagLib 2.x | Vorbis / ID3v2.3 / ID3v2.4 / MP4 / RIFF / AIFF. |
-| Credentials | QtKeychain → macOS Keychain | |
+| Credentials | QtKeychain → macOS Keychain | Also holds the Spotify client ID and secret (PRD META-1). |
+| Metadata & previews | Spotify Web API (own Qt client, or the `lib` of spotify-qt if its licence fits); official 30-s preview clips (Deezer, iTunes) | Requests go through the governor. **ADR-011.** |
 | Port mapping | miniupnpc + libnatpmp (P1) | |
 | Dependencies | Homebrew locally; reproducible pins in CI (vcpkg or pinned brew) | **ADR-004.** |
 
@@ -58,6 +59,8 @@ src/
                Inbox, filing, FileOps (create-only in the collection, trash-only in the Inbox), supersede.
   audio/       Decoder, growing-file reader, playback, 3-band waveform analysis, spectrum analysis.
   convert/     Transcoder, metadata mapping, artwork finder/resizer, quality advisor (warning matrix).
+  meta/        Metadata and preview services: Spotify Web API client and matcher, 30-second preview clips
+               (Deezer, iTunes), later MusicBrainz/Discogs. Every request goes through the governor.
   app/         Qt Widgets UI: main window, sidebar, views, item models, inspector, player,
                preferences, platform glue (Keychain, notifications, Dock, Objective-C++ touches).
 tools/
@@ -77,6 +80,8 @@ flowchart LR
   core --> library
   library --> storage
   convert --> audio
+  app --> meta
+  meta --> governor
   cli[tools/selecta-cli] --> core
 ```
 
@@ -131,7 +136,7 @@ selecta/
 Every milestone lists its scope, the PRD requirements it closes, and an exit criterion that can be demonstrated.
 
 **First slice (PRD D17): search + preview.** The critical path is M1 → M2 → M3 → M5: a GUI that searches the local
-test network with strict filters and previews results with the waveform. M4 (library) and M6 (converter) are parallel
+test network, ranks files against the release (length, then name), and previews results with the waveform. M4 (library) and M6 (converter) are parallel
 tracks; they must not delay that slice.
 
 ```mermaid
@@ -155,7 +160,7 @@ flowchart LR
 ### M0 — Definition and design *(now)*
 - PRD v0.2 drafted with the Q&A decisions. ✅
 - Research team: 8 notes in `references/`. ⏳ In progress.
-- **Mock v1** (local HTML in `mock/`, see its README) ✅ → maintainer feedback rounds → validated mock.
+- **Mock** (local HTML in `mock/`, see its README) ✅ validated by the maintainer (PRD D25). Release-first search, quick clips, naming templates and integrations are folded in.
 - ADR-001 … ADR-010 drafted from the research (section 8). PRD v1.0 with research-based defaults (limits, caps, TTLs).
 - **Exit:** the maintainer validates the mock and PRD v1.0; the ADRs are accepted.
 
@@ -181,7 +186,9 @@ flowchart LR
 ### M3 — Search experience
 - SearchService (aggregation, per-search caps, cache), filter engine (strict mode, presets, plausibility check),
   grouped/flat result models, inspector, filtered-out breakdown, budget indicator.
-- Closes: SRCH-1…13, SRCH-16, SAFE-4, SAFE-5, CACHE-1 (search part).
+- Release-first search: release lookup (Spotify via PKCE, or Deezer/MusicBrainz without keys), the release card,
+  length-based ranking and "Only this release" (SRCH-17, SRCH-18, META-2).
+- Closes: SRCH-1…13, SRCH-16…18, META-2, SAFE-4, SAFE-5, CACHE-1 (search part).
 - **Exit:** GUI search on the local network; property tests prove strict mode never shows a non-matching result.
 
 ### M4 — Library and Inbox *(library track — can run in parallel with M2)*
@@ -194,13 +201,15 @@ flowchart LR
 ### M5 — Preview and waveform *(media track — parallel)*
 - FFmpeg decoder, growing-file reader, playback engine, 3-band analyzer + cache, waveform widget (zoomed + overview,
   buffered-range overlay), keyboard audition, preview cache, Keep/Discard, cancel-on-skip.
-- Closes: PREV-1…8.
+- Quick previews from official 30-second clips (META-5), so most auditions cost peers nothing.
+- Closes: PREV-1…8, META-5.
 - **Exit:** progressive preview works on the local network; analysis of a 6-minute track < 300 ms; scrolling is smooth at 60 fps.
 
 ### M6 — Converter and filing formats *(media track — parallel)*
 - Transcoder (FFmpeg + LAME), metadata mapper with golden-file tests, artwork finder/resizer, quality advisor,
   filing with conversion (default MP3 320 CBR, ID3v2.3), output verification, Converter view.
-- Closes: CONV-1…8, DL-5 (with conversion).
+- Spotify sign-in and metadata supplement at filing (META-1, META-4).
+- Closes: CONV-1…8, DL-5 (with conversion), META-1/4.
 - **Exit:** golden tests pass; a manual rekordbox 7 import check passes on a sample set.
 
 ### M7 — Sharing, uploads and fairness
@@ -212,7 +221,8 @@ flowchart LR
 ### M8 — Batch, wishlist, browse, messages
 - Batch view (parsing, preset, paced queue, review-first matching, approve-all-confident), wishlist, browsing
   user shares, private messages, Dock badge and notifications.
-- Closes: BATCH-1…8, SRCH-14/15, BRWS-1/2, NET-7/8, UI-6.
+- Spotify playlist import into Batch (META-3) and "Open in Spotify / YouTube Music" (META-6).
+- Closes: BATCH-1…8, SRCH-14/15, BRWS-1/2, NET-7/8, UI-6, META-3/6.
 - **Exit:** a 100-line batch completes on the local network within budget (fake clock in tests) with the review flow.
 
 ### M9 — Live-network beta *(maintainer-run, manual)*
@@ -240,6 +250,8 @@ flowchart LR
 - **Login backoff:** exponential with jitter; never retry after "logged in elsewhere" (NET-4).
 - **Activity log** (SAFE-4) and **kill switch** (SAFE-5) exist from M2 onward.
 - **Injectable clock:** pacing logic is tested in accelerated time; no test ever sleeps on the real clock or talks to a real server.
+- **Secrets:** API credentials live in the Keychain. Development builds may read `local/secrets.env` (git-ignored).
+  Secrets never appear in the repo, logs or crash reports.
 
 ### 5.3 Test data
 - A **synthetic corpus generated with ffmpeg**: tones, noise and chirps in every format, bitrate and sample rate,
@@ -296,6 +308,7 @@ one manual download · observe for bans/denials · escalate gradually.
 | ADR-008 | Remote-path parsing and matching algorithm | library-matching-and-organization.md |
 | ADR-009 | File-safety model, Inbox and filing | PRD D2/D3/D7 |
 | ADR-010 | Dependency licence policy (the licence itself is decided: GPL-3.0-or-later, PRD D14) | qt-app-architecture.md |
+| ADR-011 | Metadata and preview services: Spotify vs Deezer/MusicBrainz/Discogs, terms risk, credentials handling | metadata-and-preview-services.md |
 
 ## 9. How work gets done
 
@@ -306,7 +319,6 @@ one manual download · observe for bans/denials · escalate gradually.
 
 ## 10. Immediate next steps
 
-1. Mock v1 review → feedback rounds → validated mock.
-2. Research notes land → synthesis → ADR drafts → PRD v1.0 defaults (limits, caps, TTLs).
-3. Before the first push: rewrite the early commits to the author identity `usr-ein <usr-ein@pm.me>` (PRD D16), then create the GitHub repository.
-4. Start M1 once M0 exits, aiming at the search + preview slice.
+1. Research notes land (9 topics) → `docs/RESEARCH-SYNTHESIS.md` → ADR drafts → PRD v1.0 defaults (limits, caps, TTLs) → next question round.
+2. Before the first push: rewrite the early commits to the author identity `usr-ein <usr-ein@pm.me>` (PRD D16), then create the GitHub repository.
+3. M1 Foundations: CMake skeleton, CI, the Qt app shell following the mock, `devenv/` with the local test server.

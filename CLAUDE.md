@@ -19,4 +19,7 @@ Selecta is a GPLv3 Soulseek client in C++/Qt 6, macOS-first. Start here:
 ## Working conventions
 
 - Do not run `git add -A` / `git add .` — several agents may work in this tree at once; stage explicit paths.
+- Secrets (API keys, client secrets, cookies) are never committed, logged, or copied into docs or tests.
+  Development secrets live in `local/secrets.env` (git-ignored); read them from there.
+- Selecta never downloads audio from streaming services (YouTube, YouTube Music, Spotify, …); see PRD D20.
 - Code style, module layout and test commands will be defined in Phase 1 of `docs/PLAN.md`; update this file then.

@@ -1,60 +1,64 @@
 # Selecta UI mock
 
-An interactive HTML/CSS/JS mock of Selecta's interface. It exists to decide **what goes where** in the Qt app, in the
-visual language of macOS. Everything is simulated with sample data: no network, no real files. The artists, peers and
-tracks are fictional.
+An interactive HTML/CSS/JS mock of Selecta's interface, used to decide **what goes where** in the Qt app in the visual
+language of macOS. Its design language and layout are approved (PRD D25). Everything is simulated with sample data: no
+network, no real files, no real Spotify calls. Artists, peers and tracks are fictional.
 
-Open it with `open mock/index.html`; any modern browser works. There are no build steps or dependencies:
-`index.html` (structure and icons), `styles.css` (macOS light/dark tokens), `app.js` (state, simulation, views).
+Open it with `open mock/index.html`. There are no build steps or dependencies:
+
+| File | Contents |
+|---|---|
+| `index.html` | Structure and icons |
+| `styles.css` | macOS light/dark tokens |
+| `app.js` | State, simulation and views |
 
 ## Deep links
 
-Append to the URL: `#view=search|batch|inbox|collection|history|transfers|peers|messages|shares|wishlist|converter|settings`,
-`&theme=light|dark`, `&search=<query>`. Example: `index.html#view=inbox&theme=light`.
+Append these to the URL:
+
+| Parameter | Values |
+|---|---|
+| `#view=` | `search`, `batch`, `inbox`, `collection`, `history`, `transfers`, `peers`, `messages`, `shares`, `wishlist`, `converter`, `settings` |
+| `&theme=` | `light`, `dark` |
+| `&search=` | any query |
+
+Example: `index.html#view=inbox&theme=light`.
 
 ## Things to try
 
-- **Search:** type in the sidebar field (⌘F) and press Return. Results stream in from simulated peers. Change the preset
-  or the format chips and watch the "Hidden by filters" breakdown. Searching the same thing twice opens the cache and
-  costs no search; the toolbar gauge shows the search budget (34 per 220 s).
-- **Audition:** select a result and press **Space**. The preview downloads and starts playing once enough is buffered;
-  the not-yet-downloaded part of the waveform is hatched. Then:
-  - ↑/↓ moves through the results; Space previews the new selection
-  - ←/→ seeks 5 s (30 s with ⇧)
-  - drag the zoomed waveform like a jog wheel, or click/drag the overview
-  - **K** keeps the preview (moves it to the Inbox without downloading again); **⌫** discards it
-  - skipping a preview cancels its transfer
+- **Release first.** Search "neon rain" or "tidal memory". Selecta first shows the matching release (from Spotify when
+  signed in, otherwise Deezer), then ranks the files on the network against it. Length within ±3 s gets a ✓; same-name
+  files of another length (another artist's song, a radio edit) are hidden as "Not this release". Pick another release
+  from the chips, or "Any (name only)".
+- **Audition.**
+  - **Space** plays a 30-second clip from Deezer, which costs the peer nothing.
+  - **⇧Space** previews the full file from the peer, with the 3-band waveform filling in as it downloads.
+  - ↑/↓ moves through results; ←/→ seeks (⇧ for 30 s).
+  - Drag the zoomed waveform like a jog wheel.
+  - **K** keeps the preview (a clip: downloads the file); **⌫** discards it.
+  - Settings → Preview swaps what Space plays.
 - **Waveform styles:**
-  - **Pioneer** (default) follows rekordbox/CDJ 3Band as documented in `references/audio-preview-and-waveform.md` §2.
-    The zoomed view is mirrored: brown where lows and mids overlap, the larger band beyond it in its own colour (blue
-    #0055E1 or amber #FFA600), white highs on top. The overview is a one-sided stack from the bottom.
-  - **Layered:** every band drawn from the centre, lows behind and highs in front.
-  - **Stacked:** cumulative, with blue at the centre, then orange, then white on the outside.
-  - **Lanes:** one band per lane.
+  - **Pioneer** (default) follows rekordbox/CDJ 3Band, as documented in `references/audio-preview-and-waveform.md` §2.
+    The zoomed view is mirrored: brown where lows and mids overlap, then the larger band in blue or amber, with white
+    highs on top. The overview is a one-sided stack from the bottom.
+  - **Layered**, **Stacked** and **Lanes** are there for comparison.
+- **Albums and the Inbox rule.** In "neon rain", pick the album chip and download the album. "Sodium" is already in your
+  Inbox as a single; when the album finishes, that single goes to the Trash, with Undo. Files already filed in your
+  collection are only flagged, never touched.
+- **Batch.** Every line shows its release before any network search. Paste a Spotify playlist link to import a list.
+  "Start searching" paces the network searches: the demo clock ×10 makes one search every 8.5 s visible, keeping 8
+  searches free. Then review, approve and download.
+- **Inbox → File.** Each item shows what filing will do and the exact file name it will get.
+- **Naming.** Settings → Filing has the templates (`{artist} - {title}` for singles) and the name cleaner with a live
+  preview. The cleaner keeps Unicode letters but turns spaces, quotes, `%`, `$`, `/`, `:` and the like into path-safe
+  names.
+- **Integrations.** Settings → Integrations has the Spotify client ID and secret fields (empty and fillable). Sign-in
+  needs only the client ID. The mock never contacts Spotify.
+- **Fair use.** The peer column counts what you took from each peer today. See Peers & ratio.
 
-  The style is remembered.
-- **Albums and the supersede rule:** in "neon rain", "Download album" on a folder. "Sodium" is already in the Inbox as a
-  single; when the album finishes, that single goes to the Trash, with Undo. In "salt flats" the album is flagged
-  because "Tidewater" is already filed in your Singles; filed files are never touched.
-- **Ownership badges:** Owned, Upgrade (you own a lower quality), Likely, Other mix, Inbox, This session, Earlier,
-  Queued. Try "kassia moreau" and "tidal memory".
-- **Fair use:** the peer column shows how many files you took from that peer today; flac_archivist is near the limit
-  and dubplate_dan is at it (try downloading from them). See Peers & ratio.
-- **Batch:** Batch search → Start searching. The demo clock ×10 makes pacing visible: one search every 8.5 s, keeping 8
-  searches free. Review the matches, approve, then download; nothing downloads without approval.
-- **Inbox → File:** each item shows what filing will do ("Converts to MP3 320 CBR", "Already MP3 320: moves as-is",
-  "below target"). File one and watch it land in Collection.
-- **Converter:** switch the target format to see the quality warnings and the Vorbis → ID3v2.3 tag mapping, including
-  the cover.jpg that gets added.
-- **Appearance:** the toolbar's half-circle button cycles System / Light / Dark.
+## Design questions still open
 
-## Design questions to answer while reviewing
-
-1. Is the Pioneer style faithful enough, or do you prefer another? Are the zoom window (8 s default) and the overview height right?
-2. Filter bar: is two rows of filters plus the "Hidden by filters" line the right density? Anything missing or unneeded?
-3. Results: are Folders grouping as the default, and the column set (status, quality, peer · today, availability), right?
-4. Inspector: is the content and its order (ownership, quality check, file, peer and daily limit) what you want to see?
-5. Player: bottom placement, full width, controls. Should Keep be the main action?
-6. Inbox: is the per-item "what filing will do" column clear? Should filing ask for confirmation?
-7. Batch: is review-first with "Approve confident" the right flow?
-8. Navigation: does the sidebar grouping (Searches / Library / Network / Tools) match how you think about the app?
+1. Is the Pioneer waveform faithful enough? Are the zoom window (8 s) and the overview height right?
+2. Should Space play the 30-second clip (current default) or the full file?
+3. Is the release card the right size, and should "Only this release" be on by default?
+4. What else should start hidden (filters, columns, inspector sections) to keep each screen to the essentials?

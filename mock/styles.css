@@ -466,6 +466,29 @@ tr:hover .rb, tr.sel .rb, .rb.on, .rb:focus-visible { opacity: 1; }
 .kbd { font: 11px var(--font-ui); padding: 1px 5px; border-radius: 4px; background: var(--fill-2); color: var(--label-2); white-space: nowrap; }
 .shortcuts { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 12px; }
 
+/* ---------- release card, length checks, disclosure ---------- */
+.canon { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 10px 14px 6px; background: var(--content); }
+.canon.none { color: var(--label-2); font-size: 12px; padding: 8px 14px; border-bottom: 1px solid var(--separator); }
+.canon-t { min-width: 0; }
+.canon-title { font-weight: 600; font-size: 13.5px; }
+.canon-sub { font-size: 11.5px; color: var(--label-2); }
+.canon-sub b { color: var(--label); font-weight: 600; }
+.canon-chips { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 0 14px 10px; border-bottom: 1px solid var(--separator); background: var(--content); }
+.canon-chips .chip .ic { width: 12px; height: 12px; }
+.dd { font-size: 11px; color: var(--warn); font-variant-numeric: tabular-nums; }
+.dd.ok { color: var(--good); }
+.dd .ic { width: 12px; height: 12px; }
+.tbl tr.sel .dd { color: #fff; }
+details.insp-sec > summary { display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--label-2); padding-bottom: 4px; border-bottom: 1px solid var(--separator); list-style: none; cursor: default; user-select: none; }
+details.insp-sec > summary::-webkit-details-marker { display: none; }
+details.insp-sec > summary .sum-ic { width: 11px; height: 11px; transition: transform .15s; }
+details.insp-sec[open] > summary .sum-ic { transform: rotate(90deg); }
+details.insp-sec[open] > summary { margin-bottom: 7px; }
+details.insp-sec > summary .sum-x { margin-left: auto; font-weight: 400; color: var(--label-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.np { font-size: 12px; padding: 2px 0; overflow-wrap: anywhere; }
+.vb-row.secondary { display: none; }
+.viewbar.more .vb-row.secondary { display: flex; }
+
 /* ---------- responsive ---------- */
 @media (max-width: 1180px) {
   .window { --sb-w: 210px; --insp-w: 268px; }

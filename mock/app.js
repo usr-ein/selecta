@@ -184,6 +184,13 @@ function generateResults(query, { pseudo = true, salt = 0 } = {}) {
   }
   let rels = [...hits.entries()].map(([rel, idx]) => ({ rel, idx }));
   if (!rels.length && pseudo && toks.length) rels = pseudoReleases(query, r);
+  // Same-name tracks that are not the release: another artist's song, and a radio edit with a different length.
+  for (const { rel, idx } of rels.filter(x => !x.rel.pseudo).slice(0, 2)) {
+    const t = rel.tracks[idx[0]], dr = mulberry32(hashStr(`decoy|${rel.artist}|${t[0]}`));
+    const other = ['Velvet Static', 'Marsh Tones', 'Opal Oscillator', 'Delay Line'][Math.floor(dr() * 4)];
+    rels.push({ idx: [0], rel: { id: `d${rel.id}a`, pseudo: true, artist: other, album: t[0], year: 2015 + Math.floor(dr() * 10), genre: 'House', bpm: 118 + Math.floor(dr() * 10), single: true, tracks: [[t[0], '', 170 + Math.floor(dr() * 110)]] } });
+    if (!rel.tracks.some(x => norm(x[1]) === 'radio edit')) rels.push({ idx: [0], rel: { id: `d${rel.id}b`, pseudo: true, artist: rel.artist, album: t[0], year: rel.year, genre: rel.genre, bpm: rel.bpm, single: true, tracks: [[t[0], 'Radio Edit', Math.round(t[2] * 0.56)]] } });
+  }
   const out = [];
   for (const { rel, idx } of rels) {
     const pool = shuffle(PEERS.slice(), r).slice(0, 7 + Math.floor(r() * (rel.pseudo ? 6 : 13)));
@@ -330,19 +337,29 @@ function summarizeQuality(items) {
   return set.length <= 2 ? set.join(', ') : `${set.length} qualities`;
 }
 function computeView(s) {
+  if (s.canon === undefined) {
+    s.canon = canonCandidates(s.query);
+    const q = norm(s.query), top = s.canon[0];
+    s.canonSel = top && top.kind === 'track' && q.includes(norm(top.title)) ? 0 : -1;
+  }
+  const c = s.canonSel >= 0 ? s.canon[s.canonSel] : null;
   const f = S.filters, all = s.results.slice(0, s.revealed);
   const shown = [], why = {}, fmtCount = {};
   for (const r of all) {
     fmtCount[r.fmt] = (fmtCount[r.fmt] || 0) + 1;
-    r._own = ownership(r); r._score = score(r);
-    const reason = hiddenReason(r, f, r._own);
+    r._own = ownership(r);
+    r._rm = relMatch(r, c);
+    r._score = score(r) + (r._rm ? r._rm.score * 2 : 0);
+    let reason = hiddenReason(r, f, r._own);
+    if (!reason && r._rm && S.onlyRelease && !r._rm.ok) reason = 'release';
     if (reason) why[reason] = (why[reason] || 0) + 1; else shown.push(r);
   }
   const srt = SORTS[S.sort], dir = S.sortDir;
   const cmp = (a, b) => (srt.str ? srt.key(a).localeCompare(srt.key(b)) : srt.key(a) - srt.key(b)) * dir || b._score - a._score;
   shown.sort(cmp);
-  let groups = null; const byId = new Map();
-  if (S.group === 'folders') {
+  let groups = null;
+  const byId = new Map();
+  if (groupMode(c) === 'folders') {
     const map = new Map();
     for (const r of shown) {
       const key = `${r.peer.name}|${r.folder}`;
@@ -357,7 +374,7 @@ function computeView(s) {
       byId.set(g.id, g);
     }
   }
-  return { all, shown, why, fmtCount, groups, byId, peers: new Set(all.map(r => r.peer.name)).size };
+  return { all, shown, why, fmtCount, groups, byId, canon: c, peers: new Set(all.map(r => r.peer.name)).size };
 }
 const curSearch = () => S.searches.find(s => s.id === S.searchId) || null;
 function ago(t) { const d = (Clock.t - t) / 1000; return d < 50 ? 'just now' : d < 3600 ? `${Math.round(d / 60)} min ago` : `${Math.round(d / 3600)} h ago`; }
@@ -485,7 +502,7 @@ function theadHtml() {
     const on = S.sort === k;
     return `<th class="sortable ${cls}" data-act="sort" data-v="${k}" aria-sort="${on ? (S.sortDir > 0 ? 'ascending' : 'descending') : 'none'}">${label}${on ? icon(S.sortDir > 0 ? 'chevu' : 'chevd', 'si') : ''}</th>`;
   };
-  return `<tr><th>Status</th><th><span class="sr" hidden>Preview</span></th>${col('title', 'Title')}${col('quality', 'Quality')}${col('length', 'Length', 'r')}${col('size', 'Size', 'r')}${col('peer', 'Peer · today')}${col('avail', 'Availability')}<th><span hidden>Download</span></th></tr>`;
+  return `<tr><th>Status</th><th><span hidden>Preview</span></th>${col('title', 'Title')}${col('quality', 'Quality')}${col('length', 'Length')}${col('peer', 'Peer · today')}${col('avail', 'Availability')}<th><span hidden>Download</span></th></tr>`;
 }
 function qualHtml(r) {
   const q = qualShort(r);
@@ -499,15 +516,17 @@ function peerHtml(p) {
 }
 const slotHtml = p => (p.free ? `<span class="slot"><span class="dot"></span>Free · ${fmtSpeed(p.speed)}</span>` : `<span class="slot">${icon('hourglass')}Queue ${p.queue} · ${fmtSpeed(p.speed)}</span>`);
 function trackRow(r, alt, inGroup) {
-  const own = r._own, sel = S.sel === r.id, playing = !!(P.track && P.track.rid === r.id);
+  const own = r._own, rm = r._rm, sel = S.sel === r.id, playing = !!(P.track && P.track.rid === r.id);
   const dim = S.filters.owned === 'dim' && own && HAVE.has(own.kind);
+  const len = rm && rm.dd != null
+    ? (Math.abs(rm.dd) <= 3 ? `<span class="dd ok" title="Same length as the release (${rm.dd >= 0 ? '+' : '−'}${Math.abs(rm.dd)} s)">${icon('check')}</span>` : `<span class="dd" title="Length differs from the release: probably another version or track">${fmtDelta(rm.dd)}</span>`)
+    : '';
   return `<tr class="r${alt ? ' alt' : ''}${sel ? ' sel' : ''}${dim ? ' dim' : ''}${playing ? ' playing' : ''}" data-act="sel" data-id="${r.id}" aria-selected="${sel}">
     <td>${badgeHtml(own)}</td>
     <td><button class="rb${playing ? ' on' : ''}" data-act="preview" data-id="${r.id}" aria-label="${playing && P.playing ? 'Pause preview' : 'Preview'}" title="Preview (Space)">${icon(playing && P.playing ? 'pause' : 'play')}</button></td>
     <td class="ti" title="${esc(r.file)}">${inGroup && r.trackNo ? `<span class="faint num">${String(r.trackNo).padStart(2, '0')}</span>&ensp;` : ''}${esc(r.artist)} — ${esc(r.title)}${r.version ? ` <span class="ver">(${esc(r.version)})</span>` : ''}</td>
     <td><span class="fmt">${r.fmt}</span> ${qualHtml(r)}</td>
-    <td class="r num">${fmtDur(r.dur)}</td>
-    <td class="r num">${fmtSize(r.size)}</td>
+    <td class="num">${fmtDur(r.dur)} ${len}</td>
     <td>${peerHtml(r.peer)}</td>
     <td>${slotHtml(r.peer)}</td>
     <td><button class="rb" data-act="download" data-id="${r.id}" aria-label="Download" title="Download to the Inbox (Return)">${icon('download')}</button></td>
@@ -536,7 +555,7 @@ function groupRow(g) {
     else if (L.inColl.length) flag = `<span class="gflag" title="Flag only: your collection file stays where it is">${icon('flag')}“${esc(L.inColl[0].title)}” in your Singles</span>`;
   }
   return `<tr class="g${sel ? ' sel' : ''}${col ? ' collapsed' : ''}" data-act="sel" data-id="${g.id}" aria-selected="${sel}">
-    <td colspan="9"><div class="gwrap">
+    <td colspan="8"><div class="gwrap">
       <button class="disc" data-act="toggle-group" data-key="${esc(g.key)}" aria-label="${col ? 'Expand folder' : 'Collapse folder'}" aria-expanded="${!col}">${icon('chev')}</button>
       ${icon('folder', 'faint')}
       <span class="gname" title="${esc(g.folder)}">${esc(name)}</span>
@@ -551,14 +570,15 @@ function groupRow(g) {
 function renderSearchView() {
   const s = curSearch();
   if (!s) {
-    $('#content').innerHTML = `<div class="scroll"><div class="pane"><div class="sec-h"><h3>Search Soulseek</h3></div><p class="explain">Type in the search field at the top of the sidebar (⌘F). Results stream in from peers and pass through your filter preset. Searching again for something you searched in the last 24 hours opens the cached results without using your search budget.</p></div></div>`;
+    $('#content').innerHTML = `<div class="scroll"><div class="pane"><div class="sec-h"><h3>Search Soulseek</h3></div><p class="explain">Type in the search field at the top of the sidebar (⌘F). Selecta first finds the release on Spotify (or Deezer), then ranks the files on the network by how well their length and name match it. Searching again for something from the last 24 hours opens the cached results without using your search budget.</p></div></div>`;
     return;
   }
   $('#content').innerHTML = `
     <div class="viewbar${S.moreFilters ? ' more' : ''}" id="filters">${filtersHtml()}</div>
+    <div id="canon"></div>
     <div class="summary" id="summary"></div>
-    <div class="scroll" id="resScroll"><table class="tbl" id="resTable" style="min-width:840px">
-      <colgroup><col style="width:92px"><col style="width:30px"><col><col style="width:122px"><col style="width:60px"><col style="width:70px"><col style="width:142px"><col style="width:132px"><col style="width:34px"></colgroup>
+    <div class="scroll" id="resScroll"><table class="tbl" id="resTable" style="min-width:800px">
+      <colgroup><col style="width:88px"><col style="width:30px"><col><col style="width:120px"><col style="width:92px"><col style="width:150px"><col style="width:130px"><col style="width:34px"></colgroup>
       <thead>${theadHtml()}</thead><tbody id="resBody"></tbody></table></div>`;
   updateResults();
 }
@@ -566,6 +586,8 @@ function updateResults() {
   const s = curSearch();
   if (!s || S.view !== 'search' || !$('#resBody')) return;
   const v = computeView(s); S._v = v;
+  const cc = $('#canon'); if (cc) cc.innerHTML = canonCardHtml(s, v);
+  const tv = $('#tbView'); if (tv) tv.innerHTML = viewButtons();
   const hidden = v.all.length - v.shown.length;
   const why = Object.entries(v.why).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span>${esc(REASONS[k])} <span class="n">${fmtInt(n)}</span></span>`).join('');
   const status = s.status === 'running'
@@ -582,7 +604,7 @@ function updateResults() {
     }
   } else v.shown.forEach((r, i) => { rows.push(trackRow(r, i % 2 === 1, false)); order.push(r.id); });
   S.rows = order;
-  $('#resBody').innerHTML = rows.join('') || `<tr><td colspan="9" style="height:120px;text-align:center;color:var(--label-2);white-space:normal">${s.status === 'running' ? 'Waiting for peers to answer…' : `No results match these filters. ${fmtInt(hidden)} hidden: loosen a filter above or pick another preset.`}</td></tr>`;
+  $('#resBody').innerHTML = rows.join('') || `<tr><td colspan="8" style="height:120px;text-align:center;color:var(--label-2);white-space:normal">${s.status === 'running' ? 'Waiting for peers to answer…' : `No results match these filters. ${fmtInt(hidden)} hidden: loosen a filter above or pick another preset.`}</td></tr>`;
   const sub = $('#tbSub'); if (sub) sub.textContent = VIEWS.search.title()[1];
   if (S.sel && !order.includes(S.sel) && !v.byId.has(S.sel) && !S.results.has(S.sel)) S.sel = null;
 }
@@ -590,14 +612,13 @@ function updateResults() {
 /* ---------- inspector (search) ---------- */
 function peerSection(p) {
   const st = capState(p);
-  return `<section class="insp-sec"><h4>Peer</h4><dl class="kv">
-    <dt>User</dt><dd>${esc(p.name)}</dd>
+  return `<details class="insp-sec"${st !== 'ok' || p.backoff ? ' open' : ''}><summary>${icon('chev', 'sum-ic')}Peer<span class="sum-x">${esc(p.name)} · ${p.today} today</span></summary><dl class="kv">
     <dt>Upload slot</dt><dd>${p.free ? 'Free now' : `Busy · ${p.queue} waiting`}</dd>
     <dt>Speed</dt><dd class="num">${fmtSpeed(p.speed)}</dd>
     <dt>Shares</dt><dd class="num">${fmtInt(p.files)} files</dd>
     <dt>From them</dt><dd class="num">${p.today} today · ${p.session} this session · ${p.all} all time</dd>
-    <dt>Daily limit</dt><dd><div style="display:flex;align-items:center;gap:8px"><div class="meter${st === 'cap' ? ' bad' : st === 'near' ? ' warn' : ''}" style="flex:1"><i style="width:${Math.min(100, p.today / LIMITS.peerHard * 100)}%"></i></div><span class="num muted">${p.today} / ${LIMITS.peerHard}</span></div>${st !== 'ok' ? `<div class="muted" style="margin-top:3px">${st === 'cap' ? 'Limit reached for today' : 'Getting close to the limit'}</div>` : ''}</dd>
-  </dl>${p.backoff ? `<div class="note warn" style="margin-top:8px">${icon('ban')}<div>Backing off: they answered <b>“${esc(p.backoff.reason)}”</b> ${esc(p.backoff.ago)}. Selecta waits before asking again.</div></div>` : ''}</section>`;
+    <dt>Daily limit</dt><dd><div style="display:flex;align-items:center;gap:8px"><div class="meter${st === 'cap' ? ' bad' : st === 'near' ? ' warn' : ''}" style="flex:1"><i style="width:${Math.min(100, (p.today / LIMITS.peerHard) * 100)}%"></i></div><span class="num muted">${p.today} / ${LIMITS.peerHard}</span></div>${st !== 'ok' ? `<div class="muted" style="margin-top:3px">${st === 'cap' ? 'Limit reached for today' : 'Getting close to the limit'}</div>` : ''}</dd>
+  </dl>${p.backoff ? `<div class="note warn" style="margin-top:8px">${icon('ban')}<div>Backing off: they answered <b>“${esc(p.backoff.reason)}”</b> ${esc(p.backoff.ago)}. Selecta waits before asking again.</div></div>` : ''}<div class="insp-actions" style="margin-top:8px"><button class="btn sm" data-act="browse-peer" data-v="${esc(p.name)}">${icon('folder')} Browse their files</button></div></details>`;
 }
 function ownNote(r, o) {
   if (!o) return `<div class="note">${icon('info')}<div>Not in your collection, Inbox or download history.</div></div>`;
@@ -618,22 +639,22 @@ function plausibility(r) {
   return `<span class="bdg good" style="white-space:normal">${icon('check-c')}Size matches the declared quality</span>`;
 }
 function inspectorTrack(r) {
-  const o = r._own !== undefined ? r._own : ownership(r);
+  const o = r._own !== undefined ? r._own : ownership(r), rm = r._rm;
+  const len = rm && rm.dd != null
+    ? (Math.abs(rm.dd) <= 3 ? `<span class="bdg good" style="white-space:normal">${icon('check-c')}Same length as the release (${rm.dd >= 0 ? '+' : '−'}${Math.abs(rm.dd)} s)</span>` : `<span class="bdg warn" style="white-space:normal">${icon('warn')}${fmtDelta(rm.dd)} against the release: probably another version or track</span>`)
+    : '';
   return `<div class="insp">
-    <div><div class="insp-title">${esc(r.title)}${r.version ? ` <span class="muted">(${esc(r.version)})</span>` : ''}</div><div class="insp-sub">${esc(r.artist)} · ${esc(r.rel.album)} (${r.rel.year})</div></div>
-    <div class="insp-actions"><button class="btn" data-act="preview" data-id="${r.id}">${icon('play')} Preview</button><button class="btn primary" data-act="download" data-id="${r.id}">${icon('download')} Download</button></div>
+    <div><div class="insp-title">${esc(r.title)}${r.version ? ` <span class="muted">(${esc(r.version)})</span>` : ''}</div><div class="insp-sub">${esc(r.artist)} · ${esc(qualLong(r))} · ${fmtDur(r.dur)} · ${fmtSize(r.size)}</div></div>
+    <div class="insp-actions">${hasClip(r) && S.clips ? `<button class="btn" data-act="clip" data-id="${r.id}" title="Plays a 30-second clip from Deezer. Costs the peer nothing">${icon('play')} 30-s clip</button>` : ''}<button class="btn" data-act="full" data-id="${r.id}" title="Downloads the file from the peer into the preview cache">${icon('wave')} Full preview</button><button class="btn primary" data-act="download" data-id="${r.id}">${icon('download')} Download</button></div>
     ${ownNote(r, o)}
-    <section class="insp-sec"><h4>Quality</h4><dl class="kv">
+    <div class="notes">${len ? `<div>${len}</div>` : ''}<div>${plausibility(r)}</div></div>
+    <details class="insp-sec"><summary>${icon('chev', 'sum-ic')}Quality<span class="sum-x">${esc(qualShort(r).text)}</span></summary><dl class="kv">
       <dt>Format</dt><dd>${r.fmt}${LOSSY.has(r.fmt) && r.br != null ? (r.vbr ? ' · VBR' : ' · CBR') : ''}</dd>
       ${LOSSY.has(r.fmt) ? `<dt>Bitrate</dt><dd>${r.br != null ? `${r.br} kbps` : '<span class="faint">Not reported</span>'}</dd>` : `<dt>Resolution</dt><dd>${r.sr != null ? `${r.bd}-bit · ${khz(r.sr)} kHz` : '<span class="faint">Not reported</span>'}</dd>`}
       <dt>From size</dt><dd class="num">≈ ${fmtInt(estKbps(r))} kbps</dd>
-      <dt>Length</dt><dd class="num">${fmtDur(r.dur)}</dd>
-      <dt>Size</dt><dd class="num">${fmtSize(r.size)}</dd>
-      <dt>Check</dt><dd>${plausibility(r)}</dd>
-    </dl></section>
-    <section class="insp-sec"><h4>File</h4><dl class="kv"><dt>Name</dt><dd class="mono">${esc(r.file)}</dd><dt>Folder</dt><dd class="mono">${esc(r.folder)}</dd><dt>Read as</dt><dd>${esc(r.artist)} · ${esc(r.title)}${r.version ? ` · ${esc(r.version)}` : ''}${r.trackNo ? ` · track ${r.trackNo}` : ''}</dd></dl></section>
+    </dl></details>
+    <details class="insp-sec"><summary>${icon('chev', 'sum-ic')}File<span class="sum-x">${esc(r.fmt)}</span></summary><dl class="kv"><dt>Name</dt><dd class="mono">${esc(r.file)}</dd><dt>Folder</dt><dd class="mono">${esc(r.folder)}</dd><dt>Read as</dt><dd>${esc(r.artist)} · ${esc(r.title)}${r.version ? ` · ${esc(r.version)}` : ''}${r.trackNo ? ` · track ${r.trackNo}` : ''}</dd></dl></details>
     ${peerSection(r.peer)}
-    <div class="insp-actions"><button class="btn" data-act="browse-peer" data-v="${esc(r.peer.name)}">${icon('folder')} Browse their files</button><button class="btn" data-act="add-wishlist" data-v="${esc(`${r.artist} ${r.title}`)}">${icon('star')} Add to wishlist</button></div>
   </div>`;
 }
 function inspectorGroup(g) {
@@ -821,7 +842,7 @@ function inboxRow(it, alt) {
     <td><input type="checkbox" data-ch="inbox-sel" data-id="${it.id}"${S.inboxSel.has(it.id) ? ' checked' : ''} aria-label="Select ${esc(title)}"></td>
     <td style="height:44px"><div class="cell2"><span class="thumb" style="background:${artGradient(hashStr(it.artist + (it.album || it.title)))}"></span><div class="t"><div style="overflow:hidden;text-overflow:ellipsis">${esc(title)}</div><div class="faint" style="font-size:11px;overflow:hidden;text-overflow:ellipsis">${sub}${inboxFlags(it)}</div></div></div></td>
     <td>${esc(qualLong(it))}</td>
-    <td style="white-space:normal">${f ? `<div class="prog"><div class="bar"><i style="width:${(f.p * 100).toFixed(1)}%"></i></div><span class="muted num" style="font-size:11px">${esc(f.step)}</span></div>` : `<span class="bdg ${pk[0]}" style="white-space:normal;align-items:flex-start">${icon(pk[1])}<span>${esc(plan.text)}</span></span>`}</td>
+    <td style="white-space:normal">${f ? `<div class="prog"><div class="bar"><i style="width:${(f.p * 100).toFixed(1)}%"></i></div><span class="muted num" style="font-size:11px">${esc(f.step)}</span></div>` : `<span class="bdg ${pk[0]}" style="white-space:normal;align-items:flex-start">${icon(pk[1])}<span>${esc(plan.text)}</span></span><div class="mono faint" style="font-size:10.5px;margin-top:3px;overflow-wrap:anywhere">→ ${esc(filedPath(it))}</div>`}</td>
     <td><span class="muted">${esc(it.peer)}</span> <span class="faint">· session ${it.session}</span></td>
     <td class="r"><button class="btn sm" data-act="inbox-file" data-id="${it.id}"${f ? ' disabled' : ''}>File</button></td>
   </tr>`;
@@ -840,7 +861,7 @@ function renderInbox() {
     <div class="scroll"><table class="tbl" style="min-width:860px"><colgroup><col style="width:36px"><col><col style="width:116px"><col style="width:280px"><col style="width:180px"><col style="width:64px"></colgroup>
       <thead><tr><th><input type="checkbox" data-ch="inbox-all" aria-label="Select everything"${S.inbox.length && S.inboxSel.size === S.inbox.length ? ' checked' : ''}></th><th>Item</th><th>Downloaded as</th><th>When you file it</th><th>From</th><th></th></tr></thead>
       <tbody>${section('Albums', albums)}${section('Singles', singles)}${S.inbox.length ? '' : '<tr><td colspan="6" style="height:120px;text-align:center;color:var(--label-2)">Your Inbox is empty. Downloads land here until you file them.</td></tr>'}</tbody></table></div>
-    <div class="footbar">${icon('info')}<span>Singles are filed to <span class="mono">${COLLECTION.root}/${COLLECTION.singlesDir}/</span>, albums to <span class="mono">${COLLECTION.root}/${COLLECTION.albumsDir}/Artist - Album (Year)/</span>. Filing copies the file, checks the copy, then clears it from the Inbox; lossless originals go to the Trash after a checked conversion. Selecta never changes files already in your collection.</span></div>`;
+    <div class="footbar">${icon('info')}<span>Names follow your templates and the name cleaner (Settings → Filing). Filing copies the file, checks the copy, then clears it from the Inbox; lossless originals go to the Trash after a checked conversion. Selecta never changes files already in your collection.</span></div>`;
 }
 function fileItems(ids) {
   for (const id of ids) {
@@ -869,14 +890,14 @@ function completeFiling(f) {
   const out = f.plan.kind === 'convert' ? tg : it;
   const q = f.plan.kind === 'convert' ? `${qualLong(it)} → ${tg.label}` : qualLong(it);
   if (it.kind === 'album') {
-    const dir = `${COLLECTION.albumsDir}/${albumDir(it.rel)}`;
-    it.rel.tracks.forEach((t, i) => COLLECTION.tracks.push({ artist: it.artist, title: t[0], version: t[1], fmt: out.fmt, br: out.br, vbr: out.vbr, sr: out.sr, bd: out.bd, album: it.album, path: `${dir}/${nn2(i)} - ${t[0]}.${EXT[out.fmt]}` }));
+    const dir = filedPath(it).replace(/\/$/, '');
+    it.rel.tracks.forEach((t, i) => COLLECTION.tracks.push({ artist: it.artist, title: t[0], version: t[1], fmt: out.fmt, br: out.br, vbr: out.vbr, sr: out.sr, bd: out.bd, album: it.album, path: `${dir}/${nameFor('albumTrack', { track: nn2(i), title: fullTitle(t[0], t[1]), artist: it.artist, album: it.album, year: it.year })}.${EXT[out.fmt]}` }));
     COLLECTION.stats.tracks += it.tracks; COLLECTION.stats.albums++;
     COLLECTION.recent.unshift({ name: `${it.artist} — ${it.album} (${it.tracks} tracks)`, path: `${dir}/`, q, when: 'Just now' });
     const h = S.history.find(x => x.album && x.title === it.album); if (h) h.where = `Filed · ${dir}/`;
     toast('Filed to your collection', `${esc(it.artist)} — ${esc(it.album)} → <span class="mono">${esc(dir)}/</span> · ${esc(q)}`, { kind: 'good', icon: 'check-c' });
   } else {
-    const path = `${COLLECTION.singlesDir}/${it.artist} - ${fullTitle(it.title, it.version)}.${EXT[out.fmt]}`;
+    const path = filedPath(it);
     COLLECTION.tracks.push({ artist: it.artist, title: it.title, version: it.version, fmt: out.fmt, br: out.br, vbr: out.vbr, sr: out.sr, bd: out.bd, path });
     COLLECTION.stats.tracks++; COLLECTION.stats.singles++;
     COLLECTION.recent.unshift({ name: `${it.artist} — ${fullTitle(it.title, it.version)}`, path, q, when: 'Just now' });
@@ -915,6 +936,7 @@ function batchParse() {
     const own = ownership(fake);
     return { id: 'b' + i, n: i + 1, raw, ...p, status: B.skipOwned && own && HAVE.has(own.kind) ? 'owned' : 'pending', own, best: null, alts: [], scoreV: 0, approved: false };
   });
+  for (const l of B.lines) { if (l.status === 'owned') continue; const rc = resolveCanon(l); l.canon = rc.c; l.canonExact = rc.exact; }
   B.sel = null; B.done = false;
 }
 function similarity(a, b) {
@@ -925,14 +947,18 @@ function similarity(a, b) {
   return (2 * n) / (A.size + B2.size);
 }
 function batchResolve(line) {
-  const f = presetFilters(S.batch.preset);
+  const f = presetFilters(S.batch.preset), c = line.canon;
   const res = generateResults(line.raw.replace(/[()]/g, ' '), { pseudo: false }).filter(r => !hiddenReason(r, f, null));
-  const scored = res.map(r => ({ r, m: 0.45 * similarity(line.artist, r.artist) + 0.45 * similarity(`${line.title} ${line.version}`, `${r.title} ${r.version}`) + 0.1 * Math.min(1, score(r) / 1.6) })).sort((a, b) => b.m - a.m);
+  const scored = res.map(r => {
+    const nameM = 0.5 * similarity(line.artist, r.artist) + 0.5 * similarity(`${line.title} ${line.version}`, `${r.title} ${r.version}`);
+    const rm = c ? relMatch(r, c) : null, q = Math.min(1, score(r) / 1.6);
+    return { r, rm, m: rm ? 0.6 * rm.score + 0.3 * nameM + 0.1 * q : 0.8 * nameM + 0.2 * q };
+  }).sort((a, b) => b.m - a.m);
   const seenPeers = new Set(), picks = [];
   for (const x of scored) { if (seenPeers.has(x.r.peer.name)) continue; seenPeers.add(x.r.peer.name); picks.push(x); if (picks.length >= 4) break; }
-  if (!picks.length) { line.status = 'notfound'; return; }
+  if (!picks.length || picks[0].m < 0.45) { line.status = 'notfound'; line.best = null; line.alts = []; return; }
   line.best = picks[0].r; line.alts = picks.slice(1).map(x => x.r); line.scoreV = picks[0].m; line.candidates = res.length;
-  line.status = picks[0].m >= 0.85 ? 'match' : 'review';
+  line.status = picks[0].m >= 0.85 && (!c || (picks[0].rm.ok && line.canonExact !== false)) ? 'match' : 'review';
 }
 function updateBatch() {
   const B = S.batch;
@@ -960,13 +986,19 @@ const BSTAT = {
 function batchRows() {
   const B = S.batch;
   return B.lines.map((l, i) => {
-    const st = BSTAT[l.status]; const sel = B.sel === l.id;
-    const label = l.status === 'pending' ? (S.batch.running ? (l.waiting ? 'Paced' : 'Queued') : 'Ready') : st[2];
-    const best = l.best ? `<div class="cell2"><div class="t">${esc(l.best.artist)} — ${esc(fullTitle(l.best.title, l.best.version))}<div class="faint" style="font-size:11px">${esc(qualLong(l.best))} · ${esc(l.best.peer.name)} · ${l.best.peer.free ? 'free slot' : `queue ${l.best.peer.queue}`}${l.alts.length ? ` · ${plural(l.alts.length, 'alternative')}` : ''}</div></div></div>` : l.status === 'owned' ? `<span class="faint" title="${esc(ownDetail(l.own))}">${esc(BADGES[l.own.kind].long)}</span>` : l.status === 'notfound' ? '<span class="faint">Nothing within your preset. Kept for the wishlist.</span>' : '';
+    const st = BSTAT[l.status], sel = B.sel === l.id;
+    const label = l.status === 'pending' ? (B.running ? (l.waiting ? 'Paced' : 'Queued') : 'Ready') : st[2];
+    const rel = l.canon
+      ? `<div class="faint" style="font-size:11px;overflow:hidden;text-overflow:ellipsis">→ ${esc(fullTitle(l.canon.title, l.canon.version))} · ${fmtDur(l.canon.dur)} · ${srcName()}${l.canonExact === false ? ' · closest version' : ''}</div>`
+      : l.status !== 'owned' ? `<div class="faint" style="font-size:11px">No release found on ${srcName()}</div>` : '';
+    const lenNote = l.best && l.canon ? (Math.abs(l.best.dur - l.canon.dur) <= 3 ? ' · same length' : ` · ${fmtDelta(l.best.dur - l.canon.dur)}`) : '';
+    const best = l.best
+      ? `<div class="t">${esc(l.best.artist)} — ${esc(fullTitle(l.best.title, l.best.version))}<div class="faint" style="font-size:11px">${esc(qualLong(l.best))} · ${fmtDur(l.best.dur)}${lenNote} · ${esc(l.best.peer.name)}${l.alts.length ? ` · ${plural(l.alts.length, 'alternative')}` : ''}</div></div>`
+      : l.status === 'owned' ? `<span class="faint" title="${esc(ownDetail(l.own))}">${esc(BADGES[l.own.kind].long)}</span>` : '';
     const playing = l.best && P.track && P.track.rid === l.best.id;
-    return `<tr class="r${i % 2 ? ' alt' : ''}${sel ? ' sel' : ''}" data-act="batch-sel" data-id="${l.id}" style="height:42px">
+    return `<tr class="r${i % 2 ? ' alt' : ''}${sel ? ' sel' : ''}" data-act="batch-sel" data-id="${l.id}" style="height:46px">
       <td class="num faint">${l.n}</td>
-      <td title="${esc(l.raw)}">${esc(l.raw)}</td>
+      <td title="${esc(l.raw)}"><div style="overflow:hidden;text-overflow:ellipsis">${esc(l.raw)}</div>${rel}</td>
       <td><span class="bdg ${st[1]}">${l.status === 'searching' ? '<span class="spinner"></span>' : icon(st[0])}${esc(label)}${l.cached ? ' · cached' : ''}</span></td>
       <td style="white-space:normal">${best}</td>
       <td class="r num">${l.best ? `${Math.round(l.scoreV * 100)}%` : ''}</td>
@@ -984,6 +1016,7 @@ function renderBatch() {
   $('#content').innerHTML = `<div class="batch">
     <div class="batch-left">
       <div class="sec-h" style="margin:0"><h3>Tracklist</h3><span>${plural(B.lines.length, 'line')}, one track per line</span></div>
+      <div class="fl" style="flex-wrap:nowrap"><input class="field" style="flex:1;width:auto;min-width:0" id="spImport" placeholder="Spotify playlist or album link" aria-label="Spotify playlist or album link" spellcheck="false"><button class="btn sm" data-act="spotify-import">Import</button></div>
       <textarea class="tracklist" id="tracklist" data-ch="batch-text" spellcheck="false" aria-label="Tracklist, one track per line"${B.running ? ' readonly' : ''}>${esc(B.text)}</textarea>
       <label class="fl"><span class="fl-l">Preset for every line</span><select id="bPreset" data-ch="batch-preset"${B.running ? ' disabled' : ''}>${Object.entries(PRESETS).map(([k, p]) => `<option value="${k}"${k === B.preset ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>
       <label class="cb"><input type="checkbox" id="bSkip" data-ch="batch-skip"${B.skipOwned ? ' checked' : ''}${B.running ? ' disabled' : ''}>Skip tracks I already have</label>
@@ -1006,12 +1039,14 @@ function renderBatch() {
 }
 function inspectorBatch() {
   const B = S.batch, l = B && B.lines.find(x => x.id === B.sel);
-  if (!l) return '<div class="insp-empty">Select a line to compare its best match with the alternatives.</div>';
-  const cand = l.best ? [l.best, ...l.alts] : [];
+  if (!l) return '<div class="insp-empty">Select a line to see the release it resolved to and the files that match it.</div>';
+  const cand = l.best ? [l.best, ...l.alts] : [], c = l.canon;
+  const relBlock = c ? `<section class="insp-sec"><h4>Release · ${srcName()}</h4><div style="display:flex;gap:10px;align-items:center"><span class="art" style="width:44px;height:44px;border-radius:6px;background:${artGradient(hashStr(c.artist + c.album))}"></span><div style="min-width:0"><div>${esc(fullTitle(c.title, c.version))}</div><div class="insp-sub">${esc(c.artist)} · ${esc(c.album)} (${c.year}) · ${fmtDur(c.dur)}</div></div></div>${l.canonExact === false ? `<div class="note warn" style="margin-top:8px">${icon('approx-c')}<div>No “${esc(l.version)}” version found. This is the closest release.</div></div>` : ''}${S.clips ? `<div class="insp-actions" style="margin-top:8px"><button class="btn sm" data-act="clip" data-id="${canonResult(c).id}">${icon('play')} 30-s clip</button></div>` : ''}</section>` : '';
   return `<div class="insp"><div><div class="insp-title">${esc(l.title)}${l.version ? ` <span class="muted">(${esc(l.version)})</span>` : ''}</div><div class="insp-sub">${esc(l.artist || 'Unknown artist')} · line ${l.n}</div></div>
-    ${l.status === 'review' ? `<div class="note warn">${icon('approx-c')}<div><b>Check this one.</b> The best match is ${Math.round(l.scoreV * 100)}% similar to your line. Preview it before approving.</div></div>` : ''}
-    ${l.status === 'notfound' ? `<div class="note">${icon('info')}<div>Nothing matched within “${esc(PRESETS[B.preset].name)}”. <button class="link" data-act="add-wishlist" data-v="${esc(l.raw)}">Add it to the wishlist</button></div></div>` : ''}
-    ${cand.length ? `<section class="insp-sec"><h4>Candidates</h4><div class="group">${cand.map((r, i) => `<div class="grow" style="gap:8px"><button class="rb" style="opacity:1" data-act="preview" data-id="${r.id}" aria-label="Preview">${icon('play')}</button><div class="gl" style="min-width:0">${esc(fullTitle(r.title, r.version))}<div class="gd">${esc(qualLong(r))} · ${esc(r.peer.name)} · ${r.peer.free ? 'free' : `queue ${r.peer.queue}`}</div></div>${i === 0 ? '<span class="bdg good">' + icon('check') + 'Best</span>' : `<button class="btn sm" data-act="batch-pick" data-id="${r.id}">Use</button>`}</div>`).join('')}</div></section>` : ''}
+    ${relBlock}
+    ${l.status === 'review' ? `<div class="note warn">${icon('approx-c')}<div><b>Check this one.</b> The best file scores ${Math.round(l.scoreV * 100)}% against the release. Preview it before approving.</div></div>` : ''}
+    ${l.status === 'notfound' ? `<div class="note">${icon('info')}<div>${c ? 'No file on the network matches this release within' : 'No release found, and nothing matched'} “${esc(PRESETS[B.preset].name)}”. <button class="link" data-act="add-wishlist" data-v="${esc(l.raw)}">Add it to the wishlist</button></div></div>` : ''}
+    ${cand.length ? `<section class="insp-sec"><h4>Files on the network</h4><div class="group">${cand.map((r, i) => `<div class="grow" style="gap:8px"><button class="rb" style="opacity:1" data-act="preview" data-id="${r.id}" aria-label="Preview">${icon('play')}</button><div class="gl" style="min-width:0">${esc(fullTitle(r.title, r.version))}<div class="gd">${esc(qualLong(r))} · ${fmtDur(r.dur)}${c ? ` (${Math.abs(r.dur - c.dur) <= 3 ? 'same length' : fmtDelta(r.dur - c.dur)})` : ''} · ${esc(r.peer.name)}</div></div>${i === 0 ? `<span class="bdg good">${icon('check')}Best</span>` : `<button class="btn sm" data-act="batch-pick" data-id="${r.id}">Use</button>`}</div>`).join('')}</div></section>` : ''}
   </div>`;
 }
 
@@ -1190,39 +1225,54 @@ function updateConvert(dt) {
 function renderSettings() {
   const row = (label, desc, ctl) => `<div class="grow"><div class="gl">${label}${desc ? `<div class="gd">${desc}</div>` : ''}</div>${ctl}</div>`;
   const seg = (act, cur, opts) => `<span class="seg" role="group">${opts.map(([v, l]) => `<button data-act="${act}" data-v="${v}" class="${cur === v ? 'on' : ''}" aria-pressed="${cur === v}">${l}</button>`).join('')}</span>`;
+  const tpl = (k, label) => `<input class="field mono" style="width:280px" data-ch="naming-${k}" value="${esc(S.naming[k])}" aria-label="${label}" spellcheck="false" autocomplete="off">`;
+  const sp = S.spotify;
   $('#content').innerHTML = `<div class="scroll"><div class="pane" style="max-width:820px">
     <section><div class="sec-h"><h3>Appearance</h3></div><div class="group">${row('Theme', 'Follows macOS unless you pick one', seg('set-theme', S.theme, [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]))}${row('Waveform style', 'The preview waveform stays dark in both themes', seg('wf-mode', P.mode, [['pioneer', 'Pioneer'], ['layered', 'Layered'], ['stacked', 'Stacked'], ['lanes', 'Lanes']]))}</div></section>
+    <section><div class="sec-h"><h3>Integrations</h3><span>Release metadata and 30-second clips. Credentials go to the macOS Keychain.</span></div><div class="group">
+      ${row('Spotify', sp.signedIn ? `Signed in as ${esc(sp.user)}. Tokens are in the Keychain.` : 'Sign in once in your browser. Only the client ID is needed, no secret (PKCE).', sp.signedIn ? '<button class="btn" data-act="spotify-signout">Sign out</button>' : '<button class="btn primary" data-act="spotify-signin">Sign in with Spotify</button>')}
+      ${row('Client ID', 'From your app in the Spotify developer dashboard', `<input class="field mono" style="width:280px" data-ch="sp-id" value="${esc(sp.id)}" placeholder="32 hexadecimal characters" aria-label="Spotify client ID" spellcheck="false" autocomplete="off">`)}
+      ${row('Client secret', 'Optional: only for the client-credentials flow while developing', `<input class="field mono" style="width:280px" type="password" data-ch="sp-secret" value="${esc(sp.secret)}" placeholder="Optional" aria-label="Spotify client secret" autocomplete="off"> <button class="btn sm" data-act="spotify-check">Check</button>`)}
+      ${row('Without Spotify', 'Used when you aren’t signed in', '<span class="muted">Deezer · MusicBrainz</span>')}
+      ${row('What leaves your Mac', 'The artist, title and ISRC of tracks you search or inspect', '<span class="muted">Never your files or folders</span>')}</div></section>
     <section><div class="sec-h"><h3>Network</h3><span>Debug builds only connect to a local test server</span></div><div class="group">
       ${row('Server', S.server === 'live' ? 'server.slsknet.org · the real Soulseek network' : 'localhost:2242 · Soulfind test server with test peers', seg('set-server', S.server, [['live', 'Soulseek network'], ['local', 'Local test server']]))}
       ${row('Listen port', 'Peers connect to you on this port', '<span class="mono">2234</span> <span class="bdg good">' + icon('check-c') + 'Open</span>')}
       ${row('Network activity', 'Pausing stops new searches and transfers', `<button class="btn" data-act="toggle-pause">${S.netPaused ? 'Resume' : 'Pause'}</button>`)}</div></section>
     <section><div class="sec-h"><h3>Limits</h3><span>You can make these stricter, never looser than the ceiling</span></div><div class="group">
-      ${row('Searches', `At most ${LIMITS.searches} per ${LIMITS.windowSec} s · ceiling ${LIMITS.searches}`, '<select><option selected>34 per 220 s</option><option>20 per 220 s</option><option>10 per 220 s</option></select>')}
-      ${row('Batch search', `Keeps ${LIMITS.batchKeepFree} searches free for you`, '<select><option selected>Keep 8 free</option><option>Keep 16 free</option></select>')}
+      ${row('Searches', `At most ${LIMITS.searches} per ${LIMITS.windowSec} s · ceiling ${LIMITS.searches}`, '<select aria-label="Search limit"><option selected>34 per 220 s</option><option>20 per 220 s</option><option>10 per 220 s</option></select>')}
+      ${row('Batch search', `Keeps ${LIMITS.batchKeepFree} searches free for you`, '<select aria-label="Searches kept free"><option selected>Keep 8 free</option><option>Keep 16 free</option></select>')}
       ${row('Downloads per peer', 'At the same time · queued', `<span class="muted">${LIMITS.peerConcurrent} at a time · ${LIMITS.peerQueued} queued</span>`)}
       ${row('Daily limit per peer', 'Warn, then stop until tomorrow', `<span class="muted">Warn at ${LIMITS.peerSoft} · stop at ${LIMITS.peerHard}</span>`)}
       ${row('Reconnect', 'Waits longer after each failed login', '<span class="muted">30 s, doubling up to 10 min</span>')}</div></section>
     <section><div class="sec-h"><h3>Library</h3></div><div class="group">
       ${row('Collection folder', 'Read-only. Add more folders if your music lives in several places', `<span class="mono">${esc(COLLECTION.root)}</span> <button class="btn sm">Change…</button>`)}
       ${row('Singles folder', 'Inside the collection', `<input class="field" style="width:120px" value="${COLLECTION.singlesDir}" aria-label="Singles folder name">`)}
-      ${row('Albums folder', 'One folder per album: Artist - Album (Year)', `<input class="field" style="width:120px" value="${COLLECTION.albumsDir}" aria-label="Albums folder name">`)}
+      ${row('Albums folder', 'One folder per album', `<input class="field" style="width:120px" value="${COLLECTION.albumsDir}" aria-label="Albums folder name">`)}
       ${row('Inbox', 'Where downloads wait until you file them', '<span class="mono">~/Music/Selecta/Inbox</span> <button class="btn sm">Change…</button>')}</div></section>
-    <section><div class="sec-h"><h3>Filing</h3></div><div class="group">
+    <section><div class="sec-h"><h3>Filing</h3><span>How files are named when they go into your collection</span></div><div class="group">
       ${row('File as', 'Applied when you file from the Inbox', `<select data-ch="filingTarget" aria-label="Filing format">${Object.entries(TARGETS).map(([k, t]) => `<option value="${k}"${k === S.filingTarget ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
-      ${row('Tags', 'ID3v2.3 reads best on CDJs and in rekordbox', '<select><option selected>ID3v2.3</option><option>ID3v2.4</option></select>')}
-      ${row('Single file name', '', '<span class="mono">Artist - Title (Version).mp3</span>')}
+      ${row('Tags', 'ID3v2.3 reads best on CDJs and in rekordbox', '<select aria-label="Tag version"><option selected>ID3v2.3</option><option>ID3v2.4</option></select>')}
+      ${row('Single files', 'Tokens: {artist} {title} {album} {albumartist} {year} {track} {label} {bpm} {key}', tpl('single', 'Single file name template'))}
+      ${row('Album folders', '', tpl('albumDir', 'Album folder name template'))}
+      ${row('Album tracks', '', tpl('albumTrack', 'Album track file name template'))}
+      ${row('Clean names', 'Keeps Unicode letters. Removes quotes and symbols such as % $ / : * ?', `<label class="cb"><input type="checkbox" data-ch="naming-clean"${S.naming.clean ? ' checked' : ''}>On</label><select data-ch="naming-space" aria-label="Replace spaces with">${[['_', 'Spaces become _'], ['-', 'Spaces become -'], ['.', 'Spaces become .']].map(([v, l]) => `<option value="${v}"${S.naming.space === v ? ' selected' : ''}>${l}</option>`).join('')}</select><label class="cb"><input type="checkbox" data-ch="naming-and"${S.naming.and ? ' checked' : ''}>&amp; becomes “and”</label>`)}
+      <div class="grow" style="display:block"><div class="gd" style="margin-bottom:4px">Preview</div><div id="namingPreview">${namingPreviewHtml()}</div></div>
       ${row('Lossless originals', 'After converting to MP3 at filing time', '<select aria-label="Lossless originals"><option selected>Move to the Trash</option><option>Keep in ~/Music/Selecta/Originals</option></select>')}</div></section>
     <section><div class="sec-h"><h3>Preview</h3></div><div class="group">
+      ${row('Quick previews', '30-second clips from Deezer or iTunes. They cost Soulseek peers nothing', `<input type="checkbox" data-ch="clips"${S.clips ? ' checked' : ''} aria-label="Quick previews">`)}
+      ${row('Space plays', '⇧Space plays the other one', `<select data-ch="space-plays" aria-label="What Space plays"><option value="clip"${S.spacePlays === 'clip' ? ' selected' : ''}>The 30-s clip</option><option value="full"${S.spacePlays === 'full' ? ' selected' : ''}>The full file from the peer</option></select>`)}
       ${row('Auto-preview', 'Start a preview when the selection rests on a track', `<input type="checkbox" data-ch="autoPreview"${S.autoPreview ? ' checked' : ''} aria-label="Auto-preview">`)}
-      ${row('When you skip a preview', 'Cancelling saves the peer’s upload bandwidth', `<select data-ch="cancelOnSkip" aria-label="When you skip a preview"><option value="1"${S.cancelOnSkip ? ' selected' : ''}>Cancel the transfer</option><option value="0"${S.cancelOnSkip ? '' : ' selected'}>Let it finish</option></select>`)}
+      ${row('When you skip a full preview', 'Cancelling saves the peer’s upload bandwidth', `<select data-ch="cancelOnSkip" aria-label="When you skip a full preview"><option value="1"${S.cancelOnSkip ? ' selected' : ''}>Cancel the transfer</option><option value="0"${S.cancelOnSkip ? '' : ' selected'}>Let it finish</option></select>`)}
       ${row('Preview cache', 'Oldest previews are removed first', '<span class="muted">412 MB of 2 GB</span> <button class="btn sm">Clear</button>')}</div></section>
     <section><div class="sec-h"><h3>Caches</h3></div><div class="group">
       ${row('Search results', 'Re-running a search within 24 h opens the cache and costs no search', `<span class="muted">${S.cache.size} searches</span> <button class="btn sm">Clear</button>`)}
+      ${row('Releases', 'Metadata from Spotify, Deezer and MusicBrainz, kept 30 days', '<span class="muted">212 releases</span> <button class="btn sm">Clear</button>')}
       ${row('Browsed shares', 'Kept 24 h so you don’t ask the same peer twice', '<span class="muted">3 users</span> <button class="btn sm">Clear</button>')}
       ${row('Waveforms', 'Small; re-opening a preview is instant', '<span class="muted">1.4 MB</span> <button class="btn sm">Clear</button>')}</div></section>
     <section><div class="sec-h"><h3>Keyboard</h3></div><div class="group" style="padding:12px 14px"><div class="shortcuts">
-      <span class="kbd">↑ ↓</span><span>Previous / next result</span><span class="kbd">Space</span><span>Preview the selection, or play / pause</span><span class="kbd">← →</span><span>Seek 5 s (with ⇧: 30 s). On a folder: collapse / expand</span>
-      <span class="kbd">Return</span><span>Download the selection (folder: the whole album)</span><span class="kbd">K</span><span>Keep the preview: move it to the Inbox</span><span class="kbd">⌫</span><span>Discard the preview</span>
+      <span class="kbd">↑ ↓</span><span>Previous / next result</span><span class="kbd">Space</span><span>Preview the selection (the 30-s clip or the full file, as set above), or play / pause</span><span class="kbd">⇧Space</span><span>The other kind of preview</span><span class="kbd">← →</span><span>Seek 5 s (with ⇧: 30 s). On a folder: collapse / expand</span>
+      <span class="kbd">Return</span><span>Download the selection (folder: the whole album)</span><span class="kbd">K</span><span>Keep the preview (a clip: download the file)</span><span class="kbd">⌫</span><span>Discard the preview</span>
       <span class="kbd">⌘F</span><span>Search</span><span class="kbd">⌘I</span><span>Inspector</span><span class="kbd">⌘1 … ⌘9</span><span>Sidebar sections</span></div></div></section>
   </div></div>`;
 }
@@ -1403,8 +1453,14 @@ function refreshLive(force) {
   if (!typing && ['transfers', 'inbox', 'converter', 'peers', 'collection', 'history'].includes(S.view)) keepScroll(renderContent);
 }
 
+// A chosen track release reads best as a flat list; an album or no release reads best by folder.
+const groupMode = c => (S.groupAuto ? (c && c.kind === 'track' ? 'tracks' : 'folders') : S.group);
+function viewButtons() {
+  const gm = S._v && S._v.groups ? 'folders' : 'tracks';
+  return `<button class="tbtn${gm === 'folders' ? ' on' : ''}" data-act="group" data-v="folders" aria-pressed="${gm === 'folders'}" title="Group results by folder">${icon('folder')}</button><button class="tbtn${gm === 'tracks' ? ' on' : ''}" data-act="group" data-v="tracks" aria-pressed="${gm === 'tracks'}" title="Flat list of tracks">${icon('batch')}</button>`;
+}
 function viewControlsHtml() {
-  return `<div class="tb-group tb-hide-sm" role="group" aria-label="Layout"><button class="tbtn${S.group === 'folders' ? ' on' : ''}" data-act="group" data-v="folders" aria-pressed="${S.group === 'folders'}" title="Group results by folder">${icon('folder')}</button><button class="tbtn${S.group === 'tracks' ? ' on' : ''}" data-act="group" data-v="tracks" aria-pressed="${S.group === 'tracks'}" title="Flat list of tracks">${icon('batch')}</button></div>
+  return `<div class="tb-group tb-hide-sm" id="tbView" role="group" aria-label="Layout">${viewButtons()}</div>
     <label class="tb-sort tb-hide-md"><span class="fl-l">Sort</span><select id="tbSort" data-ch="sort" aria-label="Sort results">${Object.entries(SORTS).map(([k, s]) => `<option value="${k}"${k === S.sort ? ' selected' : ''}>${s.label}</option>`).join('')}</select></label>`;
 }
 
@@ -1489,12 +1545,12 @@ const parseDur = v => { const m = String(v).trim().match(/^(\d+)(?::(\d{1,2}))?$
 
 /* ---------- synthetic preview audio (deterministic per result) ---------- */
 const PROG = [[0, 3, 7], [-4, 0, 3], [-2, 2, 5], [-5, -2, 2]]; // i – VI – VII – v
-function makeSynth(seed, bpm, n) {
+function makeSynth(seed, bpm, n, off = 0, nOut = n) {
   const r = mulberry32(seed);
   const beatS = 60 / bpm, nBars = Math.max(16, Math.floor(n / SR / (beatS * 4)));
   const b4 = x => Math.round((nBars * x) / 4) * 4;
   return {
-    sixteenth: (beatS * SR) / 4, nBars, n, noise: seed >>> 0 || 1, last16: -1,
+    sixteenth: (beatS * SR) / 4, nBars, n, off, nOut, noise: seed >>> 0 || 1, last16: -1,
     sec: { groove: b4(0.1), drop1: b4(0.22), brk: b4(0.47), drop2: b4(0.58), outro: b4(0.86) },
     root: 55 * Math.pow(2, Math.floor(r() * 12) / 12),
     k: { ph: 0, env: 0, f: 0 }, hat: { env: 0, open: 0, prev: 0 }, clap: { env: 0, lp: 0, lp2: 0 },
@@ -1505,10 +1561,10 @@ function makeSynth(seed, bpm, n) {
 const DEC = (sec) => Math.exp(-1 / (SR * sec));
 const K_DEC = DEC(0.13), K_SWEEP = DEC(0.035), H_DEC = DEC(0.018), O_DEC = DEC(0.09), C_DEC = DEC(0.11), B_DEC = DEC(0.085), S_DEC = DEC(0.14);
 function synthRender(sy, out, from, to) {
-  const sec = sy.sec, fadeOut = sy.n - SR * 2, k = sy.k, h = sy.hat, c = sy.clap, b = sy.bass, st = sy.stab, pd = sy.pad;
+  const sec = sy.sec, fadeOut = sy.nOut - SR * 2, k = sy.k, h = sy.hat, c = sy.clap, b = sy.bass, st = sy.stab, pd = sy.pad;
   let nz = sy.noise;
   for (let i = from; i < to; i++) {
-    const p16 = Math.floor(i / sy.sixteenth), bar = Math.floor(p16 / 16), in16 = p16 % 16;
+    const ii = i + sy.off, p16 = Math.floor(ii / sy.sixteenth), bar = Math.floor(p16 / 16), in16 = p16 % 16;
     const inBrk = bar >= sec.brk && bar < sec.drop2;
     if (p16 !== sy.last16) {
       sy.last16 = p16;
@@ -1543,10 +1599,10 @@ function synthRender(sy, out, from, to) {
       for (let j = 0; j < 6; j++) { pd.ph[j] += pd.f[j] / SR; if (pd.ph[j] >= 1) pd.ph[j] -= 1; v += 2 * pd.ph[j] - 1; }
       pd.lp += 0.07 * (v / 6 - pd.lp); s += pd.lp * pd.lvl * 2.2;
     }
-    if (bar >= sec.drop2 - 4 && bar < sec.drop2) { const x = (i / sy.sixteenth / 16 - (sec.drop2 - 4)) / 4; s += hp * x * x * 0.35; }
+    if (bar >= sec.drop2 - 4 && bar < sec.drop2) { const x = (ii / sy.sixteenth / 16 - (sec.drop2 - 4)) / 4; s += hp * x * x * 0.35; }
     let g = 0.9;
     if (i < SR * 0.5) g *= i / (SR * 0.5);
-    if (i > fadeOut) g *= Math.max(0, (sy.n - i) / (SR * 2));
+    if (i > fadeOut) g *= Math.max(0, (sy.nOut - i) / (SR * 2));
     out[i] = Math.tanh(s * g);
   }
   sy.noise = nz;
@@ -1579,9 +1635,10 @@ function analyze(tk, from, to) {
     }
   }
 }
-function makeTrack(r) {
-  const n = Math.floor(r.dur * SR), hop = Math.round(SR / 150), nb = Math.ceil(n / hop);
-  return { rid: r.id, r, n, dur: r.dur, bpm: r.rel.bpm || 124, hop, nb, audio: null, synth: null, an: null, gen: 0, low: new Float32Array(nb), mid: new Float32Array(nb), high: new Float32Array(nb), analyzed: 0, maxL: 1e-6, maxM: 1e-6, maxH: 1e-6, tr: null, complete: false, kept: false };
+function makeTrack(r, clip = false) {
+  const dur = clip ? Math.min(30, r.dur) : r.dur, n = Math.floor(dur * SR), hop = Math.round(SR / 150), nb = Math.ceil(n / hop);
+  const barS = 240 / (r.rel.bpm || 124), off = clip ? Math.floor(Math.round((r.dur * 0.42) / barS) * barS * SR) : 0;
+  return { rid: r.id, key: clip ? `${r.id}#clip` : r.id, clip, off, fullN: Math.floor(r.dur * SR), r, n, dur, bpm: r.rel.bpm || 124, hop, nb, audio: null, synth: null, an: null, gen: 0, low: new Float32Array(nb), mid: new Float32Array(nb), high: new Float32Array(nb), analyzed: 0, maxL: 1e-6, maxM: 1e-6, maxH: 1e-6, tr: null, complete: false, kept: false };
 }
 const trackFraction = tk => (tk.complete ? 1 : tk.tr ? tk.tr.progress : 0);
 function pumpAudio(budgetMs) {
@@ -1589,7 +1646,7 @@ function pumpAudio(budgetMs) {
   if (!tk) return;
   const target = Math.floor(trackFraction(tk) * tk.n);
   if (tk.gen >= target) return;
-  if (!tk.audio) { tk.audio = new Float32Array(tk.n); tk.synth = makeSynth(hashStr(tk.rid + tk.r.title), tk.bpm, tk.n); tk.an = makeAnalyzer(); tk.gen = 0; }
+  if (!tk.audio) { tk.audio = new Float32Array(tk.n); tk.synth = makeSynth(hashStr(tk.rid + tk.r.title), tk.bpm, tk.fullN, tk.off, tk.n); tk.an = makeAnalyzer(); tk.gen = 0; }
   const t0 = performance.now();
   while (tk.gen < target && performance.now() - t0 < budgetMs) {
     const end = Math.min(target, tk.gen + 8192);
@@ -1689,24 +1746,33 @@ function updatePlayback() {
 }
 
 /* ---------- preview lifecycle ---------- */
-function previewResult(r, { autoplay = true } = {}) {
+function previewResult(r, { autoplay = true, clip = null } = {}) {
   if (!r) return;
-  if (P.track && P.track.rid === r.id) { togglePlay(); return; }
+  let wantClip = clip == null ? S.clips && S.spacePlays === 'clip' : clip;
+  if (wantClip && (!S.clips || !hasClip(r))) {
+    if (clip) toast('No 30-second clip for this track', 'Previewing the full file from the peer instead.', { icon: 'info', ms: 3500 });
+    wantClip = false;
+  }
+  const key = wantClip ? `${r.id}#clip` : r.id;
+  if (P.track && P.track.key === key) { togglePlay(); return; }
   const prev = P.track;
   if (prev && prev.tr && prev.tr.kind === 'preview' && !['done', 'failed', 'cancelled'].includes(prev.tr.state) && !prev.tr.keep && S.cancelOnSkip) {
     prev.tr.state = 'cancelled';
-    PREVIEW_CACHE.delete(prev.rid);
-    if (!S.warnedCancel) { S.warnedCancel = true; toast('Stopped the previous preview', 'Skipping a preview cancels its transfer to save the peer’s bandwidth. You can change this in Settings → Preview.', { icon: 'info', ms: 8000 }); }
+    PREVIEW_CACHE.delete(prev.key);
+    if (!S.warnedCancel) { S.warnedCancel = true; toast('Stopped the previous preview', 'Skipping a full preview cancels its transfer to save the peer’s bandwidth. You can change this in Settings → Preview.', { icon: 'info', ms: 8000 }); }
   }
   AE.stop(); P.playing = false; P.waiting = false; P.pos = 0;
-  let tk = PREVIEW_CACHE.get(r.id);
+  let tk = PREVIEW_CACHE.get(key);
   if (!tk) {
-    if (S.netPaused) { toast('Network activity is paused', 'Resume it from the toolbar to preview new results.', { kind: 'warn' }); return; }
-    tk = makeTrack(r);
-    tk.tr = addDownload(r, { quiet: true, preview: true });
+    if (wantClip) { tk = makeTrack(r, true); tk.complete = true; }
+    else {
+      if (S.netPaused) { toast('Network activity is paused', 'Resume it from the toolbar to preview new results.', { kind: 'warn' }); return; }
+      tk = makeTrack(r);
+      tk.tr = addDownload(r, { quiet: true, preview: true });
+    }
   }
   if (autoplay) AE.ensure();
-  PREVIEW_CACHE.delete(r.id); PREVIEW_CACHE.set(r.id, tk);
+  PREVIEW_CACHE.delete(key); PREVIEW_CACHE.set(key, tk);
   evictAudio();
   P.track = tk; P.autoplay = autoplay; P.dirty = true; WF.overKey = '';
   renderPlayer(); markPlayingRow();
@@ -1719,6 +1785,7 @@ const trackName = tk => `${tk.r.artist} — ${fullTitle(tk.r.title, tk.r.version
 function keepPreview() {
   const tk = P.track;
   if (!tk || tk.kept) return;
+  if (tk.clip) { downloadForClip(tk); return; }
   const t = tk.tr;
   if (t && !['done', 'cancelled', 'failed'].includes(t.state)) { t.keep = true; tk.kept = true; toast('Kept', `${esc(trackName(tk))} goes to your Inbox when its download finishes.`, { kind: 'good', icon: 'tray' }); }
   else if (tk.complete) { inboxFromResult(tk.r, tk.r.peer); tk.kept = true; toast('Kept: moved to your Inbox', `${esc(trackName(tk))} → <span class="mono">Inbox/Singles/</span>. No second download needed.`, { kind: 'good', icon: 'tray' }); }
@@ -1729,7 +1796,7 @@ function discardPreview() {
   const tk = P.track;
   if (!tk) return;
   if (tk.tr && !['done', 'failed', 'cancelled'].includes(tk.tr.state) && !tk.tr.keep) tk.tr.state = 'cancelled';
-  PREVIEW_CACHE.delete(tk.rid);
+  PREVIEW_CACHE.delete(tk.key);
   AE.stop();
   P.track = null; P.playing = false; P.waiting = false; P.pos = 0; P.dirty = true; WF.overKey = '';
   toast('Preview discarded', 'Removed from the preview cache.', { icon: 'trash', ms: 3500 });
@@ -1740,6 +1807,7 @@ function discardPreview() {
 function playerStatus(tk) {
   const t = tk.tr;
   if (P.playing && P.waiting) return 'Buffering…';
+  if (tk.clip) return `30-s clip from ${tk.r.id.startsWith('c:') ? tk.r.peer.name : 'Deezer'} · costs peers nothing`;
   if (tk.kept && (tk.complete || !t || t.state === 'done')) return 'Kept · in your Inbox';
   if (tk.complete || !t) return 'In preview cache';
   switch (t.state) {
@@ -1769,8 +1837,9 @@ function renderPlayer() {
   }
   const r = tk.r;
   $('#plArt').style.background = artGradient(hashStr(r.artist + r.rel.album));
-  $('#plTitle').textContent = trackName(tk);
-  $('#plActions').innerHTML = `<button class="btn${tk.kept ? '' : ' primary'}" data-act="keep" title="Move this preview to your Inbox (K)"${tk.kept ? ' disabled' : ''}>${icon('tray')} ${tk.kept ? 'Kept' : 'Keep'}</button><button class="btn" data-act="discard" title="Discard this preview (⌫)" aria-label="Discard preview">${icon('trash')}</button>`;
+  $('#plTitle').textContent = tk.clip ? `${trackName(tk)} · 30-s clip` : trackName(tk);
+  if (tk.clip) $('#plActions').innerHTML = `<button class="btn primary" data-act="download-current" title="Download the file (K)">${icon('download')} Download</button><button class="btn" data-act="full-preview"${tk.r.id.startsWith('c:') ? ' disabled' : ''} title="Preview the full file from the peer (⇧Space)">${icon('wave')} Full preview</button>`;
+  else $('#plActions').innerHTML = `<button class="btn${tk.kept ? '' : ' primary'}" data-act="keep" title="Move this preview to your Inbox (K)"${tk.kept ? ' disabled' : ''}>${icon('tray')} ${tk.kept ? 'Kept' : 'Keep'}</button><button class="btn" data-act="discard" title="Discard this preview (⌫)" aria-label="Discard preview">${icon('trash')}</button>`;
   btn.innerHTML = icon(P.playing ? 'pause' : 'play');
   btn.setAttribute('aria-label', P.playing ? 'Pause' : 'Play');
   renderPlayerLite();
@@ -1780,6 +1849,11 @@ function renderPlayerLite() {
   if (!tk) return;
   const st = playerStatus(tk);
   $('#plTime').innerHTML = `<b>${fmtDur(curPos())}</b> / ${fmtDur(tk.dur)}`;
+  if (tk.clip) {
+    $('#plSub').textContent = st;
+    $('#scrStatus').innerHTML = `Clip · <b>30 s from ${esc(tk.r.id.startsWith('c:') ? tk.r.peer.name : 'Deezer')}</b> · no Soulseek transfer · ${tk.bpm} BPM`;
+    return;
+  }
   $('#plSub').textContent = `${qualLong(tk.r)} · from ${tk.r.peer.name} · ${st}`;
   $('#scrStatus').innerHTML = `Preview · ${esc(qualLong(tk.r))} · ${esc(tk.r.peer.name)} · <b>${esc(st)}</b> · ${tk.bpm} BPM`;
 }
@@ -2013,7 +2087,7 @@ const ACT = {
   fmt: el => { const f = S.filters.formats; if (f.has(el.dataset.v)) f.delete(el.dataset.v); else f.add(el.dataset.v); filtersChanged(); },
   rate: el => { const f = S.filters.rates, v = +el.dataset.v; if (f.has(v)) f.delete(v); else f.add(v); filtersChanged(); },
   owned: el => { S.filters.owned = el.dataset.v; filtersChanged(); },
-  group: el => { S.group = el.dataset.v; filtersChanged(false); renderToolbar(); },
+  group: el => { S.group = el.dataset.v; S.groupAuto = false; filtersChanged(false); renderToolbar(); },
   'more-filters': () => { S.moreFilters = !S.moreFilters; filtersChanged(false); },
   'refresh-search': () => { const s = curSearch(); if (s) startSearch(s.query, { refresh: true }); },
   'toggle-sidebar': () => { S.sidebar = !S.sidebar; applyChrome(); P.dirty = true; },
@@ -2126,7 +2200,7 @@ document.addEventListener('click', e => {
 });
 document.addEventListener('dblclick', e => { const row = e.target.closest('#resBody tr.r'); if (row) previewResult(S.results.get(row.dataset.id)); });
 document.addEventListener('change', e => { const el = e.target.closest('[data-ch]'); if (el && el.dataset.ch !== 'batch-text' && CH[el.dataset.ch]) CH[el.dataset.ch](el); });
-document.addEventListener('input', e => { const el = e.target; if (el.dataset && el.dataset.ch === 'batch-text') S.batch.text = el.value; });
+document.addEventListener('input', e => { const el = e.target, fn = el.dataset && INPUT_CH[el.dataset.ch]; if (fn) fn(el); });
 document.addEventListener('submit', e => {
   e.preventDefault();
   if (e.target.id === 'searchForm') { const q = $('#q').value; if (q.trim()) { $('#q').blur(); startSearch(q); } return; }
@@ -2137,9 +2211,15 @@ document.addEventListener('submit', e => {
     renderMessages(); $('#msgInput').focus();
   }
 });
-function spaceKey() {
-  if (S.view === 'search') { const r = S.results.get(S.sel); if (r && (!P.track || P.track.rid !== r.id)) { previewResult(r); return; } }
-  if (S.view === 'batch') { const l = S.batch.lines.find(x => x.id === S.batch.sel); if (l && l.best && (!P.track || P.track.rid !== l.best.id)) { previewResult(l.best); return; } }
+function spaceKey(shift = false) {
+  const def = S.clips && S.spacePlays === 'clip', clip = shift ? !def : def;
+  let r = null;
+  if (S.view === 'search') r = S.results.get(S.sel) || null;
+  else if (S.view === 'batch') { const l = S.batch.lines.find(x => x.id === S.batch.sel); r = l && l.best ? l.best : null; }
+  if (r) {
+    const key = clip && S.clips && hasClip(r) ? `${r.id}#clip` : r.id;
+    if (!P.track || P.track.key !== key) { previewResult(r, { clip }); return; }
+  }
   togglePlay();
 }
 document.addEventListener('keydown', e => {
@@ -2156,7 +2236,7 @@ document.addEventListener('keydown', e => {
   switch (key) {
     case 'ArrowDown': e.preventDefault(); moveSel(1); break;
     case 'ArrowUp': e.preventDefault(); moveSel(-1); break;
-    case ' ': e.preventDefault(); spaceKey(); break;
+    case ' ': e.preventDefault(); spaceKey(e.shiftKey); break;
     case 'ArrowLeft': case 'ArrowRight':
       e.preventDefault();
       if (g) { if ((key === 'ArrowRight') === S.collapsed.has(g.key)) toggleGroup(g.key); }
@@ -2173,6 +2253,154 @@ document.addEventListener('keydown', e => {
     case 'Backspace': case 'Delete': e.preventDefault(); discardPreview(); break;
     default: break;
   }
+});
+
+/* ---------- releases first: canonical metadata (simulated Spotify / Deezer) ---------- */
+S.spotify = { id: '', secret: '', signedIn: false, user: '' };
+S.clips = true;
+S.spacePlays = 'clip';
+S.onlyRelease = true;
+S.groupAuto = true;
+REASONS.release = 'Not this release';
+const srcName = () => (S.spotify.signedIn ? 'Spotify' : 'Deezer');
+const fmtDelta = d => `${d >= 0 ? '+' : '−'}${fmtDur(Math.abs(d))}`;
+const hasClip = r => !r.rel.pseudo;
+const LABELS = ['Saltwater Audio', 'Undertow Records', 'Vitrail', 'Neon Grid', 'Copper Press', 'Night Shift Music'];
+function canonTrack(rel, ti) {
+  const t = rel.tracks[ti], rr = mulberry32(hashStr(`${rel.artist}|${t[0]}|${t[1]}`));
+  const cc = ['GB', 'DE', 'NL', 'FR'][Math.floor(rr() * 4)], reg = ['SWA', 'UND', 'VTR', 'NGR'][Math.floor(rr() * 4)];
+  return { kind: 'track', rel, ti, artist: rel.artist, title: t[0], version: t[1], album: rel.album, year: rel.year, dur: t[2], bpm: rel.bpm, label: LABELS[Math.floor(rr() * LABELS.length)], isrc: `${cc}${reg}${String(rel.year).slice(2)}${10000 + Math.floor(rr() * 89999)}` };
+}
+function canonCandidates(query) {
+  const toks = norm(query).split(' ').filter(Boolean), out = [];
+  if (!toks.length) return out;
+  for (const rel of CATALOG) {
+    const relText = norm(`${rel.artist} ${rel.album}`);
+    rel.tracks.forEach((t, i) => { if (toks.every(k => `${relText} ${norm(t[0])} ${norm(t[1])}`.includes(k))) out.push(canonTrack(rel, i)); });
+    if (!rel.single && rel.tracks.length > 2 && toks.every(k => relText.includes(k))) out.push({ kind: 'album', rel, artist: rel.artist, title: rel.album, version: '', album: rel.album, year: rel.year, n: rel.tracks.length, dur: rel.tracks.reduce((a, t) => a + t[2], 0) });
+  }
+  const q = norm(query);
+  const rank = c => similarity(q, `${c.artist} ${fullTitle(c.title, c.version)}`) + (q.includes(norm(c.title)) ? 0.3 : 0) - (c.kind === 'album' ? 0.05 : 0);
+  return out.sort((a, b) => rank(b) - rank(a)).slice(0, 5);
+}
+// How well a network file fits the chosen release: length within ±3 s is the strongest signal, then artist and title.
+function relMatch(r, c) {
+  if (!c) return null;
+  if (c.kind === 'album') { const ok = r.rel === c.rel; return { score: ok ? 1 : 0.1, dd: null, ok }; }
+  const dd = r.dur - c.dur, ad = Math.abs(dd);
+  const durS = ad <= 3 ? 1 : ad <= 10 ? 0.5 : 0;
+  const nameS = 0.5 * similarity(c.artist, r.artist) + 0.5 * similarity(fullTitle(c.title, c.version), fullTitle(r.title, r.version));
+  return { score: 0.5 * nameS + 0.5 * durS, dd, ok: ad <= 3 && nameS >= 0.75 };
+}
+function resolveCanon(line) {
+  const cands = canonCandidates(`${line.artist} ${line.title}`).filter(x => x.kind === 'track');
+  const exact = cands.find(x => norm(x.artist) === norm(line.artist) && norm(x.title) === norm(line.title) && versionRel(x.version, line.version) === 'same');
+  if (exact) return { c: exact, exact: true };
+  return { c: cands.find(x => similarity(`${x.artist} ${x.title}`, `${line.artist} ${line.title}`) > 0.75) || null, exact: false };
+}
+function canonResult(c) {
+  const id = `c:${c.artist}|${c.title}|${c.version}`;
+  if (!S.results.has(id)) S.results.set(id, { id, peer: { name: srcName(), free: true, queue: 0, speed: 0, today: 0, session: 0, all: 0, files: 0 }, rel: c.rel, ti: c.ti, artist: c.artist, title: c.title, version: c.version, dur: c.dur, fmt: 'MP3', br: 128, vbr: false, sr: null, bd: null, size: (128e3 / 8) * 30, file: '30-second clip', folder: srcName(), path: srcName(), style: 'loose', trackNo: 0, suspicious: null, arrival: 0 });
+  return S.results.get(id);
+}
+function canonCardHtml(s, v) {
+  const src = srcName();
+  if (!s.canon || !s.canon.length) return `<div class="canon none">${icon('info')}<span>No release on ${src} matches “${esc(s.query)}”. Files are ranked by name only.</span></div>`;
+  const c = v.canon;
+  const chips = s.canon.map((x, i) => `<button class="chip${i === s.canonSel ? ' on' : ''}" data-act="canon" data-v="${i}" aria-pressed="${i === s.canonSel}">${x.kind === 'album' ? icon('folder') : ''}${esc(x.kind === 'album' ? `${x.title} · album` : `${x.artist} — ${fullTitle(x.title, x.version)}`)}<span class="n">${fmtDur(x.dur)}</span></button>`).join('');
+  const head = c
+    ? `<span class="art" style="width:44px;height:44px;border-radius:6px;background:${artGradient(hashStr(c.artist + c.album))}"></span><div class="canon-t"><div class="canon-title">${esc(c.kind === 'album' ? c.album : fullTitle(c.title, c.version))} <span class="muted">· ${esc(c.artist)}</span></div><div class="canon-sub">${c.kind === 'album' ? `Album · ${c.n} tracks · ${fmtDur(c.dur)}` : `${esc(c.album)} · ${c.year} · <b>${fmtDur(c.dur)}</b> · ${esc(c.label)}`} · from ${src}</div></div>`
+    : `<div class="canon-t"><div class="canon-title">Which release do you mean?</div><div class="canon-sub">Pick one so Selecta can rank files by length and name, not by name alone.</div></div>`;
+  const acts = c ? `<label class="cb" title="Hide files whose length or name doesn't fit this release"><input type="checkbox" data-ch="only-release"${S.onlyRelease ? ' checked' : ''}>Only this release</label>${c.kind === 'track' && S.clips ? `<button class="btn sm" data-act="canon-clip">${icon('play')} 30-s clip</button>` : ''}<button class="btn sm" data-act="add-wishlist" data-v="${esc(`${c.artist} ${c.kind === 'album' ? c.album : fullTitle(c.title, c.version)}`)}">${icon('star')} Wishlist</button>` : '';
+  return `<div class="canon">${head}<span class="grow-1"></span>${acts}</div><div class="canon-chips"><span class="fl-l">${s.canon.length > 1 || !c ? 'Releases' : 'Release'}</span>${chips}<button class="chip${s.canonSel < 0 ? ' on' : ''}" data-act="canon" data-v="-1" aria-pressed="${s.canonSel < 0}">Any (name only)</button></div>`;
+}
+function downloadForClip(tk) {
+  if (!tk.r.id.startsWith('c:')) { requestDownload(tk.r); return; }
+  const best = S._v && S._v.shown.find(x => x._rm && x._rm.ok);
+  if (best) { select(best.id, { scroll: true }); requestDownload(best); }
+  else toast('No file matches this release yet', 'Pick a file in the results to download it.', { kind: 'warn' });
+}
+
+/* ---------- file naming (PRD DL-13) ---------- */
+S.naming = { single: '{artist} - {title}', albumDir: '{albumartist} - {album} ({year})', albumTrack: '{track} - {title}', clean: true, space: '_', and: true };
+const QUOTES = /['"`´‘’‚‛“”„‟«»‹›]/g;
+// Path-safe names that keep Unicode letters. The C++ cleaner must produce the same output.
+function cleanName(s, o = S.naming) {
+  let t = String(s).normalize('NFC').replace(QUOTES, '').replace(/[‐‑‒–—―]/g, '-');
+  if (o.and) t = t.replace(/\s*&\s*/g, ' and ');
+  t = t.replace(/[^\p{L}\p{M}\p{N}._-]+/gu, ' ').trim().replace(/\s+/g, o.space);
+  if (o.space === '-') t = t.replace(/-{2,}/g, '-');
+  t = t.replace(/^[-_.]+|[-_.]+$/g, '');
+  if (t.length > 150) t = t.slice(0, 150).replace(/[-_.]+$/, '');
+  return t || 'Untitled';
+}
+const applyTemplate = (tpl, f) => tpl.replace(/\{(\w+)\}/g, (m, k) => (f[k] != null ? String(f[k]) : ''));
+function nameFor(kind, f) {
+  const raw = applyTemplate(S.naming[kind], f);
+  return S.naming.clean ? cleanName(raw) : raw.replace(/[/:]+/g, '-').trim() || 'Untitled';
+}
+function filedPath(it) {
+  const out = filingPlan(it).kind === 'convert' ? TARGETS[S.filingTarget] : it;
+  if (it.kind === 'album') return `${COLLECTION.albumsDir}/${nameFor('albumDir', { albumartist: it.artist, artist: it.artist, album: it.album, year: it.year })}/`;
+  return `${COLLECTION.singlesDir}/${nameFor('single', { artist: it.artist, title: fullTitle(it.title, it.version), album: it.rel ? it.rel.album : '', year: it.rel ? it.rel.year : '' })}.${EXT[out.fmt] || EXT[it.fmt]}`;
+}
+const NAMING_SAMPLES = [
+  ['single', { artist: 'Halden & Rue', title: 'Tidewater (Original Mix)' }, '.mp3'],
+  ['single', { artist: 'Inés Varga', title: 'Vesper "Live" 100% $ Edit' }, '.mp3'],
+  ['albumDir', { albumartist: 'Okuma Drift', album: 'Neon Rain: Remixes?', year: 2024 }, '/'],
+  ['albumTrack', { track: '02', title: 'Sodium', artist: 'Okuma Drift' }, '.mp3'],
+];
+const namingPreviewHtml = () => NAMING_SAMPLES.map(([k, f, ext]) => `<div class="np"><span class="mono faint">${esc(applyTemplate(S.naming[k], f))}${ext}</span><span class="arrow">→</span><span class="mono">${esc(nameFor(k, f))}${ext}</span></div>`).join('');
+function refreshNaming() { const p = $('#namingPreview'); if (p) p.innerHTML = namingPreviewHtml(); }
+
+/* ---------- inputs and actions for releases, clips, integrations and naming ---------- */
+const INPUT_CH = {
+  'batch-text': el => { S.batch.text = el.value; },
+  'naming-single': el => { S.naming.single = el.value; refreshNaming(); },
+  'naming-albumDir': el => { S.naming.albumDir = el.value; refreshNaming(); },
+  'naming-albumTrack': el => { S.naming.albumTrack = el.value; refreshNaming(); },
+  'sp-id': el => { S.spotify.id = el.value.trim(); },
+  'sp-secret': el => { S.spotify.secret = el.value; },
+};
+Object.assign(ACT, {
+  clip: (el, e) => { e.stopPropagation(); previewResult(S.results.get(el.dataset.id), { clip: true }); },
+  full: (el, e) => { e.stopPropagation(); previewResult(S.results.get(el.dataset.id), { clip: false }); },
+  canon: el => { const s = curSearch(); if (!s) return; s.canonSel = +el.dataset.v; updateResults(); renderInspector(); renderNav(); },
+  'canon-clip': () => { const c = S._v && S._v.canon; if (c && c.kind === 'track') previewResult(canonResult(c), { clip: true }); },
+  'download-current': () => { if (!P.track) return; if (P.track.clip) downloadForClip(P.track); else requestDownload(P.track.r); },
+  'full-preview': () => { if (P.track && !P.track.r.id.startsWith('c:')) previewResult(P.track.r, { clip: false }); },
+  'spotify-signin': () => {
+    if (!S.spotify.id) { toast('Enter your client ID first', 'Spotify developer dashboard → your app → Client ID. Sign-in needs no secret.', { kind: 'warn' }); return; }
+    S.spotify.signedIn = true; S.spotify.user = 'your Spotify account';
+    toast('Signed in to Spotify', 'In the app, your browser opens Spotify’s sign-in page once and the refresh token goes to the Keychain. The mock only pretends.', { kind: 'good', icon: 'check-c' });
+    renderSettings();
+  },
+  'spotify-signout': () => { S.spotify.signedIn = false; renderSettings(); toast('Signed out of Spotify', 'Releases now come from Deezer and MusicBrainz.', { icon: 'info' }); },
+  'spotify-check': () => {
+    if (!S.spotify.id) { toast('Enter a client ID first', '', { kind: 'warn' }); return; }
+    toast(S.spotify.secret ? 'Client ID and secret entered' : 'Client ID entered', S.spotify.secret ? 'In the app, Check requests a token with them. They’re saved to the Keychain, never to a file.' : 'No secret given, so Selecta uses sign-in (PKCE).', { icon: 'check-c' });
+  },
+  'spotify-import': () => {
+    const v = (($('#spImport') || {}).value || '').trim();
+    if (!/open\.spotify\.com\/(playlist|album)\/|spotify:(playlist|album):/.test(v)) { toast('Paste a Spotify playlist or album link', 'For example https://open.spotify.com/playlist/…', { kind: 'warn' }); return; }
+    const go = () => {
+      const rr = mulberry32(hashStr(v)), lines = [];
+      for (const rel of shuffle(CATALOG.slice(), rr).slice(0, 5)) for (const t of rel.tracks.slice(0, 2)) lines.push(`${rel.artist} - ${fullTitle(t[0], t[1])}`);
+      S.batch.text = lines.join('\n'); batchParse(); S.batch.parsedText = S.batch.text; S.batch.started = false;
+      renderBatch(); renderToolbar(); renderInspector();
+      toast(`Imported ${plural(lines.length, 'track')}`, 'Each line already knows its release, length and ISRC, so matching on the network is sharper.', { kind: 'good', icon: 'batch' });
+    };
+    if (S.spotify.signedIn) { go(); return; }
+    toast('Sign in with Spotify to import playlists', 'Settings → Integrations. Only your client ID is needed, no secret.', { kind: 'warn', ms: 9000, actions: [{ label: 'Sign in (mock)', run: () => { S.spotify.signedIn = true; S.spotify.user = 'your Spotify account'; go(); } }] });
+  },
+});
+Object.assign(CH, {
+  'only-release': el => { S.onlyRelease = el.checked; updateResults(); renderNav(); },
+  clips: el => { S.clips = el.checked; renderPlayer(); },
+  'space-plays': el => { S.spacePlays = el.value; },
+  'naming-clean': el => { S.naming.clean = el.checked; refreshNaming(); },
+  'naming-space': el => { S.naming.space = el.value; refreshNaming(); },
+  'naming-and': el => { S.naming.and = el.checked; refreshNaming(); },
 });
 
 /* ---------- main loop & startup ---------- */

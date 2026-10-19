@@ -14,3 +14,4 @@ themselves.
 | [qt-app-architecture.md](qt-app-architecture.md) | Qt 6 stack, native macOS UI, repo layout, dependencies, CI, packaging, licensing |
 | [sharing-and-uploads.md](sharing-and-uploads.md) | Share index, answering searches, upload queue and slots |
 | [library-matching-and-organization.md](library-matching-and-organization.md) | Matching results to the local collection, download organisation, single→album supersede |
+| [metadata-and-preview-services.md](metadata-and-preview-services.md) | Spotify Web API, spotDL's matching, 30-second preview clips, MusicBrainz/Discogs, terms risk |
