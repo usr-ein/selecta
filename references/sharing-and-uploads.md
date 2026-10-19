@@ -478,15 +478,206 @@ startup and daily at 00:00 by default).
 
 ## 8. Design sketch: ShareIndex + UploadManager
 
-TODO — being written.
+Fits PLAN §2.2/§2.3: scanning on the worker pool, SQLite writes on the storage thread, protocol handling and
+transfer state machines on the network thread.
+
+```mermaid
+flowchart LR
+  subgraph worker[Worker pool]
+    W[FsEventsWatcher\nper root] --> SC[ShareScanner\nenumerate + attributes]
+    LIB[library scanner rows] --> SC
+  end
+  SC -->|rows| DB[(SQLite: share_root,\nshare_dir, share_file)]
+  SC -->|build| SNAP[ShareIndex snapshot\nimmutable, shared_ptr]
+  subgraph net[Network thread]
+    SS[ShareService\nbrowse / folder / search / user info] --> SNAP
+    UM[UploadManager\nqueues, slots, limits] --> SNAP
+    UM --> BW[Upload token bucket]
+    SS --> RL[Inbound rate limiters]
+    UM --> RL
+  end
+  UM -->|records| UDB[(SQLite: upload)]
+  UDB --> RATIO[PeerStatsService / ratio]
+  SS --> SRV[slsk server/peer/distrib sessions]
+  UM --> SRV
+```
+
+**ShareIndex (immutable snapshot, swapped atomically after each scan/update)**
+
+```cpp
+struct FileRec { uint32_t dir; uint32_t nameOff; uint64_t size; Attrs attrs; uint8_t level; };
+struct DirRec  { uint32_t pathOff; uint32_t firstFile, fileCount; uint8_t level; };
+
+class ShareIndex {
+public:
+  // Exact NFC virtual path → file (case-insensitive fallback for Soulseek NS); nullopt if not visible at `level`.
+  std::optional<FileRef> lookup(QStringView virtualPath, AccessLevel level) const;
+  // AND of tokens, *suffix via reversed-token array, -exclusions, excluded phrases, cap.
+  SearchHits search(const ParsedQuery& q, AccessLevel level, std::size_t cap,
+                    const ExcludedPhrases& phrases) const;
+  const QByteArray& browseBlob(AccessLevel level) const;   // precompressed peer-5 payload
+  std::optional<QByteArray> folderBlob(QStringView virtualDir, AccessLevel level) const;
+  ShareCounts publicCounts() const;                         // for SharedFoldersFiles and the ratio UI
+};
+```
+
+Storage (draft, `storage/` migrations):
+
+```sql
+CREATE TABLE share_root (
+  id INTEGER PRIMARY KEY,
+  native_path BLOB NOT NULL UNIQUE,      -- bytes from the OS, opened as-is
+  alias TEXT NOT NULL UNIQUE,            -- NFC virtual root name
+  level INTEGER NOT NULL DEFAULT 0,      -- 0 public, 1 buddies only
+  enabled INTEGER NOT NULL DEFAULT 1,
+  volume_uuid TEXT, fsevents_uuid TEXT, last_event_id INTEGER,
+  online INTEGER NOT NULL DEFAULT 1, last_full_scan INTEGER
+);
+CREATE TABLE share_dir (
+  id INTEGER PRIMARY KEY,
+  root_id INTEGER NOT NULL REFERENCES share_root(id) ON DELETE CASCADE,
+  rel_native BLOB NOT NULL, virtual_path TEXT NOT NULL,
+  dev INTEGER, ino INTEGER, mtime_ns INTEGER,
+  UNIQUE (root_id, rel_native)
+);
+CREATE TABLE share_file (
+  id INTEGER PRIMARY KEY,
+  dir_id INTEGER NOT NULL REFERENCES share_dir(id) ON DELETE CASCADE,
+  name_native BLOB NOT NULL, name_wire TEXT NOT NULL,     -- NFC, backslash-escaped
+  size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL, dev INTEGER, ino INTEGER,
+  bitrate INTEGER, duration INTEGER, vbr INTEGER, sample_rate INTEGER, bit_depth INTEGER,
+  library_track_id INTEGER,              -- reuse of the collection scan when the file is in the collection
+  excluded_reason TEXT,                  -- NULL = shared; 'dataless', 'type', 'partial', ...
+  UNIQUE (dir_id, name_native)
+);
+CREATE TABLE upload (
+  id INTEGER PRIMARY KEY, session_id INTEGER, username TEXT NOT NULL,
+  virtual_path TEXT NOT NULL, file_id INTEGER, size INTEGER,
+  queued_at INTEGER, started_at INTEGER, ended_at INTEGER,
+  start_offset INTEGER, bytes_sent INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT,                          -- completed | failed | cancelled | denied | offline | timeout
+  reason TEXT
+);
+CREATE INDEX upload_user_end ON upload (username, ended_at);
+```
+
+**UploadManager (network thread)**
+
+```mermaid
+stateDiagram-v2
+  [*] --> Queued: QueueUpload accepted / legacy request answered "Queued"
+  [*] --> Denied: UploadDenied(reason)
+  Queued --> Requested: slot free and user's turn → TransferRequest(dir=1); 45 s timer
+  Requested --> Cancelled: TransferResponse(false, Cancelled)
+  Requested --> Completed: TransferResponse(false, Complete)
+  Requested --> Connecting: TransferResponse(true) → open F connection
+  Requested --> Queued: timeout (retry later, bounded)
+  Connecting --> AwaitOffset: FileTransferInit(token) sent
+  AwaitOffset --> Transferring: FileOffset ≤ size
+  AwaitOffset --> Failed: offset > size / idle 60 s
+  Transferring --> Completed: all bytes sent and peer closed → SendUploadSpeed
+  Transferring --> Failed: connection lost → UploadFailed(path)
+  Queued --> Denied: ban / file gone → UploadDenied
+  Completed --> [*]
+  Failed --> [*]
+  Cancelled --> [*]
+  Denied --> [*]
+```
+
+Scheduling (on slot freed, on enqueue, and every 10 s like Nicotine+):
+
+```
+while active < slots and not paused:
+    candidates = online users with queued files and no active upload
+    if any candidate is privileged (server list) [or a prioritised buddy]: keep only those
+    user = candidate with the oldest "last served" stamp          # round-robin
+    item = head of user's FIFO
+    revalidate(item): permission, still indexed, open(O_NOFOLLOW) + fstat checks, not dataless
+    send TransferRequest(dir=1, token, path, current size); start 45 s timer
+```
+
+Bandwidth: one global token bucket (refill every 100 ms, as slskd) drained by the F-connection writers in
+round-robin order so active uploads share it evenly; the cap and an "alternative cap" come from settings, with
+compile-time ceilings only where the governor needs them. Search-response and upload connections are
+*inbound-triggered* outbound connections: give them their own governor budget class so they can't starve
+user-initiated work and can't be abused to make Selecta spam the server with `GetPeerAddress`/`ConnectToPeer`
+(inference; align with `network-etiquette-and-safe-development.md`).
 
 ## 9. Implications for Selecta
 
-TODO — recommendations, proposed defaults, decisions.
+### 9.1 Recommendations
+
+1. **Index once, answer from memory.** One immutable `ShareIndex` snapshot serves browse (precompressed blobs per
+   access level), folder contents, search and upload lookups; it is rebuilt off-thread and swapped atomically.
+2. **Exact index lookup is the only way from a peer string to a file**, followed by an `O_NOFOLLOW` open and
+   `(dev, ino)` check. This closes path traversal and stale-index bugs in one place (NFR-4).
+3. **Reuse the library scan** for share roots inside the collection; one FSEvents watcher per root feeds both.
+4. **Mirror Nicotine+'s upload behaviour** (round-robin, one active upload per user, privileged first, per-user
+   file/MB limits, standard denial strings, 45 s start timeout); it is the de-facto reference and interoperates with
+   every client.
+5. **Report honestly**: `SharedFoldersFiles` = what is actually served (online roots, public level);
+   `FileSearchResponse` slot/queue/speed fields = live UploadManager state; `SendUploadSpeed` after each completed
+   upload.
+6. **macOS hygiene**: materialisation off on scanner threads + skip `SF_DATALESS`; folder picker for TCC intent;
+   NFC on the wire, native bytes on disk; never follow symlinks by default; offline roots hidden, not deleted.
+
+### 9.2 Proposed defaults
+
+| Setting | Default | Notes / source |
+|---|---|---|
+| Share roots | Collection folders (OQ-10), read-only; alias = folder basename | Inbox, preview cache, Originals, incomplete dir can never be shared (PRD SHARE-1) |
+| Access levels | Public; buddies-only available (P1) | Nicotine+ public/buddy/trusted; aioslsk everyone/friends/users |
+| Show locked folders to non-buddies | Off | Nicotine+ `reveal_buddy_shares` = False |
+| Respond to searches | On | Needed for "real sharing" (G6) |
+| Max results per response | 300 | Nicotine+ 300; slskd 500 |
+| Query rules | ≥ 3 characters, ≥ 1 complete word | Nicotine+ |
+| Search work queue | 200 pending, then drop; target ≤ 1 ms per request | slskd: concurrency 10, circuit breaker 500 |
+| Browse | Ignore repeats < 1 s; ≤ 3 per user per 10 min; ≤ 2 concurrent transmissions | Nicotine+ 0.4 s; rest proposal |
+| Upload slots | 3 | Nicotine+ 3; slskd/Soulseek.NET 10 |
+| Active uploads per user | 1 (fixed) | Soulseek.NET (Soulseek NS limitation), Nicotine+ |
+| Queue order | Round-robin, privileged users first | Nicotine+, slskd |
+| Per-user queue limits | 100 files, 10 000 MB → "Too many files" / "Too many megabytes" | Nicotine+ defaults |
+| Buddies exempt from limits / prioritised | Off / off | Nicotine+ |
+| Upload speed cap | None, plus a one-click alternative cap (e.g. 250 KiB/s) | Nicotine+ (unlimited; alt 100 KiB/s) — see decision D-S3 |
+| Request → start timeout | 45 s | Nicotine+ |
+| F-connection idle timeout | 60 s | Nicotine+ |
+| Retry uploads that timed out | Every 3 min, at most 3 attempts | Nicotine+ retries every 3 min (unbounded) |
+| Ban reply | `Banned` | SoulseekQt uses `File not shared.` — D-S2 |
+| Leecher rule | None | slskd: < 1 file or < 1 folder → leechers group (optional, P2) |
+| Queue persistence across restarts | Not restored | Nicotine+ (downloaders re-queue) |
+| Rescan | FSEvents incremental, catch-up at launch from stored event ID, full verification when idle once a day | Nicotine+ rescans at startup + daily |
+| `SharedFoldersFiles` | After login and after each index swap that changes the counts (debounced) | Nicotine+, aioslsk |
+| Shared file types | Audio + images + `.cue/.log/.nfo/.txt/.pdf`; hidden/system/DJ-database folders excluded | D-S1 |
+
+### 9.3 Decisions for the maintainer
+
+| # | Question | Recommendation |
+|---|---|---|
+| D-S1 | Share only audio + companions, or everything that isn't hidden (Nicotine+ behaviour)? | Audio + covers + text companions |
+| D-S2 | Reply to banned users with `Banned` (Nicotine+) or `File not shared.` (SoulseekQt, stealthier)? | `Banned` |
+| D-S3 | Upload bandwidth: unlimited, fixed cap, or automatic throttle while a preview downloads (uploads saturating the uplink slow downloads)? | Unlimited + automatic throttle during previews (P1) |
+| D-S4 | Buddy-only folders visible-but-locked to everyone? | No |
+| D-S5 | What does "Pause network activity" (SAFE-5) do to sharing? | Stop starting uploads and stop answering searches/browses; let active uploads finish |
+| D-S6 | Leecher handling? | None in v1; maybe a "leechers get 1 slot, last" group later |
+| D-S7 | Fold diacritics when matching incoming searches? | Yes (superset of strict matching; slskd does) |
 
 ## 10. Open questions / verify on the local test server
 
-TODO
+1. **Interop of our blobs**: Nicotine+, slskd and aioslsk test peers browse Selecta, fetch folder contents, search it and
+   download (incl. resume) — devenv scenario.
+2. **Folder contents**: does any client expect subfolders in `FolderContentsResponse`? Does any client break on
+   `nfolders = 0` for an unknown folder (vs. no reply)?
+3. **Search semantics of the official client** (diacritics, `*`, quoted phrases, substring exclusions): only testable
+   if SoulseekQt can be pointed at a local server, otherwise leave as "Nicotine+-compatible".
+4. **Excluded phrases**: exact casing/format the real server sends (code 160) — read it from the activity log during
+   the first manual live session; check whether Soulfind implements it.
+5. **Incoming search volume** (slskd: ~30/s) and response rate — count passively during manual live sessions only.
+6. Does the server use `SharedFoldersFiles` beyond user stats (e.g. distributed-network parent choice)?
+7. How downloaders react to `Banned` vs `File not shared.` (retry behaviour) — test with Nicotine+ and slskd peers.
+8. macOS: `EDEADLK` on dataless reads with materialisation off; TCC behaviour for `~/Music` on macOS 26; Qt/NFD
+   opens of NFC names on exFAT and SMB volumes; FSEvents history on exFAT/SMB (no per-volume UUID → full rescan);
+   `getattrlistbulk` vs `fts` time for 100k files.
+9. Budget class in the governor for search-response and upload connections (with the etiquette research).
 
 ## 11. Sources
 
