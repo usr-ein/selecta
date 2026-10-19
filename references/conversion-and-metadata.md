@@ -39,8 +39,14 @@
 3. LAME's CBR lowpass table: 320 kbps → 20.5 kHz, 256 → 19.7 kHz, 224 → 19.4 kHz, 192 → 18.6 kHz, 160 → 17.5 kHz,
    128 → 17 kHz (`libmp3lame/lame.c`, `optimum_bandwidth`) — useful for spectral-cutoff heuristics (H).
 4. FFmpeg's WAV muxer always writes `WAVE_FORMAT_EXTENSIBLE` for > 16-bit PCM or > 48 kHz and has no switch to force
-   plain `WAVEFORMATEX`; its AIFF muxer writes no ID3 chunk unless `write_id3v2=1` (H). TODO-verify whether
-   extensible 24-bit WAVs cause problems on older CDJs.
+   plain `WAVEFORMATEX` (H); the DJ community traces "CDJ refuses a supported 24-bit WAV" to exactly that header (M/L).
+   rekordbox reads only RIFF INFO from WAV (no artwork, label or key) (H manual / M disassembly) → **AIFF, not WAV,
+   for uncompressed filing**; Selecta writes its own plain-PCM WAV header when WAV is requested.
+6. The "26 ms problem": Traktor treats FFmpeg's `Lavf`/`Lavc` Xing frame (and LAME tags with a zero CRC) as audio
+   while rekordbox skips it, shifting cues by one MP3 frame between apps; genuine LAME tags with valid CRC are read
+   consistently (M, dj-data-converter). → write MP3 with libmp3lame's own LAME tag.
+7. rekordbox 7 reads tags once at import, reads `TKEY` verbatim and `TPUB` as label, and never reads BPM from tags
+   (M, third-party disassembly of 7.2.19) → complete, correct tags at filing time matter more than anything later.
 5. TagLib 2.x has a format-independent artwork API: `complexProperties("PICTURE")` with `data`, `mimeType`,
    `description`, `pictureType` ("Front Cover") (H).
 
@@ -103,13 +109,30 @@ layout as `lame -b 320` (the reference everyone tests against).
 
 ### 2.3 WAV vs AIFF for DJs
 
-- TODO: what rekordbox / CDJ read in WAV (RIFF INFO vs ID3 chunk) and AIFF (`ID3 ` chunk); artwork; AIFF-C/`sowt`.
+**Verdict: AIFF is the uncompressed format for a DJ library; WAV is a fallback for tag-less use.** Both carry the same
+PCM, but only AIFF carries usable tags and artwork in rekordbox.
+
+| Aspect | WAV (RIFF) | AIFF |
+|---|---|---|
+| Tags read by rekordbox | **RIFF `LIST/INFO` only** (manual: "When a WAVE file is added to [Collection], its tag information may not be displayed"; third-party disassembly of rekordbox 7.2.19: the `id3 ` chunk is ignored, no label, no key) (M) | ID3v2 (v2.2/2.3/2.4) in the `ID3 ` chunk, same fields as MP3 incl. `TPUB` label and `TKEY` key (H manual; M field detail) |
+| Artwork in rekordbox | None (INFO has no picture; the ID3-chunk picture is ignored) (M) | Yes (APIC in the ID3 chunk) |
+| INFO fields available | title `INAM`, artist `IART`, album `IPRD`, comment `ICMT`, genre `IGNR`, date `ICRD`, track `IPRT`/`ITRK` (no album artist, label, key, BPM) | — |
+| CDJ playback caveat | "All players up to and including CDJ-3000 may have issues playing some WAV files" — community-traced to the `WAVE_FORMAT_EXTENSIBLE` header (M/L: GitHub `joeselway/Pioneer-DJ-File-Formats`, Reddit r/DJs) | Plain AIFF (not AIFF-C) is required; compressed AIFF-C is not playable (M) |
+| Byte order | little-endian | big-endian (`FORM/AIFF`); little-endian `sowt` = AIFF-C (avoid) |
+| Max size | 4 GiB (RF64/BW64 beyond; TagLib 2.3.2 reads them) | 4 GiB |
+
+**Writer implications (H for the code facts):**
 - FFmpeg's AIFF muxer writes `FORM/AIFF` for big-endian PCM (`pcm_s16be`, `pcm_s24be`) and `FORM/AIFC` for anything
-  else (e.g. `pcm_s16le` → `sowt`). Use big-endian PCM for plain AIFF (H, `libavformat/aiffenc.c`).
-- FFmpeg's WAV muxer chooses `WAVE_FORMAT_EXTENSIBLE` for > 16-bit PCM, > 48 kHz or non-mono/stereo layouts (H,
-  `libavformat/riffenc.c`); there is no option to force `WAVEFORMATEX`.
-- TagLib writes the WAV ID3 chunk as `ID3 ` (upper case), reads `ID3 ` and `id3 `, and writes `LIST/INFO`; AIFF gets an
-  `ID3 ` chunk (H, `riff/wav/wavfile.cpp`, `riff/aiff/aifffile.cpp`).
+  else (e.g. `pcm_s16le` → `sowt`) — always use big-endian codecs (`libavformat/aiffenc.c`).
+- FFmpeg's WAV muxer always writes `WAVE_FORMAT_EXTENSIBLE` for > 16-bit PCM, > 48 kHz or non-mono/stereo layouts
+  (`libavformat/riffenc.c`) and has no option to force plain `WAVEFORMATEX`. → **Selecta writes WAV headers itself**
+  (≈ 100 lines: `RIFF`/`WAVE`/`fmt ` with `WAVE_FORMAT_PCM` = 1 for 16/24-bit mono/stereo, `data`), then TagLib adds
+  `LIST/INFO` (and optionally an `ID3 ` chunk for other apps).
+- TagLib writes the WAV ID3 chunk as `ID3 ` (upper case), reads both `ID3 ` and `id3 `, and writes `LIST/INFO`; AIFF
+  gets an `ID3 ` chunk (`riff/wav/wavfile.cpp`, `riff/aiff/aifffile.cpp`). `RIFF::WAV::File::save(tags, strip,
+  ID3v2::v3)` and `RIFF::AIFF::File::save(ID3v2::v3)` take the ID3 version.
+- Never write 32-bit float WAV/AIFF for DJ use: rekordbox and CDJs accept only 16/24-bit integer PCM (H, rekordbox 7
+  manual table; M for CDJs).
 
 ### 2.4 Verification
 
@@ -138,8 +161,8 @@ Picard tag-mapping appendix (`picard-docs/appendices/tag_mapping.rst`); beets `m
 | Lyricist | `LYRICIST` | `LYRICIST` | `TEXT` | `TEXT` | `----:com.apple.iTunes:LYRICIST` | TagLib `IWRI` | |
 | Remixer | `REMIXER` | `REMIXER` | `TPE4` | `TPE4` | `----:com.apple.iTunes:REMIXER` | TagLib `IEDT` | DJ-relevant (remix credits). |
 | Conductor | `CONDUCTOR` | `CONDUCTOR` | `TPE3` | `TPE3` | `----:com.apple.iTunes:CONDUCTOR` | — | ⚠ FFmpeg maps its `performer` key to TPE3. |
-| BPM | `BPM` | `BPM` | `TBPM` | `TBPM` | `tmpo` (16-bit int) | TagLib `IBPM` (non-standard) | ID3 spec: integer string. ⚠ Write rounded integer to ID3/MP4; keep decimals only in Vorbis. TODO-verify what DJ apps write. |
-| Musical key | `INITIALKEY` | read `INITIALKEY` (mediafile) and `KEY` (Picard); write `INITIALKEY` | `TKEY` | `TKEY` | `----:com.apple.iTunes:initialkey` | — | ID3 spec: ≤ 3 chars, e.g. `Dbm`, `o` = off key; DJ tools also write Camelot (`8A`) or Open Key (`1m`). Copy verbatim. |
+| BPM | `BPM` | `BPM` | `TBPM` | `TBPM` | `tmpo` (16-bit int) | TagLib `IBPM` (non-standard) | ID3 v2.3 spec: integer string. ⚠ Copy the source string unchanged (DJ tools write decimals such as `127.98`); MP4 `tmpo` rounds. rekordbox ignores it anyway (analysis). |
+| Musical key | `INITIALKEY` | read `INITIALKEY` (mediafile, rekordbox) and `KEY` (Picard); **write `INITIALKEY`** | `TKEY` | `TKEY` | read `----:com.apple.iTunes:initialkey` (Picard/mediafile) and `…:KEY`; write `----:com.apple.iTunes:KEY` for rekordbox (M) | — | ID3 spec: ≤ 3 chars, e.g. `Dbm`, `o` = off key; DJ tools write Camelot (`8A`) or Open Key (`1m`). rekordbox stores the text verbatim → copy verbatim, never normalise. |
 | Label | `LABEL` | `LABEL`; read `ORGANIZATION` (Vorbis spec), `PUBLISHER` (Traktor, per mediafile) | `TPUB` | `TPUB` | `----:com.apple.iTunes:LABEL` | TagLib `IPUB` | |
 | ISRC | `ISRC` | `ISRC` | `TSRC` | `TSRC` | `----:com.apple.iTunes:ISRC` | TagLib `ISRC` | |
 | Catalogue no. | `CATALOGNUMBER` | `CATALOGNUMBER`; read `CATALOGID`, `DISCOGS_CATALOG` | `TXXX:CATALOGNUMBER` | `TXXX:CATALOGNUMBER` | `----:com.apple.iTunes:CATALOGNUMBER` | — | |
@@ -185,15 +208,108 @@ which is what Picard does for v2.3 and avoids readers that decode "Latin-1" with
 
 ### 4.2 DJ software support
 
-TODO (web research in progress): rekordbox 7, CDJ-3000/NXS2 USB standalone, Serato DJ, Traktor Pro, Engine DJ.
+| Software | Reads | Writes | What matters for Selecta | Confidence |
+|---|---|---|---|---|
+| **rekordbox 7** | "ID3 tag (v1, v1.1, v2.2.0, v2.3.0, and v2.4.0) of MP3 and AIFF files, the meta tag of M4A files, RIFF INFO of WAVE files, and Vorbis Comment of FLAC files" (manual, identical wording since 5.x). Artwork images: JPEG or PNG. | Its own database (not the file) unless the user edits tags; tags are read **at import** — later changes need "Reload Tag". | Tags must be complete *before* filing (rekordbox imports once). Third-party disassembly of 7.2.19 (rbxport PR #231, Oct 2026): MP3/AIFF key from `TKEY` stored **verbatim**, label from `TPUB`; FLAC key from `INITIALKEY`, label from `LABEL`/`ORGANIZATION`; M4A key from `----:com.apple.iTunes:KEY` (lower-case `initialkey` ignored); **BPM is never read from tags** (analysis only); if an MP3 has ID3v2, ID3v1 is not used for title/artist. | H (manual) / M (PR) |
+| **CDJ / XDJ (USB, rekordbox export)** | Metadata and artwork come from rekordbox's export database; exported thumbnails are 80×80 and 240×240 JPEG (`PIONEER/Artwork/…/a{id}.jpg`, `a{id}_m.jpg`). | — | Embedded tags matter only through rekordbox. | M |
+| **CDJ (USB browsing without rekordbox data)** | ID3 v1, v1.1, v2.2, v2.3, v2.4; embedded **JPEG** artwork only; "files larger than 800 × 800 dots cannot be displayed" (CDJ-2000, CDJ-2000NXS, CDJ-900NXS manuals). | — | Embedded art: baseline JPEG ≤ 800×800. | H (old manuals), L for CDJ-3000 |
+| **Serato DJ Pro** | ID3v2.2–2.4 (L). | GEOB frames (`Serato Markers2`, `Serato BeatGrid`, `Serato Overview`, …) in the existing ID3 tag; a reverse-engineering dump shows an ID3v2.3 tag (with RVAD, a v2.3-only frame) after Serato wrote to it → Serato appears to keep the file's version. FLAC: `SERATO_*` Vorbis comments; MP4: `----:com.serato.dj:*` atoms. | Copy nothing Serato-specific into converted files. | M (Holzhaus/serato-tags) |
+| **Traktor Pro 3/4** | ID3v2.3/2.4; community reports say Traktor "prefers 2.4". | `PRIV` frame "TRAKTOR4" in ID3v2.3 or 2.4 MP3s; `NITR` chunk in WAV; older versions rewrote MP3 tags as v2.4. | Traktor misreads MP3s whose Xing/Info frame is FFmpeg's "Lavf/Lavc" reduced tag → 26 ms cue shift (§4.4). | L–M (forums) |
+| **Engine DJ (Denon)** | ID3v2.3/2.4; converts embedded art to PNG blobs in its database. | — | Community fix for missing art: APIC with **ISO-8859-1** text encoding and a ~500–600 px baseline JPEG; re-import needed after tag changes. | L (forum) |
+| **Windows Explorer / WMP (bystanders)** | ID3v2.3; v2.4 poorly supported | — | One more reason for v2.3. | M |
 
-### 4.3 Hardware playback constraints
+**Conclusion:** ID3v2.3 + UTF-16 text + Latin-1 APIC description + baseline JPEG ≤ 800 px is readable by every DJ
+application and player above. ID3v2.4 is read by all of them too, but v2.3 is what Mp3tag/XLD/dBpoweramp users and the
+DJ community standardise on, and what the maintainer asked for. Keep v2.4 as an option (CONV-4).
 
-TODO: sample-rate / bit-depth / format limits of CDJ-3000, CDJ-2000NXS2, XDJ, Denon; WAV extensible header issue.
+### 4.3 Hardware playback constraints (sample rate, bit depth, container)
+
+From the rekordbox 7 manual (H) and Pioneer manuals compiled by `joeselway/Pioneer-DJ-File-Formats` (M):
+
+| Target | MP3 | AAC (M4A) | WAV / AIFF | FLAC | ALAC |
+|---|---|---|---|---|---|
+| rekordbox 7 (software) | MPEG-1 L3 32/44.1/48 kHz, 32–320 kbps CBR/VBR; MPEG-2 L3 16–24 kHz | AAC-LC 16–48 kHz, 8–320 kbps | 16/24-bit, 44.1/48/88.2/96/192 kHz (no 176.4 listed, no 32-bit float) | same as WAV | same as WAV |
+| CDJ-3000, CDJ-2000NXS2, CDJ-TOUR1, OPUS-QUAD | all | 44.1/48 kHz, 16-bit | ≤ 96 kHz / 24-bit | ≤ 96 kHz / 24-bit | ≤ 96 kHz / 24-bit |
+| XDJ-1000MK2 | all | ≤ 48/16 | ≤ 48 kHz / 24-bit | ≤ 48/24 | ≤ 48/24 |
+| XDJ-XZ, XDJ-RX3 | all | ≤ 48/16 | ≤ 48/24 | ≤ 48/24 | — |
+| CDJ-2000NXS, CDJ-2000, CDJ-900(NXS), XDJ-1000, XDJ-RX/RX2/RR | all | ≤ 48/16 | ≤ 48/24 | — | — |
+
+**Implication:** a "DJ-safe" profile for lossless filing is **16/24-bit integer, 44.1 or 48 kHz**, AIFF (or FLAC for
+NXS2/3000-only setups). Hi-res (88.2/96 kHz) only plays on the newest players; 176.4/192 kHz plays nowhere on Pioneer
+hardware. MP3 output is always ≤ 48 kHz anyway.
+
+### 4.4 The "26 ms problem": which MP3 header to write
+
+DJ-data converters (dj-data-converter issue #3, 2019; Lexicon, Rekordcloud) document that cue points on the same MP3
+differ by one MPEG frame (1152 samples ≈ 26 ms at 44.1 kHz) between apps depending on the first frame:
+
+| First frame of the MP3 | Traktor | rekordbox | Shift between them |
+|---|---|---|---|
+| No Xing/Info frame | — | — | none |
+| Xing/Info frame, **FFmpeg "Lavf/Lavc" reduced tag** | decodes the frame as 26 ms of audio | skips it as a control frame | **26 ms** |
+| LAME tag with invalid (zero) CRC | decodes as audio | skips | **26 ms** |
+| Genuine LAME tag with valid CRC | skips | skips | none |
+
+In that project's sample, 8 of 13 Lavf/Lavc-encoded files shifted vs 5 of 122 LAME-encoded files (M). **Selecta must
+therefore write a genuine LAME tag (libmp3lame's own `lame_get_lametag_frame()`), not FFmpeg's muxer header** — this is
+the decisive argument for driving libmp3lame directly (§2.1). Verify with a test: encode, then check that the first
+frame is `Info`, the version string starts with `LAME`, and the tag CRC-16 is valid.
 
 ## 5. Cover art
 
-TODO: discovery rules (filenames, ranking), embedding per format, DJ hardware size/format constraints, resizing.
+### 5.1 Discovery (CONV-5) — where the folder image comes from
+
+Reference rules (H, source read):
+- **beets fetchart** (filesystem source): only the album directory itself (not subfolders); images sorted by the
+  position of the first matching name in `cover_names = [cover, front, art, album, folder]`; a name matches as a whole
+  word (`(\b|_)(name)(\b|_)`, case-insensitive) → "exact" candidate; otherwise the first remaining image is a fallback
+  unless `cautious: yes`.
+- **Picard** local files: regex `^(?:cover|folder|albumart)(.*)\.(?:jpe?g|png|gif|tiff?|webp)$` (case-insensitive);
+  the suffix is split into words to detect cover types (`front`, `back`, `medium`, …); default type `front`.
+
+**Proposed Selecta ranking** (album folder first, then a `Scans/`, `Artwork/`, `Covers/` subfolder one level down):
+1. Exact basenames: `cover`, `folder`, `front` (+ `.jpg/.jpeg/.png/.webp`), case-insensitive.
+2. Names containing a whole word `front`, `cover`, `folder`, `albumart` (e.g. `AlbumArt_{GUID}_Large.jpg`,
+   `Artist - Album - Front.jpg`), excluding `back`, `cd`, `disc`, `inlay`, `inside`, `tray`, `booklet`, `label`.
+3. Otherwise, if exactly one image is present, use it; if several, prefer the largest roughly square one (aspect within
+   0.8–1.25) and mark the result "guessed" (shown for confirmation, per CONV-5).
+4. Embedded art in the source file always wins over folder images; folder art is only *supplemented* when the source
+   has none.
+
+**Soulseek specifics:** album downloads must include the remote folder's images (DL-3). For singles, the remote
+folder's `cover.jpg` is a separate file from the same peer — fetching it costs one more queued transfer, so it should be
+**opt-in** ("also fetch folder artwork for singles") and counted by the governor like any file (cross-reference
+`network-etiquette-and-safe-development.md`).
+
+### 5.2 Embedding per target format
+
+| Target | Container field | Selecta writes |
+|---|---|---|
+| MP3 / AIFF / WAV-ID3 | `APIC`, picture type 3 (front cover), MIME `image/jpeg`, empty description, description encoding Latin-1 | Exactly one APIC (front). |
+| FLAC | native `PICTURE` metadata block, type 3, width/height/depth filled | One PICTURE block. |
+| M4A (ALAC, P1) | `covr` atom, data type 13 (JPEG) | One image. |
+| WAV for rekordbox | — (rekordbox ignores pictures in WAV) | Nothing; warn that art is lost (or suggest AIFF). |
+
+TagLib: `file.setComplexProperties("PICTURE", {{{"data", bytes}, {"mimeType", "image/jpeg"}, {"description", ""},
+{"pictureType", "Front Cover"}}})` works for every format; it replaces all existing pictures of that tag (H,
+`id3v2tag.cpp`: `removeFrames("APIC")` then adds).
+
+### 5.3 Size and format constraints → resize policy
+
+| Constraint | Value | Source / confidence |
+|---|---|---|
+| CDJ embedded-art display (USB browsing) | JPEG only; > 800 × 800 not displayed | CDJ-2000/NXS/900NXS manuals (H for those models) |
+| rekordbox library artwork | JPEG or PNG; makes 80×80 and 240×240 thumbnails on export | manual (H); export analysis (M) |
+| Engine DJ | baseline JPEG ~500–600 px helps; Latin-1 APIC description | forum (L) |
+| Progressive / CMYK JPEG | refused by some devices (shows nothing) | tagging guides (L) |
+| Very large images | multi-MB tags slow imports; "above about 4 MB some hardware stalls loading the track" | Mixgraph (L) |
+
+**Proposed default (decision for the maintainer):** when filing/converting, if the chosen art is not a baseline RGB
+JPEG, or is larger than **800 px** on its longest side, or larger than 500 KB, re-encode it as baseline sRGB JPEG,
+quality 90, max 800 × 800, preserving the aspect ratio (optionally centre-crop to square when the ratio is within
+0.9–1.1, as XLD offers). Never upscale. The original image file stays in the album folder untouched. Setting: "Embedded
+artwork max size: 600 / 800 / 1000 / 1400 px / original". Implement with `QImage` (JPEG via Qt's image plugins;
+baseline is Qt's default; strip EXIF/ICC after converting to sRGB).
 
 ## 6. Quality warning matrix and true-quality detection
 
@@ -238,7 +354,13 @@ case-insensitive APFS. beets reference rules recorded in §8.
   separator; TODO: confirm Picard's default ID3 version and encoding for v2.3.
 - mutagen `update_to_v23()`: converts TDOR → TORY, TDRC → TYER/TDAT/TIME, TIPL/TMCL → IPLS, deletes v2.4-only frames
   including TSOA/TSOP/TSOT/TSST/TMOO; `save(v2_version=3, v23_sep='/')` joins multi-values with `/` (H).
-- XLD / dBpoweramp: TODO.
+- **XLD** (macOS; official changelog): MP3 tags are ID3v2.3 with UCS-2 text (since 2006), date written as `TYER` +
+  `TDAT` (2015), PCM outputs resample with libsoxr (2014), LAME 3.100 bundled (2018), embedded-art scaling and
+  crop-to-square options. A good model for Selecta's defaults (M).
+- **dBpoweramp** (Windows/macOS, closed): ID3v2.4 writing only since R14.3; community instructions configure
+  "ID3v2 version 2.3, text encoding Unicode 16"; its author argued that v2.4 harms cross-compatibility. DSP chain
+  recommended by the author: bit depth → float, resample, bit depth → 16 with **TPDF** dither; dither is "not needed"
+  for MP3 output (M, forum).
 
 ## 9. Implications for Selecta
 
