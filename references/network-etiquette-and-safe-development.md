@@ -204,6 +204,15 @@ a normal user. This is the convention Selecta should follow (PRD NET-6, SRCH-14)
 "a maximum 5 clients from the same IP" (Rules) mean: one session per machine, a first retry of several seconds, and no
 test harness that spins up many logins against the live server.
 
+Two real failure modes from slskd's tracker, both described by its author:
+- **Reconnect thrash** (slskd #331, 2022): several retry loops ran at once ("Attempting to reconnect (#163)…"), and
+  a connect-then-immediate-disconnect reset the backoff. "If that were really the case I think you would have been
+  banned from the server." → exactly **one** reconnect state machine, and reset the backoff only after the session
+  has been stable for several minutes, not on a successful TCP connect or login.
+- **Server outages** (slskd #1866, 2026-10-03, during official maintenance): "If you can't log in now, you might have
+  been temporarily banned for too many login attempts or something." Every client retrying at once when the server
+  comes back is the reason for jitter (Nicotine+ and Soulfind both say so) and for a long cap.
+
 ### 4.6 Private-message and chat flooding
 
 Repeated identical private messages trigger the same 30-minute ban. A user of an automatic "please share" warning
@@ -364,7 +373,7 @@ Two different mechanisms exist; both silently remove results:
 | Mechanism | How it works | What Selecta must do |
 |---|---|---|
 | **Client-side excluded phrases** (server code 160 `ExcludedSearchPhrases`, sent at login, "starting around the beginning of 2024" per the Soulseek.NET README) | Each responding client must leave out any file whose *path* contains a listed phrase (case-insensitive substring; Nicotine+ checks `phrase in file_path.lower()` in `search.py`). The Soulseek.NET author: outgoing results "*must* be filtered". | Filter our own search responses (SHARE-2). On the search side, warn when a query contains an excluded phrase — compliant peers will return nothing — and do not spend search budget on it. |
-| **Server-side filtered queries** | The server silently drops searches that contain certain substrings — even inside other words ("Eclipse" contains a duo's name, "NANORAY" contains a film title) according to slsk-batchdl's author (issue #128, 2025-08: "The soulseek server is blocking searches which contain certain substrings … to appease copyright trolls"). Soulfind models this as "server-side phrases". The list is not published. | Accept it. When a query returns zero results, say "No results (some queries are filtered by the server)". |
+| **Server-side filtered queries** | The server silently drops searches that contain certain substrings — even inside other words ("Eclipse" contains a duo's name, "NANORAY" contains a film title) according to slsk-batchdl's author (issue #128, 2025-08: "The soulseek server is blocking searches which contain certain substrings … to appease copyright trolls"). Older than code 160: in 2021 the slskd author already noted "a number of terms that the server won't send on to the network" (slskd #316, `Michael Jackson` → nothing, `Jackson` → thousands). Soulfind models this as "server-side phrases". The list is not published. | Accept it. When a query returns zero results, say "No results (some queries are filtered by the server)". |
 
 **Never evade either mechanism.** sockseek ships a hard-coded `bannedTerms` list and rewrites matching queries by
 replacing the first letter with a wildcard (`*eatles`) to slip past the server filter ("copyright is joke", comment in
@@ -471,7 +480,7 @@ tuned on the local network and in M9.
 | **Batch pacing** | Uses the search bucket at its refill rate, keeping **2 tokens reserved** for manual searches; one search per line; cached lines are free; no automatic fallback queries (a "broaden unresolved lines" pass is a user action and costs budget). 100 lines ≈ 50 min; cached lines are instant | Same bucket | slsk-batchdl's multi-query `--desperate` mode multiplies load; bans with automated tools are the main report | §4.3 | M |
 | **Per-search collection cap** (SRCH-16) | Stop after **15 s**, 300 responses or 10 000 files | 60 s / 1 000 / 50 000 | Soulseek.NET defaults 15 s / 250 / 25 000; SoulseekQt 10 000 results; N+ shows 2 500 | §4.3, Qt changelog | H (refs) / L (values) |
 | **Wishlist** (SRCH-14) | One term per **server-provided interval** (`WishlistInterval`, usually 12 min; 2 min if privileged), round-robin; nothing if the server sent no interval | Never more often than the server interval, never < 120 s | N+ behaviour; protocol doc | §4.4 | H |
-| **Login / reconnect** (NET-4) | First retry random **10–30 s**, then ×2 with ±25 % jitter, cap **10 min**. After the ban PM: wait **30 min + 1–5 min**, auto-pause, ask the user. After a login timeout (possible silent ban): ≥ 5 min, ×2, cap 60 min. No auto-reconnect after `Relogged` or any login rejection except `SVRFULL` (≥ 5 min) | First retry ≥ 5 s; cap ≥ 5 min; ≤ **10 login attempts per hour** | "Do not connect and disconnect quickly"; N+ 5–15 s ×2 to 5–10 min; slskd 1 s ×2 to 5 min + jitter; Soulfind jitters to spread reconnects | §4.2, §4.5 | H (shape) / M (values) |
+| **Login / reconnect** (NET-4) | First retry random **10–30 s**, then ×2 with ±25 % jitter, cap **10 min**. After the ban PM: wait **30 min + 1–5 min**, auto-pause, ask the user. After a login timeout (possible silent ban): ≥ 5 min, ×2, cap 60 min. No auto-reconnect after `Relogged` or any login rejection except `SVRFULL` (≥ 5 min). One reconnect state machine; the backoff resets only after ≥ 5 min of stable session | First retry ≥ 5 s; cap ≥ 5 min; ≤ **10 login attempts per hour** | "Do not connect and disconnect quickly"; N+ 5–15 s ×2 to 5–10 min; slskd 1 s ×2 to 5 min + jitter; Soulfind jitters to spread reconnects | §4.2, §4.5 | H (shape) / M (values) |
 | **Sessions** | **1** Selecta session per account per machine (lock file) | 1 | Rules: ≤ 5 clients per IP; ban message: "many clients at once from the same IP"; `Relogged` | §3.1 | H |
 | **Peer lookups / new peer connections** (`GetPeerAddress`, `ConnectToPeer`) | ≤ **10 in flight**, ≤ **30 per minute** | ≤ 60/min | They are server operations; "too many operations at once" is the ban trigger. No public figure | §4.1 | L |
 | **Active downloads per peer** (FAIR-2) | **1** | 2 | N+ and Soulseek.NET serve one upload per user at a time; extra requests only lengthen the peer's queue | §5.1 | H |
@@ -594,6 +603,7 @@ All accessed 2026-10-19. Repositories were shallow-cloned read-only into `local/
 | https://github.com/mrusse/soularr/discussions/142 (2025-11-10) | Verbatim ban message; regular bans of an automated searcher |
 | https://github.com/allquiet-hub/Lidarr.Plugin.Slskd/issues/19 (2026-10-03) | Verbatim ban message (second independent report) |
 | https://github.com/nicotine-plus/nicotine-plus/discussions/3475 (2025-09-09) | Official donation/privileges text; no other known servers; forum moved to Google Groups |
+| https://github.com/slskd/slskd/issues/331 (2022), https://github.com/slskd/slskd/issues/1866 (2026-10-03), https://github.com/slskd/slskd/issues/316 (2021-12) | Reconnect thrash and backoff reset; bans after login storms during maintenance; server-side term filtering before 2024 |
 | https://github.com/nicotine-plus/nicotine-plus/issues/3342, /3425, /2002 | Maintainers on temporary bans ("hammering the server"), PM-spam bans from a leecher plugin |
 | https://groups.google.com/g/soulseek-discussion/c/N6L0qwMNFYg (2023-11-25) | Unanswered request for the search limits |
 | https://groups.google.com/g/soulseek-discussion/c/t_L_SwzPbzk (2023-04) | Hearsay: "30-minute" search ban that lasted months |
