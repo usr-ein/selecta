@@ -355,6 +355,14 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 
 - `hash` = lowercase hex MD5 of `username + password` (concatenated strings). The success reply returns
   `md5hex(password)` (Nicotine+ does not need it) [N+doc §1].
+- **Golden test vector** ([N+doc §1], re-computed locally 2026-10-19): `Login("username", "password", 177,
+  md5hex("usernamepassword") = d51c9a7e9353746a6020f9602d452929, 1)` frames to 76 bytes (length field 72):
+
+  ```
+  48 00 00 00 01 00 00 00 08 00 00 00 75 73 65 72 6e 61 6d 65 08 00 00 00 70 61 73 73 77 6f 72 64
+  b1 00 00 00 20 00 00 00 64 35 31 63 39 61 37 65 39 33 35 33 37 34 36 61 36 30 32 30 66 39 36 30
+  32 64 34 35 32 39 32 39 01 00 00 00
+  ```
 - Rejection reasons in use: `INVALIDUSERNAME` (+ detail: `Nick empty.`, `Nick too long.` (max 30 chars),
   `Invalid characters in nick.` (printable ASCII only), `No leading and trailing spaces allowed in nick.`),
   `EMPTYPASSWORD`, `INVALIDPASS`, `INVALIDVERSION`, `SVRFULL`, `SVRPRIVATE` (registrations closed). `BANNED` is
@@ -682,6 +690,11 @@ How many children (the server decides eligibility through `ParentMinSpeed`/`Pare
 | Nicotine+ (`slskproto.py:2397-2414`) | if `avgspeed ≥ ParentMinSpeed` and ratio > 0: `min(avgspeed // ratio // 100, 10)` ("limit to 10 for now due to socket limit concerns"), else 0 |
 | aioslsk (`SOULSEEK.rst:343-393`) | if `avgspeed ≥ ParentMinSpeed × 1024`: `floor(avgspeed / ((ratio / 10) × 1024))`, else `AcceptChildren(false)`; recomputed on each `GetUserStats(self)` |
 | Soulseek.NET (`SoulseekClientOptions.cs:112-145`) | fixed default 25, only when it has a parent or is a root |
+
+Consequence for a fresh account: its server-side `avgspeed` starts at 0 and only rises through `SendUploadSpeed`
+after completed uploads, so a new Selecta install can't take children until it has uploaded something — but it is
+easily offered parents (candidates are users faster than us). Sharing and finishing uploads is what makes a client a
+useful node.
 
 aioslsk's notes give the server's presumed defaults: `parent_min_speed = 1`, `parent_speed_ratio = 50`,
 `min_parents_in_cache = 10`, `parent_inactivity_timeout = 300`, `wishlist_interval = 720`
