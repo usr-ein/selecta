@@ -172,7 +172,7 @@ Linux/Windows):
 
 | Piece | Why | Effort | Priority |
 |---|---|---|---|
-| Native `NSToolbar` attached to the main window's `NSWindow` (search field as `NSSearchToolbarItem`, `NSSegmentedControl` items, budget/ratio/connection status as small native views, "Pause network", sidebar/inspector toggles) | Toolbar is the most visible Liquid Glass surface; Qt's toolbar gets no glass capsules | M (port ideas from Qt 5's `QMacToolBar` in qtmacextras 5.15 — TODO(verify) licence/state) | P0 polish, after the M1 spike |
+| Native `NSToolbar` attached to the main window's `NSWindow` (search field as `NSSearchToolbarItem`, `NSSegmentedControl` items, budget/ratio/connection status as small native views, "Pause network", sidebar/inspector toggles) | Toolbar is the most visible Liquid Glass surface; Qt's toolbar gets no glass capsules | M — port ideas from Qt 5's `QMacToolBar` (qtmacextras 5.15, LGPL-3.0/GPL, removed in Qt 6). Qt 6 has no `setNSToolbar` hook any more, so attach via `[(NSView *)w->winId() window].toolbar`; Qt keeps `NSWindowStyleMaskUnifiedTitleAndToolbar` when it recomputes style masks and its `safeAreaMargins()` accounts for toolbars (`qcocoawindow.mm`) | P0 polish, after the M1 spike |
 | Native context menus via `QMenu::toNSMenu()` + `-[NSMenu popUpMenuPositioningItem:atLocation:inView:]` | Glass/material menus, SF Symbol images, native keyboard handling | S | P0 |
 | Vsync ticker (`-[NSView displayLinkWithTarget:selector:]`, macOS 14+) driving waveform `update()` | Judder-free 120 Hz scrolling | S | P0 (M5) |
 | Notifications (`UNUserNotificationCenter`) | No Qt API | S | P1 (UI-6) |
@@ -254,7 +254,7 @@ Platform integration
 - [ ] Dock badge (`QGuiApplication::setBadgeNumber`), notifications (Obj-C++), `QFile::moveToTrash` for Inbox/cache.
 - [ ] High-DPI: all custom painting at `devicePixelRatio`; cached pixmaps carry `setDevicePixelRatio`.
 - [ ] Local Network privacy prompt (macOS 15+) when connecting to LAN peers/test servers: `NSLocalNetworkUsageDescription`
-      in Info.plist — TODO(verify) whether loopback/Docker is exempt; see section 10.
+      in Info.plist; loopback (the Docker test server on `127.0.0.1`) is reported exempt (medium) — see 10.3.
 
 ## 4. Waveform rendering in a Widgets app
 
@@ -395,13 +395,13 @@ Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset 
 | Qt 6.12 | everything | `qtbase` etc. **6.12.0** (split formulae; 6.11.1 installed) | `qtbase` **6.11.2** (lags) | Official binaries via aqtinstall have the documented min macOS; Homebrew bottle `minos` 14.0 |
 | zlib | protocol (compressed messages) | macOS SDK `libz` | `zlib` 1.3.2 | Use the system zlib on macOS (always present) |
 | FFmpeg (avformat/avcodec/swresample) | decode, transcode | `ffmpeg` 9.0.2 — **GPL-3.0-or-later build** (`--enable-gpl --enable-version3 --enable-libmp3lame`), links 22 dylibs (x264, x265, dav1d, libvpx, svt-av1, openssl…) | `ffmpeg` 9.0.2 with features `gpl`, `version3`, `mp3lame`, `soxr`, `opus`; `nonfree` exists — never enable | For release: a minimal audio-only FFmpeg (see 6.3) |
-| LAME | MP3 encode (CONV) | `lame` 4.0 | `mp3lame` 3.100 | TODO(verify) LAME 4.0 changes; vcpkg licence field says LGPL-2.0-only, Homebrew LGPL-2.0-or-later |
+| LAME | MP3 encode (CONV) | `lame` 4.0 | `mp3lame` 3.100; ConanCenter 3.100 | LAME 4.0 (2026-07-11) is a maintenance/security release — encoding unchanged from 3.100, version string in the LAME tag changed (medium — SourceForge listing + secondary reports; matters to the conversion note). Licence: Homebrew LGPL-2.0-or-later, vcpkg metadata LGPL-2.0-only |
 | libFLAC | FLAC encode/verify (if not via FFmpeg) | `flac` 1.5.0 | `libflac` 1.5.0 (BSD-3-Clause) | |
 | libsoxr | resampling | `libsoxr` 0.1.3 (LGPL-2.1-or-later) | `soxr` 0.1.3 | or FFmpeg's swresample with soxr engine |
 | TagLib 2.x | tags | `taglib` 2.3.2 (LGPL-2.1-only OR MPL-1.1; needs `utf8cpp`) | `taglib` 2.3.1 | CMake-native, FetchContent-friendly |
 | Chromaprint | fingerprints (P2) | `chromaprint` 1.6.2 (depends on ffmpeg) | `chromaprint` 1.6.1 | |
 | miniupnpc / libnatpmp | port mapping (P1) | 2.3.3 / 20230423 (BSD-3-Clause) | 2.3.2 / 2025-04-03 | Small, CMake; FetchContent or vcpkg |
-| QtKeychain | Keychain | `qtkeychain` **0.17.0** (BSD-2-Clause per Homebrew) | `qtkeychain-qt6` **0.14.3** (BSD-3-Clause per port; old) | Prefer FetchContent of a pinned tag; licence field differs — TODO(verify) upstream COPYING |
+| QtKeychain | Keychain | `qtkeychain` **0.17.0** (BSD-2-Clause per Homebrew metadata) | `qtkeychain-qt6` **0.14.3** (old) | Upstream: 0.17.0 released 2026-07-06 (Qt 6 by default; 0.16.0 fixed a macOS keychain-timeout crash); `COPYING` is 3-clause BSD. On macOS it uses `SecItem*` without `kSecUseDataProtectionKeychain`, i.e. the legacy login keychain with ACLs (`qtkeychain/keychain_apple.mm`). FetchContent tag `0.17.0` |
 | SQLite | storage | `sqlite` 3.54.1 | `sqlite3` 3.53.4 | See 7.x: own copy vs Qt SQL |
 | Sparkle 2 | updates (P2) | cask `sparkle` 2.9.6 | — | Binary framework from Sparkle releases; MIT |
 | Catch2 / GoogleTest / RapidCheck | tests | 3.16.1 / 1.18.0 / — | 3.16.0 / 1.18.0 / 2023-12-14 | FetchContent is simplest |
@@ -413,7 +413,7 @@ Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset 
 |---|---|---|---|
 | **Homebrew** | Zero build time; current versions (Qt 6.12.0, FFmpeg 9.0.2); maintainer already uses it | **Not reproducible** (no version pinning; upgrades under your feet); bottles are built for the host OS — local FFmpeg/LAME dylibs have **`minos 27.0`**, so a bundle that copies them runs only on macOS 27+; Homebrew FFmpeg drags in 22 codec/network dylibs | Local dev; "me first" builds |
 | **vcpkg (manifest mode)** | Version baseline pinning in `vcpkg.json`; feature selection (audio-only FFmpeg); sets `VCPKG_OSX_DEPLOYMENT_TARGET`; same recipe on macOS/Linux/Windows; CMake toolchain integration | First build is slow (FFmpeg minutes; Qt tens of minutes — avoid Qt from vcpkg); binary cache needs NuGet/GitHub Packages or `files` + `actions/cache` (`x-gha` was removed in vcpkg 2025.06) | Release + CI for non-Qt deps |
-| **Conan 2** | Similar pinning; good binary model | Second ecosystem to learn; recipes for Qt/FFmpeg lag; less common in Qt desktop apps — TODO(verify) current conancenter versions | Not recommended |
+| **Conan 2** | Similar pinning; good binary model | Second ecosystem to learn; ConanCenter (2026-10-19) has `qt` 6.11.1, `ffmpeg` 9.0.1, `libmp3lame` 3.100 but `taglib` only 2.0 and no QtKeychain recipe; less common in Qt desktop apps | Not recommended |
 | **FetchContent** | Pure CMake; ideal for small CMake-native libs (TagLib, QtKeychain, miniupnpc, libnatpmp, Catch2, SQLite amalgamation) | Builds from source every clean configure; wrong tool for autotools projects (FFmpeg, LAME) | Small deps |
 | **Qt from aqtinstall** (official binaries) | Fast in CI (cached), official min-macOS, universal binaries | Not a dep manager for anything else | Qt in CI and release |
 
@@ -598,7 +598,7 @@ the outputs. (medium — several third-party write-ups, Sept 2025–2026.) Wire 
 | Collection/Inbox on an external drive, or in `~/Documents`, `~/Desktop`, `~/Downloads`, iCloud Drive, a network volume | "Selecta would like to access files on a removable volume / in your Documents folder" | Expected; request at the moment the user picks the folder; store a security-scoped bookmark only if sandboxing is ever adopted (not planned). TODO(verify) whether `~/Music` is protected (believed not, except the Music app's library via its APIs) |
 | Connecting to peers or a test server on the **LAN**, UPnP/NAT-PMP to the router (NET-3) | **Local Network** (macOS 15+) | `NSLocalNetworkUsageDescription`; loopback (`127.0.0.1`, Docker published ports) is not "local network" (medium); the decision is tied to code identity, so unstable ad-hoc signatures can re-prompt; it is not managed by `tccutil` (state in `/Library/Preferences/com.apple.networkextension.plist`, no supported reset — TN3179 via Apple forums) |
 | Listening for incoming peer connections with the Application Firewall on | "Accept incoming network connections?" | Stable code-signing identity (Apple DTS advice) |
-| Keychain item created by an ad-hoc-signed build | Keychain access prompt **after every rebuild** (designated requirement = cdhash) | Sign dev builds with a stable identity — preferably a free **Apple Development** certificate (gives a Team ID); a self-signed code-signing certificate stabilises the requirement but reports conflict on whether it avoids the ACL-partition prompt (medium-low) |
+| Keychain item created by an ad-hoc-signed build (QtKeychain writes to the legacy login keychain, whose ACL stores the app's designated requirement) | Keychain access prompt **after every rebuild** (designated requirement = cdhash) | Sign dev builds with a stable identity — preferably a free **Apple Development** certificate (gives a Team ID); a self-signed code-signing certificate stabilises the requirement but reports conflict on whether it avoids the ACL-partition prompt (medium-low) |
 | Notifications (UI-6) | "Selecta would like to send notifications" | Ask on first relevant event, not at launch. TODO(verify) behaviour for ad-hoc builds |
 | `QScreen::grabWindow()` (6.12 uses ScreenCaptureKit) | Screen recording permission | Never call it (no screenshots in app) |
 
@@ -860,7 +860,11 @@ Accessed 2026-10-19.
   safe area).
 - qtmacextras 5.15 (github.com/qt/qtmacextras, `src/macextras/qmactoolbar.mm`) — Qt 5's `NSToolbar` wrapper
   (LGPL-3.0/GPL), a porting reference for the native toolbar.
-- QtKeychain (github.com/frankosterfeld/qtkeychain @ 987522a, `COPYING`) — licence text (3-clause BSD).
+- QtKeychain (github.com/frankosterfeld/qtkeychain @ 987522a: `COPYING`, `ChangeLog`, `qtkeychain/keychain_apple.mm`)
+  — licence text (3-clause BSD), 0.16/0.17 release notes, macOS Keychain API usage.
+- conan-io/conan-center-index @ 0edf387 (`recipes/{qt,ffmpeg,taglib,libmp3lame}/config.yml`) — Conan recipe versions.
+- https://sourceforge.net/projects/lame/files/lame/4.0/ — LAME 4.0 release (2026-07-11); release-content details
+  from secondary reports (free-codecs.com, scnlog forum).
 - vcpkg registry (github.com/microsoft/vcpkg @ 664933b, 2026-10-18, `ports/*/vcpkg.json`) — port versions, licences,
   FFmpeg/qtbase features.
 - Local Homebrew metadata (`brew info --json=v2`, 2026-10-19) and `otool -l`/`otool -L` on installed dylibs — versions,
