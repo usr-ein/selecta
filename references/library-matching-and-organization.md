@@ -45,10 +45,13 @@
 7. **Speed is a non-issue with precomputed keys** and an in-memory index: O(1) exact lookups plus rarest-token
    candidate retrieval, est. ≤ 100 µs per result at 200k tracks (to benchmark). rapidfuzz-cpp (MIT, header-only)
    provides the scorers (§6, §10).
-8. **Sockseek (sldl) is now AGPL-3.0** — borrow ideas, not code.
-9. **Supersede safety comes from guards, not from the matcher alone:** only after a verified, complete album; exact
-   tier with equal version and Δ ≤ 2 s; album copy at least as good; TOCTOU re-check; Trash + Undo + audit log;
-   circuit breaker (§15).
+8. **Durations make a name-independent album fingerprint.** Sockseek groups the same release across peers by equal
+   track count + sorted track lengths within ±3 s; Selecta can match remote folders to owned albums the same way, and
+   cluster per-track durations across peers to tell versions apart in batch results (§8, §9.1).
+9. **Sockseek (sldl) is now AGPL-3.0** — borrow ideas, not code.
+10. **Supersede safety comes from guards, not from the matcher alone:** only after a verified, complete album; exact
+    tier with equal version and Δ ≤ 2 s; album copy at least as good; TOCTOU re-check; Trash + Undo + audit log;
+    circuit breaker (§15).
 
 ---
 
@@ -961,6 +964,10 @@ seconds; `—` = attribute absent.
 | T45 | `The Prodigy - Firestarter` vs `Prodigy, The - Firestarter` vs `Prodigy - Firestarter` | — | same artist key `prodigy` |
 | T46 | `Artist - Title (Artist Remix).mp3` | owned Artist – Title (Original Mix) | REMIX by Artist (self-remix) ≠ ORIGINAL → **none**, *other version* |
 | T47 | `RÃ¶yksopp - Eple.mp3` | owned Röyksopp – Eple | P1 mojibake repair → **exact**; P0 expectation: **likely** or none (documented) |
+| T48 | folder `Неизвестный альбом\01.flac … 10.flac` (durations equal ±2 s to an owned 10-track album) | owned album | duration signature → album **likely in collection** despite unparseable names |
+| T49 | folder with `101 Title.flac … 112 …`, `201 … 209 …` | — | disc 1 tracks 1–12, disc 2 tracks 1–9 |
+| T50 | tracklist lines `ID - ID`, `Artist - ID`, `12:34 Artist - Title [LABEL]` | — | first two unidentified (not searched); third → artist, title, label hint |
+| T51 | batch line `Artist - Title`; results cluster at 211 s (5 peers, 2 say "Radio Edit") and 408 s (4 peers, 3 say "Extended Mix") | — | unversioned line prefers the cluster not claimed by an explicit non-original version; not "confident" unless one cluster is labelled Original/unlabelled with ≥ 3 peers |
 
 ## Open questions and experiments
 
