@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.4 — the Get tracks flow, yt-dlp previews and typo-tolerant matching folded in (D26–D29) |
+| **Status** | Draft v0.4 — the Get tracks flow, yt-dlp previews, typo-tolerant matching and question round 4 folded in (D26–D33) |
 | **Date** | 2026-10-19 |
 | **Product** | Selecta — a native Soulseek client for DJs and collectors |
 | **Stack** | C++ / Qt 6, macOS-first, cross-platform, GPLv3 |
@@ -81,7 +81,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 
 ### Non-goals (v1)
 
-- Chat rooms (private messages are in scope).
+- Full chat-room features (tickers, private rooms, room administration). A minimal rooms view is in scope (NET-10, D32).
 - Reading rekordbox, Apple Music or other DJ-software libraries; writing to rekordbox. The collection = folders on disk.
 - Windows/Linux packages (they must compile and pass unit tests in CI).
 - Mobile apps, web UI, headless daemon mode.
@@ -139,6 +139,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | NET-7 | P1 | Private messages: receive, read and reply; unread badge; system notification. |
 | NET-8 | P1 | Buddy list, ignore list and ban list (they affect uploads and private messages). |
 | NET-9 | P0 | Identify honestly as a third-party client. The exact login version fields follow the protocol research. |
+| NET-10 | P1 | **Minimal chat rooms** (D32): list rooms, join and leave, read and post, unread counts. One view under Network in the sidebar; no tickers, private rooms or room administration. Posts are user-typed only, under the same limits as private messages. |
 
 ### 7.2 Search and filters (SRCH)
 
@@ -290,10 +291,10 @@ Added on 2026-10-19 at the maintainer's request (D19). The source choices follow
 
 | ID | Pri | Requirement |
 |---|---|---|
-| META-1 | P0 | **Spotify access without a secret:** sign in once in the browser (Authorization Code with PKCE). Only a client ID is needed, and it isn't a secret, so it may ship with the app; the refresh token lives in the Keychain. Settings → Integrations has fillable Client ID and optional Client secret fields; a secret enables the client-credentials flow for development. Without a Spotify sign-in, metadata and previews come from keyless sources (Deezer, MusicBrainz). Credentials and tokens never appear in the repo, logs or settings files; development builds may read the git-ignored `local/secrets.env` (D21). |
+| META-1 | P0 | **Spotify access without a secret:** sign in once in the browser (Authorization Code with PKCE, loopback redirect `http://127.0.0.1/callback`). Only a client ID is needed. Each user brings their own: Spotify's 2026 development mode caps an app at 5 users and needs the owner's Premium, so Selecta ships none. The refresh token lives in the Keychain; Spotify expires it after 6 months, and Selecta then asks the user to sign in again. Settings → Integrations has fillable Client ID and optional Client secret fields; a secret enables the client-credentials flow for development. Without a Spotify sign-in, metadata and previews come from keyless sources (Deezer, MusicBrainz). Credentials and tokens never appear in the repo, logs or settings files; development builds may read the git-ignored `local/secrets.env` (D21). |
 | META-2 | P0 | **Match** a result, Inbox item or Get tracks line to a Spotify track. Search by artist and title, plus ISRC when known, scored with the matcher of LIB-3 (duration tolerance, version awareness). The inspector shows the canonical metadata (title, artists, album, label, release date, ISRC, artwork) and the match confidence. |
-| META-3 | P0 | **Playlist import:** a Spotify playlist or album link adds its tracks to Get tracks. Lines carry artist, title, duration and ISRC, which sharpens Soulseek matching. |
-| META-4 | P0 | **Tags from the release.** On arrival in the Inbox (DL-3), write the matched release's metadata and artwork: ID3v2.3, cover as JPEG ≤ 800×800 (D29). The inspector shows the tags a file will get before Get. A file with no matched release keeps its own tags, and the Inbox offers release candidates to pick from. The converter offers the same metadata, applied with confirmation. |
+| META-3 | P0 | **Playlist import:** a Spotify playlist or album link adds its tracks to Get tracks. Lines carry artist, title, duration and ISRC, which sharpens Soulseek matching. Development mode reads only playlists the user owns or collaborates on, plus Liked Songs and albums. For anyone else's playlist, the user selects all songs in Spotify and copies them: the pasted track links are looked up one by one. |
+| META-4 | P0 | **Tags from the release.** On arrival in the Inbox (DL-3), write the matched release's metadata and artwork: ID3v2.3, cover as JPEG ≤ 800×800 (D29). From Spotify (D30): title, artists, album, album artist, release date, track and disc numbers, ISRC and the cover; label and genre come from MusicBrainz, by ISRC. A one-time notice explains the Spotify terms risk before the first Spotify-tagged file. The inspector shows the tags a file will get before Get. A file with no matched release keeps its own tags, and the Inbox offers release candidates to pick from. The converter offers the same metadata, applied with confirmation. |
 | META-5 | P1 | **Quick preview:** play an official 30-second clip (e.g. Deezer by ISRC, iTunes) with no Soulseek transfer, so the audition costs peers nothing. The player names the clip's source; the full preview from the peer stays one key away. |
 | META-6 | P2 | **Full-length listening:** "Open in Spotify / YouTube Music" in their own apps. Optionally start playback in the user's Spotify app (Premium, with the user's authorisation). |
 | META-7 | P1 | Every request to these services goes through the network governor (rate limits, cached results with TTLs). The inspector says what was sent where. |
@@ -354,7 +355,7 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 
 | ID | Requirement |
 |---|---|
-| NFR-1 | **Platforms:** macOS on Apple Silicon is the release target; the minimum macOS version is whatever the chosen Qt release supports. Linux and Windows compile and pass unit tests in CI. |
+| NFR-1 | **Platforms:** macOS on Apple Silicon is the release target; the minimum macOS version is whatever the chosen Qt release supports. Linux and Windows compile and pass unit tests in CI. Release builds are signed with the maintainer's Developer ID and notarised; development builds use a stable local signing identity, never the Developer ID (D33). |
 | NFR-2 | **Performance:** the UI stays smooth (60 fps, 120 on ProMotion) while results stream in. Filter + sort of 10 000 results < 50 ms. Waveform analysis of a 6-minute track < 300 ms once downloaded, and progressive while downloading. Cold start < 2 s. 100 000-track collection: initial scan < 5 min, memory < 500 MB. |
 | NFR-3 | **Reliability:** crash-safe persistence (SQLite WAL); transfers resume after restart; filing is copy → verify → delete, so no data loss. |
 | NFR-4 | **Security:** fuzzed protocol parsers; bounded allocations from network input; path-traversal protection on uploads; downloaded files are never executed and carry the macOS quarantine attribute. |
@@ -378,12 +379,11 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 |---|---|---|
 | OQ-1 | Path of the collection folder. The layout is settled: `Singles/` plus `Albums/<album>/` (D10). How are album folders named today? | `<Collection>/Albums/<Artist> - <Album> (<Year>)/` |
 | OQ-3 | Ratio definition: uploads vs downloads (files and bytes), shown next to the number of files shared. | As stated |
-| OQ-4 | Default per-peer caps and search pacing. | From `references/network-etiquette-and-safe-development.md` |
+| OQ-4 | Default per-peer caps. (Search pacing is settled: D31.) | From `references/network-etiquette-and-safe-development.md` §9.1: 1 active and 20 queued files per peer, warning at 20 files a day, stop at 50 |
 | OQ-6 | Waveform style: cumulative stack vs overlaid layers vs separate lanes. | Decide on the mock |
-| OQ-8 | Is there an Apple Developer ID for signing and notarisation? | Unsigned / ad-hoc signed personal builds |
 | OQ-12 | Should files from outside Soulseek (e.g. Bandcamp purchases) dropped into the Inbox use the same filing pipeline? | Yes (P1) |
 
-Resolved: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12, OQ-11 → D22, OQ-13 (what Space plays) → D26, OQ-14 (metadata source) → D29, OQ-15 (Spotify credentials) → D21.
+Resolved: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12, OQ-11 → D22, OQ-13 (what Space plays) → D26, OQ-14 (metadata source) → D29 and D30, OQ-15 (Spotify credentials) → D21, OQ-8 (Developer ID) → D33.
 
 ---
 
@@ -396,7 +396,7 @@ Answers given by the maintainer on 2026-10-19.
 | D1 | What defines "what I already have"? | **Music folders on disk** only (no rekordbox / Apple Music reading in v1). |
 | D2 | Where do downloads land? | **Inbox, then file** into the collection. |
 | D3 | A downloaded album contains a single I already have. | **Flag only** for the collection — "Rekordbox already linked to them, so can't move them." **Trash** the single if it is still in the Inbox. |
-| D4 | Classic Soulseek features in v1 | **Private messages, Wishlist, Browse a user's shares.** No chat rooms. |
+| D4 | Classic Soulseek features in v1 | **Private messages, Wishlist, Browse a user's shares.** No chat rooms (revised by D32: a minimal rooms view is in). |
 | D5 | Audience | **Me first.** |
 | D6 | Batch downloads | **Review first.** |
 | D7 | Conversion at filing | "Everything to a format I configure. Generally **MP3 320**." |
@@ -422,6 +422,10 @@ Answers given by the maintainer on 2026-10-19.
 | D27 | The product's main flow | **Get tracks**, the home screen: "I have a list of tracks I'm interested in obtaining, and at the end I want them … In MP3 320kbps, with metadata from spotify in the mp3 id3v2, cover in there too, in my inbox. I want to preview them and their waveform before fully comitting." The other views stay one click away, and every screen starts with fewer knobs (UI-8, extends D24). |
 | D28 | Name matching | **Typo-tolerant and position-independent:** "I want a levenstein distance kind of thing … robust to typos, missing letters etc." Word-level Damerau–Levenshtein (OSA) with length-scaled thresholds, words matched wherever they sit in the path, and joined words. Length (±3 s) stays the main signal (D23). Details: `references/library-matching-and-organization.md` §17 (SRCH-19). |
 | D29 | When conversion and tagging happen | **On arrival in the Inbox**, not at filing (follows from D27). Downloads are converted to the Inbox format (MP3 320 CBR by default) and tagged from the matched release, with the cover embedded. Spotify ranks first ("very reliable in my usage of spotdl, well tagged"); Deezer and MusicBrainz cover what Spotify can't match. Filing only moves. Lossless originals go to the Trash once the converted file is verified (D11). |
+| D30 | Tagging from Spotify despite its developer terms | **Spotify tags**, chosen by the maintainer after hearing that Spotify's developer terms forbid storing Spotify metadata and artwork in files (`references/metadata-and-preview-services.md` §4). Files get title, artists, album, album artist, date, track and disc numbers, ISRC and the cover from Spotify; label and genre, which dev mode no longer returns, come from MusicBrainz. The risk is that Spotify revokes the maintainer's own developer app (bring-your-own Client ID). Selecta shows a one-time notice explaining this before the first Spotify-tagged file. |
+| D31 | Search pace (OQ-4, search part) | **2 searches per minute with bursts of 6** (token bucket: burst 6, one more every 30 s), one budget for every search source, no setting that loosens it, and the same query not repeated within 10 min. A 50-line Get tracks list takes about 25 minutes; cached lines are instant (`references/network-etiquette-and-safe-development.md` §9.1). |
+| D32 | Chat rooms vs the official "full range of features" rule | **A minimal rooms view** (NET-10): list, join, read, post. It closes the gap in the rules at little cost; everything else about rooms stays out. |
+| D33 | Apple Developer ID (OQ-8) | The maintainer has one: "Yes I do, but don't use it for development." Release builds (M10) are signed with it, use the hardened runtime and are notarised. Development builds use a stable local identity so Keychain and firewall approvals survive rebuilds. |
 
 ## Appendix B — Raw brief (verbatim)
 
@@ -540,4 +544,8 @@ This tool is only for myself locally as a nice .app so I fear nothing from youtu
 
 ```text
 Selecta is not breaking any term, it simply calls yt-dlp that is already on my machine.
+```
+
+```text
+I think a single agent building from the plan makes more sense, as they have the whole context, compared to a swarm. The swarm can be used to build the distinct libraries that have clear boundaries, like metadata, soulseek etc etc. I want a head implementer, and for the very separate things distinct agents.
 ```
