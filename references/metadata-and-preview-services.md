@@ -799,7 +799,8 @@ this note; output shapes come from the source.
   process may not see Homebrew on its `PATH`. Without it yt-dlp warns that "YouTube extraction without a JS runtime has
   been deprecated, and some formats may be missing".
 - **On this machine** (2026-10-20): `/opt/homebrew/bin/yt-dlp` is **2025.07.21** (Homebrew stable is 2026.8.19) and
-  Deno is not installed. Expect D26 previews to fail until `brew upgrade yt-dlp`, which also installs Deno.
+  Deno is not installed. That version predates the JavaScript-runtime requirement, so D26 previews will likely fail
+  until `brew upgrade yt-dlp`, which also installs Deno (not tested: no YouTube request was made).
 
 ### 12.2 Searching for candidates without downloading
 
