@@ -1,0 +1,5 @@
+# Tests inherit every check from the root configuration, except:
+#   bugprone-unchecked-optional-access: GoogleTest's ASSERT_* macros end a test on failure, which the check's dataflow
+#   can't see; tests assert has_value() before using an optional.
+InheritParentConfig: true
+Checks: '-bugprone-unchecked-optional-access'

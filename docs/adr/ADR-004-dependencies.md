@@ -1,31 +1,46 @@
 # ADR-004: Dependencies and toolchain
 
-- **Status:** Accepted
-- **Date:** 2026-10-19
-- **Inputs:** `references/qt-app-architecture.md` §1, §5–6, §9–10; RESEARCH-SYNTHESIS C9, C17
+- **Status:** Accepted (revised 2026-10-20: fully static linking)
+- **Date:** 2026-10-19, revised 2026-10-20
+- **Inputs:** `references/qt-app-architecture.md` §1, §5–6, §9–10; RESEARCH-SYNTHESIS C9, C17; the maintainer's
+  direction "linking should be full static. No dylib, or just the core macOS ones."
 
 ## Decision
 
-- **Qt 6.12.x.** Bump minors about every 6 months, because open-source LTS patches stop around 2027-04.
-- **CMake ≥ 3.28, Ninja and `CMakePresets.json`** with presets `dev`, `asan`, `tsan`, `release`, `fuzz` and `ci-*`.
-  Settings: `qt_standard_project_setup(REQUIRES 6.12)`, `QT_ENABLE_STRICT_MODE_UP_TO=0x060C00`, `QT_NO_KEYWORDS`.
-  C++20, or C++23 if the CI matrix builds it.
-- **Local development:**
-  - Homebrew with a `Brewfile` for Qt, FFmpeg, LAME, libsoxr, TagLib and LLVM (for fuzzing).
-  - Personal builds bundle Homebrew dylibs, so they need **macOS 27** and declare it in `LSMinimumSystemVersion`.
-- **CI and release:**
-  - Official Qt via aqtinstall.
-  - An audio-only FFmpeg, LAME and libsoxr from a pinned vcpkg baseline, targeting macOS 14.4.
-  - Small CMake dependencies via FetchContent: SQLite, QtKeychain, rapidfuzz-cpp, GoogleTest, RapidCheck,
-    miniupnpc, libnatpmp.
-- **CI matrix (GitHub Actions):**
-  - `macos-26`: build, unit tests, UI smoke tests, ASan.
-  - `ubuntu-24.04`: unit tests, Docker integration tests, fuzzing, clang-tidy.
-  - `windows-2025`: compile and unit tests.
+- **Every dependency links statically, from vcpkg, in development and in release.**
+  - The overlay triplet `cmake/vcpkg-triplets/arm64-osx-selecta.cmake` sets static libraries, release-only builds of
+    dependencies and a macOS 14.4 deployment target.
+  - The manifest is `vcpkg.json`, pinned by `builtin-baseline`. Optional features: `tests` (GoogleTest, Google
+    Benchmark) and `media` (FFmpeg avcodec/avformat/swresample, libmp3lame, libsoxr, TagLib).
+  - The vcpkg binary cache makes rebuilds fast.
+  - The app may load only macOS system frameworks and `/usr/lib` system libraries (libc++, libSystem, libz, libobjc).
+    Check with `otool -L`.
+- **Qt is static (qtbase 6.11.2 from the vcpkg baseline).**
+  - Built without Qt Quick, SQL drivers, ICU or D-Bus.
+  - Plugins are linked in: `cocoa` and the `macos` style for the app; `minimal` for headless UI tests (the static
+    build has no `offscreen`).
+  - Move to 6.12.x when vcpkg's baseline does, then bump minors about every 6 months, because open-source LTS
+    patches stop around 2027-04.
+- **SQLite and GoogleTest:**
+  - SQLite: Selecta's own pinned amalgamation, compiled with its own options (ADR-005).
+  - GoogleTest: from vcpkg; a pinned FetchContent fallback exists for builds without vcpkg.
+- **Credentials:** the macOS Security framework (`SecItem*`) directly, instead of QtKeychain, whose vcpkg port pulls
+  in all of qttools.
+- **Homebrew is for tools only,** listed in `Brewfile`: CMake, Ninja, clang-format, LLVM (clang-tidy, libFuzzer),
+  clazy, cppcheck, ccache.
+- **CMake ≥ 3.28, Ninja and `CMakePresets.json`.**
+  - Presets: `dev`, `asan`, `tsan`, `lint`, `release` and `ci`, all through the vcpkg toolchain.
+  - Settings: `qt_standard_project_setup(REQUIRES 6.11)`, `QT_NO_KEYWORDS`, `QT_NO_CAST_FROM_ASCII`.
+  - C++20.
+- **CI matrix (GitHub Actions)** runs on macOS: the static vcpkg build (cached), unit and UI tests, and the lint
+  pipeline. Linux and Windows jobs come later, when someone needs them (the app targets macOS first).
 - **Signing (D33):**
   - Development builds use a stable local identity, never the Developer ID.
   - Release builds use the maintainer's Developer ID, the hardened runtime and notarisation.
 
 ## Consequences
 
-- Fast local iteration on the maintainer's Mac. Wider macOS support waits for release builds.
+- One `.app` with no third-party dylibs to bundle, sign or update, and the same binaries in development and release.
+- The first build compiles Qt and FFmpeg (about 10 minutes on Apple Silicon); later builds restore them from the
+  binary cache.
+- macOS 14.4 or newer.

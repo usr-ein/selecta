@@ -53,6 +53,9 @@ Checks: >
 #   avoid-pragma-once: every supported compiler handles #pragma once.
 #   pro-bounds-avoid-unchecked-container-access: fires on Qt JSON/hash insertions; QList::at asserts in debug.
 #   trailing-comma, enum-size: style and micro-optimisation, no defects.
+# Designated initializers that leave fields to their default member initializers are the intended C++20 idiom;
+# newer clang frontends (Homebrew LLVM, used by the analysers) warn about them, Apple clang doesn't.
+ExtraArgs: ['-Wno-missing-designated-field-initializers']
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/(src|tests|tools)/.*'
 FormatStyle: file

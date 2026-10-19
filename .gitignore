@@ -24,3 +24,6 @@ compile_commands.json
 # Local dev environment data (test server state, test shares, caches)
 /devenv/data/
 /local/
+
+# Agent worktrees and local tool state
+/.claude/
