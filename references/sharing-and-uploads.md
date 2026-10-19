@@ -240,8 +240,127 @@ response (all clients suppress it).
 
 ## 5. Upload management
 
-TODO — being written (protocol flow, queues/slots/round-robin, limits and denial reasons, bans/buddies/auto-ban,
-resume and stalls, statistics for the ratio).
+### 5.1 Protocol flow
+
+```mermaid
+sequenceDiagram
+    participant D as Downloader
+    participant U as Uploader (Selecta)
+    participant S as Server
+    D->>U: QueueUpload(virtual path) [P connection]
+    alt refused (not shared, banned, limits, shutdown)
+        U->>D: UploadDenied(path, reason)
+    else accepted
+        Note over U: append to the user's queue
+        D-->>U: PlaceInQueueRequest(path) (optional, repeated)
+        U-->>D: PlaceInQueueResponse(path, place)
+        Note over U: slot free and this user's turn
+        U->>D: TransferRequest(dir=1 upload, token, path, size)
+        alt downloader declines
+            D->>U: TransferResponse(token, false, "Cancelled" / "Complete" / "Queued")
+        else downloader accepts
+            D->>U: TransferResponse(token, true)
+            U->>S: GetPeerAddress / ConnectToPeer (type F) if needed
+            U->>D: open F connection, PeerInit or PierceFireWall
+            U->>D: FileTransferInit(token) uint32
+            D->>U: FileOffset(offset) uint64
+            U->>D: raw bytes from offset to end of file
+            D-->>U: closes the F connection when all bytes are received
+            U->>S: SendUploadSpeed(avg bytes/s)
+        end
+    end
+```
+
+Rules from the sources:
+- **The downloader closes the F connection**; "the uploader must not close it" (Nicotine+ doc, "Example Flow for
+  Downloading a File"). Nicotine+ marks the upload finished when all bytes are sent and the socket closes, even if the
+  downloader is still draining.
+- **Legacy download requests** (`TransferRequest` direction 0, still sent by slskd and Seeker): Nicotine+ answers
+  `TransferResponse(allowed=false, reason="Queued")`, enqueues the file and later starts a normal upload. Accepting
+  directly would let a spoofed peer open the F connection itself (Nicotine+ `TransferResponse` docstring).
+- `TransferResponse` with reason `Complete` = the downloader already has the whole file → mark finished;
+  `Cancelled` → drop the upload. Any other reason string from the peer is mapped to `Cancelled` (Nicotine+ refuses
+  "internal statuses as reason").
+- **`UploadFailed(path)`** (peer 46) is sent when an active upload's F connection closes before the end (unless the
+  user went offline). The downloader re-queues or ignores it.
+- **`UploadDenied(path, reason)`** (peer 50) rejects a `QueueUpload` *and* previously queued files (e.g. on ban).
+  Nicotine+ sends nothing for a duplicate `QueueUpload` of an already-queued file.
+- `QueueUpload` arriving **during a rescan** is parked and replayed when the scan completes (Nicotine+
+  `_pending_network_msgs`). Selecta avoids this by swapping indexes atomically (§4.5), but should still not deny files
+  just because a scan is in progress.
+
+### 5.2 Queues, slots, bandwidth, fairness, privileges
+
+| | Nicotine+ (defaults from `config.py`) | slskd (`Options.cs`, `UploadQueue.cs`, `UploadGovernor.cs`) | Soulseek.NET (`SoulseekClient.cs`) |
+|---|---|---|---|
+| Concurrency model | `useupslots=True`, **`uploadslots=3`**; alternative mode: start another upload while total upload speed < `uploadbandwidth` = 50 KiB/s | Global `upload-slots` = **10**; per-group `Slots` (default unlimited, capped by global) | `MaximumConcurrentUploads` = 10 global |
+| Per-user concurrency | **1 active upload per user** (users with an active upload are not candidates) | via Soulseek.NET | **`MaximumConcurrentUploadsPerUser` = 1** — "Soulseek NS can't handle concurrent downloads from the same source" |
+| Order between users | **Round-robin** (`fifoqueue=False`): the user who has waited longest since their last upload activity (`_user_update_counters`); FIFO optional | Per group: `roundrobin` (default; by the time an upload became *ready*) or `firstinfirstout` (by enqueue time) | — |
+| Priorities | Privileged users (server list, code 69) first: when any privileged user has queued files, only they are candidates. Buddies can be prioritised (`preferfriends` or per-buddy flag) | Groups ordered by `Priority`: built-in **privileged** group = priority 0, FIFO, all global slots; default = 1; leechers; user-defined groups | — |
+| Speed limit | `use_upload_speed_limit` = unlimited; primary 1000 KiB/s, alternative 100 KiB/s; split per transfer or total (`limitby`) | Token bucket per group (refill every 100 ms), global limit default unlimited | Global token bucket |
+| Queue position reply | Round-robin estimate: (privileged queued files) + number of queued users + position within the user's own queue | `ForecastPosition` per group | — |
+
+`UserInfoResponse` and `FileSearchResponse` must expose the same numbers: total slots, queue size, "slot free",
+average speed.
+
+### 5.3 Per-user limits and denial reasons
+
+Nicotine+ checks, in order (`_check_queue_upload_allowed`): banned (user or IP, optional geo-block) → already queued
+→ pending shutdown → per-user queue limits (unless "no limits for buddies") → file is shared and visible to this user.
+
+| Limit (Nicotine+ default) | Denial string |
+|---|---|
+| Queued files per user ≥ `filelimit` = **100** | `Too many files` |
+| Queued bytes per user ≥ `queuelimit` = **10 000 MB** | `Too many megabytes` |
+| Banned user/IP | `Banned` (or `Banned (custom text)`; default custom text "Banned, don't bother retrying") — **SoulseekQt sends `File not shared.` instead** |
+| Not in index / not visible to this user | `File not shared.` (with the dot) |
+| Read error at start | `File read error.` |
+| Quitting after current uploads | `Pending shutdown.` |
+| Legacy request accepted into queue | `Queued` (as a TransferResponse reason) |
+
+Deprecated strings still seen from old clients: `Disallowed extension`, `File not shared` (no dot), `Remote file error`,
+`User limit of x megabytes exceeded`, `User limit of x files exceeded`, `Blocked country` (Nicotine+ protocol doc).
+
+slskd adds **daily and weekly** limits per group (files, megabytes, *failures*), computed from its transfer database
+(`UploadService.cs` daily/weekly succeeded/failed counts). Limits apply to *queued* files; active ones don't count.
+
+### 5.4 Bans, ignores, buddies, leecher rules
+
+- **Ban** (Nicotine+): all of the user's uploads are cleared with `UploadDenied("Banned …")`; they get the empty
+  share list, no search results, no folder contents. IP bans and country blocks use the address the server reports.
+- **Ignore** is about chat/PMs and their search results; it does not by itself stop uploads (Nicotine+ keeps the two
+  lists separate: `banlist`, `ignorelist`).
+- **Buddies**: can see buddy-only shares; optionally exempt from queue limits (`friendsnolimits`, default off) or
+  prioritised (`preferfriends`, default off). Our own username is never treated as a buddy for share access.
+- **Leechers** (slskd): users whose server stats show fewer than `Files` = 1 shared files or `Directories` = 1 shared
+  folders go to a "leechers" group that can get fewer slots, lower priority and a speed cap. Nicotine+ has no automatic
+  leech rule. Statistics come from `GetUserStats`/`WatchUser`, so they can be stale or zero for users we never
+  looked up; slskd treats unknown stats as "not a leecher".
+- No client found auto-bans on behaviour (e.g. repeated cancels); bans are manual.
+
+### 5.5 Resume, stalls, timeouts, cancellation
+
+- **Resume**: the downloader's `FileOffset` (uint64) is the number of bytes it already has. Soulseek.NET rejects
+  `offset > size`; Soulseek NS sends **−1 (0xFFFF…FF)** when its partial file is > 2 GB (Nicotine+ doc). Nicotine+
+  just `seek()`s, so a bad offset stalls until the idle timeout. Selecta: `offset == size` → send nothing and wait for
+  the close; `offset > size` → close and mark failed.
+- **Timeouts (Nicotine+)**: 45 s from `TransferRequest` to the start of the transfer (15 s margin over slow
+  indirect connections: Soulseek NS ~20 s, soulseeX ~30 s); idle connections closed after 60 s; uploads that failed with
+  a connection timeout are re-queued every 3 minutes.
+- **User goes offline** → queued and failed uploads for that user are aborted ("User logged off"); when they come
+  back, nothing is restarted automatically (the downloader re-queues).
+- **Persistence**: Nicotine+ reloads only *finished* uploads after a restart (`load_only_finished=True`); queued
+  uploads are not restored — downloaders re-request them. slskd keeps everything in its transfer DB.
+- Cancelling an active upload: close the F connection; the downloader sees a failure (and may retry later).
+
+### 5.6 Statistics for the ratio (FAIR-3, SHARE-5)
+
+- Nicotine+ counts `started_uploads`, `completed_uploads`, `uploaded_size` (**bytes added as they are sent, so
+  partial uploads count**) for the session and all time (`transfers.py` `Statistics`).
+- slskd derives per-user daily/weekly succeeded/failed files and bytes from its `Transfers` table.
+- Selecta: one SQLite row per upload attempt (user, file id, virtual path, offset, bytes sent, start/end, outcome,
+  reason), plus per-user rollups; the ratio uses **bytes actually sent** (including partial) and **files completed**,
+  over session / 30 days / all time, mirroring the download side.
 
 ## 6. macOS share indexing
 
