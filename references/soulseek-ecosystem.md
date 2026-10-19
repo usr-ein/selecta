@@ -67,7 +67,7 @@ uploads; **Client** = searching/downloading/browsing but partial or no sharing/d
 | **Soulseek.NET** | Library | C# (.NET) | GPL-3.0-only **+ §7 Additional Terms** | 2026-10-13 / 10.0.2 (2026-06-10) | Client side incl. uploads, distributed child/parent | Behavioural reference only |
 | **slskd** | Daemon + web UI | C# + React | AGPL-3.0-only **+ §7 Additional Terms** | 2026-10-19 / 0.26.1 (2026-10-10); ~4.1k★ | via Soulseek.NET | Design ideas (limits, groups, API) |
 | **aioslsk** | Library | Python asyncio | GPL-3.0-or-later (pyproject) | 2026-10-14 / v1.7.1 (2026-10-11) | Full (distributed network, rooms, uploads, UPnP) | Port logic; best docs; mock server |
-| **Seeker** | Android client | C# (.NET Android) | GPL-3.0-only (uses modified Soulseek.NET) | 2026-10-19 / v3.11.2 | via Soulseek.NET fork | UX ideas; mock-network idea |
+| **Seeker** | Android client | C# (.NET Android) | GPL-3.0-only + Soulseek.NET §7 terms (vendored modified Soulseek.NET, notice in `SEEKER-CHANGES.md`) | 2026-10-19 / v3.11.2 | via Soulseek.NET subtree | UX ideas; mock-network idea |
 | **museek+** (`eLvErDe/museek-plus`) | Daemon + Qt/GTK/curses clients | C++ (+Python) | GPL-2.0-or-later | 2022-03-08, README says "No longer maintained!" | Old subset | Historical only |
 | **newsoul** | museek+ daemon fork | C++11 | GPL-3.0-or-later | 2014-09-13 | Old subset | Historical only |
 | **soulseekcpp** | Library (port of Soulseek.NET) | C++20 + asio | GPL-3.0 + Soulseek.NET §7 Additional Terms | single commit 2026-09-17; 0★ | Claims full (untested by others) | Read only; do not depend on |
@@ -91,8 +91,8 @@ uploads; **Client** = searching/downloading/browsing but partial or no sharing/d
 | GPL-3.0-or-later (Nicotine+, aioslsk, Soulfind, newsoul) | Yes | Keep copyright notices on ported fragments; Selecta stays GPL-3.0(-or-later). |
 | GPL-2.0-or-later (museek+) | Yes | Same; combined work is GPL-3.0. |
 | MIT / Unlicense (soulseek-rs, seeleseek, slsk-client, crabseek, soul) | Yes | Keep the MIT notice for ported fragments (e.g. a `THIRD-PARTY-NOTICES` file). |
-| GPL-3.0-only + §7 Additional Terms (Soulseek.NET, Seeker) | Technically yes, **but not recommended** | Selecta would become "Covered Software": would have to be GPL-3.0-**only** (conflicts with the PRD default OQ-7 "or-later"), ship the Additional Terms in LICENSE, add the "modified version of Soulseek.NET" README notice, follow its file-header format for every derived file, and use a unique client version id. |
-| AGPL-3.0-only + §7 (slskd, sockseek) | **No** for a desktop app | AGPL network clause + Additional Terms; GPLv3 code may be combined with AGPLv3 (GPLv3 §13) but the AGPL parts keep their terms. Not worth it. |
+| GPL-3.0-only + §7 Additional Terms (Soulseek.NET, Seeker, soulseekcpp) | Technically yes, **but not recommended** | Selecta would become "Covered Software": would have to be GPL-3.0-**only** (conflicts with the PRD default OQ-7 "or-later"), ship the Additional Terms in LICENSE, add the "modified version of Soulseek.NET" README notice, follow its file-header format for every derived file, and use a unique client version id. |
+| AGPL-3.0-only + §7 (slskd); AGPL-3.0 without extra terms (sockseek ≥ 2026-05, slskr) | **No** for a desktop app | AGPL network clause (+ Additional Terms for slskd); GPLv3 code may be combined with AGPLv3 (GPLv3 §13) but the AGPL parts keep their terms. Not worth it — sockseek ≤ v2.6.0 is GPL-3.0, but ideas are all Selecta needs. |
 | No licence (soulseek-ts, goose, vessel, spotseek) | **No** | All rights reserved. |
 
 Evidence: `jpdillingham/Soulseek.NET@c07c187:LICENSE` lines 679–end ("ADDITIONAL TERMS", §1–6, incl. §3 "Modified Version
