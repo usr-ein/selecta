@@ -1,23 +1,57 @@
 # Audio preview and waveform — decoding, progressive playback, 3-band waveform, quality analysis
 
-> Status: **draft in progress** (2026-10-19). Items marked **TODO** / *unverified* are from memory and not yet checked
-> against a primary source. Confidence levels: **high** = read in source code/spec; **medium** = documentation or
-> consistent secondary sources; **low** = inference or hearsay.
+> Status: complete (2026-10-19). Items marked *unverified* were not checked against a primary source.
+> Confidence levels: **high** = read in source code or measured; **medium** = documentation or consistent secondary
+> sources; **low** = inference or hearsay.
 
 ## TL;DR
 
-- **Pioneer 3Band, answered (§2):** the **overview** is a single-sided **cumulative stack** (blue low at the bottom,
-  amber mid on top of it, a white high crest on top). The **zoomed detail** view is **mirrored** about a centre line,
-  with **overlaid** envelopes: each band is measured from the centre, the low∩mid overlap is drawn **brown**, and
-  white highs go **in front at ≈ 85 % opacity**. Measured rekordbox colours: blue `#0055E1`, amber `#FFA600`, brown
-  `#B36607`, white. Crossovers and height scaling are not public; Selecta should calibrate them against rekordbox 7.
-- Rest: TODO (filled in at the end).
+- **Pioneer 3Band, answered (§2):**
+  - The **overview** is a single-sided **cumulative stack**: blue low at the bottom, amber mid on top of it, a white
+    high crest on top.
+  - The **zoomed detail** view is **mirrored** about a centre line, with **overlaid** envelopes measured from the
+    centre. The low∩mid overlap is **brown**, and white highs go **in front at ≈ 85 % opacity**.
+  - Measured rekordbox colours: blue `#0055E1`, amber `#FFA600`, brown `#B36607`, white.
+  - Crossovers and height scaling are not public. Selecta can calibrate them offline against the maintainer's
+    rekordbox 7.
+- **Decode with FFmpeg, but not naively on a growing file.** Several demuxers read the **end of the file** when the
+  input is seekable: MP3 (ID3v1), WAV/AIFF (chunks after the audio), FLAC (binary-search seek), MP4 (`moov` at the
+  end). On a sequential Soulseek download, that stalls playback until the download completes. Fix: report the input
+  as non-seekable until the file is complete, and seek with Selecta's own frame index.
+- **The < 300 ms analysis target is not met by a naive pipeline:**
+  - Measured on an M2 Pro for a 6-min track: MP3 decode ≈ 330 ms plus 3-band filtering ≈ 150 ms.
+  - It is met by chunked parallel decode and analysis (8 segments: ≈ 130 ms).
+  - For previews it hardly matters: analysis runs during the download.
+- **Playback:** CoreAudio on macOS with a latency-compensated, vsync-extrapolated playhead. `QAudioSink` (Qt 6.11
+  callback API) does not expose device latency, which breaks sync on Bluetooth.
+- **Rendering:** QPainter + cached tiles in a plain QWidget, ticked by `QWindow::requestUpdate()` (CVDisplayLink on
+  macOS). `QRhiWidget` + shader is the upgrade path.
+- **Transcode detection:** LAME's lowpass table was verified and measured (128k → 17 kHz, 192k/V2 → ~18.5 kHz,
+  320k → 20.5 kHz, **V0 → none**). Fake 24-bit and upsampled files are detectable exactly.
 
 ## 1. Key findings
 
-- Pioneer stores 8 bits per band, 150 detail columns per second and a fixed 1,200-column overview (§2.3). That is a good
-  model for Selecta's analysis cache.
-- Further findings: TODO (filled in as sections are verified).
+1. Pioneer's two 3Band views layer differently: stacked in the overview, layered in the detail view (§2, high/medium
+   confidence). The mock's "Layered" mode is the right default for the zoomed view once it gets the brown overlap and
+   translucent white. "Stacked" is right for the overview.
+2. Pioneer stores **8 bits per band**, **150 detail columns per second** (one per half CD-frame) and a fixed
+   1,200-column overview. Byte order is mid, high, low (§2.3). That is a good model for Selecta's cache.
+3. Mixxx (GPL-2.0+, reusable) uses 4th-order Bessel filters at 600 Hz / 4 kHz, linear peak per stride at 441 Hz per
+   channel, overview = average of peaks, and protobuf + zlib storage. Its `VisualPlayPosition` is the reference design
+   for playhead sync (§6).
+4. FFmpeg's demuxers make four distinct tail reads when the input is seekable (§5.3, verified in source). With
+   `seekable = 0`, `avio_seek` still supports forward reads and backward seeks through the callback. Non-EOF read
+   errors are sticky.
+5. M4A with `moov` at the end cannot be previewed progressively. FFmpeg's default output is exactly that (verified).
+6. Measured on an M2 Pro: MP3 320 decode ≈ 330 ms, FLAC ≈ 180 ms, AAC ≈ 245 ms per 6 min (one stream); 8-way parallel
+   ≈ 130 ms (MP3) / 80 ms (FLAC); LR4 3-band split + peak/RMS ≈ 150 ms scalar (§7.4).
+7. Qt 6.11 adds a real-time callback API to `QAudioSink`. `QMediaPlayer` gained a PCM tap and playback options, but
+   still cannot drive faster-than-real-time analysis (§3, §4).
+8. Plain `QWidget::update()` is not vsync-aligned on macOS. `QWindow::requestUpdate()` is (CVDisplayLink) (§8.3).
+9. The cut-off identifies ≤ 192k and 320k MP3 sources, but not V0 or good AAC (§9.1, measured). Exact cheap checks
+   exist for fake 24-bit and upsampled files.
+10. BPM/key: qm-dsp (GPL-2.0+) and libKeyFinder (GPL-3.0+) are the proven, compatible choices. Essentia (AGPL) and
+    neural models (NC licences) are not (§10).
 
 ## 2. Pioneer "3Band" waveform (rekordbox / CDJ-3000) — how it looks and is layered
 
@@ -120,9 +154,9 @@ sample-accurate seeking; licence compatible with GPLv3; works on macOS first and
 | Option | Licence | Formats | Custom / growing I/O | Seeking | Verdict |
 |---|---|---|---|---|---|
 | **FFmpeg** libavformat + libavcodec + libswresample | LGPL-2.1+ by default; GPL-2.0+ with `--enable-gpl`; `--enable-version3` makes it (L)GPLv3. All are fine for a GPLv3 app. | Everything | `AVIOContext` with read/seek callbacks. Demuxers make tail reads unless told the stream is not seekable (§5.3). | Demuxer-dependent: MP3 by Xing TOC or estimate; FLAC by seektable or a binary search that reads the file end. | **Recommended core** (already ADR-003's choice). Use libavcodec decoders everywhere. Use libavformat for complete files, and for growing files only with the precautions in §5.3. |
-| Qt Multimedia `QMediaPlayer` (FFmpeg backend) | LGPLv3 / GPL | What its bundled FFmpeg supports | `setSourceDevice(QIODevice*)`. A growing `QFile` hits EOF early unless wrapped. | Opaque | **Not for preview.** No PCM tap for analysis, no control over buffering or tail reads, and coarse position. Fine for UI sounds. |
+| Qt Multimedia `QMediaPlayer` (FFmpeg backend) | LGPLv3 / GPL | What its bundled FFmpeg supports | `setSourceDevice(QIODevice*)`. A growing `QFile` hits EOF early unless wrapped. Qt 6.11 headers add `QPlaybackOptions` (`probeSize`, `playbackIntent`, `networkTimeout`) and `bufferedTimeRange()`. | Opaque | **Not for preview.** `QAudioBufferOutput` (PCM tap) delivers audio only at playback speed, so it cannot feed a faster-than-real-time waveform analysis. No control over tail reads or seeking strategy. Fine for UI sounds. |
 | libsndfile | LGPL-2.1+ | WAV, AIFF, FLAC, Ogg/Vorbis/Opus; MP3 since 1.1 (via mpg123/LAME) | `SF_VIRTUAL_IO` callbacks | PCM exact; FLAC/MP3 via its codecs | Viable for PCM formats, but adds little over FFmpeg. No AAC/ALAC. |
-| dr_libs (`dr_mp3`, `dr_flac`, `dr_wav`) / miniaudio | Public domain (Unlicense) or MIT-0 | MP3, FLAC, WAV (miniaudio adds device I/O) | Read/seek callbacks; single-header C | `dr_mp3`: precomputed seek points or decode from start; `dr_flac`: seektable or search | Good fallback or fuzz-friendly alternative for the three core formats. No AIFF (dr_wav reads AIFF since v0.13, *unverified*), no AAC. |
+| dr_libs (`dr_mp3` 0.7.x, `dr_flac` 0.13.x, `dr_wav` 0.14.x) / miniaudio | Public domain (Unlicense) or MIT-0 | MP3, FLAC, WAV; `dr_wav` also decodes **AIFF** (since v0.13.9, 2023-05-22; no ADPCM-in-AIFF, no AIFF metadata) | Read/seek callbacks; single-header C | `dr_mp3`: seek points (`drmp3_calculate_seek_points`/`drmp3_bind_seek_table`) or decode from start; `dr_flac`: seektable or search | Good fallback or fuzz-friendly alternative for the four core formats. No AAC/ALAC. |
 | libmpg123 | LGPL-2.1 | MP3 | Feeder API (`mpg123_open_feed`/`mpg123_feed`) and `mpg123_replace_reader_handle`. Its native mode is "push bytes as they arrive". | Xing TOC, frame index, `MPG123_FUZZY` without a full scan; gapless via LAME tag | Best-in-class MP3 decoder with NEON. Consider it only if FFmpeg's MP3 decoder proves too slow. |
 | libFLAC | BSD-3-Clause (library) | FLAC, Ogg FLAC | Stream decoder with read/seek/tell/length/eof callbacks; a read callback may block | Seektable, else binary search needing the file length | Reference decoder; FFmpeg's FLAC decoder is equivalent for our needs. |
 | AudioToolbox (`AudioFileStream`, `AudioConverter`, `ExtAudioFile`) | Apple system framework | MP3, AAC, ALAC, WAV, AIFF, CAF; FLAC on macOS 10.13+ (*unverified* for `AudioFileStream`) | `AudioFileStreamParseBytes` is *designed* for progressive network streams: push bytes, receive packets | `AudioFileStreamSeek` maps packet → byte offset (flagged as estimated for VBR without a packet table) | macOS-only. Useful as a reference design. Not worth a second decode stack. |
@@ -141,7 +175,7 @@ Scrubbing must feel instant (< 50 ms from key press to sound).
 
 | Option | Position accuracy | Notes |
 |---|---|---|
-| `QAudioSink` (pull mode, our `QIODevice`) | You know how many bytes the sink pulled (`processedUSecs()`, `bytesFree()`). **Device latency is not exposed**, so Bluetooth outputs (AirPods: ~150–250 ms, hearsay) put the playhead visibly ahead of the sound. | Cross-platform. OK as the Linux/Windows fallback. |
+| `QAudioSink` (pull mode via `QIODevice`, or the **callback API new in Qt 6.11**: `start(Callback&&)` taking `QSpan<float>` on the audio thread) | You know how many frames the sink pulled (`processedUSecs()`, `framesFree()` since 6.10). **Device latency is not exposed**, so Bluetooth outputs (AirPods: ~150–250 ms, hearsay) put the playhead visibly ahead of the sound. | Cross-platform. With the 6.11 callback API it is a reasonable real-time path. OK as the Linux/Windows backend. |
 | **CoreAudio AUHAL** (AudioUnit render callback) | Each callback has an `AudioTimeStamp` (`mHostTime`, `mSampleTime`). Device latency = `kAudioDevicePropertyLatency` + `kAudioDevicePropertySafetyOffset` + `kAudioStreamPropertyLatency` + buffer frame size. | Most precise. Real-time callback: lock-free ring buffer only, no allocation or locks. |
 | `AVAudioEngine` + `AVAudioSourceNode` | `outputNode.presentationLatency` plus the render timestamp | Simpler Objective-C++ API over the same HAL. |
 | miniaudio device | Callback frame counts. Latency only partly exposed (*unverified*). | Single-header and cross-platform; could replace `QAudioSink` everywhere. |
@@ -178,11 +212,11 @@ Scrubbing must feel instant (< 50 ms from key press to sound).
 
 | Format | Can start after | Duration known from | Seeking inside the downloaded prefix | Pitfalls |
 |---|---|---|---|---|
-| **MP3** | ID3v2 tag (size in its 10-byte header; **embedded art can make it several MB**) + first frames | Xing/Info frame count (VBR and LAME CBR), VBRI, else size × 8 ÷ bitrate (CBR) | Exact: build a **frame index** (offset, samples) by parsing frame headers as bytes arrive. Xing TOC gives only 1 % granularity. After a seek, decode about 1–2 frames early for the bit reservoir and discard the output. | Free-format and corrupt frames; false syncs inside ID3 or art (validate 2–3 consecutive headers); ID3v1/APE at the end. |
+| **MP3** | ID3v2 tag (size in its 10-byte header; **embedded art can make it several MB**) + first frames | Xing/Info frame count (VBR and LAME CBR), VBRI, else size × 8 ÷ bitrate (CBR) | Exact: build a **frame index** (offset, samples) by parsing frame headers as bytes arrive. Xing TOC gives only 1 % granularity. After a seek, preroll and discard: Mixxx uses **9 MP3 frames** (worst case 29 per libmad; 9 drain the bit reservoir and gave exact results in Mixxx's tests; `soundsourceffmpeg.cpp` `getStreamSeekPrerollFrameCount`). | Free-format and corrupt frames; false syncs inside ID3 or art (validate 2–3 consecutive headers); ID3v1/APE at the end. |
 | **FLAC** | `fLaC` + metadata blocks (**PICTURE blocks can be MBs**) | STREAMINFO `total_samples` (0 = unknown) | Exact: index frames by sync code `0xFFF8/9` + header CRC-8 as data arrives (FLAC frame headers carry the frame/sample number). The SEEKTABLE (encoder default ~10 s) helps but may point past the prefix. | FFmpeg's seek without a seektable bisects over the whole file and reads the end. |
 | **WAV** | `fmt ` + start of `data` (normally < 100 KB; `LIST`/`bext`/`JUNK` may precede `data`) | `data` size ÷ block align (0 or 0xFFFFFFFF in streamed files: use the transfer size) | Trivial: `dataStart + frame × blockAlign` | `WAVE_FORMAT_EXTENSIBLE`; 24-bit packed; float; trailing `id3 `/`LIST` chunks. |
 | **AIFF/AIFC** | `COMM` + `SSND` header (`offset`, `blockSize`) | `COMM.numSampleFrames` | Trivial (big-endian PCM; AIFC `sowt` is little-endian) | `COMM` may legally come *after* `SSND`: then wait for the full file. `ID3 ` chunk may be at either end. |
-| **M4A/MP4** (AAC, ALAC) | Only if `moov` precedes `mdat` ("fast start") | `moov`/`mvhd` / `mdhd` | Via the `stbl` sample tables (exact) | `moov` at the end (ffmpeg default without `-movflags +faststart`; common for files from various tools; iTunes/Apple Music files usually have it at the front, *medium confidence*) → **no progressive preview**; show "preview after download". |
+| **M4A/MP4** (AAC, ALAC) | Only if `moov` precedes `mdat` ("fast start") | `moov`/`mvhd` / `mdhd` | Via the `stbl` sample tables (exact); AAC needs 2,112 frames of preroll (Mixxx) | `moov` at the end → **no progressive preview**; show "preview after download". Verified: FFmpeg 9.0.2 writes `ftyp, free, mdat, moov` by default (a 63 KB `moov` *after* 9.9 MB of `mdat` for 6 min AAC) and `ftyp, moov, free, mdat` with `-movflags +faststart`. Windows Media Foundation also defaults to moov-after-mdat. iTunes-encoded files reportedly have `moov` first (*unverified*). |
 | Ogg Vorbis/Opus | First pages + headers | Last granule position (end of file) → estimate from size until then | Bisection on granule positions inside the prefix | Opus pre-skip; chained streams. |
 
 ### 5.3 FFmpeg on a growing file: verified pitfalls (FFmpeg `f91b54f`, 2026-10-19)
@@ -215,8 +249,8 @@ call the seek callback when one is set (`libavformat/aviobuf.c` ~L278–300). A 
   ID3v2/PICTURE blocks.
 - **Seeking** uses Selecta's **own index** built while bytes arrive (MP3 frame index, FLAC frame index, PCM arithmetic).
   - Targets inside the prefix: `avio_seek` to the indexed byte offset, `avcodec_flush_buffers`, then decode and discard up
-    to the exact sample, with ~2 frames of MP3 preroll. For FLAC, `av_add_index_entry` from our index also prevents
-    FFmpeg's tail-reading binary search.
+    to the exact sample, with 9 frames of MP3 preroll and 2,112 samples for AAC (§5.2). For FLAC,
+    `av_add_index_entry` from our index also prevents FFmpeg's tail-reading binary search.
   - Targets beyond the prefix: show a "waiting for data" state at the target and resume when `available` passes the
     estimated byte offset (PREV-3).
 - **One demux/decode pass for analysis** runs ahead as data arrives and feeds the waveform analyser (§7) and the indexer.
@@ -289,10 +323,10 @@ needs (Pioneer uses 150 Hz mono), and fidlib's runtime filter design is unnecess
    - **peak** = `max |x|` (transients: kicks and hats read as sharp shapes), and
    - **RMS** = `sqrt(mean x²)` (body/energy). Store both. Peak drives the shape. RMS can drive a slightly darker "inner
      body" like Pioneer's RGB/blue waveforms, and is better for perceptual tuning later.
-5. Quantise each value to `uint8` with a **perceptual (compressive) curve** at *draw time*, not analysis time. Store
-   linear amplitude ×255 with a √ curve (`q = round(255·sqrt(min(1, a)))`) so quiet passages keep resolution, and map
-   to pixels with a configurable dB curve (default: −48 dB → 0, 0 dBFS → full height). Pioneer's detail scaling is
-   "non-linear" (§2.2), and a linear peak scale makes quiet intros invisible.
+5. Store each value as `uint8` with a **√ companding curve** (`q = round(255·sqrt(min(1, a)))`, `a` = linear amplitude).
+   This gives quiet passages more code values than linear `uint8` would. Apply the display curve at **draw time**:
+   a configurable dB mapping, default −48 dBFS → 0 and 0 dBFS → full height, tuned on the mock. Pioneer's detail scaling
+   is "non-linear" (§2.2), and a linear peak scale makes quiet intros invisible.
 6. A **per-track gain** for display: normalise so that the 99th percentile of the overall peak maps to ~90 % of the
    height (cf. the `PWVC` "per-band gain" hypothesis). This makes quiet and loud masters comparable and is applied at
    draw time.
@@ -452,9 +486,9 @@ made from a V0 MP3 passes this test. That is a known limit of all cut-off detect
      band-limited, so always offer the spectrogram for human judgement.
 2. **sfb21 / "holes":** lossy MP3 at ≤ 192k shows intermittent energy above 16 kHz. The ratio of frames with energy above
    16 kHz to frames without is a second signal (P2).
-3. **LAME tag cross-check (MP3):** the LAME/Info header records the encoder version and the **lowpass actually used**
-   (1 byte, ×100 Hz). A tag saying 20.5 kHz with a measured cut-off at 16 kHz means the file was re-encoded from a
-   lossy source.
+3. **LAME tag cross-check (MP3):** the LAME/Info header records the encoder version and the **lowpass actually used**:
+   `nLowpass = round(lowpassfreq / 100)`, capped at 255, one byte (`libmp3lame/VbrTag.c` ~L623, L785). A tag saying
+   20.5 kHz with a measured cut-off at 16 kHz means the file was re-encoded from a lossy source.
 4. **Fake hi-res:** a "24-bit" file whose samples are all multiples of 256, i.e. the low 8 bits are always zero, is
    padded 16-bit. A 88.2/96 kHz file with nothing above 22.05/24 kHz is upsampled. Both checks are exact and cheap,
    and directly protect the "lossless ≥ 16/44.1" filter semantics (SRCH-*).
@@ -484,12 +518,138 @@ shows either).
 
 ## 11. Implications for Selecta
 
-TODO.
+### 11.1 Recommendations (inputs to ADR-003 and ADR-007)
+
+1. **Waveform style (closes OQ-6).** The default "Pioneer" preset combines a **stacked single-sided overview** with a
+   **layered mirrored detail view**: brown low∩mid overlap, white highs in front at 85 % alpha, colours from §2.1.
+   Keep the mock's Layered / Stacked / Lanes as alternatives for the detail view only. Update PREV-2's wording:
+   "stacked Pioneer-style" is true for the overview; the zoomed view is layered.
+2. **Decode stack:** FFmpeg (libavcodec decoders everywhere). Use libavformat for complete files, and for growing files
+   use an `AVIOContext` that reports `seekable = 0` until complete, plus Selecta's own frame/byte index for seeking
+   (§5.3–5.4). Keep dr_libs as a possible fallback. Do not use `QMediaPlayer` for previews.
+3. **Playback:** an `AudioOutput` interface. On macOS, a CoreAudio AUHAL implementation with latency-compensated
+   timestamps (needed for Bluetooth headphones). Elsewhere, `QAudioSink` with the Qt 6.11 callback API. The playhead
+   is extrapolated per vsync (Mixxx's `VisualPlayPosition` pattern).
+4. **Progressive order:** M5 ships "play when complete" first. Then progressive for WAV/AIFF → MP3 → FLAC → M4A
+   fast-start, each behind a flag with a fuzzed index builder. M4A with `moov` at the end: preview only after the
+   download.
+5. **Analysis:** mono, LR4 crossovers (default 200 Hz / 2.5 kHz, named constants), peak + RMS per band at
+   **150 columns/s**, √-companded `uint8`, display curve and per-track gain at draw time. Overview derived from detail
+   (max of peaks). Chunked parallel decode + analysis to meet < 300 ms. Previews analysed progressively during the
+   download.
+6. **Cache:** versioned binary blob keyed by content hash. 6 bytes × 150/s ≈ **324 KB per 6 min raw** (~100–200 KB
+   compressed). Either relax PREV-8's "a few KB" for previews, or keep a 3.6 KB overview long-term and full detail
+   LRU-bounded (decide in ADR-007).
+7. **Rendering:** start with QPainter + cached tiles in a plain QWidget, ticked by `QWindow::requestUpdate()`
+   (CVDisplayLink). Move to `QRhiWidget` + fragment shader only if profiling demands it. One pure layering function
+   (§8.1) for CPU, GPU and tests.
+8. **Quality checks (PREV-9):** spectral cut-off + LAME-tag lowpass cross-check + fake-24-bit and upsampling checks.
+   The first two are a P1 inspector badge with spectrogram. The fake-hi-res checks are exact and cheap: run them on
+   every analysed file. Label results "likely", never "fake".
+9. **BPM/key (P2):** qm-dsp (BPM) + libKeyFinder (key). Both GPL-compatible and proven in Mixxx.
+
+### 11.2 Proposed defaults
+
+| Setting | Default | Note |
+|---|---|---|
+| Detail column rate | 150 /s | Same as Pioneer `PWV3/5/7` |
+| Crossovers | 200 Hz / 2.5 kHz, LR4 | Calibrate against rekordbox (§12) |
+| Display range | −48 dBFS … 0 dBFS | Tune on the mock |
+| High-band overlay alpha | 0.85 | Measured from the rekordbox screenshot |
+| Colours | low `#0055E1`, mid `#FFA600`, overlap `#B36607`, high `#FFFFFF`, background `#000000` | Close to rekordbox; final values on the mock |
+| Detail zoom | ~8 s across the view; ×2 steps; snapped to whole device px per frame | |
+| Playback ring buffer | 150 ms | Seek latency ≈ ring + decode preroll |
+| Preview `probesize` / `analyzeduration` | 1 MB / 1 s | Must skip big ID3v2/PICTURE blocks |
+| MP3 seek preroll | 9 frames | Mixxx |
+| AAC seek preroll | 2,112 samples | Mixxx / Apple TN |
+| Cut-off badge threshold | Lossless with cut-off ≤ 19 kHz; MP3 "320" with cut-off ≤ 17.5 kHz | "Likely transcode" |
+
+### 11.3 Decisions to make
+
+- **D1.** PREV-8 cache size: full detail (≈ 0.1–0.3 MB/track) vs overview-only for old entries.
+- **D2.** Match rekordbox's band look by calibration (requires the maintainer's rekordbox 7 and an export) vs an
+  independent LR4 design. Calibration is cheap; recommended.
+- **D3.** CoreAudio-direct output on macOS from day one (more code, correct latency) vs `QAudioSink` first. Recommended:
+  `QAudioSink` callback API for M5's first cut, CoreAudio before v1.0, or immediately if Bluetooth offset is visible.
+- **D4.** Whether the overview should show the not-yet-downloaded part as estimated (blank, hatched) or not at all.
 
 ## 12. Open questions and things to verify experimentally (local test server)
 
-TODO.
+1. **Calibrate against rekordbox 7 (maintainer, offline):**
+   - Generate a synthetic file with ffmpeg: 1/3-octave sine tones 31.5 Hz–16 kHz at −12 dBFS, 4 s each with 1 s
+     silence, plus a 20 Hz–20 kHz log sweep and pink noise.
+   - Analyse it in rekordbox 7 with 3Band on, export to a USB folder, and read `PWV6`/`PWV7` from `ANLZ0000.2EX` (a
+     ~50-line parser, or pyrekordbox).
+   - Fit each band's frequency response and the byte → height mapping. This settles the crossovers, the scaling
+     (linear vs log) and what `PWVC` is.
+   - No network involved.
+2. **Growing-file playback on the local test network:** throttle a test peer's upload (e.g. 200 KB/s) and check
+   time-to-first-audio per format, buffering behaviour, seeking within and beyond the prefix, and cancel-on-skip. Use
+   files with 0 B, 300 KB and 5 MB ID3v2/PICTURE blocks, WAV with `LIST` before `data`, AIFF with `COMM` after
+   `SSND`, M4A with and without faststart, and FLAC with and without SEEKTABLE.
+3. **Prove the FFmpeg tail-read pitfalls** with a test `AVIOContext` that logs read offsets (§5.3). Assert that no
+   read beyond `available` happens while `seekable = 0`.
+4. **ProMotion:** does a Qt 6.11 Widgets window get 120 Hz `UpdateRequest`s from CVDisplayLink on a MacBook Pro?
+   Measure the frame interval and CPU cost of the QPainter tile path at 2× DPR.
+5. **Latency:** measure the playhead offset on built-in speakers, a USB interface and AirPods with `QAudioSink` vs
+   AUHAL (clap test with a microphone, or a loopback cable).
+6. **Analysis speed with the real pipeline:** libavcodec in-process, 8-way chunked, on M-series. Target < 150 ms for a
+   6-min MP3 320 (the CLI proxy gave ~130 ms).
+7. **How common is M4A with `moov` at the end on Soulseek?** Only measurable on the live network. Defer to a
+   maintainer-run session: count `moov` position on completed M4A downloads, no extra traffic.
+8. **PWVC semantics** and whether rekordbox normalises band heights per track (from experiment 1).
+9. Does rekordbox's **overview** use the same values as `PWV6`, or does rekordbox 7 recompute from `PWV7`? Compare
+   screenshots of the same synthetic file (cosmetic).
 
 ## 13. Sources
 
-All accessed 2026-10-19. TODO.
+All accessed 2026-10-19.
+
+Pioneer 3Band and rekordbox analysis files:
+- Deep Symmetry, crate-digger — `doc/modules/ROOT/pages/anlz.adoc`, `src/main/kaitai/rekordbox_anlz.ksy` (commit
+  `7c9d535`): ANLZ tag formats `PWAV…PWV7`; https://github.com/Deep-Symmetry/crate-digger.
+  Published as https://djl-analysis.deepsymmetry.org/rekordbox-export-analysis/anlz.html.
+- Deep Symmetry, dysentery — `doc/modules/ROOT/pages/track_metadata.adoc` (commit `f62a24b`): 3-band request and
+  response, entry byte order; https://github.com/Deep-Symmetry/dysentery.
+- dysentery issue #33 "Figure out new color waveforms used by CDJ-3000" (2021–2025), including nudge's screenshots
+  (rekordbox 6 3Band) and brunchboy's rendering notes; https://github.com/Deep-Symmetry/dysentery/issues/33.
+- nudge, gist `eca9f07ff684955b8a9bb5944614c3d7` (`anlz2.py`): PWV6 stacked preview with coefficients;
+  https://gist.github.com/nudge/eca9f07ff684955b8a9bb5944614c3d7.
+- Deep Symmetry, beat-link (commit `855d0bd`, 2026-10-07): `WaveformFinder.java` (`ThreeBandLayer` colours),
+  `WaveformPreview.java`, `WaveformDetail.java`, `WaveformPreviewComponent.java`, `WaveformDetailComponent.java`;
+  https://github.com/Deep-Symmetry/beat-link.
+- pyrekordbox (commit `2dcb57f`): `docs/source/formats/anlz.md`, `pyrekordbox/anlz/tags.py`;
+  https://github.com/dylanljones/pyrekordbox.
+- rekordcrate (commit `14d54ed`): `src/anlz.rs` (PWV6/7 columns, PWVC "calibration"), `src/setting.rs` (waveform colour
+  setting `TriBand = 0x04` "3Band"); https://github.com/Holzhaus/rekordcrate.
+- bbc/audiowaveform issue #210 (2025): community sine-sweep estimate of rekordbox bands;
+  https://github.com/bbc/audiowaveform/issues/210.
+- Pioneer DJ, CDJ-3000 product page (3Band waveform description);
+  https://www.pioneerdj.com/en/product/dj-players-turntables/cdj-3000-w/.
+- AlphaTheta Help Center, "What is the color of the waveform (BLUE/RGB/3Band) that can be displayed on the hardware
+  display?"; https://support.alphatheta.com/en-US/articles/8113178546201.
+- rekordbox FAQ (3Band and analysis data); https://rekordbox.com/en/support/faq/v7/.
+
+Mixxx (commit `44dc9ed`, 2026-10-16, GPL-2.0-or-later; https://github.com/mixxxdj/mixxx):
+- `src/analyzer/analyzerwaveform.{h,cpp}`, `src/waveform/waveform.{h,cpp}`, `src/proto/waveform.proto`,
+  `src/library/dao/analysisdao.cpp`, `src/waveform/renderers/allshader/waveformrenderer{filtered,rgb}.cpp`,
+  `res/shaders/stackedsignal.frag`, `src/waveform/widgets/allshader/waveformwidget.cpp`,
+  `src/waveform/visualplayposition.{h,cpp}`, `src/sources/soundsourceffmpeg.cpp`, `lib/qm-dsp`, `CMakeLists.txt`
+  (libKeyFinder).
+
+Decoding, containers, encoders:
+- FFmpeg (commit `f91b54f`, 2026-10-19): `libavformat/mp3dec.c`, `id3v1.c`, `wavdec.c`, `aiffdec.c`, `flacdec.c`,
+  `seek.c`, `mov.c`, `aviobuf.c`; https://github.com/FFmpeg/FFmpeg.
+- dr_libs (commit `dfe8377`): `dr_wav.h` (AIFF since v0.13.9), `dr_mp3.h`, `dr_flac.h`;
+  https://github.com/mackron/dr_libs.
+- LAME (lameproject/lame `1f5cc94`): `libmp3lame/lame.c` (`optimum_bandwidth`, VBR lowpass tables),
+  `libmp3lame/VbrTag.c` (LAME tag lowpass byte); https://github.com/lameproject/lame.
+- Qt 6.11.1 headers (local Homebrew install): `QtMultimedia/qaudiosink.h`, `qmediaplayer.h`, `qplaybackoptions.h`,
+  `QtWidgets/qrhiwidget.h`, `QtQuick/qquickrhiitem.h`.
+- Qt docs, QAudioSink (callback `start()` since 6.11; `framesFree()` since 6.10); https://doc.qt.io/qt-6/qaudiosink.html.
+- qtbase 6.11 sources: `src/plugins/platforms/cocoa/qcocoawindow.mm`, `qcocoascreen.mm`,
+  `src/widgets/kernel/qwidgetrepaintmanager.cpp`; https://github.com/qt/qtbase/tree/6.11.
+
+Measurements (this machine, 2026-10-19): Apple M2 Pro, macOS (Darwin 27), FFmpeg 9.0.2 CLI with libmp3lame, Apple
+clang 21. The test signals were synthetic, generated with ffmpeg `lavfi` (pink noise + 55 Hz pulsed sine + 880 Hz
+sine). The scripts live outside the repo, in the agent scratchpad.
