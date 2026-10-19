@@ -540,14 +540,44 @@ Never verify a limit by approaching it on the live network. Local-network experi
 
 ## 11. Sources
 
-All accessed 2026-10-19.
+All accessed 2026-10-19. Repositories were shallow-cloned read-only into `local/research-clones/etiquette/`.
+
+### Official (Soulseek, LLC)
 
 | Source | Used for |
 |---|---|
-| https://www.slsknet.org/news/node/681 (Rules) | Third-party client clause, bots, 5 clients per IP, admin powers |
-| https://www.slsknet.org/news/node/682 (Terms of Use) | Flooding/probing prohibitions, account termination |
-| https://www.slsknet.org/news/faq-page (FAQ) | Username recycling, IP bans, non-sharer policy |
-| https://www.slsknet.org/news/node/523 (Nir, 2012) | SoulseekQt empty-share warning, refusal of auto-bans |
-| nicotine-plus/nicotine-plus @ f3b9d4d, `doc/SLSKPROTOCOL.md` | Version registry, login rejection reasons, wishlist interval, excluded phrases, denial strings |
-| fiso64/sockseek (formerly slsk-batchdl/sldl) @ ff9a3ac, README + issues #12, #95, #128, #163, #165 | Search limiter origin, ban reports, banned terms, share-count spoofing dispute |
-| aioslsk @ a90ad82, `src/aioslsk/client.py` | Login version 175/1 |
+| https://www.slsknet.org/news/node/681 — Rules | Third-party client clause, bots/scripts, 5 clients per IP, admin powers, "privilege; not a right" |
+| https://www.slsknet.org/news/node/682 — Terms of Use | §2 accounts, §8 termination, §12(b) no probing/testing, §12(c) no flooding/spamming |
+| https://www.slsknet.org/news/faq-page — FAQ | Username recycling after 30 days, IP bans, non-sharer policy, "dos and don'ts" quote |
+| https://www.slsknet.org/news/node/523 — Nir, "Empty share warnings, fixes and more" (2012-05-11) | Refusal of auto-bans, background browse + warning, place in line |
+| https://www.slsknet.org/news/changelog — SoulseekQt changelog (2012–2026) | Per-user upload limit on by default, MB-per-user limit, retry policy, 10 000-result cap, one-character tokens, too-many-files handling |
+
+### Issue trackers, discussions, forums
+
+| Source | Used for |
+|---|---|
+| https://github.com/fiso64/sockseek/issues/12 (2023-11) | Origin of 34 searches / 220 s; 30-minute bans; `--random-login` |
+| https://github.com/fiso64/sockseek/issues/95 (2025-04) | Bans despite the limiter; 1 search/min and IP change as "workaround" |
+| https://github.com/fiso64/sockseek/issues/128 (2025-08) | Server-side substring filtering of queries |
+| https://github.com/fiso64/sockseek/issues/163, https://github.com/fiso64/sockseek/issues/165 (2026-03) | Share-count spoofing dispute; Rules quoted by Nicotine+ maintainers; "bad faith" |
+| https://github.com/mrusse/soularr/discussions/142 (2025-11-10) | Verbatim ban message; regular bans of an automated searcher |
+| https://github.com/allquiet-hub/Lidarr.Plugin.Slskd/issues/19 (2026-10-03) | Verbatim ban message (second independent report) |
+| https://github.com/nicotine-plus/nicotine-plus/discussions/3475 (2025-09-09) | Official donation/privileges text; no other known servers; forum moved to Google Groups |
+| https://github.com/nicotine-plus/nicotine-plus/issues/3342, /3425, /2002 | Maintainers on temporary bans ("hammering the server"), PM-spam bans from a leecher plugin |
+| https://groups.google.com/g/soulseek-discussion/c/N6L0qwMNFYg (2023-11-25) | Unanswered request for the search limits |
+| https://groups.google.com/g/soulseek-discussion/c/t_L_SwzPbzk (2023-04) | Hearsay: "30-minute" search ban that lasted months |
+| https://groups.google.com/g/soulseek-discussion/c/AktBq4ehYGI (2025-04) | Repeated bans for automatic warning PMs |
+| https://groups.google.com/g/soulseek-discussion/c/yH8YGNcxH84 (2025-05) | Nir Arbel: empty-share message once per user, only on download attempts |
+
+### Source code and project documentation
+
+| Repository @ commit (date) | Files | Used for |
+|---|---|---|
+| nicotine-plus/nicotine-plus @ f3b9d4d (2026-10-18), GPL-3.0-or-later | `doc/SLSKPROTOCOL.md`; `pynicotine/config.py`, `search.py`, `slskproto.py`, `users.py`, `uploads.py`, `downloads.py`, `transfers.py`, `privatechat.py`, `pluginsystem.py`, `plugins/leech_detector/__init__.py` | Version registry, rejection reasons, denial strings, wishlist and excluded phrases, reconnect backoff, upload defaults and queue logic, queue-limit learning, `UploadFailed`/`Cancelled` handling, leech detection, chat throttling |
+| fiso64/sockseek (formerly slsk-batchdl / sldl) @ ff9a3ac (v3.0.7, 2026-10-15) | `README.md`; `Sockseek.Core/Settings/EngineSettings.cs`; `Sockseek.Core/Search/RateLimitedSemaphore.cs`, `Searcher.cs` | 34/220 s defaults, fixed-window limiter, concurrency, `bannedTerms` evasion |
+| slskd/slskd @ 6a450e4 (2026-10-18) | `src/slskd/Core/Options.cs`, `Core/ConnectionWatchdog.cs`, `Common/Compute.cs`, `Application.cs`, `Transfers/Types/TransferStateCategories.cs`, `Transfers/Uploads/UploadService.cs`, `Search/API/Controllers/SearchesController.cs`; `docs/config.md` | Reconnect backoff, upload groups and limits, failure counting, retry defaults, search API behaviour, default server endpoint |
+| jpdillingham/Soulseek.NET @ c07c187 (2026-10-11) | `README.md`; `src/Options/SoulseekClientOptions.cs`, `src/Options/SearchOptions.cs`; `src/SoulseekClient.cs` | Excluded phrases statement, concurrency and search defaults, per-user upload concurrency |
+| JurgenR/aioslsk @ a90ad82 (2026-10-11), GPL-3.0-or-later | `src/aioslsk/client.py`, `settings.py`; `docs/source/SOULSEEK.rst`; `tests/e2e/mock/` | Version 175/1, server notification PMs, restricted-connection message, endpoints, cancel flow, mock server |
+| soulfind-dev/soulfind @ 5a256f5 (2026-10-15), GPL-3.0-or-later | `README.md`; `src/defines.d`; `src/server/{server,user,msghandler,cmdhandler,messages}.d`; `src/setup/setup.d` | Local server capabilities, ban/kick semantics, search filters, intervals, limits, official-server comments |
+| mrusse/soularr @ 2037399 (2026-10-06) | `config.ini`, `soularr.py`, `README.md` | `minimum_search_interval`, search pacing |
+| jackBonadies/SeekerAndroid @ ff1dcc6 (2026-10-11) | `Seeker/SeekerApplication.cs` | Default server host |
