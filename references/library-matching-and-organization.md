@@ -204,6 +204,14 @@ Selecta has to combine their ideas. Code read at the commits listed in Sources.
 - **Skip existing** (`TrackSkipper`): *name* mode = local filename contains the title and the relative path contains
   the artist; *tag* mode = equal titles (lower-cased, spaces removed) and local artist contains the wanted artist.
   Implemented as a linear scan per lookup — fine for a CLI, too slow for per-result badges.
+- **Same release across peers by duration signature** (`Search/SearchProjection/IncrementalAlbumAggregateProjector.cs`):
+  remote album folders are grouped as one release when they have the **same number of audio files and their sorted
+  track lengths agree within ±3 s each** (`AggregateLengthTol = 3`), bucketed by (track count, length band of the
+  shortest track) for speed; names are ignored except for one-track folders (artist and title containment). A
+  name-independent album fingerprint — directly reusable for Selecta's album ownership (§8) and grouped results view.
+- Its `InferTrackTests.cs` cases (`101 Artist - Title`, `Artist - 01 Title`, `1-01 Artist - Song`, `Some_Artist -
+  Some_Title`, em-dash separators, `Title - Artist` reversal, `(Daft Punk - One More Time) Robin Schulz Remix`) are a
+  good seed list for our parser tests (re-expressed, not copied).
 - Licence is AGPL-3.0: ideas only, no code copying into Selecta (GPLv3 §13 permits combination, but we have no reason to).
 
 ### 3.4 soularr (`soularr.py`)
@@ -266,7 +274,8 @@ Every stored key carries a `norm_version`; bumping the rules triggers a backgrou
    `[Free Download]`, `(Premiere)`); extract-and-strip quality tags (`[FLAC]`, `[FLAC 24-96]`, `(320)`, `[V0]`, `WEB`,
    `Vinyl`, `CD`), catalogue numbers (`[ABC123]`, `(ABC 123)`: letters+digits in brackets), years (`(2019)`, `[2019]`).
 4. **Track/disc prefix**: `^(?:(\d{1,2})[-.](\d{1,3})|(\d{1,3}))(?:\s*[-.)_]\s*|\s+)` → (disc, track); vinyl
-   `^([A-H])(\d{1,2})(?:\s*[-.)_]\s*|\s+)` → side/position. Strip only if (a) siblings form a sequence, or (b) the number
+   `^([A-H])(\d{1,2})(?:\s*[-.)_]\s*|\s+)` → side/position; a 3-digit prefix whose siblings run `101…1nn`, `201…2nn`
+   is disc × 100 + track. Strip only if (a) siblings form a sequence, or (b) the number
    is followed by a separator *and* the remainder still has ≥ 1 word. Keep numeric titles (`1999.mp3`, `22 - …`
    with no siblings) — see tests T10/T11.
 5. **Segment** the body on spaced dashes (` - `). Candidate patterns, most specific first, validated across the
@@ -399,7 +408,13 @@ guard ("this single is on an album you own").
    their parent (Lidarr's `(dis[ck]|cd)[\W_]*\d` sibling rule, Picard's `CD|DVD|Disc n` rule); artist from the
    constant file segment if the folder has none; VA if the most common artist covers < 25 % of files or > 75 % of
    artist values are distinct (Lidarr `IsVariousArtists`), or if the folder/artist says `VA`/`Various Artists`.
-2. **Retrieve** local albums by `album_key = artist_key ␟ album_title_key` (exact), else by album-title tokens.
+2. **Retrieve** local albums by `album_key = artist_key ␟ album_title_key` (exact), else by album-title tokens, **and
+   by duration signature**: the sorted list of track durations (seconds) of every local album, indexed by (track
+   count, band of the shortest duration) like Sockseek's cross-peer grouping (§3.3). A remote folder with the same
+   track count whose sorted durations all agree within ±3 s is almost certainly the same release (for ≥ 5 tracks),
+   even when its names are unparseable, transliterated or in another language. Name evidence then only confirms.
+   Same signature with fewer/more tracks (bonus tracks, deluxe editions) → compare as a subset: "k of n durations
+   match".
 3. **Map tracks**: cost = track distance (§9 without album term) + 0.1 if track numbers differ; solve with the
    Hungarian algorithm (beets `lap.lapjv`, Lidarr `Munkres.cs`). n ≤ 40, so an O(n³) implementation is trivial.
 4. **Album score**: weighted like beets — artist 3, album title 3, year 1 (±1 year free), track mapping mean 2,
@@ -440,6 +455,40 @@ format above the filing target (e.g. FLAC when the collection is MP3 320) is sti
 
 Badge precedence on a result (several can show; the first is the headline): In collection (exact) → Upgrade → Likely
 in collection → In Inbox → Queued → Downloaded this session → Downloaded in a past session → Other version owned.
+
+### 9.1 Query-guided matching (Batch BATCH-1…6, Wishlist SRCH-14)
+
+Here the target is known ("Artist – Title (Mix)") and results must be *ranked*, which is Sockseek's problem; its
+"identity beats quality" ordering (§3.3) is the right shape.
+
+**Tracklist line parsing (BATCH-1).** Same normaliser and version classifier as §4–5, plus line clean-up: leading
+numbering (`01.`, `1)`, `#1`), timestamps (`12:34`, `[1:02:03]`), bullets; a trailing `[LABEL]` after the title or
+version → label hint (1001tracklists style); unidentified tracks `ID - ID`, `Artist - ID` → marked "unidentified",
+never searched; mashups `A w/ B` → flagged (P1: split into two lines). De-duplicate on `exact_key`. Lines owned at
+tier ≥ likely are skipped by default (BATCH-3) with the matched item shown.
+
+**Query text.** Artist + title words, plus the remixer for remix-class versions; leave out generic version words
+(`original`, `mix`, `extended`, `radio`, `edit`) — the version is enforced by matching, not by the query, so a file
+named without "(Original Mix)" is still found. (Search syntax and server-side exclusions: see
+`references/soulseek-protocol.md`.)
+
+**Hard identity filters** (per line, on top of the preset's quality filters): every title token present in the
+filename (boundary-aware, normalised — Sockseek's strict title); artist present somewhere in the path (strict
+artist) when the line has one; version compatible (§5) — a line without a version accepts `UNSPECIFIED`/`ORIGINAL`
+only (Sockseek's bracket check, generalised).
+
+**Duration consensus.** Lines rarely carry a duration, but the results do: cluster the durations of all
+identity-passing results (±3 s). Clusters usually correspond to versions (e.g. 3:31 radio edit vs 6:48 extended);
+explicitly labelled results name their cluster, which then labels the unlabelled ones and exposes mislabelled
+files (a "(Extended Mix)" in the 3:31 cluster). Medium confidence — validate in experiment E3.
+
+**Ranking:** identity (version exact > compatible) → duration in the consensus cluster of the wanted version →
+preset quality → availability (free slot, queue, speed) → peer fairness (fewest downloads from that peer, FAIR-5) →
+deterministic tie-break.
+
+**"Confident" (BATCH-6):** the best candidate passes all hard filters, its version is exact (or both unspecified),
+its duration sits in a consensus cluster supported by ≥ 3 independent peers, it satisfies the preset, and no other
+cluster claims the same version. Anything else goes to review.
 
 ## 10. Speed: indexing 50k–200k tracks
 
