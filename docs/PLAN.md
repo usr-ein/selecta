@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.3 — tracks [PRD.md](PRD.md) v0.3 |
+| **Status** | Draft v0.4 — tracks [PRD.md](PRD.md) v0.4 |
 | **Date** | 2026-10-19 |
-| **Inputs** | PRD (decisions D1–D18), research notes in [../references/](../references/) (in progress), maintainer Q&A rounds |
+| **Inputs** | PRD (decisions D1–D29), research notes in [../references/](../references/) (in progress), maintainer Q&A rounds |
 
 This plan describes **how** Selecta gets built: architecture, repository layout, milestones, the safe-development
 setup, testing, risks, and the decisions still to record. Requirement IDs (e.g. `SRCH-3`) refer to the PRD.
@@ -40,7 +40,7 @@ setup, testing, risks, and the decisions still to record. Requirement IDs (e.g. 
 | Encoding | LAME (MP3) via FFmpeg or directly; FLAC/AIFF/WAV via FFmpeg | **ADR-003.** |
 | Tags | TagLib 2.x | Vorbis / ID3v2.3 / ID3v2.4 / MP4 / RIFF / AIFF. |
 | Credentials | QtKeychain → macOS Keychain | Also holds the Spotify client ID and secret (PRD META-1). |
-| Metadata & previews | Spotify Web API (own Qt client, or the `lib` of spotify-qt if its licence fits); official 30-s preview clips (Deezer, iTunes) | Requests go through the governor. **ADR-011.** |
+| Metadata & previews | Spotify Web API (own Qt client, or the `lib` of spotify-qt if its licence fits); official 30-s preview clips (Deezer, iTunes); full-track preview audio through the user's installed yt-dlp, run with `QProcess` (PRD D26) | Requests go through the governor. yt-dlp is optional, never bundled or reimplemented. **ADR-011.** |
 | Port mapping | miniupnpc + libnatpmp (P1) | |
 | Dependencies | Homebrew locally; reproducible pins in CI (vcpkg or pinned brew) | **ADR-004.** |
 
@@ -60,7 +60,8 @@ src/
   audio/       Decoder, growing-file reader, playback, 3-band waveform analysis, spectrum analysis.
   convert/     Transcoder, metadata mapping, artwork finder/resizer, quality advisor (warning matrix).
   meta/        Metadata and preview services: Spotify Web API client and matcher, 30-second preview clips
-               (Deezer, iTunes), later MusicBrainz/Discogs. Every request goes through the governor.
+               (Deezer, iTunes), the yt-dlp preview runner (external process, preview cache only),
+               later MusicBrainz/Discogs. Every request goes through the governor.
   app/         Qt Widgets UI: main window, sidebar, views, item models, inspector, player,
                preferences, platform glue (Keychain, notifications, Dock, Objective-C++ touches).
 tools/
@@ -111,7 +112,7 @@ There is no API to modify, move or delete a file inside a collection root. Tests
 | Database | `~/Library/Application Support/Selecta/selecta.sqlite3` |
 | Preview cache, analysis cache | `~/Library/Caches/Selecta/{previews,analysis}/` |
 | Inbox | `~/Music/Selecta/Inbox/{Singles,Albums}/` (configurable) |
-| Lossless originals converted at filing | Moved to the macOS Trash once the converted copy is verified (PRD D11) |
+| Lossless originals converted on arrival | Moved to the macOS Trash once the converted file is verified (PRD D11, D29) |
 | Logs | `~/Library/Logs/Selecta/` |
 
 ## 3. Repository layout (target)
@@ -139,6 +140,9 @@ Every milestone lists its scope, the PRD requirements it closes, and an exit cri
 test network, ranks files against the release (length, then name), and previews results with the waveform. M4 (library) and M6 (converter) are parallel
 tracks; they must not delay that slice.
 
+**Then the main flow (PRD D27): Get tracks.** M6 converts and tags downloads on arrival, and M8 builds Get tracks on
+top of search and preview. M8 doesn't wait for sharing (M7); sharing must land before the live-network beta (M9).
+
 ```mermaid
 flowchart LR
   M0[M0 Definition & mock] --> M1[M1 Foundations]
@@ -150,17 +154,18 @@ flowchart LR
   M1 --> M6[M6 Converter & filing]
   M3 --> M7[M7 Sharing & fairness]
   M4 --> M7
-  M5 --> M8[M8 Batch, wishlist, browse, PMs]
+  M3 --> M8[M8 Get tracks, wishlist, browse, PMs]
+  M5 --> M8
   M6 --> M8
-  M7 --> M8
-  M8 --> M9[M9 Live-network beta]
+  M7 --> M9[M9 Live-network beta]
+  M8 --> M9
   M9 --> M10[M10 v1.0]
 ```
 
 ### M0 — Definition and design *(now)*
-- PRD v0.2 drafted with the Q&A decisions. ✅
+- PRD drafted with the Q&A decisions; v0.4 adds the Get tracks flow (D26–D29). ✅
 - Research team: 8 notes in `references/`. ⏳ In progress.
-- **Mock** (local HTML in `mock/`, see its README) ✅ validated by the maintainer (PRD D25). Release-first search, quick clips, naming templates and integrations are folded in.
+- **Mock** (local HTML in `mock/`, see its README) ✅ validated by the maintainer (PRD D25). Release-first search, quick clips, naming templates and integrations are folded in, then the Get tracks home screen, yt-dlp previews, conversion on arrival and typo-tolerant matching.
 - ADR-001 … ADR-010 drafted from the research (section 8). PRD v1.0 with research-based defaults (limits, caps, TTLs).
 - **Exit:** the maintainer validates the mock and PRD v1.0; the ADRs are accepted.
 
@@ -188,13 +193,15 @@ flowchart LR
   grouped/flat result models, inspector, filtered-out breakdown, budget indicator.
 - Release-first search: release lookup (Spotify via PKCE, or Deezer/MusicBrainz without keys), the release card,
   length-based ranking and "Only this release" (SRCH-17, SRCH-18, META-2).
-- Closes: SRCH-1…13, SRCH-16…18, META-2, SAFE-4, SAFE-5, CACHE-1 (search part).
+- Typo-tolerant matching (SRCH-19): OSA word similarity, position-independent tokens, the corrected network query and
+  "Search wider", with the test suite of `references/library-matching-and-organization.md` §17.
+- Closes: SRCH-1…13, SRCH-16…19, META-2, SAFE-4, SAFE-5, CACHE-1 (search part).
 - **Exit:** GUI search on the local network; property tests prove strict mode never shows a non-matching result.
 
 ### M4 — Library and Inbox *(library track — can run in parallel with M2)*
 - Collection scanner (TagLib) with FSEvents, index (FTS5), remote-path parser and matcher (test suite from
   `references/library-matching-and-organization.md`), ownership and upgrade badges.
-- Inbox, filing (move-only first; conversion arrives in M6), FileOps safety layer, supersede rules, sessions and history.
+- Inbox, filing (filing only moves; conversion and tagging on arrival come in M6), FileOps safety layer, supersede rules, sessions and history.
 - Closes: LIB-1…5, DL-3…9, DL-11.
 - **Exit:** badges are correct on the synthetic corpus; tests prove filed files are never modified.
 
@@ -202,14 +209,17 @@ flowchart LR
 - FFmpeg decoder, growing-file reader, playback engine, 3-band analyzer + cache, waveform widget (zoomed + overview,
   buffered-range overlay), keyboard audition, preview cache, Keep/Discard, cancel-on-skip.
 - Quick previews from official 30-second clips (META-5), so most auditions cost peers nothing.
-- Closes: PREV-1…8, META-5.
+- The yt-dlp preview source (PREV-11, PREV-12): find the installed binary, run it with `QProcess` (argument list, no
+  shell, timeout, one at a time), pick the result within ±3 s of the release, cache by release. Tests use a fake
+  yt-dlp script; CI never runs the real one.
+- Closes: PREV-1…8, PREV-11/12, META-5.
 - **Exit:** progressive preview works on the local network; analysis of a 6-minute track < 300 ms; scrolling is smooth at 60 fps.
 
 ### M6 — Converter and filing formats *(media track — parallel)*
 - Transcoder (FFmpeg + LAME), metadata mapper with golden-file tests, artwork finder/resizer, quality advisor,
-  filing with conversion (default MP3 320 CBR, ID3v2.3), output verification, Converter view.
-- Spotify sign-in and metadata supplement at filing (META-1, META-4).
-- Closes: CONV-1…8, DL-5 (with conversion), META-1/4.
+  conversion and tagging on arrival in the Inbox (default MP3 320 CBR, ID3v2.3, D29), output verification, Converter view.
+- Spotify sign-in and tags from the matched release on arrival (META-1, META-4).
+- Closes: CONV-1…8, DL-3 (conversion and tagging), META-1/4.
 - **Exit:** golden tests pass; a manual rekordbox 7 import check passes on a sample set.
 
 ### M7 — Sharing, uploads and fairness
@@ -218,12 +228,14 @@ flowchart LR
 - Closes: SHARE-1…5, FAIR-1…5.
 - **Exit:** a test peer can browse, search and download from Selecta on the local network; caps are enforced in tests.
 
-### M8 — Batch, wishlist, browse, messages
-- Batch view (parsing, preset, paced queue, review-first matching, approve-all-confident), wishlist, browsing
-  user shares, private messages, Dock badge and notifications.
-- Spotify playlist import into Batch (META-3) and "Open in Spotify / YouTube Music" (META-6).
-- Closes: BATCH-1…8, SRCH-14/15, BRWS-1/2, NET-7/8, UI-6, META-3/6.
-- **Exit:** a 100-line batch completes on the local network within budget (fake clock in tests) with the review flow.
+### M8 — Get tracks, wishlist, browse, messages
+- **Get tracks first**, as the home screen (D27, UI-8): parsing, Spotify playlist import (META-3), the preset, paced
+  finding, release-first matching, pre-ticked confident matches, preview, Get.
+- Then the wishlist, browsing user shares, private messages, Dock badge and notifications, and "Open in Spotify /
+  YouTube Music" (META-6).
+- Closes: BATCH-1…9, UI-8, SRCH-14/15, BRWS-1/2, NET-7/8, UI-6, META-3/6.
+- **Exit:** a 100-line list completes on the local network within budget (fake clock in tests), and every Ready line
+  arrives in the Inbox as a tagged MP3 320 with its cover.
 
 ### M9 — Live-network beta *(maintainer-run, manual)*
 - Pre-flight checklist (section 5.5), dedicated account, conservative limits, a 1–2 week observation period, log review.
@@ -305,10 +317,10 @@ one manual download · observe for bans/denials · escalate gradually.
 | ADR-005 | Persistence: schema strategy, migrations, caches | library-matching-and-organization.md |
 | ADR-006 | Governor limits and ceilings (numbers) | network-etiquette-and-safe-development.md |
 | ADR-007 | Waveform analysis and rendering | audio-preview-and-waveform.md + mock feedback |
-| ADR-008 | Remote-path parsing and matching algorithm | library-matching-and-organization.md |
-| ADR-009 | File-safety model, Inbox and filing | PRD D2/D3/D7 |
+| ADR-008 | Remote-path parsing and matching algorithm, typo tolerance | library-matching-and-organization.md (§17), PRD D28 |
+| ADR-009 | File-safety model, Inbox (conversion on arrival) and filing | PRD D2/D3/D7/D29 |
 | ADR-010 | Dependency licence policy (the licence itself is decided: GPL-3.0-or-later, PRD D14) | qt-app-architecture.md |
-| ADR-011 | Metadata and preview services: Spotify vs Deezer/MusicBrainz/Discogs, terms risk, credentials handling | metadata-and-preview-services.md |
+| ADR-011 | Metadata and preview services: Spotify vs Deezer/MusicBrainz/Discogs, the yt-dlp preview runner, credentials handling | metadata-and-preview-services.md, PRD D26 |
 
 ## 9. How work gets done
 

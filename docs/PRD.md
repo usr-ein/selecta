@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.3 — for review by the maintainer (question round 3 folded in) |
+| **Status** | Draft v0.4 — the Get tracks flow, yt-dlp previews and typo-tolerant matching folded in (D26–D29) |
 | **Date** | 2026-10-19 |
 | **Product** | Selecta — a native Soulseek client for DJs and collectors |
 | **Stack** | C++ / Qt 6, macOS-first, cross-platform, GPLv3 |
@@ -19,13 +19,23 @@ The raw brief is reproduced verbatim in [Appendix B](#appendix-b--raw-brief-verb
 Selecta is a free, open-source desktop client for the Soulseek peer-to-peer network, written in C++ with Qt 6 and
 released under the GPLv3. It runs on macOS first and builds on Linux and Windows.
 
-It is designed around one workflow, a DJ's digging session:
+It is designed around one workflow, **Get tracks** (D27): a list of tracks goes in, and tagged MP3 320 files come out.
 
-1. **Search** with strict quality filters ("MP3 = 320 kbps CBR", "lossless ≥ 16-bit/44.1 kHz").
-2. **Audition** results instantly, with a Pioneer-style 3-band waveform (low = blue, mid = orange, high = white) and fast scrubbing.
-3. **See at a glance** what you already own, what is waiting in your Inbox, and what you downloaded this session or before.
-4. **Collect** downloads in an **Inbox**, then **file** them into the collection in a configured format (generally MP3 320) with complete metadata and artwork.
-5. **Stay fair.** Searches are paced, downloads per peer are counted and capped, and your upload/download ratio is always visible.
+1. **List** the tracks you want: paste lines or a Spotify playlist link.
+2. **Match** each line to its release on Spotify (title, artists, length, ISRC, cover) before any network search.
+3. **Find** the best file on Soulseek for each line. Quality is strict, the length must be within ±3 s of the release,
+   and names are matched with typo tolerance. Searches are paced.
+4. **Preview** before committing, with a Pioneer-style 3-band waveform (low = blue, mid = orange, high = white). The
+   full track comes through the user's own yt-dlp, or from the peer's file.
+5. **Get** them. Each file lands in the **Inbox** as MP3 320 with Spotify tags in ID3v2.3 and the cover embedded, and
+   is then **filed** into the collection.
+
+Three things support that flow:
+
+- **Digging:** search with strict filters ("MP3 = 320 kbps CBR", "lossless ≥ 16-bit/44.1 kHz").
+- **Collection awareness:** what you already own, what is waiting in your Inbox, and what you downloaded before.
+- **Fairness:** searches are paced, downloads per peer are counted and capped, and your upload/download ratio is
+  always visible.
 
 It looks and behaves like a native Mac app, in light and dark appearance.
 
@@ -40,7 +50,7 @@ Existing clients (SoulseekQt, Nicotine+, slskd) are general-purpose. For a DJ/co
 - **There's no post-download pipeline.** Turning a FLAC into a properly tagged MP3 320 with ID3v2.3 artwork takes
   separate tools (XLD, dBpoweramp, Mp3tag, ffmpeg).
 - **There's no self-regulation.** How many files did I take from this peer today? Am I sharing back enough?
-- **Batch searching a tracklist** is manual, or done with command-line tools that can trip the server's search limits.
+- **Getting a tracklist** is manual, or done with command-line tools that can trip the server's search limits.
 
 ## 3. Users
 
@@ -62,10 +72,10 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | # | Goal |
 |---|---|
 | G1 | Find the right file in the right quality fast: strict filters, presets, sensible ranking. |
-| G2 | Audition before downloading: progressive preview, 3-band waveform, keyboard-driven. |
+| G2 | Audition before downloading: the full track through the user's yt-dlp or the peer's file, a 3-band waveform, keyboard-driven. |
 | G3 | Never download what you already have by accident: collection, Inbox and history awareness; upgrade detection. |
-| G4 | A clean pipeline: download → Inbox → (convert + tag) → file into the collection. |
-| G5 | Batch search a tracklist with one filter set, safely paced, review-first. |
+| G4 | A clean pipeline: download → convert and tag on arrival → Inbox → file into the collection (D29). |
+| G5 | **Get tracks:** a list in, tagged MP3 320s in the Inbox out; safely paced, with a preview before committing (D27). |
 | G6 | Fair and safe by construction: rate limits, per-peer counters and caps, visible ratio, real sharing. |
 | G7 | Feel native on macOS: system controls and font, light/dark appearance, accent colour, shortcuts, speed. |
 
@@ -75,9 +85,10 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 - Reading rekordbox, Apple Music or other DJ-software libraries; writing to rekordbox. The collection = folders on disk.
 - Windows/Linux packages (they must compile and pass unit tests in CI).
 - Mobile apps, web UI, headless daemon mode.
-- Fully automatic online tagging: metadata from online sources is applied only with confirmation (META-4).
-- Downloading or ripping audio from streaming services (YouTube, YouTube Music, Spotify and the like). Selecta
-  downloads only from Soulseek peers (D20).
+- Tagging from a guess. Tags come from the release a file was matched to (D29). A file with no matched release keeps
+  its own tags until the user picks a release (META-4).
+- Getting files from streaming services. Every file in the Inbox and the collection comes from a Soulseek peer
+  (D20). Preview audio from the user's own yt-dlp stays in the preview cache and is never filed or shared (D26).
 - Anything that circumvents the server's or peers' rules: multiple accounts, ban evasion, impersonating the official
   client, queue jumping.
 - Telemetry of any kind.
@@ -103,14 +114,15 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | Share | The folders a user makes available to others. |
 | Slot / queue | Uploaders serve a limited number of transfers at once (slots); others wait in their queue. |
 | Session | One run of Selecta, from launch to quit. Sessions are numbered and dated. |
-| Inbox | Selecta-managed staging area where downloads land before being filed. Selecta may modify and trash Inbox files. |
-| Filing | Moving (or converting) an Inbox item into the collection — the only way Selecta writes into the collection. |
+| Inbox | Selecta-managed staging area where downloads land, already converted and tagged, before being filed. Selecta may modify and trash Inbox files. |
+| Filing | Moving an Inbox item into the collection — the only way Selecta writes into the collection. Conversion and tagging already happened on arrival (D29). |
 | Collection | The user's music folders on disk. Read-only for Selecta, except for filing new files into it. |
 | Single | A track downloaded on its own. Filed into the collection's Singles folder. |
 | Album download | An explicit "download whole folder" of a remote release. Filed as one folder per album. |
 | Supersede | An album download that contains a track the user already has as a single. |
-| Preview cache | Where previews are downloaded; size-bounded; separate from the Inbox. |
-| Search budget | The number of network searches the governor allows in the current time window. |
+| Preview cache | Where preview audio is stored (peer files and yt-dlp audio); size-bounded; separate from the Inbox; never shared. |
+| Release | The canonical track or album a line or search is matched to (Spotify first, else Deezer or MusicBrainz): title, artists, album, length, ISRC, cover. |
+| Search budget | The network searches the governor allows right now: a token bucket (by default up to 6 at once, then one more every 30 s). |
 
 ## 7. Functional requirements
 
@@ -139,7 +151,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | SRCH-5 | P0 | Other filters: duration range, size range, free upload slot only, maximum peer queue length, minimum peer speed, excluded words, and owned / downloaded results shown, dimmed or hidden. |
 | SRCH-6 | P0 | **Strict mode:** results whose quality can't be established (missing attributes) are hidden. With strict mode off they show an "unknown" marker. Bitrate estimated from size ÷ duration is always labelled "estimated". |
 | SRCH-7 | P0 | **Plausibility check:** flag results whose size contradicts their declared format/bitrate/duration (e.g. declared 320 kbps but the size implies ~128). |
-| SRCH-8 | P0 | **Filter presets:** named and saved (e.g. "DJ — MP3 320", "Lossless CD", "Hi-res"), one default. Search, Batch and Wishlist use the same presets. |
+| SRCH-8 | P0 | **Filter presets:** named and saved (e.g. "DJ — MP3 320", "Lossless CD", "Hi-res"), one default. Search, Get tracks and the Wishlist use the same presets. |
 | SRCH-9 | P0 | **Filtered-out transparency:** "N of M results shown", with a breakdown of why results were hidden (format, bitrate, unknown quality, owned, peer limits…). |
 | SRCH-10 | P0 | Two result views: grouped by remote folder (release) or a flat track list. Sort by quality, availability (free slot, queue, speed), size, duration, or fewest downloads from that peer. |
 | SRCH-11 | P0 | **Ownership badges** on every result: *In collection* (exact match) · *Likely in collection* (fuzzy) · *Upgrade* (you own it in lower quality) · *In Inbox* · *Downloaded this session* · *Downloaded in a past session* · *Queued*. |
@@ -150,6 +162,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | SRCH-16 | P0 | Per-search caps (stop collecting after N results or T seconds) to bound memory and peer load. |
 | SRCH-17 | P0 | **Release first.** Each search is resolved to release candidates (Spotify when signed in, otherwise Deezer or MusicBrainz), shown above the results with artwork, title, artist, album, year, length and label. When the query names a track, the best release is chosen automatically. Otherwise the user picks one, or "Any (name only)". The chosen release becomes the reference for ranking and filtering (D23). |
 | SRCH-18 | P0 | **Length identifies the track.** Each file's length is compared with the release's: within ±3 s counts as the same recording; beyond that, the file is flagged as another version or track. "Only this release" (on by default) hides files whose length or name doesn't fit. "Best match" ranks by fit to the release (length first, then artist, title and version), then quality, availability and peer fairness. It never ranks by name alone. |
+| SRCH-19 | P0 | **Typo-tolerant matching** (D28): names match word by word with Damerau–Levenshtein (OSA) distance scaled to word length, wherever the words appear in the path (artist, title or album folder); joined words count ("okumadrift"). A misspelled query is sent to the network spelled as the matched release, and the summary says so. "Search wider" sends fewer words, to catch misspelled file names, for one search from the budget. |
 
 ### 7.3 Browse user shares (BRWS)
 
@@ -158,18 +171,19 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | BRWS-1 | P1 | Browse a peer's shared folders as a tree, with the same filters and ownership badges; download files or whole folders from it. |
 | BRWS-2 | P1 | Cache browsed share lists (TTL, default 24 h) and rate-limit browse requests through the governor. |
 
-### 7.4 Batch search (BATCH)
+### 7.4 Get tracks (BATCH)
 
 | ID | Pri | Requirement |
 |---|---|---|
-| BATCH-1 | P0 | Paste a tracklist (one track per line, "Artist - Title" or free text) or open a `.txt` file. Lines are parsed, normalised and de-duplicated. |
+| BATCH-1 | P0 | **Add tracks:** paste a tracklist (one track per line, "Artist - Title" or free text), open a `.txt` file, or paste a Spotify playlist or album link (META-3). Lines are parsed, normalised and de-duplicated; adding more keeps the lines already resolved. |
 | BATCH-2 | P0 | One filter preset applies to every line (e.g. "MP3 = 320 kbps CBR"). |
 | BATCH-3 | P0 | Lines already in the collection or the Inbox are marked and skipped by default. |
 | BATCH-4 | P0 | Searches queue through the governor and are paced. The UI shows progress, ETA and the current budget, with pause / resume / cancel. Cached results are reused without spending budget. |
-| BATCH-5 | P0 | **Release first, then review.** Each line is first resolved to a release (title, artist, length, ISRC), shown before any network search. Files are then scored against that release: length first, then name and version, quality, availability and peer fairness. The line shows its best match and alternatives. The user auditions and approves; nothing downloads without approval. |
-| BATCH-6 | P0 | "Approve all confident" approves every line above the confidence threshold in one click. It is still a user action. |
+| BATCH-5 | P0 | **Release first, then review.** Each line is first resolved to a release (title, artist, length, ISRC), shown before any network search. Files are then scored against that release: length first, then name and version, quality, availability and peer fairness. The line shows its best match and alternatives. Confident matches (length within ±3 s, version agrees) are pre-ticked; the user previews, unticks what they don't want and presses Get. Nothing downloads before Get. |
+| BATCH-6 | P0 | **Get N tracks** downloads every ticked line; each arrives in the Inbox converted and tagged (D29). Lines already owned, in the Inbox or downloading say so and are never ticked. |
 | BATCH-7 | P1 | Approved downloads are spread across peers, respecting per-peer caps. |
 | BATCH-8 | P1 | Export unresolved lines (not found / ambiguous) as text. |
+| BATCH-9 | P0 | **Get tracks is the home screen** (D27): Add tracks, the quality wanted, Find them / Pause with progress and time left, then a table of Track (with its matched release and length), Status, Best file on Soulseek (quality, length check, peer, alternatives) and Preview. The inspector shows the tags the file will get and the other candidates. |
 
 ### 7.5 Preview and waveform (PREV)
 
@@ -178,13 +192,15 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | PREV-1 | P0 | Preview downloads the file into the preview cache (not the Inbox). Playback starts as soon as enough is buffered (progressive) for formats that allow it: MP3, FLAC, WAV, AIFF; M4A only when its index is at the start of the file. |
 | PREV-2 | P0 | **3-band waveform:** low = blue, mid = orange, high = white, stacked Pioneer-style. It has an overview of the whole track and a zoomed, scrolling view around the playhead. The part not downloaded yet is visibly distinct. The final rendering style is settled on the mock. |
 | PREV-3 | P0 | Transport: play/pause, click/drag to seek on either waveform, jump ±5 s / ±30 s, volume. Seeking beyond the downloaded range waits for data. |
-| PREV-4 | P0 | **Keyboard audition:** ↑/↓ moves through results and (optionally) auto-previews the selection; Space plays/pauses; ←/→ seeks; Return downloads; K keeps the preview. |
+| PREV-4 | P0 | **Keyboard audition:** ↑/↓ moves through results and (optionally) auto-previews the selection; Space previews from the configured source or plays/pauses; ⇧Space previews the peer's file; ←/→ seeks; Return downloads; K keeps the preview. |
 | PREV-5 | P0 | **Keep** moves the cached file into the Inbox without re-downloading, and it counts as a download. **Discard** deletes it from the cache. |
 | PREV-6 | P0 | Skipping a preview before its transfer completes cancels the transfer, saving the peer's bandwidth (D13). Settings can switch this to "let it finish". |
 | PREV-7 | P0 | Previews are real transfers: they count in per-peer counters and the ratio, and respect per-peer caps. |
 | PREV-8 | P0 | The preview cache is size-bounded (default 2 GB, LRU) and expires old files. Waveform analysis is cached separately (a few KB per track), so re-opening a preview is instant. |
 | PREV-9 | P1 | **Spectrum check:** detect likely transcodes / fake lossless (spectral cut-off) and show a badge and a spectrogram. |
 | PREV-10 | P2 | BPM and key detection. |
+| PREV-11 | P1 | **Preview through yt-dlp** (D26). When the user has yt-dlp installed (found on `PATH` or in Homebrew, or set in Settings), a preview can fetch the full track from YouTube Music for the matched release. The search uses artist and title, and the duration must be within ±3 s of the release. The waveform is the same as for peer previews. Selecta runs yt-dlp as an external process: an argument list with no shell, audio only, no cookies or account, writing into the preview cache, with a timeout and one process at a time. The audio is never filed, shared, converted or tagged, and it isn't a download. Selecta doesn't bundle, install, update or reimplement yt-dlp. |
+| PREV-12 | P1 | **Preview source** setting: Automatic (yt-dlp when installed, else the 30-s clip of META-5), yt-dlp only, the clip only, or always the peer's file. Space uses it; ⇧Space always previews the peer's file. The player says where the audio comes from. |
 
 ### 7.6 Downloads, Inbox and filing (DL)
 
@@ -192,9 +208,9 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 |---|---|---|
 | DL-1 | P0 | Download single files or a whole remote folder ("album download"). The transfer list shows each state: queued at the peer (with place in queue), connecting, transferring (speed, ETA), completed, or failed (with reason). Group by folder or by peer. |
 | DL-2 | P0 | Resume interrupted downloads, retry failures with backoff, and keep the queue across restarts. |
-| DL-3 | P0 | **Downloads land in the Inbox:** singles in `Inbox/Singles/` (flat), album downloads in `Inbox/Albums/<Artist> - <Album> (<Year>)/` with all their files, including the cover image. |
-| DL-4 | P0 | **Inbox view:** items with source peer, quality, tags, artwork and ownership status. Actions: play, edit basic tags, convert, **File**, Trash. |
-| DL-5 | P0 | **Filing** moves or converts an Inbox item into the collection: singles → `<Collection>/<Singles folder>/`, albums → `<Collection>/<Albums folder>/<Artist> - <Album> (<Year>)/`. It applies the configured **filing format** (default MP3 320 CBR, ID3v2.3, artwork embedded — see CONV-2). Files already in the target format and quality are moved without re-encoding. Names come from templates; an existing file is never overwritten. When a lossless download is converted at filing, the original goes to the macOS Trash once the converted copy is verified (D11). |
+| DL-3 | P0 | **Downloads land in the Inbox, converted and tagged** (D29): singles in `Inbox/Singles/` (flat), album downloads in `Inbox/Albums/<Artist> - <Album> (<Year>)/` with all their files, including the cover image. On arrival each audio file is converted to the **Inbox format** (default MP3 320 CBR, ID3v2.3, artwork embedded — see CONV-2) and tagged from its matched release (META-4). Files already in that format and quality are kept without re-encoding. Lossy files below it are kept as they are, with a warning, because re-encoding can't add quality. A converted lossless original goes to the macOS Trash once the converted file is verified (D11). |
+| DL-4 | P0 | **Inbox view:** items with source peer, quality, tags, artwork and ownership status. Actions: play, edit basic tags, pick another release, **File**, Trash. |
+| DL-5 | P0 | **Filing** moves an Inbox item into the collection: singles → `<Collection>/<Singles folder>/`, albums → `<Collection>/<Albums folder>/<Artist> - <Album> (<Year>)/`. Conversion and tagging already happened on arrival (DL-3). Names come from templates; an existing file is never overwritten. |
 | DL-6 | P0 | Files are filed by copy → verify → remove from Inbox, so a crash never loses a file. After filing, Selecta never moves, renames, re-tags or deletes them. |
 | DL-7 | P0 | **Supersede in the Inbox:** when an album download completes and contains a track that matches a single still in the Inbox, that single goes to the macOS Trash, with a notification and Undo. Uncertain matches are flagged for review instead. |
 | DL-8 | P0 | **Supersede in the collection — flag only:** when an album (in the Inbox or filed) contains a track matching a single already filed in the collection, the pair is flagged in the Library and Inbox views ("also on album X"). The filed single is never touched. |
@@ -222,7 +238,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | ID | Pri | Requirement |
 |---|---|---|
 | CONV-1 | P0 | Convert between FLAC, MP3 (CBR 320 / 256 / 192, VBR V0 / V2), WAV and AIFF; ALAC is P1. Sample rate and bit depth can be changed, with high-quality resampling and TPDF dither when reducing bit depth. |
-| CONV-2 | P0 | **Filing format:** one configured preset, default "MP3 320 CBR · ID3v2.3 · artwork embedded", applied to everything filed (DL-5). Re-encoding is skipped when it cannot improve quality: an MP3 320 is moved as-is, and an MP3 192 is filed as-is with a "below target" badge rather than re-encoded. After a verified conversion of a lossless source, the original goes to the macOS Trash (D11). |
+| CONV-2 | P0 | **Inbox format:** one configured preset, default "MP3 320 CBR · ID3v2.3 · artwork embedded", applied to every download as it arrives in the Inbox (DL-3, D29). Re-encoding is skipped when it cannot improve quality: an MP3 320 is only tagged, and an MP3 192 is kept as-is with a "below target" badge rather than re-encoded. After a verified conversion of a lossless source, the original goes to the macOS Trash (D11). |
 | CONV-3 | P0 | **Manual converter:** any Inbox or collection file → a *new* file; the original is untouched. Output folder is configurable. |
 | CONV-4 | P0 | **Metadata mapping** between Vorbis comments, ID3v2.3 (default for MP3/AIFF/WAV), ID3v2.4 (option), MP4 atoms and RIFF INFO. It covers title, artist, album, album artist, track and disc numbers with totals, date/year, genre, composer, BPM, key, label, ISRC, catalogue number, comment, lyrics, compilation and ReplayGain. ("IDFv3" in the brief is read as ID3v2.3.) |
 | CONV-5 | P0 | **Supplement missing metadata:** when the source has no embedded art, embed the folder image (`cover.jpg`, `folder.jpg`, `front.jpg`, …) as the ID3 APIC "front cover". Fill missing album/artist/track fields from the folder and file names, shown for confirmation. Optionally resize artwork to a DJ-hardware-friendly size. |
@@ -274,10 +290,10 @@ Added on 2026-10-19 at the maintainer's request (D19). The source choices follow
 
 | ID | Pri | Requirement |
 |---|---|---|
-| META-1 | P1 | **Spotify access without a secret:** sign in once in the browser (Authorization Code with PKCE). Only a client ID is needed, and it isn't a secret, so it may ship with the app; the refresh token lives in the Keychain. Settings → Integrations has fillable Client ID and optional Client secret fields; a secret enables the client-credentials flow for development. Without a Spotify sign-in, metadata and previews come from keyless sources (Deezer, MusicBrainz). Credentials and tokens never appear in the repo, logs or settings files; development builds may read the git-ignored `local/secrets.env` (D21). |
-| META-2 | P1 | **Match** a result, Inbox item or batch line to a Spotify track. Search by artist and title, plus ISRC when known, scored with the matcher of LIB-3 (duration tolerance, version awareness). The inspector shows the canonical metadata (title, artists, album, label, release date, ISRC, artwork) and the match confidence. |
-| META-3 | P1 | **Playlist import:** a Spotify playlist or album link fills Batch search. Lines carry artist, title, duration and ISRC, which sharpens Soulseek matching. |
-| META-4 | P1 | At filing and in the converter, offer canonical metadata and artwork from the matched source to fill missing tags. Show where each value came from; apply only with confirmation or a remembered choice. |
+| META-1 | P0 | **Spotify access without a secret:** sign in once in the browser (Authorization Code with PKCE). Only a client ID is needed, and it isn't a secret, so it may ship with the app; the refresh token lives in the Keychain. Settings → Integrations has fillable Client ID and optional Client secret fields; a secret enables the client-credentials flow for development. Without a Spotify sign-in, metadata and previews come from keyless sources (Deezer, MusicBrainz). Credentials and tokens never appear in the repo, logs or settings files; development builds may read the git-ignored `local/secrets.env` (D21). |
+| META-2 | P0 | **Match** a result, Inbox item or Get tracks line to a Spotify track. Search by artist and title, plus ISRC when known, scored with the matcher of LIB-3 (duration tolerance, version awareness). The inspector shows the canonical metadata (title, artists, album, label, release date, ISRC, artwork) and the match confidence. |
+| META-3 | P0 | **Playlist import:** a Spotify playlist or album link adds its tracks to Get tracks. Lines carry artist, title, duration and ISRC, which sharpens Soulseek matching. |
+| META-4 | P0 | **Tags from the release.** On arrival in the Inbox (DL-3), write the matched release's metadata and artwork: ID3v2.3, cover as JPEG ≤ 800×800 (D29). The inspector shows the tags a file will get before Get. A file with no matched release keeps its own tags, and the Inbox offers release candidates to pick from. The converter offers the same metadata, applied with confirmation. |
 | META-5 | P1 | **Quick preview:** play an official 30-second clip (e.g. Deezer by ISRC, iTunes) with no Soulseek transfer, so the audition costs peers nothing. The player names the clip's source; the full preview from the peer stays one key away. |
 | META-6 | P2 | **Full-length listening:** "Open in Spotify / YouTube Music" in their own apps. Optionally start playback in the user's Spotify app (Premium, with the user's authorisation). |
 | META-7 | P1 | Every request to these services goes through the network governor (rate limits, cached results with TTLs). The inspector says what was sent where. |
@@ -295,18 +311,21 @@ Added on 2026-10-19 at the maintainer's request (D19). The source choices follow
 | UI-4 | P0 | Colour is never the only carrier of meaning: badges pair a symbol with a label (colour-blind safety). |
 | UI-5 | P0 | Full keyboard navigation; VoiceOver labels on controls, badges and the waveform (position/duration). |
 | UI-6 | P1 | Dock badge and system notifications for unread messages and completed batches / albums. |
-| UI-7 | P0 | **Essentials first.** Each screen opens with only what's needed to act. For search: the preset, the formats, the release, and results with status, title, quality, length, peer and availability. Extra filters, columns and inspector details open on demand (D24). |
+| UI-7 | P0 | **Essentials first.** Each screen opens with only what's needed to act. For search: the quality wanted, the release, and results with status, title, quality, length, peer and availability. Formats and the other filters sit behind a Filters button; extra columns and inspector details open on demand (D24). |
+| UI-8 | P0 | **One main flow.** The app opens on Get tracks (D27). Search, the Inbox, Collection, History, Activity, Shares, Messages, Wishlist and Converter stay one click away in the sidebar, out of the way. |
 
 ### 8.2 Window and navigation
 
 One main window:
-- **Toolbar:** sidebar toggle, search field, search budget, ratio, connection status, "Pause network", inspector toggle.
+- **Toolbar:** sidebar toggle, view title, search budget, ratio, "Pause network", appearance, inspector toggle.
 - **Sidebar** (source list):
-  - Search · Batch · Wishlist
-  - **Searches:** open searches with their result counts
-  - **Library:** Inbox · Collection · History
-  - **Network:** Transfers · Peers · Messages · Shares
-  - **Tools:** Converter
+  - Search field
+  - **Get tracks** · Inbox
+  - **Digging:** open searches with their result counts · Wishlist
+  - **Library:** Collection · History
+  - **Network:** Activity (transfers, ratio, per-peer counts) · Shares · Messages
+  - Converter · Settings
+  - Footer: connection status
 - **Content:** the selected view.
 - **Inspector** (right, toggleable): details for the selected result or file: full remote path, quality and
   plausibility, ownership matches, peer statistics, actions.
@@ -322,11 +341,11 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 | ⌘F / ⌘T | Focus search field / new search |
 | ↑ / ↓ | Previous / next result (auto-preview when enabled) |
 | → / ← on a folder row | Expand / collapse |
-| Space | Preview the selection (the 30-s clip or the full file, per Settings), or play / pause |
-| ⇧Space | The other kind of preview (full file from the peer, or the 30-s clip) |
+| Space | Preview the selection from the preview source in Settings (default: the full track via yt-dlp when installed, else the 30-s clip), or play / pause |
+| ⇧Space | Preview the file from the Soulseek peer |
 | ← / → on a track, ⇧← / ⇧→ | Seek −5 s / +5 s, −30 s / +30 s |
 | Return | Download selection (folder row: download the whole folder as an album) |
-| K / ⌫ | Keep preview (to Inbox) / discard preview |
+| K / ⌫ | Keep / discard the preview. Keeping a peer preview moves it to the Inbox; keeping a yt-dlp or clip preview downloads the peer's file |
 | ⌘I | Toggle inspector |
 | ⌘1 … ⌘9 | Switch sidebar sections |
 | ⌘, | Settings |
@@ -363,10 +382,8 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 | OQ-6 | Waveform style: cumulative stack vs overlaid layers vs separate lanes. | Decide on the mock |
 | OQ-8 | Is there an Apple Developer ID for signing and notarisation? | Unsigned / ad-hoc signed personal builds |
 | OQ-12 | Should files from outside Soulseek (e.g. Bandcamp purchases) dropped into the Inbox use the same filing pipeline? | Yes (P1) |
-| OQ-13 | Should Space play the 30-s clip or the full file from the peer? | The clip when one exists (it costs peers nothing) |
-| OQ-14 | Which metadata source should rank first (Spotify, Deezer, MusicBrainz, Discogs)? | Spotify, pending ADR-011 and Spotify's developer terms |
 
-Resolved: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12, OQ-11 → D22, OQ-15 (Spotify credentials) → D21.
+Resolved: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12, OQ-11 → D22, OQ-13 (what Space plays) → D26, OQ-14 (metadata source) → D29, OQ-15 (Spotify credentials) → D21.
 
 ---
 
@@ -395,12 +412,16 @@ Answers given by the maintainer on 2026-10-19.
 | D17 | First working slice after the mock | **Search + preview** (protocol on a local test server, strict filters, preview with waveform). |
 | D18 | Mock format | A **local HTML** mock in `mock/`, not a hosted page; it exists to decide what goes where in the Qt UI, in macOS visual language. |
 | D19 | Spotify integration | **Yes:** a matcher for quality metadata, playlist import, and quick previews from official 30-s clips. It needs no secret: PKCE sign-in with a client ID, or keyless sources (D21). Any credentials stay out of the repo and are fillable in Settings (META-1…8). |
-| D20 | Downloading audio from YouTube Music or Spotify, spotDL-style, with a Premium cookie | **Not built** (architect's call, 2026-10-19). Stream ripping breaks those services' terms, means working around their stream protection, puts the maintainer's accounts at risk, and exposes the open-source project legally. Full-length listening goes through the services' own apps (META-6); purchases (Bandcamp, Beatport) can enter through the Inbox (OQ-12). |
+| D20 | Downloading audio from YouTube Music or Spotify, spotDL-style, with a Premium cookie | **Not as a source of files.** Everything Selecta files or shares comes from Soulseek peers, and Selecta takes no cookie. Purchases (Bandcamp, Beatport) can enter through the Inbox (OQ-12). The first version of this decision also ruled out preview audio; D26 replaces that part. |
 | D21 | Spotify metadata "without the API secrets", like spotDL | spotDL ships its own client ID and secret inside its source code (`spotdl/utils/config.py`). Selecta won't publish a secret or reuse anyone else's. It gets the same convenience officially: **PKCE sign-in** (client ID only, one browser login) plus **keyless sources** (Deezer, MusicBrainz). It won't reverse-engineer Spotify's web-player tokens. The maintainer's working credentials (verified 2026-10-19) stay only in the git-ignored `local/secrets.env` for development. |
 | D22 | File names | Template **`{artist} - {title}`** for singles, editable in Settings. A **name cleaner** keeps Unicode but removes or replaces spaces, quotes, `%`, `$` and other characters that are awkward in paths (DL-13). |
 | D23 | How search and batch find the right file | **Release first, length as the key signal.** Show the matched release (Spotify or Deezer) first, then rank network files against it by length (±3 s), name and version, never by name alone (SRCH-17, SRCH-18, BATCH-5). |
 | D24 | How much to show | **Start with the essentials** and reveal more on demand (UI-7). |
 | D25 | Mock review | The design language and layout are approved ("spot on", "well native"). Building starts once the preliminary research is done. |
+| D26 | Preview audio for the waveform | **The full track through the maintainer's own yt-dlp:** "Selecta is not breaking any term, it simply calls yt-dlp that is already on my machine." Selecta runs the installed yt-dlp as an optional external tool. The audio stays in the preview cache: it is never filed, shared, converted or tagged. Selecta uses no cookie or account, and doesn't bundle or reimplement yt-dlp (PREV-11). Space plays this preview when yt-dlp is installed, else the 30-s clip; ⇧Space plays the peer's file (PREV-12). |
+| D27 | The product's main flow | **Get tracks**, the home screen: "I have a list of tracks I'm interested in obtaining, and at the end I want them … In MP3 320kbps, with metadata from spotify in the mp3 id3v2, cover in there too, in my inbox. I want to preview them and their waveform before fully comitting." The other views stay one click away, and every screen starts with fewer knobs (UI-8, extends D24). |
+| D28 | Name matching | **Typo-tolerant and position-independent:** "I want a levenstein distance kind of thing … robust to typos, missing letters etc." Word-level Damerau–Levenshtein (OSA) with length-scaled thresholds, words matched wherever they sit in the path, and joined words. Length (±3 s) stays the main signal (D23). Details: `references/library-matching-and-organization.md` §17 (SRCH-19). |
+| D29 | When conversion and tagging happen | **On arrival in the Inbox**, not at filing (follows from D27). Downloads are converted to the Inbox format (MP3 320 CBR by default) and tagged from the matched release, with the cover embedded. Spotify ranks first ("very reliable in my usage of spotdl, well tagged"); Deezer and MusicBrainz cover what Spotify can't match. Filing only moves. Lossless originals go to the Trash once the converted file is verified (D11). |
 
 ## Appendix B — Raw brief (verbatim)
 
@@ -491,4 +512,32 @@ The UI is pretty good. There is a lot of information, so perhaps only starting w
 
 ```text
 The mock design language is spot on. The layout is good and well native. You can start building it when the prelimenary research work is done.
+```
+
+```text
+For name matching, I want a levenstein distance kind of thing as well. Also files can have artist / track / album names in the paths in different position. I want the search algo to be robust to typos, missing letters etc.
+```
+
+```text
+The preview waveform/listening should come from either spotify or youtube music. The metadata from spotify (very reliable in my usage of spotdl, well tagged)
+```
+
+Answers to a question round:
+
+```text
+"Selecta can play full tracks through an official player (no download, no waveform). Which should it use?"="No, I want it to download from the source. Youtube music allows that, that's how spotdl works. Do it like that and display the waveform. The waveform is a very useful tool for the dj to preview the shape of the track.", "What should Space do on a result?"="no", "Do you have Spotify Premium?"="Yes"
+```
+
+```text
+Remember my UI decision that the mock has too many knobs and buttons and things shown.
+All I care about is this in my flow:
+I have a list of tracks I'm interested in obtaining, and at the end I want them at the end:
+In MP3 320kbps, with metadata from spotify in the mp3 id3v2, cover in there too, in my inbox.
+I want to preview them and their waveform before fully comitting.
+
+This tool is only for myself locally as a nice .app so I fear nothing from youtube terms of service. I already use spotdl every day, so it does not change anything whether you refuse this. This is purely for my convenience. I am also not saving those tracks from youtube/spotify, but merely using them to preview before downloading from a soulseek peer.
+```
+
+```text
+Selecta is not breaking any term, it simply calls yt-dlp that is already on my machine.
 ```
