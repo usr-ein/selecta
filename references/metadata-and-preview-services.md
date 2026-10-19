@@ -88,7 +88,7 @@ fine for GPL-3.0-or-later Selecta but is worth recording in the dependency table
 | `GET /v1/search?q=…&type=track` | Match a batch line or result to a catalogue track | `limit` 0–10 (default 5), `offset` ≤ 1000. Field filters: `track`, `artist`, `album`, `year` (single or range `1955-1960`), `isrc` (tracks only), `genre`; albums also `upc`, `tag:new`, `tag:hipster`. `market` is overridden by the user's country when a user token is used. |
 | `GET /v1/search?q=isrc:GBCFB1700229&type=track` | ISRC → Spotify track (e.g. ISRC from MusicBrainz/Deezer or from a file's `TSRC`) | Documented filter; one request per ISRC (no batch). |
 | `GET /v1/tracks/{id}` | Canonical track data | `name`, `artists[]`, `album` (simplified), `duration_ms`, `explicit`, `disc_number`, `track_number`, `external_ids.isrc`, `external_urls.spotify`, `is_local`. `popularity`, `available_markets`, `linked_from` removed; `preview_url` deprecated (null). |
-| `GET /v1/albums/{id}` | Album-level tags and artwork | `name`, `album_type` (`album`/`single`/`compilation`), `total_tracks`, `release_date` + `release_date_precision` (`year`/`month`/`day`), `images` ("widest first"; sizes not specified, commonly 640/300/64 — TODO(verify)), `copyrights` (`C`/`P`), `external_ids` (`upc`/`ean`), paged `tracks`. **`label` removed in dev mode**; `genres` "is always empty"; `popularity` removed. |
+| `GET /v1/albums/{id}` | Album-level tags and artwork | `name`, `album_type` (`album`/`single`/`compilation`), `total_tracks`, `release_date` + `release_date_precision` (`year`/`month`/`day`), `images` ("widest first"; sizes not specified; the largest is "typically 640x640px jpeg" per Exportify's docs — below D29's 800×800 target), `copyrights` (`C`/`P`), `external_ids` (`upc`/`ean`), paged `tracks`. **`label` removed in dev mode**; `genres` "is always empty"; `popularity` removed. |
 | `GET /v1/albums/{id}/tracks` | Disc count, track total | Paged. |
 | `GET /v1/artists/{id}` | Artist images/name | `genres` deprecated; `followers`, `popularity` removed. |
 | `GET /v1/me/playlists`, `GET /v1/playlists/{id}` | List the user's playlists | Metadata for any playlist. |
@@ -384,7 +384,7 @@ Verified by manual requests:
 |---|---|
 | ISRC lookup | `GET /ws/2/isrc/GBCFB1700229?inc=artist-credits&fmt=json` → **2 recordings**: "Glue" (269,066 ms; ISRCs `ES8741707116`, `GBCFB1700229`, `GBCFB1700271`) and a soundtrack edit "Glue – 'There Are 80,000 Native Irish Speakers'" (265,000 ms). ISRC ↔ recording is many-to-many in practice. |
 | Releases + labels | `GET /ws/2/release?recording={mbid}&inc=labels+release-groups+media+url-rels` (note: `labels` is not a valid `inc` on `/recording`) → 20 releases (single, EP, album, compilations, a bootleg), each with **label + catalogue number** (e.g. Ninja Tune `ZENDNLS466X`), barcode, status, release-group type, and **URL relationships** to Spotify, Deezer, Apple Music, Tidal, **Bandcamp, Beatport, Traxsource, Discogs** pages. |
-| Search | Lucene query on `/ws/2/recording?query=…` with fields such as `recording`, `artist`, `isrc`, `dur` (ms) — TODO(verify) exact field list against the search docs. |
+| Search | Lucene query on `/ws/2/recording?query=…`; 31 fields including `recording`, `artist`, `artistname`, `isrc`, `dur` ("the recording duration in milliseconds"), `qdur` (duration / 2000, for fuzzy duration matching), `release`, `status`, `primarytype`, `secondarytype`, `firstreleasedate`, `tnum`. Results carry a 0–100 `score`. `limit` ≤ 100 (default 25). |
 | Rate limit | "on average 1 request per second" per source IP; global 300/s; anonymous/generic User-Agents capped together at 50/s; over the limit → **503**. Required User-Agent "`Application name/<version> ( contact-url )`" or with a contact e-mail. Responses carry `X-RateLimit-Limit/Remaining/Reset` headers (observed; not explained on the policy page). |
 | Licence | **Core data CC0** ("effectively placing the data into the Public Domain"); supplementary data CC BY-NC-SA 3.0. Purpose-built for tagging (Picard). No clause about P2P use. |
 | Cover Art Archive | `/release/{mbid}/` → JSON index (via 307 to archive.org); `/release/{mbid}/front[-250|-500|-1200]` and `/release-group/{mbid}/front[-…]` redirect to the image; thumbnails 250/500/1200 px plus the original. "There are currently no rate limiting rules in place" (yet 503 is documented). Images remain the rights holders' property; the API carries no licence field (same position as every tagger that uses CAA). |
@@ -395,7 +395,7 @@ Verified by manual requests:
 
 | Item | Documented |
 |---|---|
-| Auth | None (25 req/min, no image URLs); consumer key/secret or **personal access token** (60 req/min); OAuth 1.0a for user data. Database search needs authentication (TODO(verify)). Unique User-Agent required; generic agents get harsher limits. |
+| Auth | None (25 req/min, no image URLs); consumer key/secret or **personal access token** (60 req/min); OAuth 1.0a for user data. **`/database/search` requires authentication** ("Authentication (as any user) is required"; since 2014-08-15, when Discogs staff cited floods of anonymous requests from "brute-force mp3 taggers"). Search parameters include `artist`, `track`, `label`, `catno`, `barcode`, `style`, `year`, `format`. Unique User-Agent required; generic agents get harsher limits. |
 | Rate limit | Moving 60-s window per source IP; `X-Discogs-Ratelimit`, `-Used`, `-Remaining` headers; 429 over the limit. "Circumventing the rate-limit may result in a temporary or permanent ban." |
 | Data DJs value | Labels and **catalogue numbers**, **styles** (e.g. "Deep House", finer than Deezer's genres), formats (vinyl/digital), credits (remixers), master/release versions, year. Strongest for vinyl/physical electronic releases. |
 | Terms (API Terms of Use, last updated 2025-05-27; read via the Wayback copy of 2026-05-30 because the live page blocks automated reads) | **CC0 Data**: "Release titles, notes, dates, format, track listings, barcodes and other identifiers, credits, versions, URL links …", artist names, label names. **Restricted Data**: user data, marketplace data, images (user-contributed under public domain/CC0/fair-use bases). "You may not display in any format or to any audience the Content if it is more than six (6) hours older than the information on Our online properties … You may not cache or store the Content longer than is necessary to provide a service to Your application's users." Required notices: "This application uses Discogs' API but is not affiliated with, sponsored or endorsed by Discogs. 'Discogs' is a trademark of Zink Media, LLC." (prominent, may be in the docs/terms) and "Data provided by Discogs." next to Discogs data, hyperlinked, no `nofollow`. Prohibited: "Use Our API or the Content for illegal purposes"; commercial uses such as "Using Our API or the Content with the intent to drive traffic to other non-Discogs websites or services". No P2P-specific clause. |
@@ -416,7 +416,7 @@ clause as Spotify's (D-T1) but no clause on storing metadata (only audio).
 | Label / cat. no. | **no / no** | yes / no | yes / yes | yes / yes | no / no |
 | Genre / style | no (empty) | coarse genre | community genres/tags | **styles** | primary genre |
 | Release date, track/disc numbers | yes | yes | yes | yes (year mostly) | yes |
-| Artwork | ≤ 640 px (TODO(verify)) | 1000 px | 250/500/1200 + original | auth only; restricted | 100 px (larger undocumented) |
+| Artwork | ≤ 640 px (Exportify: "typically 640x640px jpeg") | 1000 px | 250/500/1200 + original | auth only; restricted | 100 px (larger undocumented) |
 | BPM | no (audio-features removed) | yes (often 0) | no | no | no |
 | Preview | no | 30 s MP3 128 | no | no (YouTube video links only) | 30 s AAC 256 |
 | Playlist import | own/collab playlists, Liked Songs | user playlists via OAuth (app creation closed) | — | — | — |
@@ -751,8 +751,105 @@ fields) rather than breaking Get tracks.
 
 ## 13. Open questions and things to verify
 
-TODO
+### 13.1 Questions for the maintainer
+
+| # | Question | Default until answered |
+|---|---|---|
+| MQ1 | D29 asks for "metadata from spotify in the mp3 id3v2, cover in there too". Spotify's Developer Terms forbid storing Spotify Content indefinitely and making permanent copies of it, and require attribution (§4, S3–S5). Accept that risk for personal builds ("Spotify first" tag policy), or tag from MusicBrainz/Deezer by ISRC and use Spotify only to match and display? | "Open data" tags (R3); Spotify used for matching and display |
+| MQ2 | Is the Spotify integration for personal builds only (your Client ID pre-filled, ≤ 5 users, your Premium), or should public builds ask every user for their own Client ID? | Personal builds pre-fill nothing; Settings field (META-1) |
+| MQ3 | Deezer's terms forbid association with unauthorised sharing (D-T1) too. Use Deezer keylessly for matching and clips anyway? | Yes, clips streamed only, Deezer logo shown |
+| MQ4 | Apply for Beatport partner API access (best electronic data and 2-min middle clips)? A P2P client is an unlikely candidate. | No; deep links only |
+| MQ5 | Discogs (catalogue numbers, styles) with a personal token, P2? | Off |
+| MQ6 | Genre and BPM tags: write Deezer genre/BPM or Discogs style, or leave them to rekordbox? | Not written |
+| MQ7 | Was your existing Spotify app created before 2026-02-11? (Its endpoint restrictions were postponed; Premium and the 5-user cap apply anyway.) | Treat as a new app |
+| MQ8 | Purchases: may Selecta watch `~/Downloads` for 2 h after a "Buy on Bandcamp/Beatport" click (read-only, confirm before import)? | Ask on first use |
+
+### 13.2 Things to verify (none of these touch the Soulseek network)
+
+| # | Experiment | How | Feeds |
+|---|---|---|---|
+| X1 | Spotify dev-mode limits | Log every 429 (`Retry-After`, `reason`) during normal manual use with the maintainer's app; do not try to exhaust the quota. | §12.3 budget |
+| X2 | Spotify fields for the maintainer's app | One `GET /albums/{id}`: is `label` present (app age, MQ7)? Image sizes? | §3.3, §12.7 |
+| X3 | Playlist access | `GET /playlists/{id}/items` on an editorial playlist and on a friend's public playlist → 403? | §12.6 |
+| X4 | Spotify search behaviour | Recall of `limit=10` with and without version words (`track:"Glue" artist:"Bicep"` vs `… extended`), on 20 lines with known versions. | §12.5 query plan |
+| X5 | Coverage and agreement | Run 100–200 lines from the maintainer's real tracklists through Spotify, Deezer, MusicBrainz, iTunes (and Discogs), at the governor's defaults; record hit rate per tier and ISRC agreement; label the correct release by hand. This is the labelled corpus for tuning §12.5. | weights, thresholds, source order |
+| X6 | Clip positions | For ~30 owned tracks, fetch the Deezer and iTunes clips into memory and cross-correlate with the local file to find each clip's offset (store only the offsets). | Whether clips show the drop; waveform UX |
+| X7 | Deezer details | Preview URL lifetime, behaviour after expiry (403?), advanced search syntax status, quota error body, how often `bpm` is 0. | §8.1, §12.3 |
+| X8 | iTunes clip container | Is `moov` before `mdat` (progressive start)? | PREV-1 streaming |
+| X9 | Spotify AppleScript | `play track` + `set player position` with the current macOS app; TCC prompt text. | §5 option C |
+| X10 | MusicBrainz release choice | On X5's corpus, how often the "original single/EP" rule picks the release the maintainer would file. | §12.5 |
 
 ## 14. Sources
 
-TODO
+All accessed 2026-10-19.
+
+**Spotify**
+
+| Source | Use |
+|---|---|
+| https://developer.spotify.com/terms | Developer Terms v10 (effective 2025-05-15): definitions, §III licence, §IV restrictions, storing/caching, §VI security codes and quotas |
+| https://developer.spotify.com/policy | Developer Policy (effective 2025-05-15): attribution, prohibited applications, streaming, preview clips, quotas |
+| https://developer.spotify.com/compliance-tips | Disallowed use cases (DJ/mixes), streaming apps list, scopes advice |
+| https://developer.spotify.com/documentation/design | Design & branding: attribution logo, artwork/metadata rules, linking to the app |
+| https://developer.spotify.com/blog/2024-11-27-changes-to-the-web-api | November 2024 restrictions |
+| https://developer.spotify.com/documentation/web-api/concepts/quota-modes | Dev mode (5 users, owner Premium) vs extended quota criteria (organisations, 250k MAU, 2025-05-15) |
+| https://developer.spotify.com/blog/2026-02-06-update-on-developer-access-and-platform-security | February 2026 dev-mode changes, March 9 postponement note |
+| https://developer.spotify.com/documentation/web-api/tutorials/february-2026-migration-guide | Endpoint/field changes, search limit, playlist `/items` |
+| https://developer.spotify.com/documentation/web-api/references/changes/february-2026 | Changelog + list of 43 endpoints still available |
+| https://developer.spotify.com/documentation/web-api/references/changes/march-2026 | `external_ids` restored |
+| https://developer.spotify.com/documentation/web-api/references/changes/may-2026 | `account_id` on the user object |
+| https://developer.spotify.com/documentation/web-api/references/changes/july-2026 | 25 Client IDs, per-account quota, `QUOTA_EXCEEDED` |
+| https://developer.spotify.com/blog/2026-07-23-web-api-quota-updates | Same, blog post |
+| https://developer.spotify.com/blog/2026-06-18-refresh-token-expiration | 6-month refresh tokens |
+| https://developer.spotify.com/documentation/web-api/concepts/redirect_uri | Loopback redirect rules, `localhost` rejected, dynamic ports |
+| https://developer.spotify.com/documentation/web-api/concepts/rate-limits | Rolling 30-s window, `Retry-After` |
+| https://developer.spotify.com/documentation/web-api/reference/search | `q` field filters, `limit` 0–10, deprecations |
+| https://developer.spotify.com/documentation/web-api/reference/get-an-album | Album fields (label/genres deprecated, images, copyrights, external_ids) |
+| https://developer.spotify.com/documentation/web-api/reference/get-playlists-items | Owner/collaborator restriction, paging |
+| https://developer.spotify.com/documentation/web-api/reference/start-a-users-playback | Premium-only playback, body fields |
+| https://techcrunch.com/2026/02/06/spotify-changes-developer-mode-api-to-require-premium-accounts-limits-test-users/ | Secondary confirmation of Feb 2026 changes |
+| https://community.spotify.com/t5/Spotify-for-Developers/Preview-URLs-MP3-no-longer-exist-all-tracks/m-p/6712864 | `preview_url` null reports (community) |
+| https://github.com/spotDL/spotify-downloader/pull/2626 | spotDL's switch to an unofficial client (SpotipyFree), March 2026 |
+| https://pypi.org/project/spotipyFree/ | What SpotipyFree is (wrapper over SpotAPI, no official API) |
+| https://community.spotify.com/t5/Desktop-Mac/applescript-play-track-command-still-not-working/td-p/1052047 | Past AppleScript breakage |
+
+**Libraries and prior art**
+
+| Source | Use |
+|---|---|
+| https://github.com/spotDL/spotify-downloader @ `cd4a420` (v4.5.2, 2026-07-20): `spotdl/utils/matching.py`, `spotdl/providers/audio/base.py`, `spotdl/providers/audio/ytmusic.py` (result fields only), `spotdl/utils/formatter.py`, `spotdl/types/song.py`, `spotdl/utils/spotify.py`, `spotdl/utils/config.py`, `spotdl/utils/metadata.py`, `pyproject.toml`, `LICENSE` (MIT) | Query building, scoring, thresholds, tagging, metadata backend |
+| https://github.com/kraxarn/spotify-qt @ `c20be07` (2026-10-05): `lib/CMakeLists.txt`, `lib/include/lib/spotify/api.hpp`, `lib/src/spotifyapi/*.cpp`, `lib/src/spotify/auth.cpp`, `src/spotify/authserver.cpp`, `license` | Licence, coverage, auth flow |
+| https://github.com/Harry-Skerritt/SpotifyCPP, https://github.com/smaltby/spotify-api-plusplus, https://github.com/dydil/Qtify, https://github.com/lucianIrsigler/spotifyAPICpp (GitHub API metadata + READMEs) | Other C++ Spotify clients: licence, activity, deps |
+| https://doc.qt.io/qt-6/qoauth2authorizationcodeflow.html, https://doc.qt.io/qt-6/qoauthhttpserverreplyhandler.html | PKCE (6.8), refresh (6.9), loopback callback host, module licence (Commercial/GPLv3) |
+| https://github.com/fiso64/slsk-batchdl (Sockseek) @ `ff9a3ac` (2026-10-15), `README.md` | Prior art: Spotify input needs an own dev app with Premium; CSV fallback |
+| https://github.com/watsonbox/exportify (README) | CSV export columns (incl. ISRC), image size |
+| https://github.com/metabrainz/libmusicbrainz (GitHub API; `src/Query.cc` header) | Licence LGPL-2.1-or-later, activity |
+| https://www.freshports.org/audio/libmusicbrainz5, https://musicbrainz.org/doc/libmusicbrainz | Last release 5.1.0 (2014) |
+
+**Deezer, Apple, MusicBrainz, Discogs, stores**
+
+| Source | Use |
+|---|---|
+| https://api.deezer.com/search, `/track/{id}`, `/track/isrc:{isrc}`, `/album/{id}` (manual requests) + one HEAD on a preview | Field names, ISRC behaviour, preview format/size/expiry, label/UPC/cover |
+| https://developers.deezer.com/termsofuse | Deezer developer terms (§III.6, §IV, §V) |
+| https://developers.deezer.com/guidelines, https://developers.deezer.com/guidelines/logo | No local audio storage, streaming URL privacy, logo requirement |
+| https://pypi.org/project/deezer-oauth-cli/, https://en.deezercommunity.com/troubleshooting-46/index4.html | App creation closed (developer reports) |
+| https://community.home-assistant.io/t/request-for-deezer-streaming-services/58684 | Second-hand quote of "50 requests / 5 seconds" |
+| https://itunes.apple.com/search (manual request) + one HEAD on a preview | Fields, preview format/size |
+| https://performance-partners.apple.com/search-api | Rate limit, promo-content terms |
+| https://developer.apple.com/documentation/applemusicapi/get-multiple-catalog-songs-by-isrc, https://sonovault.now/apple-music-api | Apple Music API ISRC filter (details second-hand) |
+| https://musicbrainz.org/ws/2/isrc/…, `/ws/2/release?recording=…` (manual requests) | ISRC → recordings, releases with labels/catno/url-rels |
+| https://coverartarchive.org/release/… (manual request) | CAA JSON index, thumbnails |
+| https://musicbrainz.org/doc/MusicBrainz_API/Rate_Limiting | 1 req/s, UA format, 503 |
+| https://musicbrainz.org/doc/MusicBrainz_API/Search | Recording search fields, limits |
+| https://musicbrainz.org/doc/About/Data_License | CC0 core data, CC BY-NC-SA supplementary |
+| https://musicbrainz.org/doc/Cover_Art_Archive/API | CAA endpoints, sizes, rate-limit statement |
+| https://web.archive.org/web/20260530143749/https://support.discogs.com/hc/en-us/articles/360009334593-API-Terms-of-Use | Discogs API Terms (2025-05-27): CC0 vs Restricted Data, 6-h rule, notices, prohibited uses |
+| https://www.discogs.com/developers (via search snippets), https://www.discogs.com/forum/thread/399958 | Rate limits, search requires auth (2014) |
+| https://github.com/asuteau/sillon/issues/43 | Another project's reading of the Discogs and Deezer terms (cross-check) |
+| https://bandcamp.com/developer | Bandcamp API scope (labels/merch partners) |
+| https://get.bandcamp.help/hc/en-us/articles/23020649597335-Does-Bandcamp-have-an-API, https://get.bandcamp.help/en/articles/15263124-bandcamp-s-acceptable-use-and-moderation-policy | API existence; anti-scraping policy |
+| https://github.com/orgs/music-assistant/discussions/4039, https://pypi.org/project/beets-beatport4/ | Beatport v4 partner access; unofficial workaround (not to use) |
+| https://intercom.help/proton-radio/en/articles/4474941-the-2-minute-preview-on-beatport-ways-around-it-for-djs-music-labels-and-artists, https://support.beatport.com/hc/en-us/articles/4412322748820-Why-can-t-I-play-some-tracks-in-full | Beatport 2-minute previews, position |
+| https://gist.github.com/9re/5939575, https://www.billboard.com/pro/beatport-embeddable-streaming-music-player-pays-artists/ | Beatport embed player (2015) |
+| https://parse.bot/marketplace/0123da1a-5d2d-4970-bf6f-398f792855a1/traxsource-com-api | No official Traxsource API (third-party statement) |
