@@ -73,9 +73,9 @@ uploads; **Client** = searching/downloading/browsing but partial or no sharing/d
 | **soulseekcpp** | Library (port of Soulseek.NET) | C++20 + asio | GPL-3.0 + Soulseek.NET §7 Additional Terms | single commit 2026-09-17; 0★ | Claims full (untested by others) | Read only; do not depend on |
 | **soulseek-rs** (`michel/soulseek-rs`) | Lib + TUI/CLI/daemon | Rust | MIT | 2026-10-14 / v19.1.0 | Claims full live message set; e2e vs Soulfind | **Port logic + test-harness pattern** |
 | **seeleseek** | Native macOS client (SwiftUI) | Swift 6 | MIT | 2026-10-13 / v1.9.0; macOS 15+ | Client + sharing, distributed, obfuscation (heuristic) | macOS UX + Swift protocol code |
-| **Seek** (`IvaKap/seek`) | Mac client: Tauri UI + frozen Python sidecar running Nicotine+ headless | TypeScript + Python | GPL-3.0 | 2026-10-13 / v0.3.0 | via Nicotine+ | **Closest product prior art** |
-| **slsk-batchdl / sldl** → `fiso64/sockseek` | Batch download CLI | C# | AGPL-3.0 since 2026-05-11 (GPL-3.0 up to v2.6.0) | 2026-10-15 / v3.0.6 | via Soulseek.NET | Batch/matching/rate-limit prior art (ideas only) |
-| **soularr** | Lidarr ↔ slskd bridge | Python | GPL-3.0 | 2026-10-06 / v1.2.2 | via slskd API | Selection/matching ideas |
+| **Seek** (`IvaKap/seek`) | Mac client: Tauri UI + frozen Python sidecar running Nicotine+ headless | TypeScript + Python | GPL-3.0-or-later (SPDX headers) | 2026-10-13 / v0.3.0 | via Nicotine+ | **Closest product prior art** |
+| **slsk-batchdl / sldl** → `fiso64/sockseek` | Batch download CLI | C# | AGPL-3.0 since 2026-05-11 (GPL-3.0 up to v2.6.0); LICENSE text only, no -only/-or-later statement | 2026-10-15 / v3.0.6 | via Soulseek.NET | Batch/matching/rate-limit prior art (ideas only) |
+| **soularr** | Lidarr ↔ slskd bridge | Python | GPL-3.0 (LICENSE text only, no -only/-or-later statement) | 2026-10-06 / v1.2.2 | via slskd API | Selection/matching ideas |
 | **Soulfind** | Server | D | GPL-3.0-or-later | 2026-10-14 / rolling "latest" | Server side (subset, §5.1) | **Local test server** |
 | nafsi / souls / soulsex | Servers | Rust / Rust / Elixir | GPL-3.0 / GPL-3.0 / BSD-3-Clause | 2026 (young, 0–4★) | Incomplete | Not needed |
 | slsk-client | Library | TypeScript (Node) | MIT | 2026-10-05 / v2.0.2 | Client (search/download) | Low |
