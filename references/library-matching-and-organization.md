@@ -742,7 +742,7 @@ each component at 255 UTF-8 bytes by shortening the title (keep the extension an
 
 | Files | Download? | At filing (to MP3 320) |
 |---|---|---|
-| `cover/folder/front.(jpg|png)`, other root-level images ≤ 10 MB | yes | Embed as APIC (CONV-5); also copy `cover.jpg` into the album folder. |
+| `cover`/`folder`/`front` `.jpg`/`.png`, other root-level images ≤ 10 MB | yes | Embed as APIC (CONV-5); also copy `cover.jpg` into the album folder. |
 | `Scans/`, `Artwork/` sub-folders, `.pdf` booklets | optional (setting, default off) | Keep with the lossless original (OQ-2). |
 | `.cue`, `.log` (EAC/XLD), `.accurip`, `.ffp/.md5/.sfv/.st5` | yes for lossless | Keep with the lossless original; they describe the rip, not the MP3s. |
 | `.m3u/.m3u8`, `.nfo`, `.txt` | yes (small) | Drop (or keep with the original). |
