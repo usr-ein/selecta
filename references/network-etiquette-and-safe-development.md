@@ -58,7 +58,7 @@ conventions maintained by the Nicotine+ developers (who are the de-facto keepers
 | Document | What it says that matters to Selecta |
 |---|---|
 | **Rules** (`slsknet.org/news/node/681`, undated) | "Access to the SoulSeek® server is a privilege; not a right. It may be revoked at any time, for any reason." · "Server or chatroom abuse will result in your connection being closed and your ISP notified." · "Spammers, automated clients (robot/bot), combinations of such, or scripts otherwise failing to implement the full range of Soulseek® features are not allowed to connect to the Soulseek® service." · "Alternative clients for platforms other than Microsoft(r) Windows(r) that implement the full range of features of the Soulseek® Network (including chat, search, wishlist, download, upload, and respect / recognition of privileges) are tolerated." · "Users are allowed to connect up to a maximum 5 clients from the same IP." · Administrators (nir, OrtaliGoddessOfPrivileges, Proteus93, arsenic_, sierracat) "can kill any connections without prior notice for any reason." |
-| **Terms of Use** (`slsknet.org/news/node/682`, © 2007 Soulseek, LLC) | §2: you may not use someone else's account. §8: accounts may be terminated without notice for abuse or for "interfer[ing] with use of the Site or the Service by others". §12(b): no "attempting to probe, scan, or test the vulnerability of the Service … without proper authorization". §12(c): no "interfering … with service to any user, host, or network, including … overloading, 'flooding,' 'spamming' …". §3 forbids reverse-engineering *their software* (Selecta reads only open third-party code and docs — see §8.6). |
+| **Terms of Use** (`slsknet.org/news/node/682`, © 2007 Soulseek, LLC) | §2: you may not use someone else's account. §8: accounts may be terminated without notice for abuse or for "interfer[ing] with use of the Site or the Service by others". §12(b): no "attempting to probe, scan, or test the vulnerability of the Service … without proper authorization". §12(c): no "interfering … with service to any user, host, or network, including … overloading, 'flooding,' 'spamming' …". §3 forbids reverse-engineering *their software*; Selecta's protocol work relies only on open third-party code and documentation. |
 | **FAQ** (`slsknet.org/news/faq-page`) | Usernames of non-privileged accounts are recycled after 30 days without login. Admins' last resort against abusive users is "an IP ban". The official position on auto-banning non-sharers points to Nir's 2012 post (below). |
 | **Nir, "Empty share warnings, fixes and more"** (`slsknet.org/news/node/523`, 2012-05-11) | The author of Soulseek refused an auto-ban for non-sharers as "too harsh", and instead added to SoulseekQt an option that **browses every downloading user in the background and sends them a message if their share comes up empty**. The same build started returning upload place-in-line to downloaders. |
 | **Nicotine+ protocol doc** (`doc/SLSKPROTOCOL.md`, community, updated 2026-10-18) | Major-version registry (below). "It is unacceptable to use randomly generated usernames, as such automated scripting is disallowed by the official server rules." Recommends Soulfind as a test server. |
@@ -118,7 +118,8 @@ deliberately mimic the official server's behaviour; their comments are cited as 
 ### 4.1 The automatic flood ban (verbatim)
 
 When a client does "too many operations at once", the server sends a **private message from the pseudo-user
-`server`** and drops the connection. The text, as reported verbatim by two independent users (slskd web UI "Chat"
+`server`** and disconnects the client (the text says "You will be able to reconnect … in 30 minutes"; the order of
+message and disconnect is not documented). The text, as reported verbatim by two independent users (slskd web UI "Chat"
 screen, soularr discussion #142, 2025-11-10; Lidarr.Plugin.Slskd issue #19, 2026-10-03):
 
 > System Message: You have been banned for 30 minutes. This is usually the result of doing too many operations at once.
@@ -184,7 +185,7 @@ a normal user. This is the convention Selecta should follow (PRD NET-6, SRCH-14)
 
 | Client | First retry | Growth | Cap | Jitter | After `Relogged` | Source |
 |---|---|---|---|---|---|---|
-| Nicotine+ | random **5–15 s** ("to spread out connection attempts from Nicotine+ clients in case server goes down") | ×2 | stops doubling once ≥ 300 s (so 300–480 s) | initial value only | no auto-reconnect | `slskproto.py` `_set_server_timer` |
+| Nicotine+ | random **5–15 s** ("to spread out connection attempts from Nicotine+ clients in case server goes down") | ×2 | stops doubling once ≥ 300 s (final wait 300–600 s, depending on the random start) | initial value only | no auto-reconnect | `slskproto.py` `_set_server_timer` |
 | slskd | ~0 s (attempt 1), then `floor((2^n − 1)/2)` s: 1, 3, 7, 15, 31, 63, 127, 255 | ×2 | **300 s** | + U(0, 1 s) every attempt | no auto-reconnect | `ConnectionWatchdog.cs`, `Common/Compute.cs` |
 | Soulfind (server side) | — | — | a `kick` bans for 2 min by default; banned logins time out after 60–75 s | 0–15 s on login timeout "to spread out reconnect attempts" | — | `defines.d`, `user.d` |
 
@@ -194,9 +195,9 @@ test harness that spins up many logins against the live server.
 
 ### 4.6 Private-message and chat flooding
 
-Repeated identical private messages trigger the same 30-minute ban. Users of Nicotine+'s auto-"please share" message
-were banned several times a day for "sending the same message too often" (Google Groups, 2025-04-12; a 2025-05
-thread describes trolls exploiting this). Nir Arbel's answer (2025-05-05) is the reference behaviour: SoulseekQt sends
+Repeated identical private messages trigger the same 30-minute ban. A user of an automatic "please share" warning
+was banned several times a day for "sending the same message too often" (Google Groups, 2025-04-12); a 2025-05
+thread (Nicotine+ user) describes trolls exploiting this by repeatedly triggering the warning. Nir Arbel's answer (2025-05-05) is the reference behaviour: SoulseekQt sends
 its empty-share notice **once per user**, only when that user tries to download. Nicotine+'s leech-detector plugin
 warns "too many message lines may get you temporarily banned for spam", and its `ResponseThrottle` (plugin chat
 replies) refuses to answer the same request from the same user within 6 min, or any reply in the same room within
@@ -304,6 +305,10 @@ global **preview budget (≤ 30 per 10 min)**; cancel the transfer as soon as th
 and saves a later re-download if the user keeps it. These numbers are judgement calls (confidence: low–medium) and
 should be tuned on the local test network, then in the M9 live beta.
 
+Keep the partial data of a cancelled preview in the preview cache. If the user later presses Keep or Download, Selecta
+re-queues the file and **resumes from the cached offset** (the protocol's start offset exists for exactly this), so
+the uploader never sends the same bytes twice.
+
 ## 7. Privileges, sharing and reputation, excluded search phrases
 
 ### 7.1 Privileges
@@ -330,6 +335,10 @@ should be tuned on the local test network, then in the M9 live beta.
   each uploader's local view of you.
 - Ignoring/banning is per client; there is no network-wide blacklist. Be careful with automatic bans of others (Nir's
   argument: many non-sharers are new, or share privately).
+- Carry your weight in the distributed search network too: join it (needed to receive searches at all), and accept
+  children up to what the server allows — the server's `ParentSpeedRatio` (code 84) sets "the number of children we
+  can have" from our upload speed; Soulseek.NET/slskd cap at 25 children by default (`distributedChildLimit`).
+  Details belong to the protocol and sharing notes.
 
 ### 7.3 Excluded search phrases and filtered queries
 
@@ -429,8 +438,11 @@ again. A ban is an IP-level event in practice; a second "test account" does not 
 
 ### 9.1 Recommended default limits (input to ADR-006)
 
-"Default" is what ships; "Ceiling" is the `constexpr` bound that settings can never exceed (PRD SAFE-2). All search
-sources (manual, batch, wishlist, user/room search, refresh) draw from **one** search budget. Rates are enforced
+"Default" is what ships; "Ceiling" is the `constexpr` bound that settings can never exceed (PRD SAFE-2, CLAUDE.md:
+"ceilings are compile-time constants, not settings"). This table assumes settings may loosen a limit from its default
+up to the ceiling; under the strictest reading of SAFE-2 ("settings can only make limits stricter") the ceiling simply
+equals the default — decision E8. All search sources (manual, batch, wishlist, user/room search, refresh) draw from
+**one** search budget. Rates are enforced
 as token buckets or sliding windows — never fixed windows (see §4.3). Confidence: **H** = backed by code or official
 text, **M** = consistent with several reports, **L** = judgement, tune on the local network and in M9.
 
@@ -451,12 +463,13 @@ text, **M** = consistent with several reports, **L** = judgement, tune on the lo
 | **Global concurrent downloads** | **4** active + 1 preview | 10 | Each active transfer holds one uploader's slot (N+ default: 3 slots in total); slsk-batchdl's 20 concurrent jobs are in the ban reports | §5.2, §4.3 | M |
 | **Global queued downloads** | 200 files | 1 000 | Bounds `QueueUpload` traffic and queue-position polling | — | L |
 | **Place-in-queue polling** | Head of our queue at each peer only, **every 10 min** (and on demand when the user opens the transfer) | ≥ 2 min per file | N+ polls every queued file every 5 min | §5.3 | M |
-| **Automatic retries** (DL-2) | Connection failures: **3** retries at 3, 10 and 30 min, then "failed". `Too many files/megabytes`: re-queue only as earlier files finish. `Banned`, `File not shared.`, unknown strings: **never** | ≤ 5 retries; ≥ 3 min first delay | SoulseekQt: max 3 retries every 5 min; slskd: 3 attempts; N+: every 3 min | §5.3 | H |
+| **Automatic retries** (DL-2) | Connection failures: **3** retries at 3, 10 and 30 min, then "failed". `Too many files/megabytes`: re-queue only as earlier files finish. `Banned`, `File not shared.`, unknown strings: **never** | ≤ 5 retries; ≥ 3 min first delay | SoulseekQt: max 3 retries every 5 min; slskd: 3 attempts; N+: every 3 min | §5.3 | H (refs) / M (values) |
 | **Peer denial back-off** (FAIR-4) | `Banned`/custom ban text: no requests to that peer for **30 days** (and flag it); repeated `File not shared.`: 24 h; `Pending shutdown.`: ≥ 15 min | — | Peers' explicit signals | §5.3 | M |
 | **Browse requests** (BRWS-2) | Burst 3, then **1 per 100 s** (≤ 6 per 10 min); same user not re-browsed within the 24 h cache TTL unless "Refresh" (≥ 10 min apart) | ≤ 30 per hour | A browse makes the peer compress and send its whole share list; crawling looks like a bot | — | L |
 | **User info / folder contents** | User info: ≤ 1 per user per 10 min, ≤ 30/h. Folder contents: ≤ 1 per folder per cache TTL, burst 5, ≤ 20 per 10 min | 2× default | Same reasoning | — | L |
 | **Private messages** (NET-7) | User-typed only; ≤ 1 per 2 s, identical text to the same user not repeated within 10 min; no automatic messages in v1 | Same | Repeated identical PMs → 30-min ban; N+ ResponseThrottle | §4.6 | M |
 | **Previews** (PREV-*) | Auto-preview after the selection rests **≥ 600 ms**; **only for results whose peer reports a free slot** (others need an explicit Space and queue like a download); **1** active preview; not started if we already have an active transfer with that peer; ≤ **30 previews per 10 min**; counted in per-peer caps (PREV-7); on skip **cancel** unless ≥ 85 % received; answer later offers with `Cancelled`; ignore `UploadFailed` for cancelled previews | ≤ 2 active; ≤ 60 per 10 min | §6 | §6 | M (cancel) / L (values) |
+| **Answering others' searches** (SHARE-2, belongs to the sharing note) | Answer only queries with ≥ 3 characters; at most **300 files** per response; never files matching an excluded phrase | ≤ 500 files | N+ `maxresults = 300`, `min_search_chars = 3`; slskd `ResponseFileLimit = 500`; Soulseek.NET README on excluded phrases | §7.3 | H |
 | **Upload side** (SHARE-3, belongs to the sharing note) | **3** slots, **1** active upload per user, round-robin, **privileged users first**, per-user queue limits 100 files / 10 GiB answered with exactly `Too many files` / `Too many megabytes`, `File not shared.` for anything not in the index | Slots ≥ 1 while sharing | N+ defaults; slskd interop note; Rules require respect of privileges | §5.2, §7.1 | H |
 
 Two numbers deserve a UI explanation, because users will want them higher: the search budget (show "3 searches per
@@ -519,6 +532,7 @@ Before any live session (maintainer, M9 onwards):
 | E5 | Search budget | Accept 3/min sustained with a burst of 6 (OQ-4); expose remaining budget and refill time (SRCH-13). |
 | E6 | Per-peer caps | Accept 1 active / 20 queued / 20–50 files per day (OQ-4). |
 | E7 | Excluded phrases on outgoing searches | Warn and do not send (no override): compliant peers would return nothing anyway. |
+| E8 | May settings loosen a limit above its default (up to the ceiling), or only tighten it? | Allow loosening up to the ceiling for the per-peer and concurrency limits (a privileged or very active user may want it); keep **search budget, reconnect and PM limits fixed at their defaults** (ceiling = default), since those are the ones the server bans for. |
 
 ## 10. Open questions and things to verify on a local test server
 
