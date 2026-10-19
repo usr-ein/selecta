@@ -1,54 +1,58 @@
 # Conversion and metadata — research note
 
-> Status: **DRAFT in progress** (2026-10-19). Items marked **TODO-verify** are from memory and not yet checked against
-> a primary source. Confidence: **H** = verified in source code or spec; **M** = several consistent secondary sources;
-> **L** = memory, single hearsay or inference.
+> Status: **complete v1** (2026-10-19), research only — inputs for ADR-003 and milestone M6, not decisions.
+> Confidence: **H** = verified in source code, a spec or an official manual; **M** = several consistent secondary
+> sources or a credible reverse-engineering source; **L** = single forum report, memory or inference.
 > Source snapshots read for this note (shallow clones, read-only): TagLib `5fb1099` (2.3.2+, 2026-10-19), FFmpeg
 > `f91b54f` (master, 2026-10-19), LAME svn-trunk mirror `lameproject/lame@1f5cc94` (3.100.1 "under construction"),
 > beets `18967aa`, mediafile `faaf744`, Picard `84862c5`, picard-docs `2a6193e`, mutagen `ada28b2`.
 
 ## TL;DR
 
-- **Pipeline:** decode with FFmpeg (libavformat/libavcodec) → sample-format conversion, resampling and dither
-  (libswresample, or libsoxr directly) → encode (libmp3lame **called directly** for MP3; FFmpeg native encoders for
-  FLAC/PCM/ALAC) → mux → **write every tag and the artwork with TagLib 2.x from Selecta's own normalised metadata
-  model**. Never rely on FFmpeg's metadata copying: it silently turns BPM, key, ISRC, label and track totals into
-  `TXXX` frames and ignores folder artwork (verified in `libavformat/id3v2enc.c`).
-- **Default filing format (CONV-2):** MP3, LAME, CBR 320 kbps, joint stereo, 44.1 kHz (48 kHz sources stay 48 kHz),
-  LAME "Info" tag with gapless data, **ID3v2.3 with UTF-16 text**, one APIC "front cover" baseline JPEG, no ID3v1, no
-  APEv2.
-- **TagLib writes ID3v2.3 correctly only if Selecta compensates:** `save(..., ID3v2::v3)` *discards* TMOO, TSST, TDRL,
-  TDTG, TPRO (→ mood, disc subtitle, release date are lost) and writes multi-value frames null-separated (non-standard
-  in v2.3). Selecta must remap those to `TXXX` and join multiple values before saving (H).
-- **Homebrew's `ffmpeg` (9.0.2) is built `--enable-gpl --enable-version3` with `libmp3lame` but without `libsoxr`** →
-  link libsoxr directly (LGPL-2.1+) for high-quality resampling instead of depending on FFmpeg's build flags (H).
-- **libswresample does not dither by default** (`dither_method` default 0 = none); TPDF must be requested explicitly
-  when reducing to 16-bit (H).
-- **Never improve what can't be improved:** lossy sources are filed as-is by default; lossy → lossy only after an
-  explicit confirmation; upsampling is never automatic (see the warning matrix, §6).
+- **Pipeline:** decode with FFmpeg → resample with **libsoxr** (only when the target can't carry the source rate) →
+  TPDF dither (only when reducing to 16-bit PCM) → encode (**libmp3lame called directly** for MP3; FFmpeg's native
+  FLAC/ALAC encoders; FFmpeg's AIFF muxer with big-endian PCM; Selecta's own plain-PCM header writer for WAV) → **write every tag and the artwork with TagLib 2.x
+  from Selecta's own metadata model**. Never let FFmpeg copy metadata: it turns BPM, key, ISRC, label and track totals
+  into `TXXX` frames and ignores folder artwork (H, `libavformat/id3v2enc.c`).
+- **Default filing format (CONV-2):** MP3, LAME 3.100, CBR 320 kbps, joint stereo, 44.1 kHz (48 kHz sources stay
+  48 kHz), genuine LAME "Info" tag, **ID3v2.3, UTF-16 text**, one APIC front cover as baseline JPEG ≤ 800 px with a
+  Latin-1 description, no ID3v1, no APEv2.
+- **Use LAME's own header, not FFmpeg's:** FFmpeg's MP3 muxer writes a `Lavf` Xing/Info frame that Traktor decodes as
+  26 ms of audio while rekordbox skips it — the documented "26 ms cue shift" between DJ apps (H code / M effect).
+- **TagLib needs help for ID3v2.3:** `save(…, ID3v2::v3)` *drops* TMOO, TSST, TDRL, TDTG, TPRO and writes multiple
+  values null-separated; Selecta must remap those fields to `TXXX` and join values before saving (H).
+- **rekordbox 7 reads ID3 v1–v2.4 in MP3/AIFF, Vorbis comments in FLAC, MP4 atoms in M4A and only RIFF INFO in WAV**
+  (H, manual). WAV therefore loses artwork, label and key in rekordbox → **AIFF is the uncompressed filing format**.
+- **Licences are fine:** FFmpeg (Homebrew build is GPL-3.0-or-later), LAME LGPL-2.0+, libsoxr LGPL-2.1+, TagLib
+  LGPL-2.1/MPL-1.1 — all compatible with a GPLv3 app. Homebrew's `ffmpeg` has libmp3lame but **not** libsoxr (H).
+- **Never improve what can't be improved:** lossy sources are filed as-is; lossy → lossy or lossy → lossless only after
+  an explicit confirmation; upsampling never happens automatically (warning matrix in §6).
 
 ## Key findings
 
-1. FFmpeg's MP3 muxer writes its own Xing/Info frame with a LAME-*style* extension whose encoder string is `Lavf`/
-   `Lavf lame`, not `LAME3.100`; lowpass, VBR method and preset fields are zero. Encoder delay/padding *are* written.
-   Calling libmp3lame directly with `lame_set_bWriteVbrTag(1)` + `lame_get_lametag_frame()` produces the same header as
-   the LAME command line — the most widely tested MP3 flavour in DJ software (H for the code; L for DJ-app impact).
-2. FFmpeg's `libmp3lame` wrapper sets no bitrate by default (`b=0`) → LAME's library default (128 kbps CBR) applies;
-   it never calls `lame_set_quality` unless `compression_level` is set (LAME default `-q 3`); it disables LAME's
-   internal resampler (`out_samplerate = in_samplerate`) (H).
-3. LAME's CBR lowpass table: 320 kbps → 20.5 kHz, 256 → 19.7 kHz, 224 → 19.4 kHz, 192 → 18.6 kHz, 160 → 17.5 kHz,
-   128 → 17 kHz (`libmp3lame/lame.c`, `optimum_bandwidth`) — useful for spectral-cutoff heuristics (H).
-4. FFmpeg's WAV muxer always writes `WAVE_FORMAT_EXTENSIBLE` for > 16-bit PCM or > 48 kHz and has no switch to force
-   plain `WAVEFORMATEX` (H); the DJ community traces "CDJ refuses a supported 24-bit WAV" to exactly that header (M/L).
-   rekordbox reads only RIFF INFO from WAV (no artwork, label or key) (H manual / M disassembly) → **AIFF, not WAV,
-   for uncompressed filing**; Selecta writes its own plain-PCM WAV header when WAV is requested.
-6. The "26 ms problem": Traktor treats FFmpeg's `Lavf`/`Lavc` Xing frame (and LAME tags with a zero CRC) as audio
-   while rekordbox skips it, shifting cues by one MP3 frame between apps; genuine LAME tags with valid CRC are read
-   consistently (M, dj-data-converter). → write MP3 with libmp3lame's own LAME tag.
-7. rekordbox 7 reads tags once at import, reads `TKEY` verbatim and `TPUB` as label, and never reads BPM from tags
-   (M, third-party disassembly of 7.2.19) → complete, correct tags at filing time matter more than anything later.
-5. TagLib 2.x has a format-independent artwork API: `complexProperties("PICTURE")` with `data`, `mimeType`,
-   `description`, `pictureType` ("Front Cover") (H).
+1. FFmpeg's MP3 muxer writes its own Xing/Info frame whose LAME-style extension carries the encoder string `Lavf`/
+   `Lavf lame` and zeroed lowpass/VBR/preset fields (delay/padding are filled). libmp3lame driven directly
+   (`lame_set_bWriteVbrTag(1)` + `lame_get_lametag_frame()`) produces the same header as the `lame` command line (H).
+2. The "26 ms problem": Traktor treats `Lavf`/`Lavc` Xing frames (and LAME tags with a zero CRC) as audio while
+   rekordbox skips them, so cues differ by one MP3 frame between apps; genuine LAME tags with a valid CRC are read
+   consistently. In one sample, 8 of 13 Lavf/Lavc files shifted vs 5 of 122 LAME files (M, dj-data-converter #3).
+3. FFmpeg's `libmp3lame` wrapper has no default bitrate (`b=0` → LAME's 128 kbps), only sets `-q` when asked (LAME
+   default `-q 3`), forces `out_samplerate = in_samplerate`, and marks LAME init as not thread-safe (H).
+4. LAME's CBR lowpass table: 320 kbps → 20.5 kHz, 256 → 19.7, 224 → 19.4, 192 → 18.6, 160 → 17.5, 128 → 17.0 kHz
+   (`libmp3lame/lame.c`, `optimum_bandwidth`) — a reference for spectral-cutoff heuristics (H).
+5. rekordbox 7: tags are read once, at import ("Reload Tag" otherwise); `TKEY` is stored verbatim, label comes from
+   `TPUB` (FLAC: `LABEL`/`ORGANIZATION`, key `INITIALKEY`), BPM is never read from tags (M, third-party disassembly
+   of 7.2.19; tag formats H from the manual). Artwork images: JPEG or PNG (H).
+6. FFmpeg's WAV muxer always writes `WAVE_FORMAT_EXTENSIBLE` for > 16-bit or > 48 kHz PCM, with no override (H); the
+   DJ community traces "CDJ refuses a supported 24-bit WAV" to that header (M/L). FFmpeg's AIFF muxer writes no ID3
+   chunk unless `write_id3v2=1`, and AIFF-C (`sowt`) for little-endian PCM (H).
+7. CDJ manuals: embedded artwork must be JPEG and ≤ 800 × 800 to display; hi-res support stops at 96 kHz/24-bit
+   (CDJ-3000/NXS2), 48 kHz on older and XDJ models; no Pioneer player handles 176.4/192 kHz (H old manuals / M table).
+8. TagLib 2.x offers a format-independent artwork API (`complexProperties("PICTURE")`), writes text frames created
+   from properties as UTF-8 → rendered UTF-16 with BOM in v2.3, and writes APIC descriptions as Latin-1 — matching the
+   Engine DJ community's "APIC must be ISO-8859-1" advice (H for TagLib; L for Engine).
+9. libswresample never dithers unless asked (`dither_method` default none) and uses soxr only when FFmpeg was built
+   with it (`precision` default 20 bits) (H).
 
 ## 1. Libraries and licences
 
@@ -56,14 +60,15 @@
 |---|---|---|---|---|
 | FFmpeg 9.x (libavformat, libavcodec, libavutil, libswresample) | Decode everything; encode FLAC/PCM/ALAC; mux; sample-format conversion | LGPL-2.1-or-later by default; GPL-2.0-or-later with `--enable-gpl`; `--enable-version3` turns these into LGPL-3.0/GPL-3.0-or-later. Homebrew's formula declares `GPL-3.0-or-later` | Yes — never `--enable-nonfree` (e.g. libfdk_aac) | Homebrew `ffmpeg` 9.0.2: `--enable-gpl --enable-version3 --enable-libmp3lame --enable-audiotoolbox`, **no `--enable-libsoxr`** (H, formula read 2026-10-19). Bundling obligations covered in `qt-app-architecture.md`. |
 | LAME (libmp3lame) | MP3 encoding | LGPL-2.0-or-later (`COPYING` = LGPL v2 "Library GPL", headers say "or any later version") | Yes | Last release 3.100 (2017); svn trunk is "3.100.1 under construction". Homebrew `lame`. (H) |
-| libsoxr | High-quality sample-rate conversion | LGPL-2.1-or-later | Yes | Use directly (simple C API) rather than through `swr` `resampler=soxr`, which Homebrew's FFmpeg lacks. TODO-verify SPDX from source. |
-| libFLAC | Optional reference FLAC encoder | BSD-3-Clause (library); GPL-2.0+ for the command-line tools | Yes | Not needed: FFmpeg's native FLAC encoder writes STREAMINFO MD5 too (TODO-verify). |
-| libsndfile | Alternative PCM I/O | LGPL-2.1-or-later | Yes | Not needed; writes RIFF INFO strings but no ID3 chunk (TODO-verify). |
+| libsoxr | High-quality sample-rate conversion | LGPL-2.1-or-later (`LICENCE`, © robs 2007-18; optional `pffft.c` carries its own permissive licence) | Yes | Use directly (simple C API) rather than through `swr` `resampler=soxr`, which Homebrew's FFmpeg lacks. Homebrew `libsoxr`. (H) |
+| libFLAC | Optional reference FLAC encoder | BSD-3-Clause (library); GPL-2.0-or-later for the command-line tools | Yes | Not needed: FFmpeg's native FLAC encoder computes the STREAMINFO MD5 itself (`flacenc.c` uses `AVMD5`) (H code / M licence). |
+| libsndfile | Alternative PCM I/O | LGPL-2.1-or-later | Yes | Not needed (L: writes RIFF INFO strings, no ID3 chunk). |
 | TagLib 2.3.x | All tag reading/writing | LGPL-2.1-only **or** MPL-1.1 (dual; `COPYING.LGPL` 2.1 + `COPYING.MPL` 1.1) | Yes (LGPL-2.1 is GPLv3-compatible) | 2.0 (Jan 2024) → 2.3.2 (Sep 2026). C++17. Writes ID3v2.3 via `ID3v2::v3`; unified `PICTURE` complex property; RIFF RF64/BW64 (2.3.2); BEXT/iXML (2.3). (H) |
 | AudioToolbox (macOS) | Optional: Apple AAC/ALAC encoders, SRC | System framework | Yes (system-library exception) | Not needed for P0 formats; would only matter for AAC output (not in CONV-1). |
 
-**Recommendation:** FFmpeg (decode, FLAC/PCM/ALAC encode, mux) + libmp3lame (direct) + libsoxr (direct) + TagLib. All
-four are in Homebrew, vcpkg and Conan (TODO-verify vcpkg/Conan names for the qt note).
+**Recommendation:** FFmpeg (decode, FLAC/ALAC encode, mux) + libmp3lame (direct) + libsoxr (direct) + TagLib. All
+four are Homebrew formulae (`ffmpeg`, `lame`, `libsoxr`, `taglib`); package names for vcpkg/Conan are for the qt note
+to confirm (L: vcpkg `ffmpeg[mp3lame]`, `mp3lame`, `soxr`, `taglib`).
 
 ## 2. Encoding best practice
 
@@ -73,8 +78,8 @@ four are in Homebrew, vcpkg and Conan (TODO-verify vcpkg/Conan names for the qt 
 |---|---|---|---|---|
 | CBR 320 | `-b 320` (CBR is the default mode) | `lame_set_brate(gfp, 320)`, `VBR = vbr_off` | `-c:a libmp3lame -b:a 320k` | Lowpass 20.5 kHz automatically (H). |
 | CBR 256 / 192 | `-b 256` / `-b 192` | idem | `-b:a 256k` | Lowpass 19.7 / 18.6 kHz (H). |
-| VBR V0 / V2 | `-V 0` / `-V 2` | `lame_set_VBR(gfp, vbr_default)` (= `vbr_mtrh`), `lame_set_VBR_quality(gfp, 0)` | `-q:a 0` / `-q:a 2` | V0 ≈ 245 kbps, V2 ≈ 190 kbps average (M, Hydrogenaudio; TODO-verify). |
-| Algorithm quality | `-q 0…9`, default 3 | `lame_set_quality`; default `LAME_DEFAULT_QUALITY = 3` | `-compression_level` | For `vbr_mtrh`, any `-q` < 5 is mapped to 0 (`lame.c`) (H). Keep the default; `-q 0` costs time for negligible gain (TODO-verify HA recommendation). |
+| VBR V0 / V2 | `-V 0` / `-V 2` | `lame_set_VBR(gfp, vbr_default)` (= `vbr_mtrh`), `lame_set_VBR_quality(gfp, 0)` | `-q:a 0` / `-q:a 2` | V0 ≈ 245 kbps, V2 ≈ 190 kbps average; HA calls V0–V2 "normally transparent" and `-b 320` the lowest-risk MP3 setting (M, Hydrogenaudio wiki). |
+| Algorithm quality | `-q 0…9`, default 3 | `lame_set_quality`; default `LAME_DEFAULT_QUALITY = 3` | `-compression_level` | For `vbr_mtrh`, any `-q` < 5 is mapped to 0 (`lame.c`) (H). Keep the default: Hydrogenaudio's recommended settings are plain `-b 320` / `-V 0`, without `-q` or lowpass overrides (M). |
 | Stereo mode | joint stereo (default) | `JOINT_STEREO` | `joint_stereo=1` (default) | Keep joint stereo. |
 | Input samples | — | `lame_encode_buffer_ieee_float` / `_int` | wrapper accepts s32p, fltp, s16p | Feed float or 32-bit: never truncate a 24-bit source to 16 bit before LAME (H). |
 | Sample rate | — | `in = out` rate; LAME *can* resample internally, but don't | wrapper forces `out = in` | MPEG-1 Layer III: 32 / 44.1 / 48 kHz only. Resample hi-res first (§2.2). |
@@ -96,11 +101,10 @@ layout as `lame -b 320` (the reference everyone tests against).
 - **When to resample:** only when the target format cannot carry the source rate: MP3 (max 48 kHz), or a user-chosen
   "hardware compatibility" profile (§4.3). Never upsample automatically.
 - **Target rate:** 88.2 / 176.4 kHz → 44.1 kHz (integer ratio). 96 / 192 kHz → 48 kHz keeps an integer ratio, but
-  44.1 kHz is the CD/DJ norm; proposed default **44.1 kHz for MP3 output**, 48 kHz sources kept at 48 kHz (TODO decide
-  with the maintainer).
+  44.1 kHz is the CD/DJ norm; proposed default **44.1 kHz for MP3 output**, 48 kHz sources kept at 48 kHz (decision D-4 in §9).
 - **Engine:** libsoxr, quality `SOXR_VHQ` (28-bit precision) or `SOXR_HQ` (20-bit); both far beyond what MP3 needs.
   FFmpeg's `swr` with `resampler=soxr` uses `precision=20` by default (H) but needs an FFmpeg built with libsoxr.
-  FFmpeg's native swr resampler (`filter_size=32` default) is acceptable as a fallback (TODO-verify measured quality).
+  FFmpeg's native swr resampler (`filter_size=32` default) is acceptable as a fallback (L: not measured here; measure with a sweep test, §10).
 - **Dither:** only when reducing word length to integer PCM (24 → 16-bit WAV/AIFF/FLAC). Use TPDF
   (`dither_method=triangular` in swr, or Selecta's own ±1 LSB TPDF after soxr). Never dither before MP3 (LAME takes
   float). libswresample default is *no dither* (`dither_method` default 0; H). Noise-shaped variants (`shibata`,
@@ -186,23 +190,23 @@ Picard tag-mapping appendix (`picard-docs/appendices/tag_mapping.rst`); beets `m
 | Comment | `COMMENT` | `COMMENT`; read `DESCRIPTION` | `COMM` (lang `eng`, empty description) | `COMM` | `©cmt` | `ICMT` | ⚠ Skip iTunes-internal COMM frames (`iTunNORM`, `iTunSMPB`, `iTunPGAP`) when copying. |
 | Lyrics | `LYRICS` | `LYRICS`; read `UNSYNCEDLYRICS` | `USLT` | `USLT` | `©lyr` | — | |
 | Compilation | `COMPILATION` | `COMPILATION` = `1` | `TCMP` = `1` (iTunes, non-standard) | `TCMP` | `cpil` | — | |
-| Grouping | `GROUPING` | `GROUPING` | `TIT1` (classic) / `GRP1` (iTunes ≥ 12.5) | idem | `©grp` | — | ⚠ TagLib maps TIT1 → `WORK` and GRP1 → `GROUPING`; decide which frame to write (TODO: what rekordbox shows). |
+| Grouping | `GROUPING` | `GROUPING` | `TIT1` (classic) / `GRP1` (iTunes ≥ 12.5) | idem | `©grp` | — | ⚠ TagLib maps TIT1 → `WORK` and GRP1 → `GROUPING`; write `TIT1` (what most DJ tools read as grouping; L) unless the source used `GRP1`; verify in rekordbox (§10). |
 | Subtitle / mix | `SUBTITLE` | `SUBTITLE` | `TIT3` | `TIT3` | `----:com.apple.iTunes:SUBTITLE` | — | |
 | Mood | `MOOD` | `MOOD` | ⚠ `TXXX:MOOD` | `TMOO` | `----:com.apple.iTunes:MOOD` | — | TagLib *drops* TMOO on v2.3 save (H). |
 | Disc subtitle | `DISCSUBTITLE` | `DISCSUBTITLE` | ⚠ `TXXX:DISCSUBTITLE` | `TSST` | `----:com.apple.iTunes:DISCSUBTITLE` | TagLib `PRT1` | TagLib drops TSST on v2.3 save (H). |
 | Encoded by | `ENCODEDBY` | `ENCODEDBY` | `TENC` | `TENC` | `©enc` | TagLib `ITCH` | |
-| Encoder / settings | `ENCODING` | `ENCODER` / `ENCODERSETTINGS` | `TSSE` | `TSSE` | `©too` | `ISFT` | Selecta writes e.g. `LAME 3.100 -b 320` (TODO decide). |
+| Encoder / settings | `ENCODING` | `ENCODER` / `ENCODERSETTINGS` | `TSSE` | `TSSE` | `©too` | `ISFT` | Selecta writes e.g. `LAME3.100 -b 320` (and `TENC` = `Selecta <version>`); never copy the source's value. |
 | Copyright | `COPYRIGHT` | `COPYRIGHT` | `TCOP` | `TCOP` | `cprt` | `ICOP` | |
 | Sort names | `ARTISTSORT`, `ALBUMSORT`, `TITLESORT`, `ALBUMARTISTSORT`, `COMPOSERSORT` | same keys | `TSOP`, `TSOA`, `TSOT` (iTunes extension in v2.3, kept by TagLib), `TSO2`, `TSOC` | `TSOP`, `TSOA`, `TSOT` (standard), `TSO2`, `TSOC` | `soar`, `soal`, `sonm`, `soaa`, `soco` | — | mutagen's `update_to_v23()` deletes TSOA/TSOP/TSOT; TagLib keeps them unless built with `NO_ITUNES_HACKS` (H). |
-| ReplayGain | `REPLAYGAIN_TRACK_GAIN`, `…_PEAK`, `REPLAYGAIN_ALBUM_GAIN`, `…_PEAK` | same | `TXXX:REPLAYGAIN_TRACK_GAIN` … | idem | `----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN` … | — | ⚠ Values describe the *source* encoding; after lossy encoding the gain is still approximately right but the peak is not. Copy gain, drop peak (TODO decide). |
+| ReplayGain | `REPLAYGAIN_TRACK_GAIN`, `…_PEAK`, `REPLAYGAIN_ALBUM_GAIN`, `…_PEAK` | same | `TXXX:REPLAYGAIN_TRACK_GAIN` … | idem | `----:com.apple.iTunes:REPLAYGAIN_TRACK_GAIN` … | — | ⚠ Values describe the *source* encoding; after lossy encoding the gain is still approximately right but the peak is not. Proposed: drop all ReplayGain tags when transcoding (DJ apps use their own auto-gain; stale values are worse than none), keep them when a file is moved as-is (decision D-7 in §9). |
 | MusicBrainz IDs | `MUSICBRAINZ_TRACKID`, `MUSICBRAINZ_ALBUMID`, … | same | `UFID:http://musicbrainz.org` + `TXXX:MusicBrainz Album Id` … | idem | `----:com.apple.iTunes:MusicBrainz Track Id` … | — | Copy verbatim (TagLib handles the TXXX names). |
 | Artwork | `PICTURE` (complex property) | FLAC: native `PICTURE` metadata block; Ogg/Opus: `METADATA_BLOCK_PICTURE` (base64) | `APIC` (type 3 = front cover, MIME `image/jpeg`) | `APIC` | `covr` (data type 13 = JPEG, 14 = PNG; no picture type) | — (no artwork in INFO) | WAV/AIFF artwork only via the ID3 chunk. |
-| DJ-app private data | — | Serato: base64 `SERATO_*` comments (TODO-verify) | `GEOB` "Serato Markers2", "Serato BeatGrid"…; `PRIV` "TRAKTOR4" (TODO-verify) | idem | Serato freeform atoms (TODO-verify) | — | ⚠ **Drop on conversion**: cue/beatgrid offsets are tied to the source encoding (encoder delay differs). Files moved as-is keep them untouched. |
+| DJ-app private data | — | Serato: base64 `SERATO_*` comments | `GEOB` "Serato Markers2", "Serato BeatGrid"…; `PRIV` "TRAKTOR4" | idem | `----:com.serato.dj:*` atoms | — | ⚠ **Drop on conversion**: cue/beatgrid offsets are tied to the source encoding (encoder delay differs). Files moved as-is keep them untouched. |
 
 **Multi-value rule for ID3v2.3 (H):** TagLib renders a text frame with several values null-separated even when saving
 v2.3 (`TextIdentificationFrame::renderFields`), which v2.3 readers show as only the first value. mutagen joins with
 `/` (`v23_sep='/'`); Picard has a "join with" setting (default `/`). Selecta should join with `; ` for ARTIST-like
-fields where `/` occurs in names (e.g. "AC/DC") — TODO decide; proposed `", "` for ARTIST, `"; "` elsewhere.
+fields where `/` occurs in names (e.g. "AC/DC") — proposed `", "` for ARTIST-type fields and `"; "` elsewhere (decision D-6 in §9).
 
 **Text encoding (H):** TagLib frames default to Latin-1 and are rendered as UTF-16 (v2.3) or UTF-8 (v2.4) only when a
 value is not Latin-1-representable (`Frame::checkTextEncoding`). Setting
@@ -445,7 +449,8 @@ An "ASCII-only" option (transliterate) is not needed for rekordbox and is left o
 ### 8.3 Picard, mutagen, XLD, dBpoweramp
 
 - Picard: canonical cross-format mapping (used in §3); v2.3 is a user option with a "join multiple values with"
-  separator; TODO: confirm Picard's default ID3 version and encoding for v2.3.
+  separator. Defaults (`picard/options.py`): ID3v2.4 (`write_id3v23=False`), UTF-8, ID3v1 on, join `/`; choosing v2.3
+  disables UTF-8 and switches the encoding to UTF-16 (`ui/options/tags_compatibility_id3.py`) (H).
 - mutagen `update_to_v23()`: converts TDOR → TORY, TDRC → TYER/TDAT/TIME, TIPL/TMCL → IPLS, deletes v2.4-only frames
   including TSOA/TSOP/TSOT/TSST/TMOO; `save(v2_version=3, v23_sep='/')` joins multi-values with `/` (H).
 - **XLD** (macOS; official changelog): MP3 tags are ID3v2.3 with UCS-2 text (since 2006), date written as `TYER` +
