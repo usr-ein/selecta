@@ -324,13 +324,41 @@ one manual download · observe for bans/denials · escalate gradually.
 
 ## 9. How work gets done
 
-- The architect splits each milestone into work packages with acceptance tests mapped to PRD IDs.
-- Implementation agents work in isolated git worktrees on feature branches; the architect reviews and merges.
-- The maintainer validates anything user-facing against the mock, and answers question rounds as they come up.
+**One head implementer builds Selecta from this plan.** Separate agents build only the libraries with clear
+boundaries (maintainer's direction, 2026-10-19: one agent with the whole context beats a swarm).
+
+- **The head implementer** is the main session, which holds the PRD, this plan, the research and the mock. It builds
+  the app end to end:
+  - the CMake skeleton, CI and `devenv/`;
+  - `app/`, `core/`, `storage/`, `governor/` and `library/`;
+  - the player and waveform widget;
+  - the integration of every library.
+
+  It writes each library's contract before that library is built, reviews and merges library work, and keeps `main`
+  green.
+- **Library agents**, one per library, only where the boundary is clean:
+
+  | Library | Scope | Contract it builds against |
+  |---|---|---|
+  | `slsk/` | Codec, server/peer/distributed sessions, transfer state machines, FakeServer/FakePeer fixtures | Protocol note §12; public headers; golden vectors |
+  | `meta/` | Release lookup (Spotify, Deezer, MusicBrainz), cover fetch, the yt-dlp preview runner | Metadata note; public headers; recorded HTTP fixtures; a fake yt-dlp |
+  | `convert/` | Transcoder, tag policy and writer, artwork, output verifier | Conversion note §9; golden files |
+  | `audio/` (analysis only) | Decoder over a growing file, 3-band analyzer, analysis cache format | Audio note §11; analysis outputs on synthetic audio |
+
+- Each library agent gets:
+  - its contract: public headers plus acceptance tests mapped to PRD IDs;
+  - its own git worktree and branch.
+
+  It edits only its module directory and its tests, commits early, and hands back to the head implementer for review
+  and merge.
+- Anything that crosses modules stays with the head implementer: UI, services, settings, persistence and the
+  governor's wiring. That way one agent holds the whole picture.
+- The maintainer validates anything user-facing against the mock and answers question rounds as they come up.
 - `CLAUDE.md` carries the non-negotiable network-safety rules for every agent.
 
 ## 10. Immediate next steps
 
 1. Research notes land (9 topics) → `docs/RESEARCH-SYNTHESIS.md` → ADR drafts → PRD v1.0 defaults (limits, caps, TTLs) → next question round.
 2. Before the first push: rewrite the early commits to the author identity `usr-ein <usr-ein@pm.me>` (PRD D16), then create the GitHub repository.
-3. M1 Foundations: CMake skeleton, CI, the Qt app shell following the mock, `devenv/` with the local test server.
+3. M1 Foundations, built by the head implementer: CMake skeleton, CI, the Qt app shell following the mock, `devenv/`
+   with the local test server. Then the `slsk/` contract, so its library agent can start while the shell grows.

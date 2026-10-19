@@ -19,6 +19,10 @@ Selecta is a GPLv3 Soulseek client in C++/Qt 6, macOS-first. Start here:
 ## Working conventions
 
 - Do not run `git add -A` / `git add .` — several agents may work in this tree at once; stage explicit paths.
+- Roles (`docs/PLAN.md` §9): the head implementer, the main session, owns the app, integration, top-level CMake
+  and every cross-module change. A library agent (`slsk/`, `meta/`, `convert/`, `audio/` analysis) works in its own
+  worktree and branch, edits only its module and its tests, builds against the contract it was given, and hands back
+  for review and merge.
 - Secrets (API keys, client secrets, cookies) are never committed, logged, or copied into docs or tests.
   Development secrets live in `local/secrets.env` (git-ignored); read them from there.
 - Files Selecta keeps (Inbox, collection, shares) come only from Soulseek peers (PRD D20). Preview audio may come from
