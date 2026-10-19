@@ -49,9 +49,12 @@
    track count + sorted track lengths within ±3 s; Selecta can match remote folders to owned albums the same way, and
    cluster per-track durations across peers to tell versions apart in batch results (§8, §9.1).
 9. **Sockseek (sldl) is now AGPL-3.0** — borrow ideas, not code.
-10. **TagLib opens files read-write by default** (`FileStream` tries `rb+` first): the scanner must pass an explicit
+10. **Two different SQLites:** Homebrew's Qt 6.11.1 QSQLITE plugin links the *system* SQLite (3.54, FTS5 on,
+    extension loading off), Qt's bundled copy is 3.53 with FTS5. Rely on FTS5 only; compute match keys in C++ and
+    store them, no custom SQL functions or extensions (§10).
+11. **TagLib opens files read-write by default** (`FileStream` tries `rb+` first): the scanner must pass an explicit
     read-only `FileStream` so Selecta never holds a write handle on a collection file (§12).
-11. **Supersede safety comes from guards, not from the matcher alone:** only after a verified, complete album; exact
+12. **Supersede safety comes from guards, not from the matcher alone:** only after a verified, complete album; exact
     tier with equal version and Δ ≤ 2 s; album copy at least as good; TOCTOU re-check; Trash + Undo + audit log;
     circuit breaker (§15).
 
@@ -575,6 +578,8 @@ Where it helps Selecta:
 3. **Preview check (new idea, P2)**: once a preview has been downloaded, fingerprint the cached audio and compare it
    with likely owned candidates — turns "likely" into "exact" or "none" for the result being auditioned.
 
+Use Chromaprint ≥ 1.6.1 (1.6.1 fixed a heap overflow when decoding fingerprints, `NEWS.txt`).
+
 Cost: decoding 120 s of audio and computing the fingerprint is dominated by decoding (FFmpeg); store fingerprints in the
 analysis cache keyed by content hash. Not useful *before* download: search results carry no audio.
 
@@ -831,7 +836,9 @@ renamed freely (it is Selecta's), so a later rename after tags are read is safe.
 already contains `(Extended Mix)`; if the version came from the filename only, append ` (<Version>)`. Collision →
 ` (2)`, never overwrite (DL-5). Sanitisation (details in `references/conversion-and-metadata.md`): replace `/` and `\`
 with `-`, `:` with ` -`, drop `* ? " < > |` and control characters, trim trailing dots/spaces, no leading `.`, NFC, cap
-each component at 255 UTF-8 bytes by shortening the title (keep the extension and any ` (2)` suffix).
+each component at 255 UTF-8 bytes (`getconf NAME_MAX` on APFS = 255) by shortening the title (keep the extension and
+any ` (2)` suffix). APFS preserves the normalisation it is given but compares names normalisation-insensitively
+(Apple APFS FAQ), so an NFC name and an NFD name collide: collision checks must compare NFC-normalised names.
 
 **Companion files** (Inbox album folders):
 
@@ -1055,4 +1062,11 @@ All accessed 2026-10-19. Code read from shallow clones under `local/research-clo
 | TagLib, https://github.com/taglib/taglib @ 5fb1099 (2.3.2) — `taglib/toolkit/tfilestream.{h,cpp}`, `taglib/fileref.h`, `taglib/audioproperties.h`, `taglib/toolkit/taglib.h` | Read-write-first open behaviour, read-only stream API, ReadStyle |
 | Nicotine+ `pynicotine/shares.py`, `pynicotine/external/tinytag.py` (same commit as above) | Shared-file duration truncation, bitrate rounding, headerless-MP3 duration estimation |
 | Chromaprint, https://github.com/acoustid/chromaprint @ 3b38c10 (v1.6.2) — `LICENSE.md`, `CMakeLists.txt`, `src/fingerprinter_configuration.{h,cpp}`, `src/fingerprint_matcher.{h,cpp}`, `src/chromaprint.h`, `src/cmd/fpcalc.cpp` | Licence, FFT backends, parameters, local comparison |
+| SQLite FTS5 docs, https://www.sqlite.org/fts5.html; spellfix1, https://www.sqlite.org/spellfix1.html | Tokenizers, trigram limits, external content, detail option |
+| Qt qtbase v6.11.1: https://raw.githubusercontent.com/qt/qtbase/v6.11.1/src/3rdparty/sqlite/qt_attribution.json and `src/plugins/sqldrivers/sqlite/CMakeLists.txt`; https://doc.qt.io/qt-6/qsqldriver.html | Bundled SQLite version and compile options; `QSqlDriver::handle()` |
+| Local read-only checks on the maintainer's machine (helper agent): `otool -L` on Homebrew `libqsqlite.dylib`, `PRAGMA compile_options` of the system SQLite | Homebrew Qt links system SQLite 3.54.0 (FTS5, OMIT_LOAD_EXTENSION) |
+| Apple, FSEvents Programming Guide, https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html; macOS SDK `FSEvents.h` | Event-id persistence, device UUID, flags, extended data `fileID` |
+| macOS SDK `NSFileManager.h` (`trashItemAtURL:resultingItemURL:error:`) | Trash + Undo design |
+| Apple APFS Guide FAQ, https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/APFS_Guide/FAQ/FAQ.html | Normalisation preserving/insensitive behaviour |
+| AcoustID web service, https://acoustid.org/webservice; Chromaprint `NEWS.txt` | Key, 3 req/s, non-commercial terms; 1.6.1 security fix |
 | Selecta `docs/PRD.md` v0.2, `docs/PLAN.md` v0.2 | Requirements and module boundaries |
