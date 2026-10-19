@@ -861,6 +861,11 @@ Accessed 2026-10-19.
   `src/3rdparty/sqlite/sqlite3.h` (bundled SQLite); `src/tools/macdeployqt/macdeployqt/main.cpp` (options);
   `src/corelib/kernel/qcore_mac.mm` (os_log routing); `src/plugins/platforms/cocoa/qcocoawindow.mm` (style mask, tabbing,
   safe area).
+- Xcode 27 macOS SDK headers (`AppKit.framework/Headers/NSView.h`, `NSScreen.h`, `NSWindow.h`, `NSGlassEffectView.h`) —
+  availability of `displayLinkWithTarget:selector:` (14.0), `NSGlassEffectView` (26.0), `effectIsInteractive` and
+  `cornerConfiguration` (27.0).
+- qtbase v6.12.0 `src/widgets/kernel/qrhiwidget.cpp` (composition and compatibility notes), `src/widgets/widgets/qmenu.cpp`
+  (`createPlatformMenu`/`syncPlatformMenu`).
 - qtmacextras 5.15 (github.com/qt/qtmacextras, `src/macextras/qmactoolbar.mm`) — Qt 5's `NSToolbar` wrapper
   (LGPL-3.0/GPL), a porting reference for the native toolbar.
 - QtKeychain (github.com/frankosterfeld/qtkeychain @ 987522a: `COPYING`, `ChangeLog`, `qtkeychain/keychain_apple.mm`)
