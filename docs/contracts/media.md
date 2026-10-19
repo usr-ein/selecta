@@ -102,7 +102,7 @@ A `Decoder` instance is used by one thread at a time. Document thread safety per
 
 - Every component has tests for its failure paths; dev, asan and tsan are clean; lint is clean; the benchmarks are
   recorded in `DESIGN.md`.
-- A demo in `selecta-cli`, in new files: `media-analyze <file>` prints the analysis summary and timing;
+- Demo commands in `tools/selecta-cli/commands/audio/` and `…/convert/`: `media-analyze <file>` prints the analysis summary and timing;
   `media-convert <in> <out.mp3> [--title … --artist … --cover img]` produces a verified, tagged MP3 that rekordbox can
   read. The maintainer checks rekordbox by hand later.
 - `DESIGN.md`: classes, threading, cache format, and the integration points for the player (PCM pull API, seek, the

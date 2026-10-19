@@ -102,7 +102,7 @@ copyable values.
 - **`ClipSource`:** the official 30-s preview URL (Deezer by ISRC, else by search).
 
 ### M6. Smoke tool (manual only)
-A `selecta-cli meta …` subcommand, in new files under `tools/selecta-cli/`: `meta-search "artist - title"`,
+`selecta-cli` commands as new files in `tools/selecta-cli/commands/meta/`: `meta-search "artist - title"`,
 `meta-isrc <isrc>`, `meta-ytdlp-search "artist - title"`. The maintainer, or you sparingly, runs it by hand to check
 behaviour against the real services. It reads the client ID from the environment or `local/secrets.env` and never
 prints secrets or tokens.

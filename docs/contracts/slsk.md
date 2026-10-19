@@ -132,9 +132,9 @@ Deliver in this order; each step is useful on its own and reviewed when done.
   your tests must not try.
 
 ### S7. Command-line exercise
-Add `selecta-cli` subcommands that exercise the library against the local network only, in new files under
-`tools/selecta-cli/`: `slsk-login`, `slsk-search`, `slsk-browse`, `slsk-download`. Register them in
-`tools/selecta-cli/main.cpp` with a minimal change. Each refuses non-local servers through `ServerGuard`. Permits in
+Add `selecta-cli` commands that exercise the library against the local network only, as new files in
+`tools/selecta-cli/commands/slsk/` (self-registering, see `Command.h`): `slsk-login`, `slsk-search`, `slsk-browse`,
+`slsk-download`. Each refuses non-local servers through `ServerGuard`. Permits in
 the CLI come from a small local `Governor` stand-in that enforces the real limits from `Limits.h`; ask the head
 implementer for the real `Governor` API when you get there.
 

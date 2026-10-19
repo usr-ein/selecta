@@ -19,8 +19,12 @@ library agent designs the details inside it and builds it.
    - the research note it cites;
    - `docs/RESEARCH-SYNTHESIS.md` §3 for the numbers;
    - the relevant ADRs in `docs/adr/`.
-2. **Stay in your directories.** Your library's `CMakeLists.txt` is picked up automatically: `src/CMakeLists.txt` adds
-   `src/<lib>/`, and `tests/CMakeLists.txt` adds `tests/<lib>/`. Don't edit files outside your directories. If you need a
+2. **Stay in your directories.**
+   - Your library's `CMakeLists.txt` is picked up automatically: `src/CMakeLists.txt` adds `src/<lib>/`, and
+     `tests/CMakeLists.txt` adds `tests/<lib>/`.
+   - CLI commands are new files in `tools/selecta-cli/commands/<lib>/` that register themselves (see
+     `tools/selecta-cli/Command.h`). They are compiled whenever your library is in the build.
+   - Don't edit files outside your directories. If you need a
    change elsewhere (a vcpkg port, a governor operation, a shared helper), message the head implementer (`main`) and
    explain why.
 3. **Work on your branch** (table above) in your own git worktree. Commit early and often, at least after every
