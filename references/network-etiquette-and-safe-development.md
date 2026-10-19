@@ -285,10 +285,14 @@ Facts:
   `Cancelled`, sends `UploadFailed` (which the downloader must ignore if it cancelled on purpose) and **immediately
   starts the next user's upload** (`uploads.py` `_file_connection_closed` → `_check_upload_queue`). The slot is freed
   sooner than if Selecta had finished a file it does not want; the bytes not sent are bandwidth saved.
-- slskd records such an upload in a *failed* state (`Cancelled`, `Errored` or `Aborted` are all in
-  `TransferStateCategories.Failed`) and **counts it against optional per-user daily/weekly failure limits** (none by
+- slskd records such an upload in a *failed* state — reading Soulseek.NET's upload loop, a remote disconnect
+  surfaces as an exception and ends as `Completed | Errored`; `Cancelled`, `Errored` and `Aborted` are all in
+  `TransferStateCategories.Failed` — and **counts it against optional per-user daily/weekly failure limits** (none by
   default; the docs' example allows a leecher 10 failures per day). Many cancelled previews from one slskd peer can
   therefore get Selecta refused by that peer for a day or a week.
+- The mirror case matters too: when a download (or a kept preview) *completes*, close the file connection promptly.
+  Uploaders wait for the receiver to disconnect — Soulseek.NET: "ideally the receiving end disconnects; this way we
+  know they've gotten all of the data", lingering up to `MaximumLingerTime` otherwise (`SoulseekClient.cs`).
 - No source found treats an early cancel as rude; no client bans on it. The complaints in the community are about
   hoarding slots and mass-queuing, which finishing unwanted files makes *worse*. (Confidence: medium — absence of
   evidence, plus the mechanics above.)
@@ -550,7 +554,7 @@ Never verify a limit by approaching it on the live network. Local-network experi
 | Q2 | Do bursts of `GetPeerAddress` / `ConnectToPeer` contribute to the flood ban? | Unknown. Keep the L-confidence peer-lookup bucket; watch M9 logs. |
 | Q3 | Is "34 per 220 s" (or "~28 per 10 min") the real edge in 2026, and is there more than one window? Does the ban escalate for repeat offenders? Does a ban disconnect, or silently block searches (Orbit-pure says searches "returned zero results silently")? | Unknown; never probe. Defaults stay far below. Record any ban in M9 with full context. |
 | Q4 | Does the server send the ban PM before closing the connection, and are logins during the ban silently ignored (as Soulfind assumes)? | Only observable if it happens; the ban detector must handle both orders. |
-| Q5 | What does slskd record (Cancelled / Errored / Aborted) when the downloader closes mid-transfer, and does it count toward failure limits? | devenv: slskd peer with `failures` limits set; preview-cancel scenario. |
+| Q5 | What does slskd record when the downloader closes mid-transfer (code reading says `Errored`), and does it count toward failure limits? | devenv: slskd peer with `failures` limits set; preview-cancel scenario. |
 | Q6 | How do Nicotine+ and slskd react to many short previews from one downloader (queue position, `UploadFailed`, bans)? | devenv scenario with both as uploaders. |
 | Q7 | How do Nicotine+, slskd and SoulseekQt react to `TransferResponse(false, "Cancelled")` for a queued item? | devenv for N+/slskd; SoulseekQt: TODO(verify) whether it can use a custom server — otherwise observe only in normal M9 use. |
 | Q8 | SoulseekQt's default per-user upload limits (files/MB) and slot count. | TODO(verify): official client options, not documented on slsknet.org. |
