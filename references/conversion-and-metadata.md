@@ -463,12 +463,174 @@ An "ASCII-only" option (transliterate) is not needed for rekordbox and is left o
 
 ## 9. Implications for Selecta
 
-TODO (will consolidate): converter architecture, defaults table, decisions for the maintainer.
+### 9.1 Module design (`convert/` in PLAN.md)
+
+```mermaid
+flowchart LR
+  subgraph Inputs
+    SRC[Inbox / collection file]
+    DIR[Folder images]
+  end
+  SRC --> PROBE[QualityProbe<br/>§6.1]
+  SRC --> TR[TagReader<br/>TagLib + aliases]
+  DIR --> AF[ArtworkFinder<br/>§5.1]
+  PROBE --> ADV[QualityAdvisor<br/>§6.2 matrix]
+  ADV -->|move as-is| MOVE[FileOps copy → verify → remove]
+  ADV -->|convert| DEC[Decoder<br/>FFmpeg]
+  DEC --> RS[Resampler<br/>libsoxr, only if needed]
+  RS --> DI[TPDF dither<br/>only to 16-bit PCM]
+  DI --> ENC{Encoder}
+  ENC -->|MP3| LAME[libmp3lame direct<br/>+ LAME tag]
+  ENC -->|FLAC / ALAC| FFE[FFmpeg encoder + muxer]
+  ENC -->|AIFF| AIFF[FFmpeg AIFF muxer<br/>pcm_s16be / s24be]
+  ENC -->|WAV| WAV[own WAVE_FORMAT_PCM writer]
+  TR --> POL[TagPolicy<br/>v2.3 fixes, deny-list]
+  AF --> AP[ArtworkProcessor<br/>baseline JPEG ≤ 800 px]
+  LAME & FFE & AIFF & WAV --> TW[TagWriter<br/>TagLib]
+  POL --> TW
+  AP --> TW
+  TW --> VER[OutputVerifier<br/>§2.4]
+  VER --> PUB[No-overwrite rename<br/>into collection]
+```
+
+| Component | Responsibility | Key rules from this note |
+|---|---|---|
+| `MetadataModel` | Canonical tags (TagLib property keys → `QStringList`), pictures, provenance per field (embedded / folder / filename / user) | Provenance drives the "shown for confirmation" UI of CONV-5. |
+| `TagReader` | TagLib `FileRef::properties()` + `complexProperties("PICTURE")`, plus an alias table | Aliases: `ALBUM ARTIST`/`ALBUM_ARTIST` → `ALBUMARTIST`; `TOTALTRACKS`/`TRACKTOTAL`, `TOTALDISCS`/`DISCTOTAL` → `n/N`; `KEY` → `INITIALKEY`; `ORGANIZATION`/`PUBLISHER` → `LABEL`; `DESCRIPTION` → `COMMENT`; `UNSYNCEDLYRICS` → `LYRICS`. |
+| `TagPolicy` | Decide what is written per target | Deny-list on transcode: Serato GEOB/`SERATO_*`, `PRIV:TRAKTOR4`, iTunes `COMM:iTunNORM/iTunSMPB/iTunPGAP`, `TLEN`, `RVAD`/`RVA2`, `ReplayGain_*`, `TSSE`/`TENC` (re-set), `MCDI`. ID3v2.3: TMOO/TSST/TDRL/TDTG/TPRO → `TXXX:MOOD/DISCSUBTITLE/RELEASEDATE/…`; join multi-values (D-6). Copy unknown `TXXX`/Vorbis fields otherwise. |
+| `TagWriter` | Write via the format-specific TagLib classes | MP3: `MPEG::File::save(MPEG::File::ID3v2, File::StripOthers, ID3v2::v3, File::DoNotDuplicate)` (strips ID3v1/APE). AIFF: `RIFF::AIFF::File::save(ID3v2::v3)`. WAV: INFO (for rekordbox) + ID3 chunk (for other apps), `save(…, ID3v2::v3)`. FLAC: Xiph comment + PICTURE block, strip ID3. One front cover only. |
+| `QualityProbe` / `QualityAdvisor` | §6.1 facts → §6.2 decision: move as-is / convert / needs confirmation, with warnings | Spectral verdicts come from the audio module's analysis cache (shared with PREV-9). |
+| `ArtworkFinder` / `ArtworkProcessor` | §5.1 ranking; §5.3 resize/re-encode with `QImage` | Never upscale; keep originals; Latin-1 empty description. |
+| `Transcoder` | Decode → resample → dither → encode → mux, cancellable, progress | One LAME instance per job; serialise LAME init; feed float. |
+| `PcmWavWriter` | Minimal RIFF/WAVE writer with `WAVE_FORMAT_PCM` | Avoids FFmpeg's `WAVE_FORMAT_EXTENSIBLE` (§2.3). |
+| `OutputVerifier` | §2.4 checks | Failure → delete temp file, keep source, report. |
+| `PathBuilder` | §7 templates and sanitiser | Collision check case/normalisation-insensitive; never overwrite. |
+| `ConversionQueue` | Worker pool (CONV-8) | L: start with (performance cores − 1) workers; measure. |
+
+### 9.2 Proposed defaults
+
+| Setting | Proposed default | Why |
+|---|---|---|
+| Filing preset | MP3 CBR 320, joint stereo, LAME default `-q 3` | PRD D7/CONV-2; HA "lowest-risk MP3 setting" |
+| MP3 header | genuine LAME "Info" tag (libmp3lame) | consistent cue positions across DJ apps (§4.4) |
+| MP3 sample rate | keep 44.1/48 kHz; > 48 kHz → 44.1 kHz (D-4) | MP3 limit; CD/DJ norm |
+| Resampler | libsoxr VHQ | quality; independent of FFmpeg build |
+| Dither | TPDF, only when writing 16-bit integer PCM | standard practice (XLD, dBpoweramp) |
+| Lossless preset (when chosen) | AIFF, source bit depth, ≤ 96 kHz (D-3) | rekordbox reads AIFF ID3 + art; CDJ-3000/NXS2 limit |
+| WAV output | plain `WAVE_FORMAT_PCM` + RIFF INFO + ID3 chunk, with W-WAV-TAGS warning | rekordbox reads INFO only |
+| ID3 version / encoding | v2.3, UTF-16 text, Latin-1 APIC description; v2.4 (UTF-8) as an option | maintainer's "IDFv3"; widest compatibility |
+| ID3v1 / APEv2 | not written; stripped from outputs | rekordbox uses ID3v2 when present (M); APE is noise |
+| Artwork | one front cover; embedded art > folder image; re-encode to baseline sRGB JPEG q90, ≤ 800 px, when larger, non-JPEG, progressive or > 500 KB (D-2) | CDJ 800 × 800 JPEG limit |
+| Folder art for singles | off (opt-in, counted by the governor) (D-8) | costs an extra transfer from the peer |
+| Multi-value join (v2.3) | `", "` for ARTIST-type fields, `"; "` otherwise (D-6) | `/` collides with names like AC/DC |
+| ReplayGain, DJ-app private data | dropped on transcode, untouched when moved as-is (D-7) | values tied to the source encoding |
+| Lossy source vs MP3 320 target | filed as-is with "below target"/"format differs" badge (CONV-2) | no-gain conversions need confirmation |
+| Ogg/Opus/WMA sources | ask: MP3 320 (generation loss) or AIFF (large) (D-5) | rekordbox can't play them |
+| Lossless originals after MP3 filing | kept in `~/Music/Selecta/Originals/` (PRD OQ-2) | re-encode later without re-downloading |
+| Naming | §7.1 templates; NFC; ≤ 200-byte components | portability, rekordbox path stability |
+| Verification | always on (§2.4) | CONV-7, DL-6 |
+
+### 9.3 Decisions for the maintainer
+
+| # | Question | Proposal |
+|---|---|---|
+| D-1 | ID3v2.3 + UTF-16 as the only default for MP3/AIFF/WAV (v2.4 as an option)? | Yes |
+| D-2 | Embedded artwork size: 600 / 800 / 1000 px / original? Crop near-square images to square? | 800 px, crop only when ratio within 0.9–1.1 |
+| D-3 | Which players must lossless output play on (CDJ-3000/NXS2 → ≤ 96/24; older/XDJ → ≤ 48/24)? | ≤ 96 kHz / 24-bit |
+| D-4 | Hi-res → MP3: always 44.1 kHz, or 48 kHz for 96/192 kHz sources? | always 44.1 kHz |
+| D-5 | Ogg/Opus/WMA sources: default MP3 320 (with warning) or AIFF? | ask each time; remember the choice |
+| D-6 | Separator when joining multiple artists in ID3v2.3? | `", "` |
+| D-7 | Drop ReplayGain tags when transcoding? | Yes |
+| D-8 | Fetch the remote folder's cover image when downloading a single? | opt-in, off by default |
+| D-9 | File AAC/M4A downloads as-is (rekordbox plays them) rather than converting to MP3? | as-is, with badge |
+| D-10 | Write `TENC` = "Selecta x.y" in converted files? | Yes (helps debugging; no personal data) |
+
+### 9.4 Test corpus additions (for PLAN's synthetic corpus)
+
+FLAC with `KEY` vs `INITIALKEY`; `ALBUM ARTIST` spelling; `TRACKTOTAL` and `TOTALTRACKS`; two `ARTIST` values;
+`MOOD`/`DISCSUBTITLE`/`RELEASEDATE` (v2.3 compensation); PNG, progressive-JPEG, CMYK-JPEG and 3000 px covers; `cover.jpg`
++ `back.jpg` + `cd.jpg` folders; 24/96 and 24/44.1-with-zero-low-byte ("fake 24-bit") FLAC; 96 kHz upsampled from
+44.1 kHz; MP3 encoded by FFmpeg (`Lavf` header) vs LAME CLI; MP3 192 labelled 320 in its filename; Ogg Vorbis and Opus;
+WAV with only an ID3 chunk; titles with `/`, `:`, `?`, trailing dots, emoji, NFD accents, RLO characters, 300-byte
+names, `CON`.
 
 ## 10. Open questions and experiments
 
-TODO.
+All experiments are local (no network). "Manual" = needs the maintainer's rekordbox/hardware.
+
+| # | Question | How to settle it | Who |
+|---|---|---|---|
+| E-1 | Does rekordbox 7 show every field we write (title, artist, album, album artist, genre, label, key, comment, year from `TYER`+`TDAT`, track no., remixer, composer, artwork) for ID3v2.3/UTF-16 MP3 and AIFF? Which grouping frame (`TIT1`/`GRP1`) does it show? | Import a sample set, compare with the intended tags (PRD success criterion) | Manual |
+| E-2 | Does the 26 ms shift disappear with Selecta's LAME header? | Same source encoded by `lame -b 320`, FFmpeg CLI and Selecta; compare first-transient positions in rekordbox, Mixxx and (if available) Traktor/Serato | Manual + dev |
+| E-3 | Do CDJs (maintainer's model) reject 24-bit `WAVE_FORMAT_EXTENSIBLE` WAVs and accept plain PCM? Show 800 px vs 1000 px embedded art when browsing USB folders? | USB stick test | Manual |
+| E-4 | Is FFmpeg's native swr resampler good enough as a fallback? | Sweep/impulse tests swr default vs soxr VHQ (aliasing, passband) | Dev |
+| E-5 | Encode speed: LAME CBR 320 `-q 3` per core on Apple Silicon; whole pipeline for a 6-min FLAC | Benchmark in CI and locally | Dev |
+| E-6 | Spectral-cutoff thresholds and false-positive rate | Synthetic encodes at each bitrate/encoder (with the audio note's analyser) | Dev |
+| E-7 | rekordbox key/label in M4A (`----:com.apple.iTunes:KEY` vs `initialkey`) — only from third-party disassembly | Import ALAC test files (P1) | Manual |
+| E-8 | Does rekordbox read FLAC `ALBUMARTIST` and `ALBUM ARTIST`? `TRACKTOTAL`? | Import test FLACs | Manual |
+| E-9 | Do Engine DJ / Serato need anything beyond §4.2 (e.g. APIC Latin-1)? | Only if the maintainer uses them | Optional |
+
+Unverified or weakly sourced claims in this note: rekordbox field-level behaviour (third-party disassembly, M); the
+WAV-extensible CDJ problem (community, M/L); Engine DJ artwork advice (forum, L); Traktor/Serato tag-version behaviour
+(forums/reverse engineering, L–M); artwork size limits for CDJ-3000 specifically (only older manuals state 800 × 800).
 
 ## 11. Sources
 
-TODO (accessed 2026-10-19).
+Accessed 2026-10-19. Source code was read in shallow clones under `local/research-clones/conversion/` (not built or
+run).
+
+**Source code**
+- TagLib — https://github.com/taglib/taglib @ `5fb1099`: `taglib/mpeg/id3v2/id3v2frame.cpp` (frame ↔ property table),
+  `id3v2tag.cpp` (`downgradeFrames`, v2.3 rendering, PICTURE complex property), `frames/textidentificationframe.cpp`
+  (TXXX table, multi-value rendering), `id3v2framefactory.cpp` (default encodings), `mp4/mp4itemfactory.cpp`,
+  `riff/wav/infotag.cpp`, `riff/wav/wavfile.{h,cpp}`, `riff/aiff/aifffile.{h,cpp}`, `mpeg/mpegfile.h`, `fileref.h`,
+  `CHANGELOG.md`, `COPYING.LGPL`, `COPYING.MPL`.
+- FFmpeg — https://github.com/FFmpeg/FFmpeg @ `f91b54f`: `libavcodec/libmp3lame.c`, `libavcodec/flacenc.c`,
+  `libavformat/mp3enc.c`, `libavformat/mp3dec.c`, `libavformat/id3v2enc.c`, `libavformat/id3v2.c`,
+  `libavformat/aiffenc.c`, `libavformat/wavenc.c`, `libavformat/riffenc.c`, `libswresample/options.c`,
+  `libswresample/swresample.c`.
+- LAME — https://github.com/lameproject/lame @ `1f5cc94` (mirror of svn trunk 3.100.1): `libmp3lame/lame.c`
+  (default quality, lowpass tables), `libmp3lame/presets.c`, `libmp3lame/version.h`, `include/lame.h`
+  (`lame_get_lametag_frame`), `COPYING`, `doc/html/history.html`.
+- beets — https://github.com/beetbox/beets @ `18967aa`: `beetsplug/convert.py`, `beets/config_default.yaml`,
+  `beets/util/__init__.py` (path legalisation), `beetsplug/fetchart.py` (local art ranking).
+- mediafile — https://github.com/beetbox/mediafile @ `faaf744`: `mediafile/__init__.py` (cross-format field styles).
+- Picard — https://github.com/metabrainz/picard @ `84862c5`: `picard/const/defaults.py`, `picard/options.py`,
+  `picard/formats/id3.py`, `picard/ui/options/tags_compatibility_id3.py`, `picard/coverart/providers/local.py`.
+- Picard docs — https://github.com/metabrainz/picard-docs @ `2a6193e`: `appendices/tag_mapping.rst` (mapping table).
+- mutagen — https://github.com/quodlibet/mutagen @ `ada28b2`: `mutagen/id3/_tags.py` (`update_to_v23`),
+  `mutagen/id3/_file.py` (`v23_sep`).
+- Homebrew ffmpeg formula — https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/f/ffmpeg.rb (version 9.0.2,
+  licence, configure flags).
+- libsoxr licence — https://sourceforge.net/p/soxr/code/ci/master/tree/LICENCE
+
+**Official documentation**
+- rekordbox 7.0.0 Instruction Manual — https://cdn.rekordbox.com/files/20240509141437/rekordbox7.0.0_manual_EN.pdf
+  (tag formats per file type, WAVE note, artwork JPEG/PNG, Reload Tag; text extracted locally with `pdftotext`).
+- rekordbox 7.0.7 Introduction — https://cdn.rekordbox.com/files/20241213141709/rekordbox7.0.7_introduction_EN.pdf
+  (supported formats, sample rates, bit depths).
+- Pioneer CDJ-2000NXS manual p. 7 (manualslib) — https://www.manualslib.com/manual/712075/Pioneer-Cdj-2000nxs.html?page=7
+  (ID3 versions, JPEG artwork ≤ 800 × 800); CDJ-2000 manual —
+  https://www.manualslib.com/manual/130120/Pioneer-Cdj-2000.html?page=20 (embedded JPEG shown as jacket).
+- Apple APFS Guide FAQ —
+  https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/APFS_Guide/FAQ/FAQ.html
+  (normalisation-preserving / -insensitive names).
+- ID3v2.3.0 and v2.4.0 specifications (copies in TagLib `taglib/mpeg/id3v2/id3v2.3.0.txt`, `id3v2.4.0-*.txt`).
+- XLD official page — https://tmkk.undo.jp/xld/index_e.html (ID3v2.3/UCS-2, TYER+TDAT, libsoxr, art scaling).
+- Hydrogenaudio LAME wiki — https://wiki.hydrogenaudio.org/index.php?title=LAME and forum thread
+  https://hydrogenaudio.org/index.php/topic,126770.0.html (recommended settings, V0/V2 averages).
+
+**Reverse engineering, community and third-party (lower confidence)**
+- chrisle/rbxport PR #231 (rekordbox 7.2.19 tag reading, Oct 2026) — https://github.com/chrisle/rbxport/pull/231
+- dj-data-converter issue #3 ("26 ms problem") — https://github.com/digital-dj-tools/dj-data-converter/issues/3
+- joeselway/Pioneer-DJ-File-Formats (player format table, WAV issue) — https://github.com/joeselway/Pioneer-DJ-File-Formats
+- M-Igashi/baken issue #235 (rekordbox export artwork 80/240 px) — https://github.com/M-Igashi/baken/issues/235
+- Holzhaus/serato-tags (Serato GEOB/Vorbis/MP4 storage) — https://github.com/Holzhaus/serato-tags
+- dBpoweramp forum and help — https://forum.dbpoweramp.com/forum/other-topics/how-do-i/27660-id-tags ,
+  https://doc.dbpoweramp.com/dmc/en/dsp.htm , https://versions.dbpoweramp.com/?appid=2
+- Engine DJ community (APIC encoding, art size) — https://community.enginedj.com/t/album-art-for-bandcamp-mp3s-workaround/20580
+- DJ TechTools forum (Traktor tag versions, PRIV/NITR) — https://forum.djtechtools.com/showthread.php?t=28112
+- Lexicon DJ manual (WAV artwork in rekordbox) — https://www.lexicondj.com/manual/all
+- bliss blog (CDJ artwork rules) — https://www.blisshq.com/music-library-management-blog/2020/03/03/pioneer-cdj-album-art/
+- Mixgraph tag editor notes (large artwork stalls) — https://www.mixgraph.io/tools/mp3-metadata-editor
+- editmp3tags.com (progressive/CMYK JPEG) — https://editmp3tags.com/guides/album-art-not-showing/
