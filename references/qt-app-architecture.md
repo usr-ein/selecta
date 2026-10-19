@@ -607,11 +607,120 @@ Qt module licences (open-source side, from SPDX headers of the local 6.11.1 inst
 | Core, Gui, Widgets, Network, Sql, Concurrent, Test, Multimedia, Svg, Quick, QuickControls2, QuickWidgets, StateMachine, TaskTree | `LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only` |
 | CanvasPainter, Charts, Graphs, HttpServer | `LicenseRef-Qt-Commercial OR GPL-3.0-only` |
 
-TODO: dependency table.
+Homebrew's metadata for the `qt` meta-formula summarises the whole Qt distribution as `BSD-3-Clause AND
+GFDL-1.3-no-invariants-only AND GPL-2.0-only AND (GPL-3.0-only WITH Qt-GPL-exception-1.0) AND LGPL-3.0-only` (the
+`Qt-GPL-exception` covers tools such as moc output).
+
+### 11.1 Dependency compatibility with Selecta (GPL-3.0-or-later)
+
+| Component | SPDX (as distributed) | Compatible? | Notes |
+|---|---|---|---|
+| Qt essentials (Core/Gui/Widgets/Network/Sql/Concurrent/Svg/Test/Multimedia) | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only | Yes | Use under LGPL-3.0 or GPL-3.0. Dynamic frameworks in the bundle satisfy LGPL relinking anyway |
+| Qt Canvas Painter / Charts / Graphs | GPL-3.0-only | Yes | Binaries that link them are distributable under GPLv3 only — fine, but note it in ADR-010 |
+| zlib | Zlib | Yes | |
+| FFmpeg | LGPL-2.1-or-later; GPL-2.0-or-later with `--enable-gpl`; (L)GPL-3.0-or-later with `--enable-version3` | Yes | **Never `--enable-nonfree`** (makes binaries non-redistributable). Homebrew's build is GPL-3.0-or-later |
+| LAME (libmp3lame) | LGPL-2.0-or-later (Homebrew); vcpkg metadata says LGPL-2.0-only | Yes | MP3 patents have expired |
+| libFLAC | BSD-3-Clause (tools GPL-2.0-or-later — not linked) | Yes | |
+| libsoxr | LGPL-2.1-or-later | Yes | |
+| TagLib | LGPL-2.1-only OR MPL-1.1 | Yes, under LGPL-2.1 | MPL-1.1 alone is not GPL-compatible — take the LGPL branch |
+| Chromaprint | LGPL-2.1-or-later | Yes | P2; on macOS uses Accelerate for FFT |
+| miniupnpc, libnatpmp | BSD-3-Clause | Yes | |
+| QtKeychain | BSD-3-Clause (upstream `COPYING` has 3 clauses; Homebrew metadata says BSD-2-Clause) | Yes | |
+| SQLite | blessing (public domain) | Yes | |
+| Sparkle 2 | MIT (+ bundled permissive components) | Yes | |
+| KDSingleApplication | MIT | Yes | optional |
+| GoogleTest / Catch2 / RapidCheck | BSD-3-Clause / BSL-1.0 / BSD-2-Clause | Yes | test-only |
+| Mixxx code (waveform/analysis ideas) | GPL-2.0-or-later | Yes (as GPLv3) | Keep copyright notices; record provenance in file headers |
+| Nicotine+ code (protocol logic, if ported) | GPL-3.0-or-later | Yes | A port is a derivative work: keep notices; incompatible only with a GPL-2.0-only Selecta (not planned) |
+| macOS frameworks (AppKit, CoreAudio, Security…) | Apple | Yes | GPLv3 "System Libraries" exception |
+| SF Symbols, SF Pro fonts | Apple licence (system-provided use only) | Use at runtime only | **Never commit exported symbol images or font files** (also not into `mock/`); on Linux/Windows use a permissive icon set (e.g. an MIT/ISC set) as fallback |
+| Mac App Store | — | No | GPL and App Store terms conflict; not a goal |
+
+### 11.2 Hygiene
+
+- SPDX headers in every source file: `// SPDX-FileCopyrightText: 2026 Selecta contributors` +
+  `// SPDX-License-Identifier: GPL-3.0-or-later` (PRD OQ-7 default); `LICENSES/` directory and `REUSE.toml` for
+  assets/fixtures; `reuse lint` in CI (the REUSE tool is only run, not distributed).
+- Third-party code copied into the tree lives under `third_party/<name>/` with its licence file and a `README.selecta`
+  (origin URL, version/commit, local changes).
+- An "Acknowledgements" pane in About/Settings lists bundled libraries and licences, generated from a CMake list.
+- For any **public binary**: GPLv3 §6 requires Corresponding Source for Selecta and the (L)GPL libraries we ship
+  (Qt modules, FFmpeg, LAME, TagLib, soxr…). Simplest compliance: attach source tarballs of exactly the bundled versions
+  to each GitHub release (or document a written offer). Not needed while builds stay private ("me first").
+- PRD OQ-7: GPL-3.0-or-later is compatible with everything above, including GPL-3.0-only Qt add-ons; nothing here
+  forces "-only".
 
 ## 12. Proposed repository tree and dependency graph
 
-TODO.
+Refines PLAN §3 with the findings above.
+
+```
+selecta/
+├── CMakeLists.txt  CMakePresets.json  vcpkg.json  vcpkg-configuration.json  Brewfile
+├── cmake/                 SelectaWarnings.cmake SelectaSanitizers.cmake SelectaFuzz.cmake
+│                          SelectaMacBundle.cmake (Info.plist, actool icon, entitlements) SelectaVersion.cmake
+├── src/
+│   ├── base/              Clock, Result/expected, logging categories, string + NFC helpers   (Qt Core)
+│   ├── slsk/              codec/ messages/ server/ peer/ distrib/ transfer/                     (Core, Network, zlib)
+│   ├── governor/          budgets, token buckets, backoff, ceilings (constexpr)                   (Core)
+│   ├── storage/           sqlite wrapper, migrations/*.sql, repositories                          (SQLite)
+│   ├── library/           scanner, index, remote-path parser, matcher, Inbox, FileOps, supersede  (TagLib)
+│   ├── audio/             decoder, growing-file reader, playback, analysis                        (FFmpeg, CoreAudio/QtMultimedia)
+│   ├── convert/           transcoder, tag mapping, artwork, quality advisor                       (FFmpeg, LAME, soxr, TagLib)
+│   ├── core/              services: Search, Transfer, Share, PeerStats, Session, Wishlist, Message
+│   └── app/               main.cpp, MainWindow, views/, models/, delegates/, widgets/ (WaveformView),
+│       │                  inspector/, player/, settings/
+│       └── platform/      PlatformShell interfaces; mac/ (*.mm: NSToolbar, native menus, vsync,
+│                          notifications, Dock); generic/ (QToolBar, QMenu, QTimer, QSystemTrayIcon)
+├── tools/selecta-cli/     headless client, loopback/private addresses only
+├── tests/                 unit/<module>/ property/ integration/ fuzz/ golden/ ui/ bench/ fixtures/
+├── third_party/           vendored code with provenance (if any)
+├── devenv/                docker-compose.yml, local server, test peers, corpus generator
+├── packaging/macos/       Info.plist.in, Selecta.entitlements (empty for now), AppIcon.icon, dmg/
+├── docs/                  PRD.md PLAN.md BUILDING.md adr/
+├── references/  mock/  LICENSES/  REUSE.toml
+├── .github/workflows/     ci.yml nightly.yml release.yml
+└── .clang-format .clang-tidy .editorconfig LICENSE README.md CLAUDE.md
+```
+
+```mermaid
+flowchart TD
+  subgraph UI["Selecta.app (Qt Widgets)"]
+    app[app: windows, views, models, delegates]
+    shell[app/platform/mac: Objective-C++ shell]
+  end
+  app --> shell
+  app --> core
+  app --> library
+  app --> audio
+  app --> convert
+  app --> storage
+  cli[tools/selecta-cli] --> core
+  core --> slsk
+  core --> governor
+  core --> storage
+  core --> library
+  library --> storage
+  convert --> audio
+  slsk --> base
+  governor --> base
+  storage --> base
+  library --> base
+  audio --> base
+  convert --> base
+  core --> base
+
+  slsk -.-> QtNetwork[(Qt Core + Network, zlib)]
+  storage -.-> SQLite[(SQLite, own copy)]
+  library -.-> TagLib[(TagLib)]
+  audio -.-> FFmpeg[(FFmpeg, CoreAudio / Qt Multimedia)]
+  convert -.-> Enc[(FFmpeg, LAME, soxr, TagLib)]
+  shell -.-> AppKit[(AppKit, UserNotifications)]
+  app -.-> Widgets[(Qt Widgets, QtKeychain)]
+```
+
+Rule: arrows point from dependent to dependency; nothing below `app` may include Qt Widgets headers; `slsk` has no
+policy (it never decides *whether* to send — `core` asks `governor`).
 
 ## Implications for Selecta
 
