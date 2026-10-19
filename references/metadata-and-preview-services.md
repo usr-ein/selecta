@@ -79,7 +79,7 @@
 | K2 | Extended quota: organisations only, ≥ 250k MAU, since 2025-05-15. | High | Spotify quota-modes page |
 | K3 | `external_ids` (ISRC, UPC) remain available (removal reverted March 2026). | High | Spotify March 2026 changelog |
 | K4 | Refresh tokens expire 6 months after authorisation (PKCE included); refreshing does not extend them. | High | Spotify blog 2026-06-18 |
-| K5 | Spotify Terms prohibit Spotify Content in apps that facilitate unauthorised sharing of audio, integration with content from other services, indefinite storage, and permanent copies; Spotify Content includes metadata and cover art. | High (verbatim); application to Selecta is inference | Developer Terms v10, Policy (2025-05-15) |
+| K5 | Spotify Terms prohibit Spotify Content in apps that facilitate unauthorised sharing of audio, integration with content from other services, indefinite storage, and permanent copies; Spotify Content includes metadata and cover art. The maintainer accepted this risk for tags (D30). | High (verbatim); application to Selecta is inference | Developer Terms v10, Policy (2025-05-15) |
 | K6 | `preview_url` deprecated/null for new apps; no official Spotify preview remains. | High | Spotify blog 2024-11-27, reference pages |
 | K7 | Deezer keyless: search hits include `isrc`; album has `label`, `upc`, `cover_xl` 1000 px; preview = 30-s MP3 128 kbps, URL signed ~15 min. | High (observed) | Manual requests |
 | K8 | Deezer terms: no association with unauthorised download/sharing; non-commercial, private use; no local audio storage; logo required. | High (verbatim) | developers.deezer.com terms + guidelines |
@@ -101,6 +101,9 @@
 | K24 | yt-dlp flat `ytsearch` entries carry `duration` and `channel`; flat YouTube Music search entries carry only `id`/`title`. | High (source) | yt-dlp `_tab.py` @ `8973412` |
 | K25 | yt-dlp: `--fixup never` avoids a post-download rewrite of DASH m4a; `--max-downloads 1` turns success into exit 101; YouTube rate limits are reported as "rate-limited by YouTube for up to an hour". | High (source) | `YoutubeDL.py`, `_video.py` |
 | K26 | The maintainer's installed yt-dlp is 2025.07.21 without Deno; Homebrew's current yt-dlp (2026.8.19) depends on Deno. | High | `yt-dlp --version`; `brew info` |
+| K27 | D30 accepts the Spotify terms risk for tags. MusicBrainz gap fill: the ISRC lookup returns recordings but **no releases** (even with `inc=releases`), so label needs a second request (`release?recording=…&inc=labels`); release-group genres exist but are thinly voted; a 503 can arrive below 1 request/s. | High (observed, 2026-10-20) | MusicBrainz requests |
+| K28 | `GET /tracks/{id}` is still among the 43 dev-mode endpoints while the batch `GET /tracks?ids=` is gone, so other people's playlists import as pasted links at one request per track. | High | Feb 2026 changelog |
+| K29 | Spotify's largest album image is typically 640 × 640 JPEG, so D29/D30's ≤ 800 px rule needs no resizing (never upscale). | Medium (Exportify docs; check in X2) | Exportify README |
 
 ## 3. Spotify Web API (state on 2026-10-19)
 
