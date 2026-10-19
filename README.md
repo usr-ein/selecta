@@ -25,4 +25,6 @@ into a clean library — without duplicating what you already own and without ab
 
 ## License
 
-Selecta is free software, licensed under the GNU General Public License version 3. See [LICENSE](LICENSE).
+Selecta is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version
+(`GPL-3.0-or-later`). See [LICENSE](LICENSE).

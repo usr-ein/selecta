@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.2 — for review by the maintainer |
+| **Status** | Draft v0.3 — for review by the maintainer (question round 3 folded in) |
 | **Date** | 2026-10-19 |
 | **Product** | Selecta — a native Soulseek client for DJs and collectors |
 | **Stack** | C++ / Qt 6, macOS-first, cross-platform, GPLv3 |
@@ -176,7 +176,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | PREV-3 | P0 | Transport: play/pause, click/drag to seek on either waveform, jump ±5 s / ±30 s, volume. Seeking beyond the downloaded range waits for data. |
 | PREV-4 | P0 | **Keyboard audition:** ↑/↓ moves through results and (optionally) auto-previews the selection; Space plays/pauses; ←/→ seeks; Return downloads; K keeps the preview. |
 | PREV-5 | P0 | **Keep** moves the cached file into the Inbox without re-downloading, and it counts as a download. **Discard** deletes it from the cache. |
-| PREV-6 | P0 | Skipping a preview before its transfer completes cancels the transfer, saving the peer's bandwidth. This is the default and is configurable; to be confirmed against the etiquette research. |
+| PREV-6 | P0 | Skipping a preview before its transfer completes cancels the transfer, saving the peer's bandwidth (D13). Settings can switch this to "let it finish". |
 | PREV-7 | P0 | Previews are real transfers: they count in per-peer counters and the ratio, and respect per-peer caps. |
 | PREV-8 | P0 | The preview cache is size-bounded (default 2 GB, LRU) and expires old files. Waveform analysis is cached separately (a few KB per track), so re-opening a preview is instant. |
 | PREV-9 | P1 | **Spectrum check:** detect likely transcodes / fake lossless (spectral cut-off) and show a badge and a spectrogram. |
@@ -190,7 +190,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | DL-2 | P0 | Resume interrupted downloads, retry failures with backoff, and keep the queue across restarts. |
 | DL-3 | P0 | **Downloads land in the Inbox:** singles in `Inbox/Singles/` (flat), album downloads in `Inbox/Albums/<Artist> - <Album> (<Year>)/` with all their files, including the cover image. |
 | DL-4 | P0 | **Inbox view:** items with source peer, quality, tags, artwork and ownership status. Actions: play, edit basic tags, convert, **File**, Trash. |
-| DL-5 | P0 | **Filing** moves or converts an Inbox item into the collection: singles → `<Collection>/<Singles folder>/`, albums → `<Collection>/<Albums folder>/<Artist> - <Album> (<Year>)/`. It applies the configured **filing format** (default MP3 320 CBR, ID3v2.3, artwork embedded — see CONV-2). Files already in the target format and quality are moved without re-encoding. Names come from templates; an existing file is never overwritten. |
+| DL-5 | P0 | **Filing** moves or converts an Inbox item into the collection: singles → `<Collection>/<Singles folder>/`, albums → `<Collection>/<Albums folder>/<Artist> - <Album> (<Year>)/`. It applies the configured **filing format** (default MP3 320 CBR, ID3v2.3, artwork embedded — see CONV-2). Files already in the target format and quality are moved without re-encoding. Names come from templates; an existing file is never overwritten. When a lossless download is converted at filing, the original goes to the macOS Trash once the converted copy is verified (D11). |
 | DL-6 | P0 | Files are filed by copy → verify → remove from Inbox, so a crash never loses a file. After filing, Selecta never moves, renames, re-tags or deletes them. |
 | DL-7 | P0 | **Supersede in the Inbox:** when an album download completes and contains a track that matches a single still in the Inbox, that single goes to the macOS Trash, with a notification and Undo. Uncertain matches are flagged for review instead. |
 | DL-8 | P0 | **Supersede in the collection — flag only:** when an album (in the Inbox or filed) contains a track matching a single already filed in the collection, the pair is flagged in the Library and Inbox views ("also on album X"). The filed single is never touched. |
@@ -217,7 +217,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | ID | Pri | Requirement |
 |---|---|---|
 | CONV-1 | P0 | Convert between FLAC, MP3 (CBR 320 / 256 / 192, VBR V0 / V2), WAV and AIFF; ALAC is P1. Sample rate and bit depth can be changed, with high-quality resampling and TPDF dither when reducing bit depth. |
-| CONV-2 | P0 | **Filing format:** one configured preset, default "MP3 320 CBR · ID3v2.3 · artwork embedded", applied to everything filed (DL-5). Re-encoding is skipped when it cannot improve quality: an MP3 320 is moved as-is, and an MP3 192 is filed as-is with a "below target" badge rather than re-encoded. |
+| CONV-2 | P0 | **Filing format:** one configured preset, default "MP3 320 CBR · ID3v2.3 · artwork embedded", applied to everything filed (DL-5). Re-encoding is skipped when it cannot improve quality: an MP3 320 is moved as-is, and an MP3 192 is filed as-is with a "below target" badge rather than re-encoded. After a verified conversion of a lossless source, the original goes to the macOS Trash (D11). |
 | CONV-3 | P0 | **Manual converter:** any Inbox or collection file → a *new* file; the original is untouched. Output folder is configurable. |
 | CONV-4 | P0 | **Metadata mapping** between Vorbis comments, ID3v2.3 (default for MP3/AIFF/WAV), ID3v2.4 (option), MP4 atoms and RIFF INFO. It covers title, artist, album, album artist, track and disc numbers with totals, date/year, genre, composer, BPM, key, label, ISRC, catalogue number, comment, lyrics, compilation and ReplayGain. ("IDFv3" in the brief is read as ID3v2.3.) |
 | CONV-5 | P0 | **Supplement missing metadata:** when the source has no embedded art, embed the folder image (`cover.jpg`, `folder.jpg`, `front.jpg`, …) as the ID3 APIC "front cover". Fill missing album/artist/track fields from the folder and file names, shown for confirmation. Optionally resize artwork to a DJ-hardware-friendly size. |
@@ -229,7 +229,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 
 | ID | Pri | Requirement |
 |---|---|---|
-| SHARE-1 | P0 | Choose shared folders (the collection folders are proposed by default; never the Inbox or the preview cache). Scan and index them, excluding hidden and system files. |
+| SHARE-1 | P0 | Choose shared folders. The whole collection is shared by default (D12); the Inbox and the preview cache never are. Scan and index the shares, excluding hidden and system files. |
 | SHARE-2 | P0 | Answer browse, folder-contents and search requests from the index. Honour the server's excluded search phrases. Never reveal full local paths. |
 | SHARE-3 | P0 | Upload queue with slots, bandwidth limit, per-user queue limits and fair round-robin (defaults from research). |
 | SHARE-4 | P1 | Buddy-only shared folders; ban / ignore users. |
@@ -317,7 +317,7 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 | NFR-3 | **Reliability:** crash-safe persistence (SQLite WAL); transfers resume after restart; filing is copy → verify → delete, so no data loss. |
 | NFR-4 | **Security:** fuzzed protocol parsers; bounded allocations from network input; path-traversal protection on uploads; downloaded files are never executed and carry the macOS quarantine attribute. |
 | NFR-5 | **Privacy:** no telemetry; credentials in the Keychain; logs stay local; local paths are never sent to peers. |
-| NFR-6 | **Licensing:** GPLv3; every dependency GPLv3-compatible; SPDX headers in source files. |
+| NFR-6 | **Licensing:** GPL-3.0-or-later (D14); every dependency GPLv3-compatible; SPDX headers in source files. |
 | NFR-7 | **Testability:** the protocol layer is testable without a network; integration tests run against a local test server; fixtures are deterministic, and the test audio corpus is synthetic (no copyrighted music in the repo). |
 | NFR-8 | **i18n:** English UI; strings are translatable (Qt Linguist) — P2. |
 
@@ -334,18 +334,15 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 
 | # | Question | Default until answered |
 |---|---|---|
-| OQ-1 | Collection folder path(s) and current layout: is there a `Singles/` folder, a parent `Albums/` folder, and how are album folders named? | `<Collection>/Singles/` and `<Collection>/Albums/<Artist> - <Album> (<Year>)/` |
-| OQ-2 | When a lossless download is filed as MP3 320, what happens to the lossless original? | Keep it in `Selecta/Originals/` (outside the collection) |
+| OQ-1 | Path of the collection folder. The layout is settled: `Singles/` plus `Albums/<album>/` (D10). How are album folders named today? | `<Collection>/Albums/<Artist> - <Album> (<Year>)/` |
 | OQ-3 | Ratio definition: uploads vs downloads (files and bytes), shown next to the number of files shared. | As stated |
 | OQ-4 | Default per-peer caps and search pacing. | From `references/network-etiquette-and-safe-development.md` |
-| OQ-5 | Skipping a preview cancels its transfer. | Cancel (PREV-6) |
 | OQ-6 | Waveform style: cumulative stack vs overlaid layers vs separate lanes. | Decide on the mock |
-| OQ-7 | Licence: GPL-3.0-only or GPL-3.0-or-later? | GPL-3.0-or-later |
 | OQ-8 | Is there an Apple Developer ID for signing and notarisation? | Unsigned / ad-hoc signed personal builds |
-| OQ-9 | Repository hosting (GitHub?) for CI. | GitHub + GitHub Actions |
-| OQ-10 | Share the whole collection by default? | Yes, read-only |
-| OQ-11 | Singles file-naming template. | `<Artist> - <Title>.<ext>` |
+| OQ-11 | Singles file-naming template. | `<Artist> - <Title> (<Version>).<ext>` |
 | OQ-12 | Should files from outside Soulseek (e.g. Bandcamp purchases) dropped into the Inbox use the same filing pipeline? | Yes (P1) |
+
+Resolved in round 3: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12.
 
 ---
 
@@ -364,6 +361,15 @@ Answers given by the maintainer on 2026-10-19.
 | D7 | Conversion at filing | "Everything to a format I configure. Generally **MP3 320**." |
 | D8 | Session definition | **App launch → quit.** |
 | D9 | Look and feel | **macOS-native** ("not too crazy, but native"), **with a dark theme**. |
+| D10 | Collection layout on disk | **`Singles/` + `Albums/<album>/`** under one collection root. |
+| D11 | Lossless original after filing as MP3 320 | **Move it to the Trash** (after the converted copy is verified). |
+| D12 | What to share by default | **The whole collection** (read-only). |
+| D13 | Preview skipped before its transfer finishes | **Cancel the transfer.** |
+| D14 | Licence | **GPL-3.0-or-later.** |
+| D15 | Hosting | **GitHub** (CI on GitHub Actions). |
+| D16 | Git author identity | **usr-ein <usr-ein@pm.me>.** |
+| D17 | First working slice after the mock | **Search + preview** (protocol on a local test server, strict filters, preview with waveform). |
+| D18 | Mock format | A **local HTML** mock in `mock/`, not a hosted page; it exists to decide what goes where in the Qt UI, in macOS visual language. |
 
 ## Appendix B — Raw brief (verbatim)
 

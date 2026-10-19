@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft v0.2 — tracks [PRD.md](PRD.md) v0.2 |
+| **Status** | Draft v0.3 — tracks [PRD.md](PRD.md) v0.3 |
 | **Date** | 2026-10-19 |
-| **Inputs** | PRD, research notes in [../references/](../references/) (in progress), maintainer Q&A rounds |
+| **Inputs** | PRD (decisions D1–D18), research notes in [../references/](../references/) (in progress), maintainer Q&A rounds |
 
 This plan describes **how** Selecta gets built: architecture, repository layout, milestones, the safe-development
 setup, testing, risks, and the decisions still to record. Requirement IDs (e.g. `SRCH-3`) refer to the PRD.
@@ -106,7 +106,7 @@ There is no API to modify, move or delete a file inside a collection root. Tests
 | Database | `~/Library/Application Support/Selecta/selecta.sqlite3` |
 | Preview cache, analysis cache | `~/Library/Caches/Selecta/{previews,analysis}/` |
 | Inbox | `~/Music/Selecta/Inbox/{Singles,Albums}/` (configurable) |
-| Originals of converted lossless files | `~/Music/Selecta/Originals/` (pending PRD OQ-2) |
+| Lossless originals converted at filing | Moved to the macOS Trash once the converted copy is verified (PRD D11) |
 | Logs | `~/Library/Logs/Selecta/` |
 
 ## 3. Repository layout (target)
@@ -130,6 +130,10 @@ selecta/
 
 Every milestone lists its scope, the PRD requirements it closes, and an exit criterion that can be demonstrated.
 
+**First slice (PRD D17): search + preview.** The critical path is M1 → M2 → M3 → M5: a GUI that searches the local
+test network with strict filters and previews results with the waveform. M4 (library) and M6 (converter) are parallel
+tracks; they must not delay that slice.
+
 ```mermaid
 flowchart LR
   M0[M0 Definition & mock] --> M1[M1 Foundations]
@@ -137,6 +141,7 @@ flowchart LR
   M2 --> M3[M3 Search experience]
   M1 --> M4[M4 Library & Inbox]
   M1 --> M5[M5 Preview & waveform]
+  M2 --> M5
   M1 --> M6[M6 Converter & filing]
   M3 --> M7[M7 Sharing & fairness]
   M4 --> M7
@@ -244,7 +249,7 @@ flowchart LR
 - Protocol fixtures are captured on the local test network only.
 
 ### 5.4 CI
-- CI never has network access to the live server; integration jobs start the local network in Docker.
+- GitHub Actions (PRD D15). CI never has network access to the live server; integration jobs start the local network in Docker.
 
 ### 5.5 Live-network pre-flight (M9)
 Dedicated account · conservative limits verified in the activity log · shares configured · one manual search, then
@@ -290,7 +295,7 @@ one manual download · observe for bans/denials · escalate gradually.
 | ADR-007 | Waveform analysis and rendering | audio-preview-and-waveform.md + mock feedback |
 | ADR-008 | Remote-path parsing and matching algorithm | library-matching-and-organization.md |
 | ADR-009 | File-safety model, Inbox and filing | PRD D2/D3/D7 |
-| ADR-010 | Licence: GPL-3.0-only vs -or-later; dependency licence policy | qt-app-architecture.md |
+| ADR-010 | Dependency licence policy (the licence itself is decided: GPL-3.0-or-later, PRD D14) | qt-app-architecture.md |
 
 ## 9. How work gets done
 
@@ -303,5 +308,5 @@ one manual download · observe for bans/denials · escalate gradually.
 
 1. Mock v1 review → feedback rounds → validated mock.
 2. Research notes land → synthesis → ADR drafts → PRD v1.0 defaults (limits, caps, TTLs).
-3. Next question round: collection path and layout (OQ-1), what happens to lossless originals (OQ-2), licence (OQ-7), signing (OQ-8), hosting (OQ-9).
-4. Start M1 once M0 exits.
+3. Before the first push: rewrite the early commits to the author identity `usr-ein <usr-ein@pm.me>` (PRD D16), then create the GitHub repository.
+4. Start M1 once M0 exits, aiming at the search + preview slice.
