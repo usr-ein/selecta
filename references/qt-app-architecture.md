@@ -1,7 +1,7 @@
 # Qt 6 application architecture for Selecta (toolkit, build, dependencies, CI, packaging, licensing)
 
-> Status: **draft in progress** (research 2026-10-19). Items marked **TODO(verify)** come from prior knowledge and have
-> not yet been checked against a primary source. Confidence: **high** = checked in source code or official docs;
+> Status: **complete v1** (research 2026-10-19). Items still marked **TODO(verify)** come from prior knowledge and were
+> not checked against a primary source. Confidence: **high** = checked in source code or official docs;
 > **medium** = consistent secondary sources or strong prior knowledge; **low** = inference.
 > Source paths like `qtbase@v6.12.0:src/...` refer to shallow clones in `local/research-clones/qt/` (read only).
 
@@ -21,8 +21,22 @@
   build, CMake ≥ 3.25. Local machine: Homebrew Qt **6.11.1** (6.11 is already out of open-source support).
 - **Liquid Glass:** an app built with the macOS 26+ SDK runs with Liquid Glass; the `UIDesignRequiresCompatibility`
   opt-out only works on macOS 26, and Qt assumes it is ignored on macOS 27 (the maintainer's OS). Design for glass.
-- **Build:** CMake ≥ 3.28 + Ninja + `CMakePresets.json`, `qt_standard_project_setup(REQUIRES 6.12)`, C++20, warnings as
-  errors in CI, ASan/UBSan and TSan presets, clang-tidy/clang-format from Homebrew LLVM, ccache. (Sections 5–6 TODO.)
+  macOS 27 again changes chrome (edge-to-edge sidebars, uniform toolbars) — AppKit chrome follows for free, Qt-drawn
+  chrome does not.
+- **Build:** CMake ≥ 3.28 + Ninja + `CMakePresets.json` (workflow presets), `qt_standard_project_setup(REQUIRES 6.12)`,
+  `QT_ENABLE_STRICT_MODE_UP_TO=0x060C00`, C++20 (23 if CI allows), ASan/UBSan and TSan presets (Apple clang has no
+  libFuzzer → fuzz with Homebrew LLVM or on Linux), clang-tidy + clazy from Homebrew, ccache.
+- **Dependencies:** Homebrew for local dev only — its FFmpeg/LAME dylibs are built with **`minos 27.0`** and Homebrew
+  FFmpeg links 22 extra codec/network dylibs, so a bundle that copies them runs only on macOS 27+. CI/release: official
+  Qt via aqtinstall, an **audio-only FFmpeg + LAME + soxr from vcpkg** (pinned baseline), small CMake deps via
+  FetchContent (TagLib, QtKeychain, miniupnpc, libnatpmp, SQLite, test frameworks). Prefer **our own SQLite** over Qt SQL
+  (Homebrew's Qt SQL plugin uses the system SQLite; official Qt bundles 3.53.4).
+- **CI:** GitHub Actions `macos-26` (arm64, = `macos-latest`) + `ubuntu-24.04` + `windows-2025`; Docker-based
+  integration tests on Linux only (no nested virtualization on macOS runners); vcpkg `x-gha` cache is gone.
+- **Packaging:** `qt_generate_deploy_app_script` → macdeployqt (ad-hoc signs by default), Icon Composer `.icon` compiled
+  by `actool` (else macOS 26+ shows the icon in a grey squircle), DMG. Without a Developer ID: build locally and sign with
+  a **stable identity** so Keychain/Local Network/firewall grants survive rebuilds; with one: hardened runtime +
+  `notarytool` + staple. The official Homebrew cask repo has refused un-notarised apps since 2026-09-01.
 - **Licensing:** Qt Widgets/Core/Gui/Network/Sql/Multimedia are `LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`;
   Qt Canvas Painter, Charts, Graphs and HTTP Server are **`GPL-3.0-only`** for open-source users — fine for a GPLv3 app,
   but it pins distributed binaries to GPLv3 terms (relevant to PRD OQ-7). Never bundle SF Symbols images or SF fonts.
@@ -422,6 +436,13 @@ Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset 
 Confidence: high for the facts; medium for the split (it trades one extra mechanism for reproducible, portable
 release builds — if the maintainer only ever runs Selecta on his own macOS 27 Mac, Homebrew-only is acceptable and
 simpler for v1).
+
+Prior art (high — `strawberrymusicplayer/strawberry@036fef0:.github/workflows/build.yaml`): Strawberry, a GPL Qt
+Widgets music player, does **not** ship Homebrew libraries on macOS. Its CI downloads prebuilt dependencies from a
+separate `strawberry-macos-dependencies` repository, derives `MACOSX_DEPLOYMENT_TARGET` from the `minos` of the QtCore it
+links ("Use the deployment target Qt was built with"), builds on `macos-15` and `macos-15-intel`, deploys, signs with a
+Developer ID, builds a DMG, then `notarytool submit --wait` and staples. Selecta's release path in 6.3/10.4 is the
+same shape, with vcpkg playing the role of the dependencies repository.
 
 ## 7. Architecture patterns
 
@@ -829,3 +850,40 @@ Accessed 2026-10-19.
 - https://www.qt.io/blog/qt-on-macos-26-tahoe — Liquid Glass status and workarounds (2025-09-05, Tor Arne Vestbø).
 - https://github.com/fsalinas26/qt-liquid-glass — third-party glass effect views for Qt (reference only).
 - https://github.com/opencloud-eu/desktop/issues/721 — a Qt Widgets app enabling Liquid Glass with Qt 6.10.2/6.11.
+- https://developer.apple.com/videos/play/wwdc2026/289/ — WWDC26 "Modernize your AppKit app": macOS 27 chrome changes.
+- https://www.macrumors.com/2026/06/08/apple-announces-macos-golden-gate/ — macOS 27 announcement (Apple's design text).
+- qtbase v6.12.0 additional files: `src/corelib/doc/src/cmake/qt_standard_project_setup.qdoc`,
+  `qt_generate_deploy_app_script.qdoc`, `policy/*.qdoc` (CMake API); `src/corelib/global/qtconfigmacros.h` (strict mode);
+  `src/corelib/global/qcompilerdetection.h` (C++17 minimum); `src/plugins/sqldrivers/sqlite/CMakeLists.txt` +
+  `src/3rdparty/sqlite/sqlite3.h` (bundled SQLite); `src/tools/macdeployqt/macdeployqt/main.cpp` (options);
+  `src/corelib/kernel/qcore_mac.mm` (os_log routing); `src/plugins/platforms/cocoa/qcocoawindow.mm` (style mask, tabbing,
+  safe area).
+- qtmacextras 5.15 (github.com/qt/qtmacextras, `src/macextras/qmactoolbar.mm`) — Qt 5's `NSToolbar` wrapper
+  (LGPL-3.0/GPL), a porting reference for the native toolbar.
+- QtKeychain (github.com/frankosterfeld/qtkeychain @ 987522a, `COPYING`) — licence text (3-clause BSD).
+- vcpkg registry (github.com/microsoft/vcpkg @ 664933b, 2026-10-18, `ports/*/vcpkg.json`) — port versions, licences,
+  FFmpeg/qtbase features.
+- Local Homebrew metadata (`brew info --json=v2`, 2026-10-19) and `otool -l`/`otool -L` on installed dylibs — versions,
+  licences, `minos`, linkage; `/usr/bin/sqlite3` — system SQLite version and FTS5 trigram; Xcode 27 toolchain
+  `lib/clang/21/lib/darwin` — sanitizer runtimes.
+- strawberrymusicplayer/strawberry @ 036fef0, `.github/workflows/build.yaml` — prior art for macOS deps, deployment
+  target, signing and notarisation of a GPL Qt Widgets app.
+- https://github.blog/changelog/2026-02-26-macos-26-is-now-generally-available-for-github-hosted-runners/ ,
+  https://github.com/actions/runner-images , https://docs.github.com/en/actions/reference/runners/github-hosted-runners —
+  runner labels, hardware, no nested virtualization.
+- https://github.com/marketplace/actions/install-qt , https://github.com/miurahr/aqtinstall ,
+  https://github.com/iainchesworthlabs/cubeulator/pull/32 — Qt 6.12 via aqtinstall (Windows needs a master build).
+- https://github.com/microsoft/vcpkg-tool/pull/1662 , https://devblogs.microsoft.com/cppblog/whats-new-in-vcpkg-june-2025/
+  — removal of the `x-gha` binary cache.
+- https://github.com/Homebrew/brew/issues/20755 — removal of `--no-quarantine`, Gatekeeper requirement for casks
+  (plus third-party reports of the 2026-09-01 cut-off).
+- https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy and Apple Developer
+  Forums threads 764374, 776479, 778457 — local network privacy behaviour (page body not retrievable; via forum quotes).
+- https://github.com/Blake11/PenBridge/issues/55 , https://github.com/gabrielseco/triage/pull/40 ,
+  https://github.com/NousResearch/hermes-agent/pull/128864 — Keychain re-prompts for ad-hoc builds; stable-identity fix
+  and its limits.
+- https://mjtsai.com/blog/2025/08/08/separate-icons-for-macos-tahoe-vs-earlier/ ,
+  https://github.com/stoatchat/for-desktop/issues/318 , https://praeclarum.org/2025/09/12/app-icons.html — Icon Composer
+  `.icon` + `actool` without an Xcode project.
+- https://dvratil.cz/2026/02/qcoro-0.13.0-release-announcement/ — QCoro status.
+- https://eclecticlight.co/2026/04/08/privacy-files-folders-or-full-disk-access/ — TCC Files & Folders behaviour.
