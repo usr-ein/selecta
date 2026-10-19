@@ -98,8 +98,10 @@ uploads; **Client** = searching/downloading/browsing but partial or no sharing/d
 Evidence: `jpdillingham/Soulseek.NET@c07c187:LICENSE` lines 679–end ("ADDITIONAL TERMS", §1–6, incl. §3 "Modified Version
 Identification", §4 "Rebranding", §5 "Client Version Identifier"); `NOTICE`; file headers e.g. `src/SoulseekClient.cs:1-22`
 ("version 3", `SPDX-License-Identifier: GPL-3.0-only`). `slskd/slskd@6a450e4:LICENSE` has the same terms for AGPLv3.
-Terms added in commits between 2026-03-21 and 2026-04-03 (GitHub API, `commits?path=LICENSE`). Older Soulseek.NET
-releases were plain GPL-3.0 (TODO(verify) exact first version with the terms) — irrelevant if Selecta ports nothing.
+LICENSE history (GitHub API, `commits?path=LICENSE`): slskd's terms were written 2026-03-21…29, Soulseek.NET's finalised
+2026-04-03; by release dates the first releases carrying them are Soulseek.NET **10.0.0 (2026-04-05)** and slskd
+**0.25.0 (2026-04-19)** (inferred, medium confidence). Earlier releases (e.g. Soulseek.NET 9.1.0, the GPL-3.0 code that
+sockseek ≤ 2.6.0 and soulseekcpp's "September 2026" upstream build on) differ — irrelevant if Selecta ports nothing.
 
 Recommendation: treat Soulseek.NET/slskd/Seeker/sockseek as **read-for-behaviour** sources (what to do), and Nicotine+'s
 protocol doc + Nicotine+/aioslsk/soulseek-rs code as **port-from** sources (how). This keeps OQ-7 (GPL-3.0-or-later)
@@ -219,7 +221,8 @@ museek+ README: "No longer maintained!" and points users to slskd, Nicotine+ and
 + `museeq` (Qt GUI) / `mucous` (curses) / `murmur` (GTK) talking to the daemon over an "interface" protocol; `muscan`
 share scanner. newsoul (2013–2014) was a C++11 resurrection of the daemon only (libevent, json-c, taglib, sqlite3).
 Both predate obfuscation, modern login versions and current server behaviour. Value for Selecta: historical, plus the
-daemon/UI split idea. TODO: any still-useful pieces (share DB format?).
+daemon/UI split idea. Nothing else worth reusing: its share database and protocol knowledge are superseded by
+Nicotine+ and aioslsk, and its old login identities (178/182) are listed as obsolete in the version registry.
 
 ### 3.6 Seeker
 
