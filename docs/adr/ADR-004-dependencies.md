@@ -12,6 +12,9 @@
     dependencies and a macOS 14.4 deployment target.
   - The manifest is `vcpkg.json`, pinned by `builtin-baseline`. Optional features: `tests` (GoogleTest, Google
     Benchmark) and `media` (FFmpeg avcodec/avformat/swresample, libmp3lame, libsoxr, TagLib).
+  - Overlay ports in `cmake/vcpkg-ports/` pin a newer version than the baseline when security needs it. Today:
+    TagLib 2.3.2, for its crafted-input hardening (downloads are untrusted input). Delete an overlay once the
+    baseline catches up.
   - The vcpkg binary cache makes rebuilds fast.
   - The app may load only macOS system frameworks and `/usr/lib` system libraries (libc++, libSystem, libz, libobjc).
     Check with `otool -L`.
