@@ -7,8 +7,9 @@
 
 ## TL;DR
 
-- **No reusable, maintained C++ Soulseek library exists.** The only substantial C++ code is museek+/newsoul
-  (2000s–2014, unmaintained, protocol long out of date). Selecta should **write its own protocol layer in C++/Qt**.
+- **No maintained, licence-clean C++ Soulseek library exists.** museek+/newsoul (C++, GPL) are dead since 2014/2022;
+  the only modern C++ code, *soulseekcpp* (C++20/asio, Sept 2026), is a one-commit, 0-star port of Soulseek.NET that
+  carries Soulseek.NET's licence terms. Selecta should **write its own protocol layer in C++/Qt** (§6).
 - **Port logic only from GPL-3.0-or-later or permissive sources** — Nicotine+ (GPL-3.0-or-later, the de-facto protocol
   reference and maintainer of the protocol doc), aioslsk (GPL-3.0-or-later), soulseek-rs-lib (MIT), seeleseek (MIT,
   Swift, macOS-native). **Do not copy or translate code from Soulseek.NET, slskd or Seeker**: since March–April 2026
@@ -54,6 +55,7 @@ uploads; **Client** = searching/downloading/browsing but partial or no sharing/d
 | **Seeker** | Android client | C# (.NET Android) | GPL-3.0-only (uses modified Soulseek.NET) | 2026-10-19 / v3.11.2 | via Soulseek.NET fork | UX ideas; mock-network idea |
 | **museek+** (`eLvErDe/museek-plus`) | Daemon + Qt/GTK/curses clients | C++ (+Python) | GPL-2.0-or-later | 2022-03-08, README says "No longer maintained!" | Old subset | Historical only |
 | **newsoul** | museek+ daemon fork | C++11 | GPL-3.0-or-later | 2014-09-13 | Old subset | Historical only |
+| **soulseekcpp** | Library (port of Soulseek.NET) | C++20 + asio | GPL-3.0 + Soulseek.NET §7 Additional Terms | single commit 2026-09-17; 0★ | Claims full (untested by others) | Read only; do not depend on |
 | **soulseek-rs** (`michel/soulseek-rs`) | Lib + TUI/CLI/daemon | Rust | MIT | 2026-10-14 / v19.1.0 | Claims full live message set; e2e vs Soulfind | **Port logic + test-harness pattern** |
 | **seeleseek** | Native macOS client (SwiftUI) | Swift 6 | MIT | 2026-10-13 / v1.9.0; macOS 15+ | Client + sharing, distributed, obfuscation (heuristic) | macOS UX + Swift protocol code |
 | **Seek** (`IvaKap/seek`) | Mac client on Nicotine+ core (Tauri + Python sidecar, TODO verify) | TypeScript + Python | GPL-3.0 | 2026-10-13 / v0.3.0 | via Nicotine+ | **Closest product prior art** |
@@ -204,10 +206,51 @@ Both predate obfuscation, modern login versions and current server behaviour. Va
 daemon/UI split idea. TODO: any still-useful pieces (share DB format?).
 
 ### 3.6 Seeker
-TODO
 
-### 3.7 Rust, Go, JavaScript and other libraries
-TODO
+`jackBonadies/SeekerAndroid@ff1dcc6` (v3.11.2, 2026-10), C# .NET for Android, GPL-3.0-only, ~700★. Full-featured
+mobile client (search with wishlist and filters, sharing, messages, chat rooms, port forwarding, user info, privileges)
+built on a vendored, **modified Soulseek.NET** (`Seeker/Soulseek.NET-master/`). Ideas: compact mobile search/transfer
+UX; the "Debug Mock" in-process fake network (§5.2). Reuse: none (licence lineage).
+
+### 3.7 C++, Rust, Go, Swift, JavaScript and other implementations
+
+**C++ — the only C++ code is either dead or licence-encumbered:**
+
+| Project | Facts | Verdict |
+|---|---|---|
+| **soulseekcpp** (`comedyjohn/soulseekcpp@bade51b`) | C++20, standalone asio, ~16.5k lines; README: "a port of Soulseek.NET (upstream commit `76fddb6`, September 2026)" covering server/peer/distributed connections, search, browse, downloads/uploads, rooms, PMs. **One commit (2026-09-17), 0★, 790 lines of tests.** LICENSE = GPLv3 **with Soulseek.NET's Additional Terms** (identical text); README lacks the "modified version of Soulseek.NET" notice the terms require; example passes 170 = Soulseek.NET's major version. | **Do not build on it.** Using it makes Selecta "Covered Software" (GPL-3.0-only + terms) and it has no track record. Reading it is fine (shows how Soulseek.NET's design maps to C++20/asio). |
+| museek+ / newsoul | §3.5 — unmaintained since 2014/2022, GPL-2.0+/GPL-3.0+. | Historical. |
+| soulseek-basecamp (`xAlisher`) | C++/Qt plugin that talks to an **slskd REST API** (`src/core/SlskdClient.cpp`), not the protocol. | Not a protocol implementation. |
+| slskPlusPlus, Bishop | 5-file stub (no licence); Bishop = music server using slskd's API (GPL-3.0). | No. |
+
+**Rust:**
+- **soulseek-rs** (`michel/soulseek-rs@20bd676`, MIT, created 2025-01, ~560 commits by one author, release v19.1.0):
+  library `soulseek-rs-lib` (~23k lines, **zero dependencies** — own zlib inflate and MD5) + TUI/CLI/daemon. Actor
+  model (`actor/server_actor.rs`, `actor/peer_actor.rs`, `peer_registry.rs`), `client/upload_queue.rs`,
+  `client/distributed.rs`, `client/children.rs`, `shares/`, `download_store.rs` (resumable `.part` files). Claims the full
+  live message set with a per-message coverage table proven e2e against Soulfind (`docs/protocol-coverage.md`); known
+  gaps: locked (buddy-only) results ignored, obfuscated connections not dialled, no firewalled children. Reserved major
+  version 176. **Best permissive reference and the model for Selecta's test harness.** Caveat: one maintainer, fast
+  version churn.
+- Others: crabseek (MIT, TUI, 2026-09), slsk-rs (GPL-3.0, TUI, WIP, last push 2026-02), slskr (AGPL-3.0, Rust web
+  client from the "slskdN" slskd-fork authors), libsoulseek (GPL-3.0, created 2026-10-18), vessel (no licence, 2022),
+  RustSoSeek (Apache-2.0), several unlicensed hobby clients. None mature enough to depend on.
+
+**Swift:** **seeleseek** (`bretth18/seeleseek@195eddc`, MIT, v1.9.0, 2026-10; macOS 15+, Swift 6, SwiftUI, GRDB;
+reserved major version 169). Core in a local Swift package `Packages/SeeleseekCore` (protocol, server/peer connections,
+`NetworkClient+Distributed.swift`, UPnP `NATService`, obfuscated listener port, uploads, leech detection). UX: sidebar
+sections (Search, Wishlists ⌘2, Transfers, Chat, Browse, Friends, Statistics, Settings) and **quick filter presets
+"MP3 320", "FLAC", "Lossless", "Hi-Res"** plus an advanced panel (format, bitrate ≥, sample rate ≥, bit depth ≥, free
+slots) — `site/src/content/docs/guide/searching.md`. Closest *native macOS* prior art; MIT, so fragments may be ported
+with notice. Also: Soulseek-Arpeggio (SwiftUI, MIT, 2026-10), several iOS clients.
+
+**Go:** bh90210/soul (Unlicense, client library incl. some distributed handling, last push 2025-04), goose (no licence,
+2021 stub), spotseek (no licence), oto (AGPL-3.0 TUI), waves (GPL-3.0 terminal player with Soulseek integration).
+**JavaScript/TypeScript:** slsk-client (MIT, Node, search/download, v2.0.2 2026-09; used by soulseek-cli), soulseek-ts
+(no licence, 2024), livelook (AGPL-3.0, 2019), nslsk (2015). **Python:** py-soulseek-lib (GPL-3.0, 2022). **Zig:** zslsk
+(GPL-3.0, incomplete), libsslsk (CC0, WIP). **Other mac clients:** iSoul (Obj-C, 2012, dead), Seek (§8).
+
+None of these changes the conclusion: there is no maintained, licence-clean C++ library to adopt.
 
 ## 4. Automation tools
 
