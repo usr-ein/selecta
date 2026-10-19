@@ -26,8 +26,8 @@ class RequestPacer;
 
 struct YtDlpInstall
 {
-    QString path;       // canonical path of the executable that will run
-    QString version;    // as yt-dlp prints it: "2026.08.19"
+    QString path;    // canonical path of the executable that will run
+    QString version; // as yt-dlp prints it: "2026.08.19"
     QDate versionDate;
     QString denoPath;   // the JavaScript runtime yt-dlp needs for YouTube, or empty when none was found
     bool stale = false; // more than 90 days older than today: suggest `brew upgrade yt-dlp`
@@ -88,9 +88,9 @@ public:
 
     struct Config
     {
-        QString executable;              // the path set in Settings; empty: look in searchDirectories
+        QString executable; // the path set in Settings; empty: look in searchDirectories
         QStringList searchDirectories = defaultSearchDirectories();
-        QString ytDlpCacheDir;           // yt-dlp's own cache (--cache-dir); empty: --no-cache-dir
+        QString ytDlpCacheDir; // yt-dlp's own cache (--cache-dir); empty: --no-cache-dir
         std::chrono::milliseconds versionTimeout{10'000};
         std::chrono::milliseconds searchTimeout{60'000};
         std::chrono::milliseconds idleTimeout{30'000};   // a fetch with no output for this long is killed

@@ -45,11 +45,22 @@ public:
         m_state->promise.finish();
     }
 
+    // Ends the future canceled (no result), unless it already finished.
+    void cancel() const
+    {
+        if (m_state->finished) {
+            return;
+        }
+        m_state->finished = true;
+        m_state->promise.future().cancel();
+        m_state->promise.finish();
+    }
+
     // Finishes on the next turn of `context`'s event loop, so the caller never sees a re-entrant continuation. If
     // `context` is gone by then, the future ends canceled.
     void finishLater(QObject *context, T value) const
     {
-        SharedPromise self = *this;
+        const SharedPromise self = *this;
         QMetaObject::invokeMethod(
             context, [self, value = std::move(value)]() mutable { self.finish(std::move(value)); },
             Qt::QueuedConnection);
@@ -77,7 +88,7 @@ private:
 template <typename T>
 QFuture<T> deferred(QObject *context, T value)
 {
-    SharedPromise<T> promise;
+    const SharedPromise<T> promise;
     promise.finishLater(context, std::move(value));
     return promise.future();
 }
@@ -101,7 +112,7 @@ public:
             return;
         }
         m_state->cancelled = true;
-        if (auto step = std::exchange(m_state->cancelStep, nullptr)) {
+        if (const auto step = std::exchange(m_state->cancelStep, nullptr)) {
             step();
         }
     }
@@ -120,16 +131,14 @@ private:
 template <typename T, typename F>
 void whenReady(const QFuture<T> &future, QObject *context, F then)
 {
-    QPointer<QObject> guard(context);
-    auto *watcher = new QFutureWatcher<T>(context);
-    QObject::connect(watcher, &QFutureWatcherBase::finished, context,
-                     [watcher, guard, then = std::move(then)]() mutable {
-                         watcher->deleteLater();
-                         if (guard.isNull() || watcher->isCanceled() || watcher->future().resultCount() == 0) {
-                             return;
-                         }
-                         then(watcher->future().result());
-                     });
+    auto *watcher = new QFutureWatcher<T>(context); // a child of `context`; deletes itself once finished
+    QObject::connect(watcher, &QFutureWatcherBase::finished, context, [future, then = std::move(then)]() mutable {
+        if (future.isCanceled() || future.resultCount() == 0) {
+            return;
+        }
+        then(future.result());
+    });
+    QObject::connect(watcher, &QFutureWatcherBase::finished, watcher, &QObject::deleteLater);
     watcher->setFuture(future);
 }
 

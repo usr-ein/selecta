@@ -26,7 +26,7 @@ enum class VersionClass : quint8 {
     Live,
     Acoustic,
     Demo,
-    Other,       // bracketed text that is none of the above ("Part 2", "Intro"): compared as text
+    Other, // bracketed text that is none of the above ("Part 2", "Intro"): compared as text
 };
 
 struct Version
@@ -47,12 +47,12 @@ enum class VersionRelation : quint8 {
 // A title taken apart: base text, version, featured artists, and the markers the resolver penalises.
 struct ParsedTitle
 {
-    QString base;          // without version, featured artists and junk brackets
+    QString base; // without version, featured artists and junk brackets
     Version version;
-    QStringList featured;  // artists from "(feat. X)", "ft. X"…
-    bool djMix = false;    // a DJ-mix segment: "(Mixed)", " - Mixed", "(Mix Cut)"
-    QStringList junk;      // derivative markers present: "slowed", "sped up", "nightcore", "8d", "reverb",
-                           // "karaoke", "in the style of", "tribute", "cover", "bass boosted"
+    QStringList featured; // artists from "(feat. X)", "ft. X"…
+    bool djMix = false;   // a DJ-mix segment: "(Mixed)", " - Mixed", "(Mix Cut)"
+    QStringList junk;     // derivative markers present: "slowed", "sped up", "nightcore", "8d", "reverb",
+                          // "karaoke", "in the style of", "tribute", "cover", "bass boosted"
 };
 
 // Thread-safe: implementations are immutable after construction, so one instance can be shared across threads.

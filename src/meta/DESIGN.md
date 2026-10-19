@@ -123,7 +123,18 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
 
 ## Progress
 
-- **Done:** public headers (this commit).
-- **Next:** M1 — `Result`/`Release`/policies implementation, `HttpChannel` + `ServiceGate`, PKCE, loopback receiver,
-  `SpotifyAuth`, token stores; tests with a fake `QNetworkAccessManager`.
-- **Open questions:** see the end of this file once there are any.
+- **Done:**
+  - Public headers (`1c7f454`).
+  - M1: `Result`/`MetaError`, `ServicePolicy`, `MemoryMetaCache`, `InMemoryTokenStore`, `KeychainTokenStore`
+    (verified once against the real login Keychain with a throwaway service name, `SELECTA_TEST_KEYCHAIN=1`), PKCE,
+    `detail::ServiceGate`, `detail::HttpChannel`, `detail::Json`, `detail::LoopbackReceiver`, `SpotifyAuth`
+    (PKCE + loopback, refresh, rotation, 6-month expiry, client credentials). 126 tests (+2 opt-in Keychain).
+- **Next:** M2 — `SpotifyClient` and `SpotifyLinks`, recorded JSON fixtures.
+- **Open questions:** none blocking. `ReleaseResolver`'s text matching uses the local adapter until `match/` lands.
+
+### Notes for whoever resumes
+
+- Tests drive time with `base::ManualClock`; gates poll real timers, so after `clock.advance()` call
+  `detail::ServiceGate::pollAll()` (or use `testing::awaitAdvancing`).
+- A flow's `LoopbackReceiver`/`QTimer` are deleted with `deleteLater()`: a flow can end inside their own signals.
+- `QT_USE_QSTRINGBUILDER` is on: wrap `a + b` in `QByteArray(...)`/`QString(...)` before calling members on it.

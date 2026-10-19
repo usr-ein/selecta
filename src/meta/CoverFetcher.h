@@ -27,7 +27,7 @@ struct CoverImage
     QString mimeType; // "image/jpeg" or "image/png"
     int width = 0;    // from the image header
     int height = 0;
-    QUrl url;         // where they came from
+    QUrl url; // where they came from
     Source source = Source::Spotify;
 };
 

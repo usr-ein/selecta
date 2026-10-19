@@ -36,12 +36,12 @@ QString serviceName(Service service);
 
 enum class ErrorCode : quint8 {
     // Configuration and sign-in
-    NotConfigured,  // a required setting is missing: no Spotify Client ID, no yt-dlp, no cache folder…
-    SignInRequired, // not signed in to Spotify, or the sign-in expired (6-month refresh token) or was revoked
-    MissingScope,   // signed in, but without the permission this call needs: sign in again for it
-    AccessDenied,   // the user declined in the browser
-    Forbidden,      // HTTP 403: account not on the app's user list, playlist neither owned nor collaborative…
-    StateMismatch,  // a sign-in answer that doesn't belong to the sign-in in progress
+    NotConfigured,   // a required setting is missing: no Spotify Client ID, no yt-dlp, no cache folder…
+    SignInRequired,  // not signed in to Spotify, or the sign-in expired (6-month refresh token) or was revoked
+    MissingScope,    // signed in, but without the permission this call needs: sign in again for it
+    AccessDenied,    // the user declined in the browser
+    Forbidden,       // HTTP 403: account not on the app's user list, playlist neither owned nor collaborative…
+    StateMismatch,   // a sign-in answer that doesn't belong to the sign-in in progress
     PortUnavailable, // the loopback port for the sign-in answer can't be opened
 
     // Requests
@@ -81,7 +81,7 @@ struct MetaError
     Service service = Service::SpotifyApi;
     // English, safe to show and to log: never contains a token, secret, Client ID or authorisation code.
     QString message;
-    int httpStatus = 0;                           // the HTTP status that caused it, 0 if none
+    int httpStatus = 0;                             // the HTTP status that caused it, 0 if none
     std::optional<std::chrono::seconds> retryAfter; // RateLimited / QuotaExceeded: how long the service asked to wait
 
     // "MusicBrainz: rate limited (HTTP 503): …", for logs.
@@ -90,14 +90,17 @@ struct MetaError
 
 // A value or an error. Copyable when T is. Accessing the wrong alternative throws std::bad_variant_access (and
 // asserts in debug builds), so check ok() first.
+//
+// Both constructors are implicit on purpose, like std::expected's value constructor: a function returning Result<T>
+// can `return value;` or `return makeError(…);`.
 template <typename T>
 class [[nodiscard]] Result
 {
 public:
-    Result(T value) // NOLINT(google-explicit-constructor): a value converts to a successful result
+    Result(T value) // NOLINT(cppcoreguidelines-explicit-constructor,misc-explicit-constructor)
         : m_data(std::in_place_index<0>, std::move(value))
     {}
-    Result(MetaError error) // NOLINT(google-explicit-constructor): an error converts to a failed result
+    Result(MetaError error) // NOLINT(cppcoreguidelines-explicit-constructor,misc-explicit-constructor)
         : m_data(std::in_place_index<1>, std::move(error))
     {}
 
@@ -134,17 +137,19 @@ template <>
 class [[nodiscard]] Result<void>
 {
 public:
-    Result() = default; // success
-    Result(MetaError error) // NOLINT(google-explicit-constructor): an error converts to a failed result
+    Result() = default;     // success
+    Result(MetaError error) // NOLINT(cppcoreguidelines-explicit-constructor,misc-explicit-constructor)
         : m_error(std::move(error))
     {}
 
     bool ok() const { return !m_error.has_value(); }
     explicit operator bool() const { return ok(); }
+    // The error; on a successful result (a caller bug) an Internal error rather than undefined behaviour.
     const MetaError &error() const
     {
         Q_ASSERT(!ok());
-        return m_error.value();
+        static const MetaError kNoError{};
+        return m_error.has_value() ? *m_error : kNoError;
     }
 
 private:

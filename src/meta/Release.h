@@ -48,21 +48,21 @@ struct Release
 {
     Source source = Source::Spotify;
 
-    QString title;             // as the service writes it, version included
-    QStringList artists;       // credited order
+    QString title;       // as the service writes it, version included
+    QStringList artists; // credited order
     QString album;
-    QStringList albumArtists;  // credited order; Spotify's "Various Artists" kept as is
-    QString albumType;         // lower case, as the service says: "album", "single", "compilation", "ep"
-    QString releaseDate;       // ISO-8601 prefix matching releaseDatePrecision: "2017", "2017-06", "2017-06-09"
+    QStringList albumArtists; // credited order; Spotify's "Various Artists" kept as is
+    QString albumType;        // lower case, as the service says: "album", "single", "compilation", "ep"
+    QString releaseDate;      // ISO-8601 prefix matching releaseDatePrecision: "2017", "2017-06", "2017-06-09"
     DatePrecision releaseDatePrecision = DatePrecision::Unknown;
     std::optional<int> trackNumber;
     std::optional<int> trackTotal;
     std::optional<int> discNumber;
-    std::optional<int> discTotal;    // known only when the whole album was read (SpotifyClient::album)
+    std::optional<int> discTotal; // known only when the whole album was read (SpotifyClient::album)
     std::optional<qint64> durationMs;
-    QString isrc;                    // upper case, 12 characters, or empty
-    QString upc;                     // album barcode (UPC/EAN), or empty
-    QList<CoverRef> covers;          // largest first
+    QString isrc;           // upper case, 12 characters, or empty
+    QString upc;            // album barcode (UPC/EAN), or empty
+    QList<CoverRef> covers; // largest first
 
     // Identifiers and link-backs (Spotify Developer Policy §II.4 asks for a link next to displayed data).
     QString spotifyId;
@@ -79,10 +79,10 @@ struct Release
     // MusicBrainz by ISRC, or from Deezer's album when Deezer is the source. The *Source fields say which.
     QString label;
     QString catalogNumber;
-    QStringList genres;              // most votes first
+    QStringList genres; // most votes first
     std::optional<Source> labelSource;
     std::optional<Source> genreSource;
-    QString copyrightP;              // Spotify's ℗ line: a label hint for the inspector, never written as the label
+    QString copyrightP; // Spotify's ℗ line: a label hint for the inspector, never written as the label
 
     // ", "-joined, the ID3v2.3 convention (never "/": names like "AC/DC").
     QString artist() const { return artists.join(u", "); }
@@ -96,7 +96,7 @@ struct PlaylistSummary
 {
     QString id;
     QString name;
-    QString owner;     // display name
+    QString owner; // display name
     int trackCount = 0;
     bool collaborative = false;
     QUrl spotifyUrl;

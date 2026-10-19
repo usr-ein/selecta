@@ -8,7 +8,7 @@
 // Pure functions; the random ones draw from the operating system's CSPRNG (QRandomGenerator::system()). Thread-safe.
 namespace selecta::meta::pkce {
 
-inline constexpr int kMinVerifierLength = 43;  // RFC 7636 §4.1
+inline constexpr int kMinVerifierLength = 43; // RFC 7636 §4.1
 inline constexpr int kMaxVerifierLength = 128;
 inline constexpr int kDefaultVerifierLength = 64;
 

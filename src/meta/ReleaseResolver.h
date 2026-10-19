@@ -29,7 +29,7 @@ struct ResolveQuery
     QString album;   // album hint (album downloads, Inbox folders), optional
     QString label;   // label hint ("[Ninja Tune]" in a tracklist), optional
     std::optional<qint64> durationMs;
-    QString isrc;    // from a file's TSRC or a playlist item, optional
+    QString isrc; // from a file's TSRC or a playlist item, optional
 };
 
 enum class Confidence : quint8 {
@@ -53,10 +53,10 @@ struct Candidate
 
 struct Resolution
 {
-    QList<Candidate> candidates;        // best first; other versions (version conflict, score 0) last
+    QList<Candidate> candidates;              // best first; other versions (version conflict, score 0) last
     Confidence confidence = Confidence::None; // of the first candidate
     QList<Source> sourcesTried;
-    QList<MetaError> sourceErrors;      // sources that failed while others answered
+    QList<MetaError> sourceErrors; // sources that failed while others answered
 };
 
 // Turns a line into ranked release candidates with scores and explanations (META-2, D23; §14.5 of the metadata

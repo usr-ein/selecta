@@ -46,7 +46,7 @@ public:
 class MemoryMetaCache final : public MetaCache
 {
 public:
-    explicit MemoryMetaCache(const base::Clock &clock, qint64 maxBytes = qint64{32} << 20);
+    explicit MemoryMetaCache(const base::Clock &clock, qint64 maxBytes = qint64{32} * 1024 * 1024);
 
     std::optional<QByteArray> get(const QString &key) override;
     void put(const QString &key, const QByteArray &value, std::chrono::seconds ttl) override;

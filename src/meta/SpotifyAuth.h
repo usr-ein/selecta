@@ -66,8 +66,8 @@ public:
     struct Config
     {
         QString clientId;
-        quint16 callbackPort = 0;                 // 0: a random free port (register http://127.0.0.1/callback)
-        std::chrono::seconds callbackTimeout{300}; // how long the browser step may take
+        quint16 callbackPort = 0; // 0: a random free port (register http://127.0.0.1/callback)
+        std::chrono::milliseconds callbackTimeout{300'000}; // how long the browser step may take
         // Opens the authorisation page in the user's browser (the app passes QDesktopServices::openUrl, so meta
         // needs no Qt Gui). Returns false when it couldn't. The URL carries the Client ID: don't log it.
         std::function<bool(const QUrl &)> openUrl;
@@ -75,8 +75,8 @@ public:
     };
 
     // The scopes each feature needs (asked for only when the feature is first used).
-    static QStringList playlistScopes();  // playlist-read-private, playlist-read-collaborative
-    static QStringList libraryScopes();   // user-library-read (Liked Songs)
+    static QStringList playlistScopes(); // playlist-read-private, playlist-read-collaborative
+    static QStringList libraryScopes();  // user-library-read (Liked Songs)
 
     // Access tokens are refreshed when they expire within this margin.
     static constexpr std::chrono::minutes kRefreshMargin{5};

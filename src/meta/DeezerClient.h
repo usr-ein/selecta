@@ -25,9 +25,9 @@ class RequestPacer;
 // A Deezer track: the release it describes plus what only Deezer has.
 struct DeezerTrack
 {
-    Release release;       // source Deezer; title includes the version ("Glue (Mixed)")
-    QString titleVersion;  // Deezer's separate version text, "(Mixed)", or empty
-    QUrl previewUrl;       // 30-s MP3 clip; signed, expires about 15 minutes after the answer
+    Release release;           // source Deezer; title includes the version ("Glue (Mixed)")
+    QString titleVersion;      // Deezer's separate version text, "(Mixed)", or empty
+    QUrl previewUrl;           // 30-s MP3 clip; signed, expires about 15 minutes after the answer
     std::optional<double> bpm; // Deezer's own analysis; often absent (0 is reported as absent)
 };
 
@@ -39,7 +39,7 @@ struct DeezerAlbum
     QString label;
     QString upc;
     QStringList genres;
-    QString recordType;    // "single", "ep", "album", "compile"
+    QString recordType; // "single", "ep", "album", "compile"
     QString releaseDate;
     int trackCount = 0;
     QList<CoverRef> covers; // largest first (cover_xl is 1000 px)

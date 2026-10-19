@@ -44,11 +44,11 @@ struct ReleaseInfo
 {
     QString id;
     QString title;
-    QString date;          // "2017", "2017-06" or "2017-06-09", or empty
-    QString status;        // "Official", "Bootleg", "Promotion"…
+    QString date;   // "2017", "2017-06" or "2017-06-09", or empty
+    QString status; // "Official", "Bootleg", "Promotion"…
     QString barcode;
     QString releaseGroupId;
-    QString primaryType;   // "Single", "EP", "Album"…
+    QString primaryType;        // "Single", "EP", "Album"…
     QStringList secondaryTypes; // "Compilation", "DJ-mix", "Soundtrack"…
     QList<LabelInfo> labels;
 };
@@ -71,10 +71,10 @@ struct Enrichment
     QString recordingId;
     QString releaseId;
     QString releaseGroupId;
-    QString label;         // empty when MusicBrainz has none
+    QString label; // empty when MusicBrainz has none
     QString catalogNumber;
-    QStringList genres;    // most votes first; empty when nobody voted
-    QStringList reasons;   // "ISRC GBCFB1700229: 2 recordings, 1 within ±3 s", "release chosen by barcode"…
+    QStringList genres;  // most votes first; empty when nobody voted
+    QStringList reasons; // "ISRC GBCFB1700229: 2 recordings, 1 within ±3 s", "release chosen by barcode"…
 };
 
 } // namespace musicbrainz
