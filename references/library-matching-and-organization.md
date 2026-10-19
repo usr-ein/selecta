@@ -392,11 +392,13 @@ Selecta's comparison is remote **integer seconds** vs an exact local duration (T
 sharers (`pynicotine/shares.py`): duration is **truncated** (`int(duration)`, so remote ∈ [d − 1, d]) and bitrate
 rounded; for MP3s without a Xing/Info/VBRI header the bundled tinytag *estimates* the duration from the average size of
 the first frames (`pynicotine/external/tinytag.py`), which can be off for VBR files. Other clients: to measure (E4).
-Compare against `floor(d_local)`. Versions differ by minutes, edits by seconds. Proposal:
+Compare against `floor(d_local)`. Versions differ by minutes, edits by seconds. The PRD has since fixed the
+"same recording" window at **±3 s** for search ranking against a release (SRCH-18, D23); ownership uses the same
+window so the two never disagree. Proposal:
 
 ```
-Δ        = |d_remote − d_local|            (seconds; missing or 0 on either side → s_dur = unknown)
-t_exact  = 2 + max(1, 0.01 · d_local)      (2 s = integer rounding + client variance; ≈ 5.6 s for a 6-min track)
+Δ        = |d_remote − floor(d_local)|     (seconds; missing or 0 on either side → s_dur = unknown)
+t_exact  = 3                               (SRCH-18 / D23; truncation is absorbed by the floor)
 t_likely = max(6, 0.03 · d_local)          (≈ 11 s for 6 min)
 t_far    = max(15, 0.08 · d_local)         (≈ 29 s for 6 min)
 s_dur    = 1                         if Δ ≤ t_exact
@@ -941,7 +943,7 @@ to rekordbox stays a non-goal.
 | Weights title / artist / duration / album | 0.45 / 0.30 / 0.20 / 0.05 | Picard (title ≫ artist), beets (length 2/13 of track weights); album weak for singles. |
 | Exact tier | exact key + version "same" + Δ ≤ `t_exact`, or score ≥ 0.97 with title ≥ 0.97, artist ≥ 0.95 | Conservative: SRCH-11 "exact" drives duplicate warnings. |
 | Likely tier | score ≥ 0.85, title ≥ 0.85, artist ≥ 0.70 | beets medium threshold 0.25 distance ≈ 0.75 similarity; stricter because a wrong "owned" hides a wanted track. |
-| `t_exact` / `t_likely` / `t_far` / veto | `2 + max(1, 1 %)` / `max(6 s, 3 %)` / `max(15 s, 8 %)` / `> max(60 s, 25 %)` | Sockseek 3 s; beets/Lidarr 10 s grace + 30 s; Picard 30 s and 60–600 s discriminator. |
+| `t_exact` / `t_likely` / `t_far` / veto | `3 s` (vs `floor(d_local)`) / `max(6 s, 3 %)` / `max(15 s, 8 %)` / `> max(60 s, 25 %)` | PRD SRCH-18/D23 ±3 s; Sockseek 3 s; beets/Lidarr 10 s grace + 30 s; Picard 30 s and 60–600 s discriminator. |
 | Artist-contradiction multiplier | × 0.5 when title ≥ 0.9 and artist < 0.5 | Picard 0.6/0.5 discriminator. |
 | Album "in collection" | distance ≤ 0.20 and ≥ 90 % tracks mapped ≥ likely | Lidarr 0.20/0.40. |
 | Supersede exact | equal title key + artist set, version same, Δ ≤ 2 s, quality(album) ≥ quality(single) | Local-vs-local evidence is strong; DL-7. |
@@ -985,7 +987,7 @@ seconds; `—` = attribute absent.
 | T14 | `B & A - Title.mp3` (300) | owned A & B – Title, 300 | artist sets equal → **exact** |
 | T15 | `Cover Band - Hallelujah.mp3` (410) | owned Jeff Buckley – Hallelujah, 413 | artist discriminator → **none** |
 | T16 | `Artist - Title.mp3` (—) | owned Artist – Title, 300 | no duration, versions unspecified → **likely** (not exact) |
-| T17 | `Artist - Title.mp3` (364) | owned Artist – Title, 360 | Δ 4 ≤ t_exact 5.6 → **exact** |
+| T17 | `Artist - Title.mp3` (363), then (364) | owned Artist – Title, 360.4 | Δ 3 → **exact**; Δ 4 > t_exact → **likely** (SRCH-18 window) |
 | T18 | `Artist - Title.mp3` (385) | owned Artist – Title, 360 | Δ 25 (between t_likely and t_far) → **none** + *other version?* (tuning probe) |
 | T19 | `Rips\Track 01.wav` | anything | unparseable title → **none** (history checks only) |
 | T20 | any path, size and basename equal to a past download | history row | **downloaded in a past session** (exact) |
