@@ -31,9 +31,6 @@ void PrintTo(const NormalizeCase &c, std::ostream *os)
 class NormalizeTest : public testing::TestWithParam<NormalizeCase>
 {};
 
-// cppcheck can parse TEST_P only with --library=googletest, which tools/lint.sh doesn't pass yet (requested from the
-// head implementer); the file is clean with it. Remove this suppression once lint.sh has the flag.
-// cppcheck-suppress syntaxError
 TEST_P(NormalizeTest, GivesTheKey)
 {
     const NormalizeCase &c = GetParam();

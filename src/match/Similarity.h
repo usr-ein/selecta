@@ -121,10 +121,10 @@ struct FieldMatch
 class FieldMatcher final
 {
 public:
-    static FieldMatch compare(const FieldKey &a, const FieldKey &b, const FieldMatchOptions &options = {});
+    static FieldMatch compare(const FieldKey &a, const FieldKey &b, FieldMatchOptions options = {});
 
     // As compare(), from normalised keys only (no leet route).
-    static FieldMatch compareKeys(QStringView a, QStringView b, const FieldMatchOptions &options = {});
+    static FieldMatch compareKeys(QStringView a, QStringView b, FieldMatchOptions options = {});
 };
 
 } // namespace selecta::match

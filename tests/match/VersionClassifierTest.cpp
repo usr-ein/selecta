@@ -43,9 +43,6 @@ void PrintTo(const ClassifyCase &c, std::ostream *os)
 class ClassifyTest : public testing::TestWithParam<ClassifyCase>
 {};
 
-// cppcheck can parse TEST_P only with --library=googletest, which tools/lint.sh doesn't pass yet (requested from the
-// head implementer); the file is clean with it. Remove this suppression once lint.sh has the flag.
-// cppcheck-suppress syntaxError
 TEST_P(ClassifyTest, ClassifiesThePhrase)
 {
     const ClassifyCase &c = GetParam();
