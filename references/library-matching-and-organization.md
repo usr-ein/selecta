@@ -19,6 +19,9 @@
   but none parses Soulseek paths blind for "already owned" detection; that part is Selecta's own design.
 - Version (Original / Extended / Radio Edit / remix-by-X) is the main precision trap for a DJ library: same artist and
   title can be different tracks. Version conflicts block "exact" and surface as "other version owned".
+- Typos and odd layouts: per-token OSA with length-dependent budgets, token alignment, and — when a release is known —
+  a position-free token bag scored against it with length first (§17). Queries are spelled from the release lookup;
+  "Search wider" drops words, never uses wildcards.
 - Speed is not a problem at 50k–200k tracks with precomputed keys: O(1) exact-key lookups and rarest-token candidate
   retrieval, estimated ≤ 100 µs per result (to benchmark in M4). Past downloads match exactly on (size, basename).
 - Supersede (DL-7/DL-8) must be conservative: trash an Inbox single only on an *exact* match against a *verified,
@@ -54,7 +57,15 @@
     store them, no custom SQL functions or extensions (§10).
 11. **TagLib opens files read-write by default** (`FileStream` tries `rb+` first): the scanner must pass an explicit
     read-only `FileStream` so Selecta never holds a write handle on a collection file (§12).
-12. **Supersede safety comes from guards, not from the matcher alone:** only after a verified, complete album; exact
+12. **Typos need length-aware rules, not one threshold.** Measured on an 80k-word proxy, 96 % of 4-letter tokens
+    have another real word one edit away (`noon`/`neon`), vs 14 % at 10 letters. Use per-token OSA with budgets by
+    length (exact ≤ 3, no substitutions at 4–5), token alignment rather than whole-string distance, and a
+    symmetric-delete token index (98.6 % recall, ~51 candidates per typo) instead of a BK-tree (2.6–16.8 % of the
+    vocabulary per lookup) (§17).
+13. **Peers match whole words, without accent folding; the server only routes queries.** Spell the query from the
+    release lookup, choose words that survive the peers' punctuation splitting, and widen by dropping words or using
+    spelling variants — never wildcards (§17.7).
+14. **Supersede safety comes from guards, not from the matcher alone:** only after a verified, complete album; exact
     tier with equal version and Δ ≤ 2 s; album copy at least as good; TOCTOU re-check; Trash + Undo + audit log;
     circuit breaker (§15).
 
@@ -372,6 +383,8 @@ GPL-compatible and avoids writing our own bit-parallel Levenshtein. It works on 
 already-normalised keys as `std::u32string` or UTF-16 code units. SIMD paths are x86 (SSE2/AVX2); on Apple Silicon
 the scalar bit-parallel path is used — still microseconds for short strings (TODO: benchmark).
 
+Typo handling (edit budgets, token alignment, fuzzy retrieval) is specified in §17.
+
 Proposed field similarities (all in [0, 1]):
 - `s_title = max(ratio(t1, t2), token_sort_ratio(t1, t2)) / 100`, forced to 1.0 if `squash(t1) == squash(t2)`.
 - `s_artist`: compare artist **sets**: 1.0 if the sets are equal; 0.95 if one set contains the other (`A & B` vs `A`);
@@ -471,7 +484,8 @@ in collection → In Inbox → Queued → Downloaded this session → Downloaded
 ### 9.1 Query-guided matching (Batch BATCH-1…6, Wishlist SRCH-14)
 
 Here the target is known ("Artist – Title (Mix)") and results must be *ranked*, which is Sockseek's problem; its
-"identity beats quality" ordering (§3.3) is the right shape.
+"identity beats quality" ordering (§3.3) is the right shape. Since the PRD went "release first" (SRCH-17/18, BATCH-5,
+D23), the target is the chosen release, and the scoring is §17.5 B (length first); query words follow §17.7.
 
 **Tracklist line parsing (BATCH-1).** Same normaliser and version classifier as §4–5, plus line clean-up: leading
 numbering (`01.`, `1)`, `#1`), timestamps (`12:34`, `[1:02:03]`), bullets; a trailing `[LABEL]` after the title or
@@ -1124,10 +1138,11 @@ Design (confirms and refines the brief):
    - **no wildcards** to work around spelling: `*yksopp` is also the filter-evasion pattern the etiquette note forbids
      (its §7.3); if a word contains an excluded phrase, warn instead of searching.
 3. **"Search wider"**: one explicit click = one budgeted search. The etiquette note forbids fanning one query out into
-   several searches automatically (its "never" rule 7). Ladder: (1) drop the least reliable words (diacritics, symbols,
-   and the longest word, the likeliest to be misspelled in files) or use the joined form of a multi-word artist
-   (`okumadrift`) — a spelling variant, not a wildcard; (2) title words only; (3) artist only, for short or generic
-   titles, relying on per-search caps (SRCH-16). Wide results go through the reference-guided scorer (§17.5 B) with
+   several searches automatically (its "never" rule 7). Ladder: (1) **spelling variant** — words with diacritics in
+   their folded form (`royksopp`), a multi-word artist in its joined form (`okumadrift`); a different spelling, not a
+   wildcard; (2) **fewer words** — drop the least reliable words (symbols, and the longest word, the likeliest to be
+   misspelled in files), typically leaving the title words only; (3) **artist only**, for short or generic titles,
+   relying on per-search caps (SRCH-16). Wide results go through the reference-guided scorer (§17.5 B) with
    the ±3 s window, so precision holds even when the query is broad. In Batch, one click may queue wider searches for
    all unresolved lines, paced by the governor with the budget shown. Wide results are cached like any search
    (SRCH-12).
@@ -1146,6 +1161,9 @@ Design (confirms and refines the brief):
 | `AlbumMatcher` | §8 folder ↔ album, Hungarian mapping, coverage | |
 | `Scanner` + `Watcher` | §12 TagLib reads in a worker pool; FSEvents; offline volumes; reconciliation | Read-only on the collection. |
 | `Supersede` | §15 decision table | Calls only `FileOps.trashFromInbox`. |
+| `TokenIndex` | §17.6 exact token postings + symmetric-delete fuzzy index (prefix 7, length budgets) + joined-pair lookups | Part of the `MatchIndex` snapshot. |
+| `ReferenceScorer` | §17.5 B zone token bag against a release or a library candidate; §17.3–17.4 token rules | Used by search, batch, wishlist, META-2 and ownership verification. |
+| `QueryPlanner` | §17.7 network query words from a release; "Search wider" ladder | Never emits wildcards; checks excluded phrases; every search goes through the governor. |
 
 ### Proposed defaults (initial; tune on the labelled corpus)
 
@@ -1160,6 +1178,12 @@ Design (confirms and refines the brief):
 | Supersede exact | equal title key + artist set, version same, Δ ≤ 2 s, quality(album) ≥ quality(single) | Local-vs-local evidence is strong; DL-7. |
 | Supersede circuit breaker | > 10 files per event or > 30 % of Inbox singles → confirm | Defence against matcher bugs. |
 | Undo window | 30 days (while the item is still in the Trash) | |
+| Token edit budget (OSA) | ≤ 3 chars and numbers: 0 · 4–5: 1 without substitution · 6–8: 1 · ≥ 9: 2 | Neighbour density measured in §17.3. |
+| Fuzzy conditions | same first letter (≤ 8 chars); substitutions and 4–5-char edits need corroboration; ≤ 1 edit per field ≤ 12 chars, else ≤ 2 | Pollock & Zamora 7.8 % first-letter errors; §17.3. |
+| Fuzzy token score | `1 − 0.15 × edits` | Typos never look exact. |
+| Whole-string check | `fuzz::ratio(squash(R), squash(P)) ≥ 85` | Concatenations. |
+| Release fit | `0.35·s_dur + 0.40·cov_T + 0.25·cov_A`; "Only this release" keeps fit ≥ 0.8 with s_dur = 1 | D23 length first. |
+| Query words | ≥ 3 chars, no stop/version words, ≤ 4–5 words, no wildcards | Responder matching rules (§17.7). |
 
 ### Decisions to make (ADR-005, ADR-008)
 
@@ -1171,7 +1195,10 @@ Design (confirms and refines the brief):
    circuit breaker and quality/version guards.
 6. **Disc folders at filing**: flatten with `d-tt` prefixes (recommended) vs keep `Disc n` sub-folders.
 7. **Chromaprint**: P2 for LIB-7 as planned; consider P1 for the preview check and the supersede guard.
-8. **Labelled corpus**: record parsed results from local-test-network sessions and the maintainer's manual live
+8. **Fuzzy retrieval structure**: symmetric-delete token index (recommended) vs trigram index vs BK-tree (§17.6).
+9. **Search wider**: explicit, budgeted clicks along the §17.7 ladder (recommended); no automatic fan-out, no
+   wildcards.
+10. **Labelled corpus**: record parsed results from local-test-network sessions and the maintainer's manual live
    sessions (search cache), label ~500 result–library pairs in a debug view, and report precision/recall per tier in
    CI. Targets: exact precision ≥ 99.5 %, likely precision ≥ 90 %.
 
@@ -1235,6 +1262,46 @@ seconds; `—` = attribute absent.
 | T51 | batch line `Artist - Title`; results cluster at 211 s (5 peers, 2 say "Radio Edit") and 408 s (4 peers, 3 say "Extended Mix") | — | unversioned line prefers the cluster not claimed by an explicit non-original version; not "confident" unless one cluster is labelled Original/unlabelled with ≥ 3 peers |
 | T52 | scan a collection fixture whose files are immutable (`chflags uchg`) or on a read-only disk image | collection | scan succeeds; no file opened for writing; mtimes and bytes unchanged |
 
+Typo tolerance, position independence and query planning (§17). "Release" = the reference chosen in SRCH-17.
+
+| ID | Input | Library state / reference | Expected |
+|---|---|---|---|
+| T53 | `Music\okumadrift - lights.mp3` (240) | release Okuma Drift – Lights, 240 | joined pair `okuma`+`drift` → cov_A 1 → **fits the release**; ownership of the same owned track: **exact** (squashed keys equal) |
+| T54 | `OkumaDrift - Lights.mp3` (240) | owned Okuma Drift – Lights, 240 | CamelCase split → **exact** |
+| T55 | `Bicp - Glue.mp3` (269) | owned Bicep – Glue, 269 | `bicp`→`bicep`: one deletion, same first letter, corroborated by `glue` and duration → **likely** (a fuzzy token never gives exact) |
+| T56 | `Artist - Gallaxy.mp3` | owned Artist – Galaxy | single-letter skeleton equal → **likely** |
+| T57 | `The Prodigy - Firestatrer.mp3` (283) | owned The Prodigy – Firestarter, 283 | adjacent transposition = 1 OSA edit → **likely** |
+| T58 | `Prodigy - Firestorter.mp3` (283) | same | one substitution in an 11-char token (budget 2) → **likely** |
+| T59 | `Artist - Noon.mp3` (240) | owned Artist – Neon, 240 | 4-char substitution not allowed → **none** (deliberate: `noon`/`neon`) |
+| T60 | `Artist - Max.mp3` | owned Artist – Mix | 3-char tokens are exact-only → **none** |
+| T61 | `Artist - Live.mp3` | owned Artist – Love | 4-char substitution → **none** |
+| T62 | `MK - 17.mp3`; `MJ - 17.mp3` | owned MK – 17 | first **exact**; second **none** (short tokens, numbers exact-only) |
+| T63 | `Artist - Title Part II.mp3` | owned Artist – Title Pt. 2 | `pt`→`part`, `ii`→`2` after `part` → **exact** (duration permitting) |
+| T64 | `Ke$ha - Tik Tok.mp3` | owned Kesha – TiK ToK | `$`→`s` → **exact** |
+| T65 | `Deadmaus - Strobe.mp3` | owned deadmau5 – Strobe | leet-folded keys equal → **exact** |
+| T66 | `dead mau5 - Strobe.mp3` | owned deadmau5 – Strobe | squashed keys equal → **exact** |
+| T67 | `Sigur Ros - Hoppipolla.mp3` | owned Sigur Rós – Hoppípolla | folding → **exact** |
+| T68 | `Roeyksopp - Eple.mp3` | owned Röyksopp – Eple | `roeyksopp`→`royksopp`: one deletion (9 chars) → **likely** |
+| T69 | `Mueller - Title.mp3` | owned Müller – Title | `mueller`→`muller`: one deletion → **likely** |
+| T70 | `Glue - Bicep.mp3` (269), no siblings | release / owned Bicep – Glue, 269 | token bag fits regardless of order; blind parse swaps via the known-artist dictionary → **exact** |
+| T71 | `Bicep\Isles (2021)\03 Apricots.flac` | release Bicep – Apricots | title in F, artist in D+ → **fits** |
+| T72 | `Isles - Bicep\03 - Apricots.flac` | owned Bicep album *Isles* | reversed folder: dictionary marks `Bicep` as artist → album *Isles*, artist Bicep |
+| T73 | `Other Artist - Glue (Bicep Remix).mp3` | release Bicep – Glue | `Bicep` only inside brackets = remixer → version conflict → **does not fit** |
+| T74 | `Bicep - Glue.mp3` | release Other Artist – Glue (Bicep Remix) | reference artist missing, version REMIX vs UNSPECIFIED → **does not fit** |
+| T75 | `Artist - Love Story.mp3` (235) | release Artist – Love, 200 | unexplained share > 0.3 and length off → **does not fit** |
+| T76 | `X - Intro.mp3` (72); `X\Other Album\01 Intro.mp3` (125) | release X – Intro, 72 | first **fits**; second **does not** (length decides generic titles) |
+| T77 | `M.K. - Title.mp3` | owned MK – Title | dots between single letters removed → **exact** |
+| T78 | `AboveandBeyond - Sun and Moon.mp3` | owned Above & Beyond – Sun & Moon | squashed `aboveandbeyond` equal → **exact** |
+| T79 | `Artist - Leave The World Behnd.mp3` | owned Artist – Leave the World Behind | one deletion in `behind`, other tokens exact → **likely** |
+| T80 | `Artist - Lev Teh Wrld Behnd.mp3` | same | field budget exceeded → **none** |
+| T81 | release Röyksopp – Eple | — | default query `röyksopp eple`; wider (1) `royksopp eple`; wider (2) `eple`; never `*yksopp` |
+| T82 | release Ke$ha – TiK ToK | — | responders index `ke` `ha` → dropped (< 3 chars); query `tik tok`; files named `Ke$ha - …` and `Kesha - …` both found |
+| T83 | release Swedish House Mafia – Don't You Worry Child | — | no `dont` and no `t`; ≤ 5 words, e.g. `swedish house mafia worry child` |
+| T84 | query word contains a server-sent excluded phrase | — | warning shown, no search sent, no budget spent |
+| T85 | wide query `glue` returns 500 results | release Bicep – Glue, 269 | "Only this release" keeps only files with artist evidence and length within ±3 s |
+| T86 | typed `Bicpe Glue` | release lookup returns Bicep – Glue | network query uses `bicep glue` |
+| T87 | `DJ Kose - Pick Up.mp3` (length equal) | owned / release DJ Koze – Pick Up | ownership **none** (4-char substitution, artist evidence only `dj`); release-guided fit 0.35 + 0.40 + 0.25 × 0.33 ≈ 0.83 → **fits** (title and length carry it) |
+
 ## Open questions and experiments
 
 Questions for the maintainer:
@@ -1258,6 +1325,12 @@ Experiments (local test network, synthetic library — never the live network fr
 - E5. FSEvents replay after quit/relaunch, rename pairs, external drive unmount/mount, Trash + Undo round trip.
 - E6. Chromaprint on 30–60 s of a preview: is it enough to separate Original vs Extended vs Radio Edit of the same
   track? (Probably not on its own — they share audio; combine with duration.)
+- E7. C++ benchmark of the token index (§17.6) on a synthetic 200k-track library: build time, memory, µs per
+  misspelled token, recall at the §17.3 budgets.
+- E8. Calibrate the fuzzy rules and the `Artist - Title` order prior on recorded, labelled results (E3): false
+  positives of short-token edits, share of reversed names.
+- E9. On the local test network, share crafted misspelled, joined and accented names from test peers; check that the
+  §17.7 ladder finds them and that the release scorer keeps precision.
 
 ## Sources
 
@@ -1282,4 +1355,12 @@ All accessed 2026-10-19. Code read from shallow clones under `local/research-clo
 | macOS SDK `NSFileManager.h` (`trashItemAtURL:resultingItemURL:error:`) | Trash + Undo design |
 | Apple APFS Guide FAQ, https://developer.apple.com/library/archive/documentation/FileManagement/Conceptual/APFS_Guide/FAQ/FAQ.html | Normalisation preserving/insensitive behaviour |
 | AcoustID web service, https://acoustid.org/webservice; Chromaprint `NEWS.txt` | Key, 3 req/s, non-commercial terms; 1.6.1 security fix |
-| Selecta `docs/PRD.md` v0.2, `docs/PLAN.md` v0.2 | Requirements and module boundaries |
+| SymSpell, https://github.com/wolfgarbe/SymSpell (README) | Symmetric delete algorithm, prefix indexing, MIT licence, reported speeds |
+| W. Cohen, P. Ravikumar, S. Fienberg, "A Comparison of String Distance Metrics for Name-Matching Tasks", IIWeb 2003, http://www.cs.cmu.edu/~wcohen/postscript/ijcai-ws-2003.pdf | Token-weighted soft matching (SoftTFIDF) best for names |
+| F. Damerau, "A technique for computer detection and correction of spelling errors", CACM 7(3), 1964 (background, cited from memory) | Single-edit share of misspellings |
+| J. Pollock, A. Zamora, "Automatic spelling correction in scientific and scholarly text", CACM 27(4), 1984, https://dl.acm.org/doi/pdf/10.1145/358027.358048; JASIS 34(1), 1983 | First-letter error 7.8 %, single-error share, omissions most common |
+| rapidfuzz-cpp `rapidfuzz/fuzz_impl.hpp` (WRatio, partial_ratio), `rapidfuzz/distance/OSA_impl.hpp`, `JaroWinkler.hpp`, `Levenshtein.hpp` (same commit as above) | Scorer semantics, bit-parallel algorithms, parameters |
+| Nicotine+ `pynicotine/utils.py` (`PUNCTUATION`), `pynicotine/search.py` (`_create_search_result_list`) (same commit as above) | Responder word splitting; complete word required |
+| Selecta `references/soulseek-protocol.md` §10, `references/network-etiquette-and-safe-development.md` §7.3 and "never" list | Search semantics; no wildcard evasion; no automatic fan-out |
+| Own experiment (2026-10-19): Python prototype over 80 000 random lowercase ASCII words from macOS `/usr/share/dict/words` (web2), seed 42; budgets of §17.3; 3 000 queries with one random insertion/deletion/substitution/transposition (two edits for half of the ≥ 9-char words); symmetric-delete index (prefix 7) verified with OSA; BK-tree on Levenshtein (150 queries per radius); padded trigram index with count filter `|G(q)| − 3k` (1 000 queries) | Numbers in §17.3 and §17.6 (a natural-language proxy, not a music vocabulary) |
+| Selecta `docs/PRD.md` v0.2+ (SRCH-17/18, BATCH-5, META-*, D23), `docs/PLAN.md` v0.2 | Requirements and module boundaries |
