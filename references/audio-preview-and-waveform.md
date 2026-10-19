@@ -352,15 +352,135 @@ Conclusions:
 
 ## 8. Rendering in Qt (Widgets / Qt Quick / QRhi) at 60–120 fps
 
-TODO.
+### 8.1 One layering function for every renderer
+
+Write the colour decision as a pure function of `(column values, normalised y)` and use it in the CPU renderer, a
+shader and snapshot tests:
+
+```
+// Detail ("Pioneer layered", mirrored): y = |distance from centre| / half-height, in [0,1]
+base = (y <= min(L,M)) ? BROWN
+     : (y <= L)        ? BLUE        // low exceeds mid
+     : (y <= M)        ? AMBER       // mid exceeds low
+     :                   BACKGROUND;
+colour = (y <= H) ? mix(base, WHITE, 0.85) : base;
+
+// Overview ("Pioneer stacked", single-sided): y = distance from the bottom baseline / height
+colour = (y <= L) ? BLUE : (y <= L+M) ? AMBER : (y <= L+M+H) ? WHITE : BACKGROUND;
+```
+
+`L, M, H` are the curved and gained heights (§7.1). The mock's three modes (Layered / Stacked / Lanes) are three such
+functions, so the mode switch is trivial.
+
+The **not-yet-downloaded** span (PREV-2) renders from the same function with a "pending" flag: a flat dim baseline,
+or 25 % opacity hatching. A thin download-progress marker sits at the time that corresponds to the received byte
+count (Xing TOC / frame index / linear for CBR and PCM).
+
+### 8.2 Options
+
+| Approach | Notes | Verdict |
+|---|---|---|
+| **QPainter in a plain `QWidget`** + pre-rendered tiles | Render the waveform once per zoom level into `QImage` tiles (e.g. 512 device px wide, `Format_ARGB32_Premultiplied`, DPR-aware). Each frame blits 2–3 tiles at an offset and draws the playhead, beat/progress markers and the buffered-range overlay. A 3,000×600 px blit is ~7 MB/frame; at 120 Hz that is ~0.9 GB/s of memcpy, OK on Apple Silicon. Keeps the window on the normal raster backing store, which is the most native. | **Start here** (M5). |
+| **`QRhiWidget`** (QtWidgets, Qt ≥ 6.7; present in the local Qt 6.11 headers) | Metal on macOS. Upload the column data as a texture (`RGBA8`: L, M, H, RMS) with a max-pyramid mip chain; a fragment shader runs §8.1 per pixel. Scrolling and zoom become uniforms, essentially free at 120 Hz, with fractional-pixel offsets. A texture-based child switches the top-level window to RHI composition (`textureChildSeen` in `QWidgetRepaintManager`). Test that this does not disturb native look, translucency or resize. | **Upgrade path** if the CPU path costs > 4 ms/frame or judders. |
+| Qt Quick (`QQuickRhiItem`, `QSGGeometryNode`) in a `QQuickWidget` | Same GPU path plus a QML layer. `QQuickWidget` also forces RHI composition. | Only if the player becomes a Qt Quick view (ADR-001 chose Widgets). |
+| `QOpenGLWidget` | OpenGL is deprecated on macOS. This is what Mixxx uses today. | No. |
+
+### 8.3 Frame pacing, smoothness, ProMotion
+
+- Qt 6.11 drives `QWindow::requestUpdate()` on macOS from a **CVDisplayLink** whenever the window's `swapInterval ≠ 0`
+  (default) (`qcocoawindow.mm` `updatesWithDisplayLink`; `qcocoascreen.mm` `QCocoaScreen::requestUpdate`). A plain
+  `QWidget::update()` only posts a low-priority `UpdateRequest` event (`QWidgetRepaintManager::sendUpdateRequest`) and
+  is **not** vsync-aligned. So drive the playhead animation from a display-link tick: call `requestUpdate()` on the
+  top-level `QWindow`, and on `QEvent::UpdateRequest` compute the extrapolated position (§4), `update()` the
+  waveform, then request the next tick. Stop ticking when paused.
+- Avoid scroll judder: at the default zoom the content moves 150 device px/s, which is 1.25 px per frame at 120 Hz.
+  Either draw at fractional offsets (GPU, or QPainter with a `translate()` of the cached image using smooth
+  pixmap transform), or **snap the zoom levels so that the scroll speed is a whole number of device pixels per frame**
+  at the current refresh rate (`QScreen::refreshRate()`).
+- **ProMotion:** CVDisplayLink should run at the panel's rate. Whether Qt Widgets windows actually get 120 Hz frames
+  is **unverified**: measure with a frame counter in the M5 prototype (§12).
+- The waveform screen stays dark in both appearances (UI-3). Use sRGB colours from §2.1. VoiceOver: expose the widget
+  as a slider (`QAccessible::Slider`) with value = position and description = "m:ss of m:ss, downloaded n %".
 
 ## 9. Fake-lossless / transcode detection and spectrograms
 
-TODO.
+### 9.1 Spectral cut-off: what encoders leave behind (verified)
 
-## 10. Optional BPM / key detection libraries and licences
+LAME's default lowpass (`libmp3lame/lame.c`, lameproject/lame `1f5cc94`):
 
-TODO.
+| Mode | Lowpass |
+|---|---|
+| CBR/ABR 128 kbps | 17.0 kHz |
+| CBR/ABR 160 kbps | 17.5 kHz |
+| CBR/ABR 192 kbps | 18.6 kHz |
+| CBR/ABR 224 kbps | 19.4 kHz |
+| CBR/ABR 256 kbps | 19.7 kHz |
+| CBR/ABR 320 kbps | 20.5 kHz |
+| VBR (default `vbr_mtrh`) `-V0` | 24 kHz, i.e. **no lowpass** at 44.1 kHz |
+| VBR `-V1` | 19.5 kHz |
+| VBR `-V2` | 18.5 kHz |
+| VBR `-V3` | 18.0 kHz |
+| VBR `-V4` | 17.5 kHz |
+| VBR `-V5` | 17.0 kHz |
+
+The CBR/ABR values come from the `optimum_bandwidth` table, the VBR values from the `x[]` table in
+`lame_init_params`.
+
+Measured here: band energy of a pink-noise test signal encoded with FFmpeg 9.0.2 + libmp3lame (60 s, 1 kHz bands,
+dBFS):
+
+| Band | WAV | MP3 128 | MP3 192 | MP3 V2 | MP3 V0 | MP3 320 | AAC 256 (FFmpeg aac) |
+|---|---|---|---|---|---|---|---|
+| 16–17 kHz | −50.2 | −52.7 | −50.5 | −49.5 | −49.8 | −50.2 | −50.3 |
+| 17–18 kHz | −50.6 | **−56.1** | −51.3 | −50.1 | −50.1 | −50.6 | −50.8 |
+| 18–19 kHz | −51.0 | **−62.2** | −53.2 | −52.0 | −50.4 | −51.0 | −51.2 |
+| 19–20 kHz | −51.2 | **−72.0** | **−58.4** | **−57.3** | −50.5 | −52.0 | −51.3 |
+| 20–21 kHz | −50.8 | **−90.3** | **−70.8** | **−69.6** | −50.1 | **−57.3** | −51.0 |
+| 21–22 kHz | −48.8 | **−91.0** | **−91.0** | **−91.0** | −48.0 | **−78.8** | −49.0 |
+
+So the cut-off identifies ≤ 128k, ~192k/V2 and 320k sources reliably. **V0 and good AAC leave no cut-off**, so a FLAC
+made from a V0 MP3 passes this test. That is a known limit of all cut-off detectors.
+
+### 9.2 Proposed checks (PREV-9, also feeds CONV-6 "source flagged as likely transcode")
+
+1. **Cut-off:** average the power spectrum over the track: Hann window, 4,096-point FFT, ~200 frames spread over the
+   file (cheap: ~30 ms with vDSP). Find the highest frequency where the level is within 15–20 dB of the 14–16 kHz
+   reference band and stays below it for the rest of the spectrum.
+   - Lossless with cut-off ≤ 19 kHz → badge "likely from lossy (≈ N kbps MP3)".
+   - MP3 labelled 320 with cut-off ≤ 17.5 kHz → "likely upconverted from ≤ 160 kbps".
+   - Wording must say *likely*. Old recordings, lo-fi productions, vinyl rips and some masters are genuinely
+     band-limited, so always offer the spectrogram for human judgement.
+2. **sfb21 / "holes":** lossy MP3 at ≤ 192k shows intermittent energy above 16 kHz. The ratio of frames with energy above
+   16 kHz to frames without is a second signal (P2).
+3. **LAME tag cross-check (MP3):** the LAME/Info header records the encoder version and the **lowpass actually used**
+   (1 byte, ×100 Hz). A tag saying 20.5 kHz with a measured cut-off at 16 kHz means the file was re-encoded from a
+   lossy source.
+4. **Fake hi-res:** a "24-bit" file whose samples are all multiples of 256, i.e. the low 8 bits are always zero, is
+   padded 16-bit. A 88.2/96 kHz file with nothing above 22.05/24 kHz is upsampled. Both checks are exact and cheap,
+   and directly protect the "lossless ≥ 16/44.1" filter semantics (SRCH-*).
+5. **Duration plausibility** (DL-10): decoded duration vs the search-result duration attribute. A mismatch flags
+   truncated or mislabelled files.
+
+**Spectrogram view** (P1, inspector): linear frequency axis 0–22 kHz (cut-offs live at 16–21 kHz, where a log axis
+would squash them), dB colour map −120…0 dBFS, ~1,024 time columns × 512 bins as `uint8` (≈ 0.5 MB, generated on
+demand, cached with the analysis). FFT: Apple **Accelerate/vDSP** on macOS (system framework); **PocketFFT** or
+**KissFFT** (BSD-3-Clause) elsewhere. FFTW (GPL-2.0+) also works licence-wise but is heavier. UI reference: Spek
+(GPL-3.0). Closed tools for comparison: Fakin' The Funk?, Lossless Audio Checker, auCDtect.
+
+## 10. Optional BPM / key detection libraries and licences (PREV-10, P2)
+
+| Library | Licence | What | Notes |
+|---|---|---|---|
+| **Queen Mary DSP (qm-dsp)** | GPL-2.0-or-later | Tempo/beat tracking (`TempoTrackV2`), key (`GetKeyMode`), onset detection | Used by Mixxx (`lib/qm-dsp`, `src/analyzer/plugins/analyzerqueenmary{beats,key}.cpp`). Proven; C++; GPLv3-compatible. **First choice for BPM.** |
+| **libKeyFinder** (mixxxdj fork 2.2.x) | GPL-3.0-or-later | Musical key | Used by Mixxx (fetched in its `CMakeLists.txt`); needs FFTW. Good DJ-oriented key accuracy (hearsay). **First choice for key.** |
+| SoundTouch `BPMDetect` | LGPL-2.1 | BPM | Mixxx's fallback beat plugin; simpler and less accurate. |
+| aubio | GPL-3.0-or-later | Onset, tempo, beat, pitch | C; usable; less DJ-tuned. |
+| Essentia | AGPL-3.0 | Everything (incl. key profiles `edma`, BPM) | AGPL obligations; heavy. Avoid. |
+| madmom / Beat This! (neural) | Code BSD-like; **models CC BY-NC-SA** | State-of-the-art beats | Non-commercial model licence. Not compatible with distribution in a GPL app. Avoid. |
+
+BPM/key on a *preview* only needs ~30–60 s of audio (BPM) or the whole track (key). Run them after the waveform on the
+same decoded PCM (P2). Convention for the UI: DJs expect Camelot/Open Key notation alongside standard names (rekordbox
+shows either).
 
 ## 11. Implications for Selecta
 
