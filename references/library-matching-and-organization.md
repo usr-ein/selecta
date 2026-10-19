@@ -434,9 +434,9 @@ score = base × Π multipliers
 | Ambiguity | If the two best candidates are both ≥ likely but different versions, cap at likely (beets' "gap" idea). |
 
 **Upgrade** (LIB-4): tier ≥ likely and `quality_rank(R) > quality_rank(L)`, where R's quality is *established*
-(strict-mode attributes present and plausible, SRCH-6/7). Initial rank: lossless ≥ 24-bit (6) > lossless 16-bit (5)
-> MP3 320 CBR / AAC ≥ 256 (4) > MP3 V0 / 256 (3) > V2 / 192 (2) > < 192 (1). An upgrade to a format above the
-filing target (e.g. FLAC when the collection is MP3 320) is still shown, labelled "lossless source".
+(strict-mode attributes present and plausible, SRCH-6/7). Initial ranks, high to low: lossless ≥ 24-bit = 6,
+lossless 16-bit = 5, MP3 320 CBR or AAC ≥ 256 = 4, MP3 V0 or 256 = 3, V2 or 192 = 2, below 192 = 1. An upgrade to a
+format above the filing target (e.g. FLAC when the collection is MP3 320) is still shown, labelled "lossless source".
 
 Badge precedence on a result (several can show; the first is the headline): In collection (exact) → Upgrade → Likely
 in collection → In Inbox → Queued → Downloaded this session → Downloaded in a past session → Other version owned.
