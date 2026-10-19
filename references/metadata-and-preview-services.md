@@ -4,10 +4,12 @@
 > second-hand sources or need an experiment; do not turn them into constants until verified. Source repos are read at
 > the commits listed in §14.
 >
-> Scope: canonical track metadata (Spotify and alternatives), matching a Soulseek result or a Get tracks line to a
-> catalogue entry, and 30-second previews from official sources. **Out of scope of this note:** any technique for
-> downloading or extracting audio from YouTube, YouTube Music, Spotify or other streaming services (PRD D20: never a
-> source of files; the D26 preview runner is specified elsewhere). spotDL is described only at the level of "where
+> Scope (PRD v0.4): canonical track metadata (Spotify first, D29), matching a Soulseek result or a Get tracks line to a
+> release, official 30-second clips, full-length listening in official players, and **preview audio through the
+> user's own installed yt-dlp (D26, §17)**. **Out of scope (D20):** ripping or keeping files from streaming services —
+> everything Selecta keeps (Inbox, collection, shares) comes from Soulseek peers; yt-dlp audio stays in the preview
+> cache and is never filed, shared, converted or tagged. This note does not cover circumvention of any access control
+> (signature/PO-token internals, cookies, web-player tokens, DRM). spotDL is described only at the level of "where
 > metadata comes from, where audio comes from", plus its matching and tagging logic.
 >
 > Manual requests made for this note (all public, unauthenticated, one-off): Deezer 6 (2 searches that failed, 1 search,
