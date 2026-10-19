@@ -106,7 +106,8 @@ uint32 nprivdirs              (optional: locked / buddy-only folders, same layou
 
 - Nicotine+ emits an entry for **every scanned folder, including folders with no files**, and aioslsk emits every
   intermediate path. Selecta should do the same so trees render identically everywhere.
-- Strings are UTF-8 (length-prefixed). Sizes are uint64.
+- Strings are `uint32` length + UTF-8 bytes; Nicotine+ decodes invalid UTF-8 as Latin-1 (legacy clients) and
+  encodes requests to legacy clients in Latin-1 when possible. Sizes are uint64.
 - Nicotine+ precomputes the compressed message for each permission level after each scan and caches the bytes
   (`compressed_shares[...]`, "elaborate hack to save CPU"). Banned users get the empty variant.
 - Size estimate (inference): ~90 B per file entry (name ≈ 45 B + fixed 21 B + three attributes 24 B) → ~9–10 MB raw for
@@ -177,7 +178,8 @@ folders to everyone" toggle. Download authorisation is always rechecked at `Queu
 
 `string description, bool has_picture, [bytes picture], uint32 total_uploads (upload slots), uint32 queue_size,
 bool slots_free, uint32 upload_permitted`. Upload-permission codes: 0 no one, 1 everyone, 2 users in list,
-3 permitted users (this is about *receiving* files pushed to us, not our shares; Selecta: 0). Museek+ sends
+3 permitted users (this is about *receiving* files pushed to us, not our shares; the field is optional and
+SoulseekQt doesn't send it; Selecta: 0). Museek+ sends
 `slots_free` as an int — parsers must tolerate a short tail.
 
 ## 4. Answering searches from a local index
@@ -373,8 +375,8 @@ slskd adds **daily and weekly** limits per group (files, megabytes, *failures*),
 - **Timeouts (Nicotine+)**: 45 s from `TransferRequest` to the start of the transfer (15 s margin over slow
   indirect connections: Soulseek NS ~20 s, soulseeX ~30 s); idle connections closed after 60 s; uploads that failed with
   a connection timeout are re-queued every 3 minutes.
-- **User goes offline** → queued and failed uploads for that user are aborted ("User logged off"); when they come
-  back, nothing is restarted automatically (the downloader re-queues).
+- **User goes offline** → that user's uploads are aborted ("User logged off") when Nicotine+ notices (status
+  change, or when their turn comes); when they come back nothing restarts automatically (the downloader re-queues).
 - **Persistence**: Nicotine+ reloads only *finished* uploads after a restart (`load_only_finished=True`); queued
   uploads are not restored — downloaders re-request them. slskd keeps everything in its transfer DB.
 - Cancelling an active upload: close the F connection; the downloader sees a failure (and may retry later).
@@ -435,7 +437,9 @@ startup and daily at 00:00 by default).
   materialises the file (network download, reported ~1.8 s for a small file; can hang); with
   `setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD|PROCESS,
   IOPOL_MATERIALIZE_DATALESS_FILES_OFF)` reads fail immediately with `EDEADLK` (errno 11 on macOS). launchd jobs start
-  with materialisation off (Qiita, Apple's iCloud Drive release note as quoted by MacRumors). Selecta: set the policy
+  with materialisation off (Qiita test, several project reports); Apple's iCloud Drive note recommends
+  `NSFileCoordinator` or this policy. The man page calls OFF the process-scope system default, yet GUI apps do
+  materialise on read in practice — so set the policy explicitly rather than relying on defaults. Selecta: set the policy
   **off on scanner threads**, skip `SF_DATALESS` files (don't index them; show "N files are in iCloud only and are not
   shared"), and at upload time treat `EDEADLK` as `File read error.`. Never trigger iCloud downloads to serve a peer.
 
@@ -509,22 +513,22 @@ transfer state machines on the network thread.
 
 ```mermaid
 flowchart LR
-  subgraph worker[Worker pool]
-    W[FsEventsWatcher\nper root] --> SC[ShareScanner\nenumerate + attributes]
-    LIB[library scanner rows] --> SC
+  subgraph worker["Worker pool"]
+    W["FsEventsWatcher<br/>one per root"] --> SC["ShareScanner<br/>enumerate + attributes"]
+    LIB["Library scanner rows"] --> SC
   end
-  SC -->|rows| DB[(SQLite: share_root,\nshare_dir, share_file)]
-  SC -->|build| SNAP[ShareIndex snapshot\nimmutable, shared_ptr]
-  subgraph net[Network thread]
-    SS[ShareService\nbrowse / folder / search / user info] --> SNAP
-    UM[UploadManager\nqueues, slots, limits] --> SNAP
-    UM --> BW[Upload token bucket]
-    SS --> RL[Inbound rate limiters]
+  SC -->|rows| DB[("SQLite<br/>share_root, share_dir, share_file")]
+  SC -->|build| SNAP["ShareIndex snapshot<br/>immutable, shared_ptr"]
+  subgraph net["Network thread"]
+    SS["ShareService<br/>browse, folder, search, user info"] --> SNAP
+    UM["UploadManager<br/>queues, slots, limits"] --> SNAP
+    UM --> BW["Upload token bucket"]
+    SS --> RL["Inbound rate limiters"]
     UM --> RL
   end
-  UM -->|records| UDB[(SQLite: upload)]
-  UDB --> RATIO[PeerStatsService / ratio]
-  SS --> SRV[slsk server/peer/distrib sessions]
+  UM -->|records| UDB[("SQLite<br/>upload")]
+  UDB --> RATIO["PeerStatsService / ratio"]
+  SS --> SRV["slsk server / peer / distributed sessions"]
   UM --> SRV
 ```
 
@@ -593,7 +597,7 @@ CREATE INDEX upload_user_end ON upload (username, ended_at);
 stateDiagram-v2
   [*] --> Queued: QueueUpload accepted / legacy request answered "Queued"
   [*] --> Denied: UploadDenied(reason)
-  Queued --> Requested: slot free and user's turn → TransferRequest(dir=1); 45 s timer
+  Queued --> Requested: slot free and user's turn, TransferRequest dir=1, 45 s timer
   Requested --> Cancelled: TransferResponse(false, Cancelled)
   Requested --> Completed: TransferResponse(false, Complete)
   Requested --> Connecting: TransferResponse(true) → open F connection
