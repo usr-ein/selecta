@@ -177,16 +177,145 @@ messages; if auto-replies are ever added, they need a per-user once-per-session 
 
 ## 5. Peer-side etiquette
 
-TODO(verify): leeching culture, common uploader rules, how clients enforce them (Nicotine+, slskd, SoulseekQt),
-denial strings, annoying downloader behaviour, recommended self-limits.
+### 5.1 Why it matters more on Soulseek than on BitTorrent
+
+Soulseek has no swarming: every file comes from **one** uploader, start to finish, through that uploader's limited
+upload slots. Every file Selecta takes from a peer is a slot-time that peer's other downloaders wait for. Most
+clients also give **one active upload per user** at a time (Nicotine+ removes a user from the round-robin while one of
+their uploads is active — `uploads.py` `_activate_transfer`/`_update_user_counter`; Soulseek.NET
+`MaximumConcurrentUploadsPerUser = 1`), so asking one peer for several files at once only lengthens *their* queue.
+
+The culture has a long "leecher" grievance: the official FAQ concedes that "Soulseek has a reputation for mean,
+pedantic users that have a great list of 'dos and don'ts' in their userinfo". The author refused automatic bans of
+non-sharers as "too harsh" (2012) and built a polite warning instead; uploaders built the bans themselves.
+
+### 5.2 How uploaders enforce their rules (what Selecta will run into)
+
+| Client (as uploader) | Slots | Per-user queue limits | Order | Privileged users | Leecher handling | Source |
+|---|---|---|---|---|---|---|
+| **Nicotine+** (defaults) | 3 upload slots (`useupslots`, `uploadslots = 3`); alternative mode: accept new uploads while total < 50 KiB/s | **100 files** (`filelimit`) and **10 000 MiB** (`queuelimit`) per user → `Too many files` / `Too many megabytes`; buddies can be exempt | Round-robin by "user who waited longest since their last download" (`fifoqueue = False`) | First, ahead of everyone (server list + optionally prioritised buddies) | Optional *Leech detector* plugin: threshold ≥ 1 file in ≥ 1 folder; checks server stats, **browses you** to verify ("SoulseekQt only sends the number of shared files/folders to the server once on startup"), then private-messages you after the transfer. Third-party *Ban-SoulseekLeechers* plugin bans outright. Custom ban text default: "Banned, don't bother retrying" | `pynicotine/config.py`, `uploads.py`, `plugins/leech_detector` |
+| **slskd** (defaults) | 10 global slots; unlimited group slots | None by default; group limits for *queued*, *daily*, *weekly* files / MB and **failed transfers** | Groups by priority (privileged = 0), round-robin inside a group | Priority 0, FIFO, "not subject to any limits" | Built-in `leechers` group = fewer than 1 shared file or 1 directory. The docs' example config: **1 slot, 100 KiB/s, 15 queued files / 150 MB, 30 files / 300 MB / 10 failures per day, 150 files / 1.5 GB / 30 failures per week** | `src/slskd/Core/Options.cs`, `docs/config.md`, `Application.cs` |
+| **SoulseekQt** (official; behaviour from the changelog) | User-set | "Maximum uploads per user limit on by default to prevent mass queuing" (2014-02-14); "Maximum queued MB per user setting" (2013-04-10) | Place in line returned to downloaders (2012) | Privileged first (donation page) | Optional background browse of every downloader + one warning message if the share is empty (2012; "only gets sent once per user", only on a download attempt — Nir, 2025-05-05) | slsknet.org changelog, node/523, Google Groups |
+
+Example values in slskd's docs are illustrative, not defaults, but they show the scale uploaders think in: **tens of
+files per day** for a stranger who shares nothing, **~150 queued files** for an ordinary user.
+
+### 5.3 Denial strings and what Selecta must do with each
+
+| Reason (exact string) | Meaning | Retryable? | Selecta reaction | Source |
+|---|---|---|---|---|
+| `Queued` | Accepted, waiting for a slot | — | Show place in queue; poll it at most every 5 min (Nicotine+ does every 300 s) | N+ `downloads.py` |
+| `Too many files` / `Too many megabytes` | Per-user queue limit hit | **Yes** — "these messages are retryable, while anything else is not" (slskd) | Keep the rest *locally* queued; learn the limit (Nicotine+ uses `max(5, queued − 1)`); send more only as earlier files finish. SoulseekQt does the same (2015-06-12) | slskd `Application.cs`; N+ `_upload_denied`; Qt changelog |
+| `File not shared.` | Not shared — **also what SoulseekQt sends instead of `Banned`** | No (one latin-1 retry for very old clients, as N+ does) | Fail the item; count it in the peer's record | N+ `SLSKPROTOCOL.md` |
+| `Banned` (or any custom text such as "Banned, don't bother retrying", "Sorry, your country is blocked") | You are banned by this peer | **Never** | Stop all requests to that peer (queue, browse, user info); mark the peer "banned you" with the date; demote/hide its results (FAIR-4) | N+ `config.py` |
+| `Pending shutdown.` | Uploader is closing | Later | Retry after ≥ 15 min (N+ retries in its 3-minute cycle; Selecta should be gentler) | N+ `TransferRejectReason` |
+| `Cancelled` | Uploader cancelled | Not automatically | Mark failed; user may retry once | N+ |
+| `File read error.` | Uploader-side I/O error | Rarely | Retry at most a few times, ≥ 15 min apart (N+: every 15 min) | N+ |
+| `Disallowed extension`, `Remote file error`, `Blocked country`, `User limit of x …` | Legacy (NS / old N+) | No (`User limit …` = treat like "Too many …") | As above | N+ `SLSKPROTOCOL.md` |
+| `UploadFailed` (peer code 46) after *we* closed the connection | Uploader asks us to re-queue an abruptly ended transfer | Only if we did not cancel on purpose — "If the transfer was intentionally cancelled, the peer should ignore this message." | Ignore it for cancelled previews | N+ `uploads.py` `_file_connection_closed` |
+
+When an uploader later offers a file we no longer want (peer `TransferRequest`, direction = upload), answer at once
+with `TransferResponse(allowed = false, reason = "Cancelled")` — or `"Complete"` if we already have it, as SoulseekQt
+does — so the uploader moves on to the next user (N+ `_transfer_request_downloads`).
+
+### 5.4 Downloader behaviour that annoys uploaders
+
+| Behaviour | Why it is a problem | Evidence |
+|---|---|---|
+| Sharing nothing, or faking share counts | Triggers leech detectors and bans; faking was called "bad faith" by the Soulseek.NET author and pushed back by Nicotine+ maintainers | slsk-batchdl #165 (2026-03); N+ leech detector |
+| Mass-queuing a whole share or discography | Monopolises the uploader; why SoulseekQt turned a per-user limit on by default | Qt changelog 2014-02-14; FAQ "dos and don'ts" |
+| Re-queuing immediately after a denial or a failure | Endless requeue cycles; SoulseekQt caps automatic retries at "three times every five minutes" | Qt changelog 2013-10-05 |
+| Several concurrent requests to one peer | Most uploaders serve one file per user at a time anyway; extra requests just pile up in their queue | N+ `uploads.py`; Soulseek.NET option |
+| Polling place-in-queue or user info aggressively | Pointless load; N+ polls every 5 min | N+ `downloads.py` |
+| Private messages asking for slots / auto-messages | Repeated identical PMs earn a 30-min server ban | §4.6 |
+| Queue-jumping (cancel and re-queue, or multiple accounts) | Explicit PRD non-goal; multiple accounts also hit the 5-per-IP rule | PRD §4; Rules |
+| Sending `QueueUpload` before our own shares are loaded | The uploader's leech check sees 0 files. Nicotine+ holds queue messages locally "until our shares have initialized, to prevent invalid messages about not sharing any files" | N+ `downloads.py` `_enqueue_transfer` |
+
+### 5.5 Self-limits Selecta should impose
+
+Proposed values are in the table in §9.1. The principles: one active transfer per peer; a small number of files
+queued per peer (well under the 15-file "leecher" example and far under Nicotine+'s 100); a daily per-peer cap that
+keeps Selecta's footprint on any one person modest; no automatic retries after non-retryable denials; learn and
+respect each peer's queue limit; global concurrency kept low enough that Selecta never holds many uploaders' slots at
+once.
 
 ## 6. Previews: cancel mid-transfer or finish?
 
-TODO: is cancelling a transfer mid-way rude/harmful versus finishing it?
+**Answer: cancel early — it is the considerate choice — but keep previews rare, serial and debounced.**
+
+Facts:
+- A preview is indistinguishable from a download on the wire: the protocol has no range or "preview" request, only a
+  start offset for resuming. It takes a queue position and an upload slot like any download (so PREV-7 is right).
+- Cancelling an active transfer means closing the file connection. Nicotine+ as uploader then marks the upload
+  `Cancelled`, sends `UploadFailed` (which the downloader must ignore if it cancelled on purpose) and **immediately
+  starts the next user's upload** (`uploads.py` `_file_connection_closed` → `_check_upload_queue`). The slot is freed
+  sooner than if Selecta had finished a file it does not want; the bytes not sent are bandwidth saved.
+- slskd records such an upload in a *failed* state (`Cancelled`, `Errored` or `Aborted` are all in
+  `TransferStateCategories.Failed`) and **counts it against optional per-user daily/weekly failure limits** (none by
+  default; the docs' example allows a leecher 10 failures per day). Many cancelled previews from one slskd peer can
+  therefore get Selecta refused by that peer for a day or a week.
+- No source found treats an early cancel as rude; no client bans on it. The complaints in the community are about
+  hoarding slots and mass-queuing, which finishing unwanted files makes *worse*. (Confidence: medium — absence of
+  evidence, plus the mechanics above.)
+
+Risks specific to Selecta's keyboard audition (PREV-4):
+- **Bursts.** Holding ↓ with auto-preview on would fire a peer connection (via `GetPeerAddress`/`ConnectToPeer` on
+  the server) and a `QueueUpload` for every row. Server-side operations in bursts are exactly what the flood ban
+  punishes ("too many operations at once"). Debounce and cap.
+- **Queue pollution.** A preview requested from a busy peer sits in their queue after the user has moved on. There is
+  no "dequeue" message; when the uploader offers it, Selecta must answer `Cancelled` immediately (§5.3).
+- **Churn on one peer.** Previewing many files from the same peer in a row (start, cancel, start, cancel) looks like
+  slot-hogging and accumulates slskd failures. Prefer one preview per peer at a time and count previews in the
+  per-peer budget.
+
+Recommended preview policy (defaults; see §9.1): auto-preview starts only after the selection has rested
+**≥ 600 ms**; at most **1 active preview transfer** (plus the user's normal downloads); a preview of a peer that is busy
+with another of our transfers is not started (show "peer busy"); previews count in the per-peer daily cap and in a
+global **preview budget (≤ 30 per 10 min)**; cancel the transfer as soon as the user moves on (PREV-6 default stays
+**cancel**), unless more than ~85 % is already received, in which case finishing costs the uploader almost nothing
+and saves a later re-download if the user keeps it. These numbers are judgement calls (confidence: low–medium) and
+should be tuned on the local test network, then in the M9 live beta.
 
 ## 7. Privileges, sharing and reputation, excluded search phrases
 
-TODO.
+### 7.1 Privileges
+
+- Bought by donating. The official donation page (quoted by a Nicotine+ maintainer, 2025-09-09): for $5 or more
+  "your username will become permanent", and "you'll receive a minimum of one month of privileges. While your
+  privileges are active, your downloads will be queued ahead of those of non-privileged users." 7–10 days per dollar;
+  days can be gifted.
+- On the protocol: the server sends the list of privileged users (`PrivilegedUsers`, code 69) and updates;
+  `CheckPrivileges` returns our remaining time; privileged users get a **2-minute** wishlist interval instead of 12.
+- "Respect / recognition of privileges" is one of the six features the Rules require of third-party clients.
+  **Selecta's upload queue must serve privileged users first** (Nicotine+: privileged ahead of everyone; slskd:
+  priority 0, FIFO, no limits). This is missing from the PRD (SHARE-3) and should be added.
+- Selecta must never pretend to be privileged or reorder anyone's queue; it can show the user's own privilege status.
+
+### 7.2 Sharing and reputation
+
+- Uploaders judge you by (a) the share counts *you* report to the server (`SharedFoldersFiles`), (b) browsing your
+  share, (c) your behaviour in their queue. Report **true counts**, as soon as the share index is loaded, and never
+  queue downloads before then (§5.4).
+- Answer browse and folder-contents requests reliably even for users you are downloading from: SoulseekQt and the
+  Nicotine+ leech detector both browse downloaders to check them.
+- The PRD's ratio display (FAIR-3) is the right social lever: there is no global reputation system on Soulseek, only
+  each uploader's local view of you.
+- Ignoring/banning is per client; there is no network-wide blacklist. Be careful with automatic bans of others (Nir's
+  argument: many non-sharers are new, or share privately).
+
+### 7.3 Excluded search phrases and filtered queries
+
+Two different mechanisms exist; both silently remove results:
+
+| Mechanism | How it works | What Selecta must do |
+|---|---|---|
+| **Client-side excluded phrases** (server code 160 `ExcludedSearchPhrases`, sent at login, "starting around the beginning of 2024" per the Soulseek.NET README) | Each responding client must leave out any file whose *path* contains a listed phrase (case-insensitive substring; Nicotine+ checks `phrase in file_path.lower()` in `search.py`). The Soulseek.NET author: outgoing results "*must* be filtered". | Filter our own search responses (SHARE-2). On the search side, warn when a query contains an excluded phrase — compliant peers will return nothing — and do not spend search budget on it. |
+| **Server-side filtered queries** | The server silently drops searches that contain certain substrings — even inside other words ("Eclipse" contains a duo's name, "NANORAY" contains a film title) according to slsk-batchdl's author (issue #128, 2025-08: "The soulseek server is blocking searches which contain certain substrings … to appease copyright trolls"). Soulfind models this as "server-side phrases". The list is not published. | Accept it. When a query returns zero results, say "No results (some queries are filtered by the server)". |
+
+**Never evade either mechanism.** sockseek ships a hard-coded `bannedTerms` list and rewrites matching queries by
+replacing the first letter with a wildcard (`*eatles`) to slip past the server filter ("copyright is joke", comment in
+`Searcher.cs`). That is circumvention of a server rule, which the PRD excludes (§4 non-goals) and which risks the
+account. Selecta must not do it, nor relay results that it knows match an excluded phrase.
 
 ## 8. Safe development
 
