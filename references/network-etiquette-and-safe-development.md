@@ -319,8 +319,80 @@ account. Selecta must not do it, nor relay results that it knows match an exclud
 
 ## 8. Safe development
 
-TODO: local server (Soulfind), test peers, no official test server, record/replay, code guardrails, first controlled
-live tests.
+### 8.1 There is no official test server
+
+None exists, and no other public Soulseek-compatible server is known: "The client can connect to any Soulseek®
+compatible server (however none are presently known to exist other than the official one)" (Nicotine+ maintainer
+slook, 2025-09-09). The protocol doc points developers to **Soulfind**: "an open source implementation (unrelated to
+the official proprietary Soulseek server). It handles the protocol well enough for development and testing of client
+implementations." Soulfind's own README: it "exists for local testing, and should not be used in production."
+
+Also note: **logging in with an unknown username creates an account** (Soulfind registers on first login unless in
+private mode, which answers `SVRPRIVATE`; the official server behaves the same way, and recycles unused names after
+30 days per the FAQ). A typo, or a test that generates usernames, would create accounts on the live server — the
+"randomly generated usernames" the protocol doc calls unacceptable.
+
+### 8.2 The local test network (`devenv/`)
+
+| Component | Role | What it models | What it does **not** model | Source |
+|---|---|---|---|---|
+| **Soulfind** (D, GPL-3.0-or-later; `ghcr.io/soulfind-dev/soulfind`, port 2242; `soulsetup` CLI; admin commands by PM to user `server`) | The server | Login and registration, rooms, PMs, user/room/wishlist search; search fan-out to all users (server code 26, batched every 650 ms); queries > 256 chars dropped; **client-side excluded phrases** and **server-side query filters** (configurable in `soulsetup` → "Search filters"); "unsearchable" users; privileges; **bans** (no login response, timeout 60 s + 0–15 s), **kick [minutes]** (default 2 min), `kickall`; wishlist interval 12 / 2 min; `Relogged` | **Distributed network** (parent/child messages are accepted but "unused in Soulfind"); **automatic flood bans** (no rate limiting found in the source); any undocumented heuristics of the official server | Soulfind @ 5a256f5: `README.md`, `src/defines.d`, `src/server/{server,user,msghandler,cmdhandler}.d` |
+| **aioslsk mock server** (Python, GPL-3.0-or-later, `tests/e2e/mock/`) | Second server for distributed-network tests | Pluggable distributed strategies (`EveryoneRootStrategy`, potential-parent jobs), excluded phrases, wishlist interval | Same as above for flood bans | aioslsk @ a90ad82 |
+| **Reference peers**: Nicotine+ (configurable server host:port), slskd (Docker; `soulseek.address`/`port`), scripted aioslsk peers | Interop and adversarial behaviour | Real queue/slot/denial behaviour (Nicotine+ 3 slots, 100-file limit; slskd groups and failure limits); scripted peers can deny with each reason string, stall, disconnect mid-transfer, send `UploadFailed`, run a leech check | Official SoulseekQt (closed, cannot be pointed at another server reliably — TODO(verify)) | §5.2 |
+| **`selecta-cli` instances** | Load and multi-peer scenarios | Everything Selecta does | — | PLAN M1/M2 |
+| **Topology tricks** | NAT and failure paths | A peer with its listener disabled forces indirect connections (`ConnectToPeer` / `CantConnectToPeer`); optional `tc netem` for latency and bandwidth | — | inference |
+
+Pin every image by digest; keep the whole network on an internal Docker network with no route to the internet if
+possible (`internal: true` in Compose), so even a misconfigured peer cannot reach `server.slsknet.org`.
+
+### 8.3 A "referee" in tests, because no local server punishes flooding
+
+Neither Soulfind nor the mocks reproduce the official flood ban, so a test can pass while Selecta would get banned
+live. Add two independent checks:
+
+1. **Governor audit stream.** Every outbound server and peer message passes the governor, which emits
+   `(timestamp, kind, peer)` events. Property tests (fake clock) assert that no rolling window ever exceeds the budget.
+2. **Counting proxy.** A small TCP proxy between Selecta and Soulfind decodes message codes and fails the scenario if,
+   for example, more than *N* `FileSearch`/`WishlistSearch` messages pass in any 220 s, more than one identical search
+   passes within the cache TTL, more than *N* logins occur in 10 min, or an identical PM is repeated. It is
+   independent of Selecta's own code, so a bug that bypasses the governor still fails CI.
+
+The same proxy **records** sessions (codes + payloads, with usernames and paths replaced) as fixtures for codec
+round-trip tests and fuzz seeds, and **replays** them for regression tests. Fixtures come only from the local network
+(PLAN §5.3).
+
+### 8.4 Code guardrails (in addition to PLAN §5.2)
+
+- **Live-server lock checked after DNS resolution.** Debug/test builds allow only loopback, RFC 1918, link-local and
+  ULA addresses; check the *resolved* address, not the hostname, so an `/etc/hosts` alias or an IP literal cannot
+  slip through. Release builds need a one-time explicit confirmation that names the Rules.
+- **One instance per account and machine** (lock file): protects against "connect many clients at once from the same
+  IP" and against `Relogged` ping-pong.
+- **Ban detector → automatic pause.** Recognise the `server` PM ("You have been banned for …"), login timeouts and
+  repeated disconnects; switch the global network pause on (SAFE-5), log it (SAFE-4), and require a user action after
+  the cool-down to resume.
+- **Identity constants in one file**: major/minor version, client name in user info; 177 in development until a number
+  is reserved; never 157/160/170/175.
+- **Explicit account creation.** The login screen distinguishes "log in" from "create account" and warns that an
+  unknown username creates a new account; no code path ever invents a username.
+- **No automatic messages** in v1 (no auto-replies, no leech warnings); PM sending goes through the governor with a
+  per-recipient and global rate limit and an identical-text check.
+- **Kill switch and ceilings are tested**: `static_assert(default <= ceiling)` for every limit; a test that every
+  outbound message type is routed through the governor (e.g. the codec's send function is only reachable from it).
+
+### 8.5 First controlled live tests (M9, run manually by the maintainer)
+
+| Step | What | Pass criterion |
+|---|---|---|
+| 0 | Pre-flight: reserved version numbers (or 177 with the maintainers' blessing), true share counts, shares loaded, activity log on, all limits at their *minimum* defaults, network pause reachable | Checklist §9.3 complete |
+| 1 | Log in, stay idle 30 min (pings, status, parent acquisition, incoming searches answered) | No disconnects; no `server` PMs |
+| 2 | 1 manual search, then 5 manual searches over 10 min | Results arrive; budget indicator correct |
+| 3 | 1 download from a peer with a free slot; 1 preview cancelled at ~30 % | Peer shows normal behaviour; no re-download after `UploadFailed` |
+| 4 | A 10-line batch at default pacing | Finishes within the computed ETA; no denials beyond normal |
+| 5 | Two weeks of normal use, daily log review | Zero bans (PRD §10). Raise at most one limit at a time, never above the ceiling |
+
+Any ban message: stop, keep the logs, find the cause, halve the relevant budget, wait at least 24 h before trying
+again. A ban is an IP-level event in practice; a second "test account" does not protect the maintainer's main account.
 
 ## 9. Implications for Selecta
 
