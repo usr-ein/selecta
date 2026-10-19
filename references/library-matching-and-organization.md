@@ -367,7 +367,7 @@ Proposed field similarities (all in [0, 1]):
 
 | Source | Rule | Context |
 |---|---|---|
-| Sockseek | `|Δ| ≤ 3 s`, missing length accepted | Spotify/YouTube metadata vs Soulseek files; README suggests 10 s for CD rips. |
+| Sockseek | Δ ≤ 3 s, missing length accepted | Spotify/YouTube metadata vs Soulseek files; README suggests 10 s for CD rips. |
 | beets / Lidarr | free up to 10 s, then linear to full penalty at +30 s (40 s) | Album identification against MusicBrainz. |
 | Picard | linear 1 → 0 over 30 s; extra multiplier 1 → 0.3 between 60 s and 600 s | Same. |
 
@@ -377,7 +377,7 @@ by minutes, edits by seconds. Proposal:
 
 ```
 Δ        = |d_remote − d_local|            (seconds; missing or 0 on either side → s_dur = unknown)
-t_exact  = 2 + max(1, 0.01 · d_local)      (1 s for integer rounding; ≈ 3.5 s for a 6-min track)
+t_exact  = 2 + max(1, 0.01 · d_local)      (2 s = integer rounding + client variance; ≈ 5.6 s for a 6-min track)
 t_likely = max(6, 0.03 · d_local)          (≈ 11 s for 6 min)
 t_far    = max(15, 0.08 · d_local)         (≈ 29 s for 6 min)
 s_dur    = 1                         if Δ ≤ t_exact
