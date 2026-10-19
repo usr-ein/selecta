@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <exception>
 
 using namespace Qt::StringLiterals;
 
@@ -29,34 +30,41 @@ QString commandList()
 
 int main(int argc, char *argv[])
 {
-    const QCoreApplication application(argc, argv);
-    QCoreApplication::setApplicationName(u"selecta-cli"_s);
-    QCoreApplication::setApplicationVersion(QString(selecta::base::kVersion));
+    try {
+        const QCoreApplication application(argc, argv);
+        QCoreApplication::setApplicationName(u"selecta-cli"_s);
+        QCoreApplication::setApplicationVersion(QString(selecta::base::kVersion));
 
-    QCommandLineParser parser;
-    parser.setApplicationDescription(u"Selecta development tools."_s);
-    parser.addHelpOption();
-    parser.addVersionOption();
-    const QCommandLineOption socket(u"socket"_s, u"Debug socket of the running Selecta."_s, u"name"_s,
-                                    QString(selecta::base::debugprotocol::kSocketName));
-    parser.addOption(socket);
-    parser.addPositionalArgument(u"command"_s, u"The command to run, then its arguments."_s);
-    parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
-    parser.process(application);
+        QCommandLineParser parser;
+        parser.setApplicationDescription(u"Selecta development tools."_s);
+        parser.addHelpOption();
+        parser.addVersionOption();
+        const QCommandLineOption socket(u"socket"_s, u"Debug socket of the running Selecta."_s, u"name"_s,
+                                        QString(selecta::base::debugprotocol::kSocketName));
+        parser.addOption(socket);
+        parser.addPositionalArgument(u"command"_s, u"The command to run, then its arguments."_s);
+        parser.setOptionsAfterPositionalArgumentsMode(QCommandLineParser::ParseAsPositionalArguments);
+        parser.process(application);
 
-    QStringList positional = parser.positionalArguments();
-    if (positional.isEmpty()) {
-        selecta::cli::printLine(stderr, parser.helpText() + u'\n' + commandList());
-        return selecta::cli::kExitUsage;
+        QStringList positional = parser.positionalArguments();
+        if (positional.isEmpty()) {
+            selecta::cli::printLine(stderr, parser.helpText() + u'\n' + commandList());
+            return selecta::cli::kExitUsage;
+        }
+        const QString name = positional.takeFirst();
+        const QList<selecta::cli::Command> all = selecta::cli::commands();
+        const auto found =
+            std::ranges::find_if(all, [&](const selecta::cli::Command &command) { return command.name == name; });
+        if (found == all.end()) {
+            selecta::cli::printLine(stderr, u"unknown command: "_s + name + u"\n\n"_s + commandList());
+            return selecta::cli::kExitUsage;
+        }
+        const selecta::cli::Context context{parser.value(socket)};
+        return found->run(positional, context);
+    } catch (const std::exception &error) {
+        selecta::cli::printLine(stderr, u"selecta-cli: "_s + QString::fromLocal8Bit(error.what()));
+    } catch (...) {
+        selecta::cli::printLine(stderr, u"selecta-cli: unexpected error"_s);
     }
-    const QString name = positional.takeFirst();
-    const QList<selecta::cli::Command> all = selecta::cli::commands();
-    const auto found =
-        std::ranges::find_if(all, [&](const selecta::cli::Command &command) { return command.name == name; });
-    if (found == all.end()) {
-        selecta::cli::printLine(stderr, u"unknown command: "_s + name + u"\n\n"_s + commandList());
-        return selecta::cli::kExitUsage;
-    }
-    const selecta::cli::Context context{parser.value(socket)};
-    return found->run(positional, context);
+    return selecta::cli::kExitFailed;
 }

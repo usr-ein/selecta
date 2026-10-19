@@ -69,7 +69,7 @@ int run(const QStringList &arguments, const selecta::cli::Context &context)
 }
 
 const selecta::cli::CommandRegistration registration{
-    {u"app"_s, u"<command> [key=value …]"_s,
-     u"Inspect or drive a running Selecta started with --debug-server (see tools/dev/app.sh)."_s, &run}};
+    u"app", u"<command> [key=value …]",
+    u"Inspect or drive a running Selecta started with --debug-server (see tools/dev/app.sh).", &run};
 
 } // namespace

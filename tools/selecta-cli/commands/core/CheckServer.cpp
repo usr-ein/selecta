@@ -30,7 +30,6 @@ int run(const QStringList &arguments, const selecta::cli::Context & /*context*/)
 }
 
 const selecta::cli::CommandRegistration registration{
-    {u"check-server"_s, u"<host>"_s, u"Classify a server address: local test server, live network or invalid."_s,
-     &run}};
+    u"check-server", u"<host>", u"Classify a server address: local test server, live network or invalid.", &run};
 
 } // namespace

@@ -19,9 +19,10 @@ QList<Command> &registry()
 
 } // namespace
 
-CommandRegistration::CommandRegistration(Command command)
+CommandRegistration::CommandRegistration(const char16_t *name, const char16_t *usage, const char16_t *summary,
+                                         int (*run)(const QStringList &, const Context &)) noexcept
 {
-    registry().append(std::move(command));
+    registry().append(Command{QString::fromUtf16(name), QString::fromUtf16(usage), QString::fromUtf16(summary), run});
 }
 
 QList<Command> commands()
