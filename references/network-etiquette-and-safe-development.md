@@ -131,7 +131,11 @@ screen, soularr discussion #142, 2025-11-10; Lidarr.Plugin.Slskd issue #19, 2026
 This is the closest thing to an official rate-limit policy. It names five triggers — message flooding, repeated text,
 **quickly repeated searches**, **rapid connect/disconnect**, **many clients per IP** — and a fixed **30-minute**
 duration. Nicotine+ already special-cases private messages from the user `server` (`privatechat.py`,
-`SERVER_USERNAME = "server"`); Soulfind sends its admin replies the same way (`defines.d`: `server_username = "server"`).
+`SERVER_USERNAME = "server"`); Soulfind sends its admin replies the same way (`defines.d`: `server_username = "server"`);
+aioslsk's server notes: "The server will send private chat messages to report errors and information back to the
+client". **Conflict:** one small client (MeshDigital/Orbit-pure, `Services/SoulseekAdapter.cs`) assumes the ban text
+arrives as a global `AdminMessage` (code 66). The slskd screenshots show it in the private chat with `server`, which
+is the stronger evidence; Selecta's ban detector should match the text in **both** channels.
 
 ### 4.2 Ban and disconnect signals
 
