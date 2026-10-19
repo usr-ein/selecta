@@ -1359,14 +1359,40 @@ tracks.
 | Governor budgets | §14.3 |
 | MusicBrainz User-Agent | `Selecta/<version> ( https://github.com/usr-ein/selecta )` (TODO: final repo URL) |
 
+### 14.11 Spotify sign-in (META-1): bring-your-own Client ID, PKCE, re-consent
+
+Setup the user does once (Settings → Integrations shows these steps):
+1. Open developer.spotify.com → Dashboard → Create app (the account needs Premium, §3.1).
+2. Redirect URI: `http://127.0.0.1/callback` — no port, not `localhost`. API: Web API (add Web Playback SDK only for
+   the P2 experiment).
+3. Copy the Client ID into Selecta (no secret needed). The app's owner can sign in; other accounts must be added under
+   User Management, at most 5 (check in X3 whether the owner must also list themselves).
+
+What Selecta does:
+- **Sign-in**: `QOAuth2AuthorizationCodeFlow` with `setPkceMethod(S256)`, `QOAuthHttpServerReplyHandler` on
+  `QHostAddress::LocalHost` and an ephemeral port (callback `http://127.0.0.1:<port>/callback`), the system browser,
+  `state` checked. Scopes are requested when a feature first needs them (§4.2): none for matching and tags,
+  `playlist-read-private` + `playlist-read-collaborative` and `user-library-read` for imports, the two
+  `*-playback-state` scopes for Connect playback.
+- **Tokens**: access token in memory (1 h, refreshed ~5 min before expiry with `grant_type=refresh_token` +
+  `client_id`); refresh token and `authorised_at` in the Keychain; keep the old refresh token when a refresh response
+  carries none.
+- **6-month re-consent**: from `authorised_at`, show "Spotify sign-in expires on <date> — reconnect" two weeks before
+  the 6-month mark; on `invalid_grant`, drop the tokens, keep Selecta working on keyless sources, and offer one-click
+  reconnect. Refreshing never extends the 6 months.
+- **Disconnect**: delete the tokens and the Spotify cache (Policy §I.2); remind the user they can also remove the app's
+  access in their Spotify account settings.
+- **Errors**: 403 for an account that is not allow-listed → explain User Management; 429 → honour `Retry-After`
+  (§14.3); the owner's Premium lapsing makes the app stop working → say so instead of failing silently.
+
 ## 15. Open questions and things to verify
 
 ### 15.1 Questions for the maintainer
 
 | # | Question | Default until answered |
 |---|---|---|
-| MQ1 | D29 writes "metadata from spotify in the mp3 id3v2, cover in there too". Spotify's Developer Terms forbid storing Spotify Content indefinitely and making permanent copies of it, and require attribution (§5, S3–S5); the exposure is your developer app/account. Confirm "Spotify first" tags for personal builds, or switch to "Deezer first" (similar data, no metadata-storage clause, but the same P2P clause)? | D29 as decided, personal builds only, `WOAS` link-back |
-| MQ2 | Is the Spotify integration for personal builds only (your Client ID pre-filled, ≤ 5 users, your Premium), or should public builds ask every user for their own Client ID? | Settings field (META-1); a personal build may pre-fill your Client ID from `local/secrets.env`; public builds ship it empty |
+| MQ1 | Spotify tags despite the developer terms? | **Resolved by D30**: Spotify tags, label and genre from MusicBrainz, one-time notice (§5.3). |
+| MQ2 | Shared or personal Client ID? | **Resolved by META-1**: every user brings their own Client ID; Selecta ships none (§14.11). |
 | MQ3 | Deezer's terms forbid association with unauthorised sharing (D-T1) too. Use Deezer keylessly for matching and clips anyway? | Yes, clips streamed only, Deezer logo shown |
 | MQ4 | Apply for Beatport partner API access (best electronic data and 2-min middle clips)? A P2P client is an unlikely candidate. | No; deep links only |
 | MQ5 | Discogs (catalogue numbers, styles) with a personal token, P2? | Off |
@@ -1376,6 +1402,8 @@ tracks.
 | MQ9 | Your installed yt-dlp is 2025.07.21 and Deno is missing; D26 previews will likely fail until `brew upgrade yt-dlp` (it now pulls in Deno). OK to show that hint in Settings? | Show the hint; never update anything ourselves |
 | MQ10 | "Listen in full" via the Spotify desktop app (AppleScript) asks once for macOS Automation permission. Build it in P1? | Yes (P1), after deep links |
 | MQ11 | Embedded players (YouTube IFrame, Spotify Web Playback SDK) in a WKWebView: worth a P2 experiment, given ads on YouTube embeds and the Widget/SDK terms? | P2 experiment only |
+| MQ12 | D30 takes label and genre from MusicBrainz, which lacked 3 of 4 club ISRCs in §4.4. Fall back to Deezer's album label and genre (keyless, present on every album checked) when MusicBrainz has nothing? | Yes, marked as "from Deezer" in the inspector |
+| MQ13 | Rewrite Spotify's " - Extended Mix" title suffixes as " (Extended Mix)" in `TIT2` (DJ convention, cleaner `{artist} - {title}` file names), or keep Spotify's text exactly? | Rewrite recognised version suffixes only |
 
 ### 15.2 Things to verify (none of these touch the Soulseek network)
 
