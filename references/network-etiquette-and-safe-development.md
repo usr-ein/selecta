@@ -1,36 +1,52 @@
 # Network etiquette and safe development
 
-> Status: **draft — research in progress** (all sources accessed 2026-10-19). Items marked **TODO(verify)** are from
-> memory or hearsay and have not yet been checked against a primary source. Do not turn them into constants until
-> verified. Source repos were read at the commits listed in section 11.
+> Status: **complete draft v1** (2026-10-19; all sources accessed 2026-10-19). Remaining **TODO(verify)** items are
+> listed in §10. Source repositories were read at the commits listed in §11.
+> Confidence labels: **H** = code or official text, **M** = several consistent reports, **L** = judgement.
 
 ## 1. TL;DR
 
-- **The official rules only "tolerate" third-party clients that implement the full feature set** — "chat, search,
-  wishlist, download, upload, and respect / recognition of privileges". Bots and "scripts otherwise failing to implement
-  the full range of Soulseek features are not allowed to connect". Selecta's v1 non-goal "no chat rooms" is in tension
-  with that wording (see §3.2 and the decision in §9).
-- **Identify honestly with a reserved login version.** The community registry in Nicotine+'s protocol doc reserves
-  major versions per client (157 official, 160 Nicotine+, 170 Soulseek.NET, 175 aioslsk, …) and **177 for
-  experimental development**. Selecta should ask for its own number before any live use.
-- **The server bans silently.** A banned login gets *no* login response (the `BANNED` reason is obsolete). Search
-  flooding leads to a disconnect and a temporary ban; slsk-batchdl's author measured "around 34 searches every 220
-  seconds" and reports 30-minute bans. That figure is one person's experiment, not a published limit.
-- TODO: peer-side etiquette, previews, safe development summary.
+- **The rules only "tolerate" full-featured third-party clients**: "chat, search, wishlist, download, upload, and
+  respect / recognition of privileges". Bots and "scripts otherwise failing to implement the full range of Soulseek
+  features are not allowed to connect". Selecta's v1 gaps against that list: chat rooms (non-goal) and privileged-first
+  uploads (not in the PRD). Both are cheap to close (§9.4 E1, E3).
+- **The server's flood ban is explicit about its triggers.** Its automatic PM (from user `server`): "You have been
+  banned for 30 minutes. This is usually the result of doing too many operations at once … Do not quickly repeat a
+  search. Do not connect and disconnect quickly. Do not connect many clients at once from the same IP." A banned login
+  then gets **no response at all**.
+- **The only search-rate figure is empirical**: slsk-batchdl's author measured "around 34 searches every 220 seconds"
+  (2023) and made it the default; automated tools at or near that rate still report bans. Selecta's proposed
+  default is **3 searches/min with a burst of 6** (≤ 17 per 220 s), with a hard ceiling of ≤ 28 per 220 s, one shared
+  budget for every search source, no repeat of the same query within 10 min.
+- **Identify honestly**: the community version registry reserves login major versions per client; **177** is for
+  experimental clients. Ask for a Selecta number before going live; never use 157 (official) or another client's.
+- **Peers enforce etiquette themselves**: one upload per user at a time, per-user queue limits (Nicotine+ 100 files),
+  leech detectors that check your share counts *and browse you*, exact denial strings (`Too many files` is retryable;
+  `Banned`/`File not shared.` are not). Selecta: 1 active and ≤ 20 queued files per peer, a daily per-peer cap,
+  true share counts reported before any download is queued.
+- **Previews: cancel early.** Cancelling frees the uploader's slot for the next person (Nicotine+ starts the next
+  upload at once); finishing unwanted files is worse. But slskd counts cancelled uploads against optional failure
+  limits, and auto-preview bursts look like flooding: debounce, one preview at a time, free-slot results only.
+- **There is no official test server.** Develop against Soulfind (which mimics the official ban behaviour but has no
+  flood detection and no distributed network) plus reference peers, with a counting proxy as a "referee" in CI.
 
 ## 2. Key findings
 
-| # | Finding | Confidence | Source |
+| # | Finding | Conf. | Source |
 |---|---|---|---|
-| K1 | Third-party clients are tolerated only if they implement chat, search, wishlist, download, upload and privileges; bots and partial scripts may not connect. | High (verbatim rule) | slsknet.org Rules |
-| K2 | Max **5 clients from the same IP**. | High (verbatim rule) | slsknet.org Rules |
-| K3 | ToS §12 forbids "overloading, flooding, spamming" and probing/testing the service without authorisation. | High (verbatim) | slsknet.org TOS |
-| K4 | Login major versions are a de-facto registry; 177 is for experimental clients; random usernames are "unacceptable". | High (maintained by Nicotine+ devs; not an official Soulseek document) | Nicotine+ `doc/SLSKPROTOCOL.md` |
-| K5 | Banned logins get no response at all (`BANNED` no longer sent). | Medium-high (protocol doc statement) | Nicotine+ `doc/SLSKPROTOCOL.md` |
-| K6 | Search flooding → disconnect + ~30 min ban; slsk-batchdl default 34 searches / 220 s comes from its author's own testing (2023). | Medium (single-source empirical) | slsk-batchdl issue #12, README |
-| K7 | Peers auto-detect "leechers" from the server-reported share counts and by browsing you; faking counts was publicly called "bad faith". | High | Nicotine+ leech_detector plugin; slsk-batchdl #165 |
-
-TODO — more rows as sections are verified.
+| K1 | Third-party clients are tolerated only if they implement chat, search, wishlist, download, upload and privileges; bots and partial scripts may not connect. | H (verbatim rule) | slsknet.org Rules |
+| K2 | Max **5 clients from the same IP**; admins can kill connections "for any reason". | H | Rules |
+| K3 | ToS §12 forbids "overloading, flooding, spamming" and probing/testing the service without authorisation. | H | Terms of Use |
+| K4 | The automatic ban is **30 minutes**, announced by a PM from `server` listing its triggers (repeated searches, connect/disconnect churn, many clients per IP, chat/PM flooding, repeated text). | H (two independent verbatim reports, 2025–2026) | soularr #142; Lidarr.Plugin.Slskd #19 |
+| K5 | Banned logins get no response at all (`BANNED` is no longer sent); Soulfind copies this. | H | N+ `SLSKPROTOCOL.md`; Soulfind `user.d` |
+| K6 | slsk-batchdl's 34 searches / 220 s is one developer's black-box measurement (2023), implemented as a burst-prone fixed window; tools near that rate still get banned. | M | slsk-batchdl #12, #95; soularr #142 |
+| K7 | Login major versions form a registry (157 official, 160 N+, 169 seeleseek, 170 Soulseek.NET, 175 aioslsk, 176 soulseek-rs, **177 experimental**); random usernames are "unacceptable". | H (community doc, not official) | N+ `SLSKPROTOCOL.md` |
+| K8 | Wishlist interval comes from the server: "almost always 12 minutes, or 2 minutes for privileged users"; clients send one term per interval. | H | N+ doc and `search.py`; Soulfind `defines.d` |
+| K9 | Uploaders serve one file per user at a time and cap per-user queues (N+ 100 files / 10 000 MiB; SoulseekQt per-user limit on by default; slskd optional queued/daily/weekly/failure limits). | H | N+ `config.py`/`uploads.py`; Qt changelog; slskd docs |
+| K10 | Leech detection uses server-reported share counts and then browses you; faking counts was called "bad faith" by the Soulseek.NET author. | H | N+ leech_detector; slsk-batchdl #165 |
+| K11 | Two content filters exist: client-side excluded phrases (code 160, since ~2024, results must be filtered) and silent server-side query filtering (substring match, unpublished list). slsk-batchdl evades the latter with wildcards — Selecta must not. | H / M | Soulseek.NET README; N+ `search.py`; sockseek `Searcher.cs`, #128; Soulfind |
+| K12 | Cancelling a transfer: N+ uploader marks it cancelled, sends `UploadFailed` (to be ignored if intentional) and immediately serves the next user; slskd records it as failed. | H | N+ `uploads.py`; slskd `TransferStateCategories.cs` |
+| K13 | No official or public test server exists; Soulfind is the recommended local server; logging in with a new username creates an account. | H | N+ maintainer (2025-09); N+ doc; Soulfind |
 
 ## 3. Official rules and terms
 
