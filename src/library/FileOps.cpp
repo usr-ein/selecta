@@ -3,6 +3,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QSaveFile>
@@ -219,15 +220,11 @@ FileResult FileOps::publishIntoInbox(const QString &sourceFile, const QString &r
     return FileResult::failure(u"too many files named like %1 in the Inbox"_s.arg(target));
 }
 
-FileResult FileOps::fileIntoCollection(const QString &inboxFile, const QString &collectionRoot,
-                                       const QString &relativePath) const
+FileResult FileOps::collectionTarget(const QString &collectionRoot, const QString &relativePath) const
 {
     const QString root = resolved(collectionRoot);
     if (!m_collectionRoots.contains(root)) {
         return FileResult::failure(u"%1 isn't a collection folder"_s.arg(collectionRoot));
-    }
-    if (!isInside(inboxFile, m_inboxRoot) || !QFileInfo(inboxFile).isFile()) {
-        return FileResult::failure(u"only Inbox files can be filed: %1"_s.arg(inboxFile));
     }
     if (relativePath.isEmpty() || QDir::isAbsolutePath(relativePath)) {
         return FileResult::failure(u"the collection path must be relative: %1"_s.arg(relativePath));
@@ -236,13 +233,103 @@ FileResult FileOps::fileIntoCollection(const QString &inboxFile, const QString &
     if (!isInside(target, root)) {
         return FileResult::failure(u"refusing to write outside the collection: %1"_s.arg(relativePath));
     }
-    if (QFileInfo::exists(target)) {
+    if (QFileInfo::exists(target) || QFileInfo(target).isSymLink()) {
         return FileResult::failure(u"%1 already exists; Selecta never overwrites collection files"_s.arg(target));
     }
     if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
         return FileResult::failure(u"can't create the folder for %1"_s.arg(target));
     }
-    return moveExclusive(inboxFile, target);
+    return FileResult::success(target);
+}
+
+FileResult FileOps::fileIntoCollection(const QString &inboxFile, const QString &collectionRoot,
+                                       const QString &relativePath) const
+{
+    if (!isInside(inboxFile, m_inboxRoot) || !QFileInfo(inboxFile).isFile()) {
+        return FileResult::failure(u"only Inbox files can be filed: %1"_s.arg(inboxFile));
+    }
+    FileResult target = collectionTarget(collectionRoot, relativePath);
+    if (!target.ok) {
+        return target;
+    }
+    return moveExclusive(inboxFile, target.path);
+}
+
+FileResult FileOps::fileFolderIntoCollection(const QString &inboxFolder, const QString &collectionRoot,
+                                             const QString &relativeFolder) const
+{
+    const QFileInfo folder(inboxFolder);
+    if (!isInside(inboxFolder, m_inboxRoot) || !folder.isDir() || folder.isSymLink()) {
+        return FileResult::failure(u"only Inbox folders can be filed: %1"_s.arg(inboxFolder));
+    }
+    // Only plain files and folders: a symbolic link could point anywhere, including into the collection.
+    QDirIterator entries(inboxFolder, QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot,
+                         QDirIterator::Subdirectories);
+    while (entries.hasNext()) {
+        const QFileInfo entry = entries.nextFileInfo();
+        if (entry.isSymLink() || (!entry.isFile() && !entry.isDir())) {
+            return FileResult::failure(
+                u"%1 contains %2, which isn't a plain file"_s.arg(inboxFolder, entry.filePath()));
+        }
+    }
+    FileResult target = collectionTarget(collectionRoot, relativeFolder);
+    if (!target.ok) {
+        return target;
+    }
+    if (!m_forceCopy) {
+        const int code = renameExclusive(resolved(inboxFolder), target.path);
+        if (code == 0) {
+            return FileResult::success(target.path);
+        }
+        if (code != EXDEV) {
+            return FileResult::failure(u"can't move %1 to %2: %3"_s.arg(inboxFolder, target.path, describeErrno(code)));
+        }
+    }
+    return copyFolderVerified(resolved(inboxFolder), target.path);
+}
+
+FileResult FileOps::copyFolderVerified(const QString &from, const QString &to) const
+{
+    // A hidden staging folder next to the target, named after it: a retry after a crash finds and replaces its own
+    // leftovers, and nothing else in the collection is ever touched.
+    const QFileInfo targetInfo(to);
+    const QString stage = targetInfo.dir().filePath(u"."_s + targetInfo.fileName() + u".selecta-part"_s);
+    if (QFileInfo::exists(stage) && !QDir(stage).removeRecursively()) {
+        return FileResult::failure(u"can't clear the leftover %1"_s.arg(stage));
+    }
+    if (!QDir().mkdir(stage)) {
+        return FileResult::failure(u"can't create %1"_s.arg(stage));
+    }
+    const auto abandon = [&stage](const QString &error) {
+        QDir(stage).removeRecursively();
+        return FileResult::failure(error);
+    };
+
+    QDirIterator files(from, QDir::Files | QDir::Hidden | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
+    while (files.hasNext()) {
+        const QString source = files.next();
+        const QString relative = QDir(from).relativeFilePath(source);
+        const QString copy = stage + u'/' + relative;
+        if (!QDir().mkpath(QFileInfo(copy).absolutePath())) {
+            return abandon(u"can't create the folder for %1"_s.arg(copy));
+        }
+        QString error;
+        const QByteArray sourceHash = sha256(source, &error);
+        if (sourceHash.isEmpty() || !QFile::copy(source, copy)) {
+            return abandon(error.isEmpty() ? u"can't copy %1"_s.arg(source) : error);
+        }
+        if (sha256(copy, &error) != sourceHash) {
+            return abandon(error.isEmpty() ? u"the copy of %1 doesn't match the original"_s.arg(source) : error);
+        }
+    }
+    if (const int code = renameExclusive(stage, to); code != 0) {
+        return abandon(u"can't create %1: %2"_s.arg(to, describeErrno(code)));
+    }
+    if (!QDir(from).removeRecursively()) {
+        // The album is complete and verified in the collection; leftovers in the Inbox are safe.
+        return FileResult{true, to, u"copied, but some of the originals stayed in %1"_s.arg(from)};
+    }
+    return FileResult::success(to);
 }
 
 FileResult FileOps::trashFromInbox(const QString &path) const

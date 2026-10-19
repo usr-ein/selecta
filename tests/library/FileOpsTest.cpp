@@ -165,3 +165,64 @@ TEST(FileOps, IsInsideHandlesPrefixesAndDots)
     EXPECT_FALSE(FileOps::isInside(root + u"Other/x.mp3"_s, root)); // "Inbox" vs "InboxOther"
     EXPECT_FALSE(FileOps::isInside(root + u"/../x.mp3"_s, root));
 }
+
+TEST_F(FileOpsTest, FilesAnAlbumFolderWhole)
+{
+    const QString album = inbox + u"/Albums/Okuma Drift - Nightfall (2024)"_s;
+    ASSERT_TRUE(writeFile(album + u"/01 - Neon Rain.mp3"_s, "one"));
+    ASSERT_TRUE(writeFile(album + u"/02 - Sodium.mp3"_s, "two"));
+    ASSERT_TRUE(writeFile(album + u"/cover.jpg"_s, "jpeg"));
+    const auto result = ops().fileFolderIntoCollection(album, collection, u"Albums/Okuma Drift - Nightfall (2024)"_s);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    const QString filed = collection + u"/Albums/Okuma Drift - Nightfall (2024)"_s;
+    EXPECT_EQ(readFile(filed + u"/01 - Neon Rain.mp3"_s), "one");
+    EXPECT_EQ(readFile(filed + u"/cover.jpg"_s), "jpeg");
+    EXPECT_FALSE(QFileInfo::exists(album));
+}
+
+TEST_F(FileOpsTest, AlbumCopyAcrossVolumesIsStagedAndVerified)
+{
+    FileOps copying = ops();
+    copying.setForceCopy(true);
+    const QString album = inbox + u"/Albums/A"_s;
+    ASSERT_TRUE(writeFile(album + u"/01.flac"_s, QByteArray(qsizetype{2} * 1024 * 1024, 'a')));
+    ASSERT_TRUE(writeFile(album + u"/CD2/01.flac"_s, "disc two"));
+    // A staging folder left by a crashed attempt is cleared, not merged.
+    ASSERT_TRUE(writeFile(collection + u"/Albums/.A.selecta-part/stale.flac"_s, "stale"));
+
+    const auto result = copying.fileFolderIntoCollection(album, collection, u"Albums/A"_s);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(readFile(collection + u"/Albums/A/CD2/01.flac"_s), "disc two");
+    EXPECT_EQ(readFile(collection + u"/Albums/A/01.flac"_s).size(), qsizetype{2} * 1024 * 1024);
+    EXPECT_FALSE(QFileInfo::exists(collection + u"/Albums/A/stale.flac"_s));
+    EXPECT_FALSE(QFileInfo::exists(collection + u"/Albums/.A.selecta-part"_s));
+    EXPECT_FALSE(QFileInfo::exists(album));
+}
+
+TEST_F(FileOpsTest, AlbumFilingNeverMergesIntoAnExistingFolder)
+{
+    ASSERT_TRUE(writeFile(collection + u"/Albums/A/01.mp3"_s, "precious"));
+    ASSERT_TRUE(writeFile(inbox + u"/Albums/A/01.mp3"_s, "new"));
+    const auto result = ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, collection, u"Albums/A"_s);
+    EXPECT_FALSE(result.ok);
+    EXPECT_EQ(readFile(collection + u"/Albums/A/01.mp3"_s), "precious");
+    EXPECT_TRUE(QFileInfo::exists(inbox + u"/Albums/A/01.mp3"_s));
+}
+
+TEST_F(FileOpsTest, AlbumWithASymlinkIsRefused)
+{
+    ASSERT_TRUE(writeFile(inbox + u"/Albums/A/01.mp3"_s, "x"));
+    ASSERT_TRUE(QFile::link(collection, inbox + u"/Albums/A/escape"_s));
+    EXPECT_FALSE(ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, collection, u"Albums/A"_s).ok);
+    EXPECT_FALSE(QFileInfo::exists(collection + u"/Albums/A"_s));
+}
+
+TEST_F(FileOpsTest, OnlyInboxFoldersAreFiled)
+{
+    ASSERT_TRUE(writeFile(incoming + u"/A/01.mp3"_s, "x"));
+    EXPECT_FALSE(ops().fileFolderIntoCollection(incoming + u"/A"_s, collection, u"Albums/A"_s).ok);
+    EXPECT_FALSE(ops().fileFolderIntoCollection(inbox, collection, u"Albums/Everything"_s).ok); // the Inbox itself
+    ASSERT_TRUE(writeFile(inbox + u"/Albums/A/01.mp3"_s, "x"));
+    EXPECT_FALSE(ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, collection, u"../A"_s).ok);
+    EXPECT_FALSE(ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, dir.filePath(u"other"_s), u"A"_s).ok);
+}
