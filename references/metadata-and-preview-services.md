@@ -1037,12 +1037,12 @@ PREV-11/12).
 | # | Recommendation | Why |
 |---|---|---|
 | R1 | **Spotify first when signed in (D29); Deezer as the keyless baseline.** With a Spotify sign-in: Spotify resolves the release (title, artists, version, duration, ISRC, numbers, date, cover); Deezer fills the label (and a larger cover if wanted); MusicBrainz adds catalogue numbers and store links when it knows the ISRC. Without a sign-in: Deezer resolves the release, MusicBrainz enriches, iTunes is the clip fallback. | Spotify is the maintainer's trusted source; Deezer covers its gaps (label) and works with no account; MusicBrainz coverage of club singles is thin (§4.4). Get tracks survives losing Spotify access. |
-| R2 | **Spotify via PKCE with a user-owned Client ID** (META-1, §4.2). Personal builds may inject the maintainer's Client ID at configure time from `local/secrets.env`; public builds ship the field empty. It serves at most 5 allow-listed users and needs the owner's Premium. **No client secret in any build**; never reuse spotDL's or anyone's key (§4.1). | §3.1, §4. |
-| R3 | **Tags on arrival follow D29 (Spotify first)**, with the label from Deezer/MusicBrainz, a `WOAS` link-back to the Spotify track, and no `POPM`. This is where Spotify's terms bite hardest (§5, S3–S5: no indefinite storage, no "permanent copies of Spotify Content", attribution): keep it to personal builds with the user's own Client ID and say so in Settings (MQ1). The alternative policy for users without Spotify — or who prefer lower exposure — is Deezer first (§14.7). | The maintainer's decision; the risk is his developer app/account, not third parties. MusicBrainz alone cannot tag most club singles. |
+| R2 | **Spotify via PKCE with the user's own Client ID** (META-1, §4.2, §14.11): loopback redirect `http://127.0.0.1/callback`, scopes asked per feature, tokens in the Keychain, re-consent every 6 months. Personal builds may inject the maintainer's Client ID at configure time from `local/secrets.env`; public builds ship the field empty. **No client secret in any build**; never reuse spotDL's or anyone's key (§4.1). | Dev mode: 5 users per app, owner's Premium (§3.1). |
+| R3 | **Tags on arrival follow D30** (§5.3): title, artists, album, album artist, date, track/disc numbers, ISRC and the cover from Spotify; label and genre from MusicBrainz by ISRC (3 requests per track, 1/s); a `WOAS` link to the Spotify track; no `POPM`; the one-time notice before the first Spotify-tagged file. When MusicBrainz has no match, the fallbacks of §5.3 apply (Deezer label/genre pending MQ12). Without a sign-in, "Deezer first" tags (§14.7). | The maintainer accepted the terms risk (§5, S3–S5) for his own developer app. MusicBrainz misses many club ISRCs (§4.4). |
 | R4 | **Clips are streamed, never stored.** Play Deezer/iTunes clips from memory (`QBuffer` or `QMediaPlayer` on the URL); derive the 30-s waveform in memory; do not put clip audio in the preview cache. Show the source logo/attribution and a store/"Open in" link next to the player. | Deezer forbids local storage of audio; Apple requires stream-only + badge + "provided courtesy of iTunes". |
 | R5 | **Every meta request through the governor** with per-host buckets, compile-time ceilings, the global pause switch, and an activity-log line per request (META-7, SAFE-1/4/5). | §14.3. |
 | R6 | **Release-first resolution** uses identifiers before text, rejects DJ-mix segments and derivative junk, and hands the chosen release's duration to the Soulseek ranker (D23, `library-matching-and-organization.md` §9.1/§17.5). | §14.5. |
-| R7 | **Playlist import** = (a) Spotify own/collab playlists, Liked Songs and any album link via the API; (b) for other playlists, tell the user to add them to a playlist they own in the Spotify app, or import an Exportify CSV; (c) plain text as today. | Dev-mode 403 on others' playlists (§3.3). |
+| R7 | **Playlist import (META-3)** = (a) the user's own or collaborative playlists, Liked Songs and any album link via the API; (b) anyone else's playlist: the user selects all songs in Spotify and copies them, Selecta parses the pasted track links and looks each one up with `GET /tracks/{id}` (still among dev mode's 43 endpoints), paced by the governor; (c) Exportify CSV and plain text. | Dev mode answers 403 on others' playlists (§3.3); the batch `GET /tracks?ids=` is gone. |
 | R8 | **"Listen in full"** = deep links (P1, nothing to grant) → Spotify desktop control via AppleScript (P1, one Automation prompt) → Web API Connect playback (P2, sign-in + Premium) → WKWebView embeds (P2 experiments). No audio access in any of them; Selecta pauses its own player first and never overlaps audio. | §6.6, S8/S9. |
 | R9 | **No unofficial endpoints** (Spotify web-player APIs à la SpotipyFree, Beatport docs client ID, Bandcamp mobile API, preview scrapers). | Terms; brittleness; D21. |
 | R10 | Write a **small in-house client per service** (Spotify ~800 lines, Deezer ~300, MusicBrainz+CAA ~400, iTunes ~150) on `QNetworkAccessManager` + `QJsonDocument`, with recorded HTTP fixtures for tests. Reuse no Spotify C++ library. | §7; testability (PLAN `meta/` agent). |
@@ -1167,7 +1167,7 @@ bucket; all meta traffic stops with "Pause network activity" (SAFE-5).
 | `api.deezer.com` | 50 / 5 s per IP (2nd-hand) | 5 req/s | 2 req/s | 2 | error code 4 (quota) → pause 5 s, ×2 up to 5 min |
 | `cdnt-preview.dzcdn.net`, `audio-ssl.itunes.apple.com` | — | 2 req/s | 1 clip at a time | 1 | 403 on Deezer URL → re-resolve once (expired signature) |
 | `itunes.apple.com` | ~20 / min | 20 / min | 10 / min | 1 | 403/429 → pause 60 s, ×2 |
-| `musicbrainz.org` | 1 / s average per IP | 1 req/s | 1 req/s (start 1.1 s apart) | 1 | 503 → 2 s, ×2 up to 60 s |
+| `musicbrainz.org` | 1 / s average per IP | 1 req/s | 1 req/s (start 1.1 s apart); D30 gap fill ≈ 3 requests per arriving track | 1 | 503 is routine (seen once below 1/s): 2 s, ×2 up to 60 s, 3 tries |
 | `coverartarchive.org` (+ archive.org redirects) | none stated, 503 documented | 2 req/s | 1 req/s | 2 | 503 → as MusicBrainz |
 | `api.discogs.com` | 60/min authenticated, 25/min not (60-s moving window) | 60 / min | 30 / min | 1 | 429 → wait for `X-Discogs-Ratelimit-Remaining` to recover |
 
@@ -1263,33 +1263,39 @@ Rules learned from spotDL and from the requests made for this note:
 
 ### 14.6 Playlist import (META-3)
 
-| Source | Works in dev mode? | What a line carries |
-|---|---|---|
-| The user's own or collaborative Spotify playlist; Liked Songs | Yes (scopes `playlist-read-private`, `playlist-read-collaborative`, `user-library-read`) | Spotify ID, title, artists, album, duration, ISRC |
-| Spotify album link | Yes (`/albums/{id}` + `/albums/{id}/tracks`, any album) | same (track-level ISRC needs `/tracks/{id}` per track, one request each) |
-| Someone else's or an editorial playlist | **No (403)** for apps under the 2026 rules (TODO(verify) X3 for an app created before 2026-02-11) | — → tell the user to add the tracks to a playlist they own in Spotify, or import a CSV |
-| Exportify CSV (MIT web app, exportify.app) | n/a (user runs it) | Columns include "Track Name", "Artist Name(s)", "Album Name", "Track Duration (ms)", "ISRC", "Track URI" |
-| Plain text | n/a | parsed line |
+| Source | Works in dev mode? | Requests | What a line carries |
+|---|---|---|---|
+| The user's own or collaborative playlist | Yes: `GET /me/playlists`, `GET /playlists/{id}/items` (scopes `playlist-read-private`, `playlist-read-collaborative`) | 1 per 50 items | Spotify ID, title, artists, album, duration, ISRC |
+| Liked Songs | Yes: `GET /me/tracks` (scope `user-library-read`) | 1 per 50 items | same |
+| An album link | Yes, any album: `GET /albums/{id}` + `GET /albums/{id}/tracks` | 2+ | same, except the ISRC (album tracks are simplified objects): `GET /tracks/{id}` per track, lazily at tagging time |
+| **Anyone else's playlist (incl. editorial)** | `GET /playlists/{id}/items` answers 403 for apps under the 2026 rules (X3 for older apps) → **paste the tracks**: in the Spotify app select all songs (⌘A) and copy (⌘C); Selecta reads the pasted links and calls `GET /tracks/{id}` for each — that endpoint is in the February 2026 list of endpoints still available | **1 per track** (no batch), at the Spotify budget of 1/s: 100 tracks ≈ 1 min 40 s; cached 24 h | full track object: title, artists, album (simplified, with images, `release_date`, `total_tracks`), duration, `disc_number`, `track_number`, ISRC |
+| Exportify CSV (MIT web app, exportify.app) | n/a (the user runs it) | 0 | "Track Name", "Artist Name(s)", "Album Name", "Track Duration (ms)", "ISRC", "Track URI" |
+| Plain text | n/a | 0 | parsed line |
 
-`is_local` playlist entries (local files in Spotify) carry no ID or ISRC — import them as text lines.
+Pasted-link parsing: accept `https://open.spotify.com/track/<22-char base62 ID>` with or without an `intl-xx/`
+segment and `?si=…`, and `spotify:track:<ID>` (copied with ⌥); de-duplicate; ignore everything else and report how
+many lines were skipped. Shortened `spotify.link/…` links would need an HTTP redirect lookup — ask the user to paste
+full links instead. Without a Spotify sign-in, each link can only be resolved through oEmbed (title and cover only,
+§4.3) plus a Deezer search, so the paste flow asks the user to sign in first. `is_local` playlist entries (local files
+in Spotify) carry no ID or ISRC — import them as text lines.
 
 ### 14.7 Tag plan on arrival (META-4, DL-3)
 
-Two policies. D29 ("Spotify first") applies when the user is signed in to Spotify; "Deezer first" applies without a
-sign-in, or by choice (MQ1). The mapping to frames follows `conversion-and-metadata.md`.
+D30 applies when the user is signed in to Spotify (details in §5.3); "Deezer first" applies without a sign-in, or when
+the user declines Spotify tags in the one-time notice. The mapping to frames follows `conversion-and-metadata.md`.
 
-| Field | "Spotify first" (D29, signed in) | "Deezer first" (no sign-in, or chosen) | Frame (ID3v2.3) |
+| Field | D30 (signed in) | "Deezer first" (no sign-in, or declined) | Frame (ID3v2.3) |
 |---|---|---|---|
-| Title, version | Spotify → Deezer | Deezer → MusicBrainz | `TIT2` (version in the title, Beatport style "Title (Extended Mix)"; Spotify's " - Extended Mix" rewritten as "(Extended Mix)") |
-| Artists, album artist | Spotify → Deezer | Deezer → MusicBrainz | `TPE1` (`/`-separated in v2.3), `TPE2` |
-| Album, track/disc n/N, date | Spotify release (§3.6) | Deezer release → MusicBrainz | `TALB`, `TRCK`, `TPOS`, `TYER` (+`TDAT`) |
-| Label | Deezer `label` → MusicBrainz label-info (Spotify has none) | same | `TPUB` (not `TENC` as spotDL does) |
-| Catalogue number | MusicBrainz → Discogs (P2) | same | `TXXX:CATALOGNUMBER` |
+| Title, version | Spotify | Deezer → MusicBrainz | `TIT2` (trailing " - Extended Mix" → " (Extended Mix)", MQ13) |
+| Artists, album artist | Spotify | Deezer → MusicBrainz | `TPE1`, `TPE2` (", "-joined) |
+| Album, date, track/disc n/N | Spotify release (§3.6) | Deezer release → MusicBrainz | `TALB`, `TYER` (+`TDAT`), `TRCK`, `TPOS` |
 | ISRC | Spotify `external_ids` | Deezer | `TSRC` |
-| Genre | none by default; Deezer genre or Discogs style on request (MQ6) | same | `TCON` |
+| Label | MusicBrainz by ISRC → fallbacks (§5.3; Deezer pending MQ12) | Deezer `label` → MusicBrainz | `TPUB` |
+| Genre | MusicBrainz genres → fallbacks (§5.3) | Deezer genre → MusicBrainz | `TCON` |
+| Catalogue number | MusicBrainz `label-info` (when found) | same | `TXXX:CATALOGNUMBER` |
 | BPM, key | not written (rekordbox analyses; Deezer BPM is often 0) | same | — |
-| Artwork | Spotify 640 px (fits ≤ 800 × 800, never upscaled) or Deezer 1000 px → 800 | Deezer `cover_xl` → JPEG ≤ 800 × 800 (D29); CAA front-1200 when MusicBrainz has the release | `APIC` type 3 |
-| Provenance | `WOAS` = Spotify track URL (link-back) | `WOAS` = Deezer track URL; `TXXX:MusicBrainz Track Id`/`Release Id` when known | `WOAS`, `TXXX` |
+| Artwork | Spotify `images[0]` (~640 px, kept as is if baseline JPEG ≤ 500 KB) | Deezer `cover_xl` → JPEG ≤ 800 × 800; CAA front-1200 when MusicBrainz has the release | `APIC` type 3 |
+| Link back / provenance | `WOAS` = Spotify track URL | `WOAS` = Deezer track URL; `TXXX:MusicBrainz Track Id`/`Release Id` when known | `WOAS`, `TXXX` |
 
 ### 14.8 Privacy: what leaves the machine
 
@@ -1342,7 +1348,7 @@ tracks.
 | Setting | Default |
 |---|---|
 | Metadata sources | Spotify first once signed in (D29); Deezer + MusicBrainz always on; Discogs off (P2) |
-| Tag policy | "Spotify first" when signed in (D29), else "Deezer first" (§14.7) |
+| Tag policy | D30 when signed in (Spotify fields, MusicBrainz label/genre, one-time notice), else "Deezer first" (§14.7) |
 | Preview source (PREV-12) | Automatic: yt-dlp full track when installed and healthy (D26), else the official clip (Deezer by ISRC → iTunes, never stored), with the peer's file one key away |
 | Listen in full | "Open in Spotify / YouTube Music" links; Spotify app control via AppleScript when Spotify is installed (asks once for Automation) |
 | yt-dlp | Found automatically (§12.1); warn if older than 90 days or Deno missing; budgets §14.3 |
