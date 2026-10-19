@@ -229,12 +229,126 @@ call the seek callback when one is set (`libavformat/aviobuf.c` ~L278–300). A 
 
 ## 6. Mixxx waveform implementation (filtered / RGB / stacked)
 
-TODO: files, crossovers, filters, summarisation, storage; GPLv2+ reuse.
+Read at mixxx `44dc9ed` (2026-10-16, "2.7-alpha"), licence **GPL-2.0-or-later**. Code can be reused in a GPLv3 program
+with copyright notices kept.
+
+**Analysis** (`src/analyzer/analyzerwaveform.{h,cpp}`):
+- **Filters:** `EngineFilterBessel4Low` at **600 Hz**, `EngineFilterBessel4Band` **600–4,000 Hz**,
+  `EngineFilterBessel4High` at **4,000 Hz** (`kLowMidFreqHz`, `kMidHighFreqHz`). An 8th-order Butterworth variant is
+  commented out. The filters are "settled" on silence to avoid a start-up ramp (`assumeSettled`, Mixxx issue #7776).
+  Coefficients come from fidlib (`src/engine/filters/`).
+- **Detail waveform:** a fixed **441 visual samples per second**, *per channel* (L and R kept separately), with
+  `WaveformData = {low, mid, high, all}` as `uint8` plus up to 4 stem bytes. Each value is the **peak** (`max |x|`)
+  over the stride (~100 samples at 44.1 kHz), stored linearly as `min(255, 255·peak + 0.5)`. There is no log or power
+  scaling at analysis time. The code has a commented-out RMS alternative, and the protobuf labels the values "RMS"
+  even though they are peaks.
+- **Overview ("summary"):** **2 × 1,920 = 3,840** points per channel over the whole track ("two visual samples per
+  pixel in full width overview in full HD"). Each point is the **average of the detail-stride peaks** it covers
+  (`WaveformStride::averageStore`), so the overview is smoother than a max-reduction.
+- **Progressive:** the analyser marks completion as it goes (`setCompletion`), and the renderers draw what is
+  complete. The same pattern suits a growing download.
+- **Storage** (`src/waveform/waveform.cpp`, `src/proto/waveform.proto`, `src/library/dao/analysisdao.cpp`): protobuf →
+  `qCompress` (zlib, default level) → one file per analysis under the Mixxx analysis directory, indexed in SQLite
+  (`track_analysis`), with a version string per analysis type (`WAVEFORM_CURRENT_VERSION`). A 2012 comment says a
+  1.2 MB detail waveform compresses to ~600 KB.
+
+**Rendering** (`src/waveform/renderers/allshader/`):
+- **Filtered** (`waveformrendererfiltered.cpp`): for each device pixel, the max of each band over the visual samples
+  under that pixel. Bands are multiplied by user "visual gain" and the deck EQ gains. Each band is drawn as a rectangle
+  about the axis (top = left channel, bottom = right channel), **overlaid** in the order low, mid, high: overlaid
+  layering like Pioneer's detail view, but without an overlap colour.
+- **RGB** (`waveformrendererrgb.cpp`): colour = `low·lowColour + mid·midColour + high·highColour`, normalised by the
+  largest component. The height follows the "all" signal scaled by the EQ gain.
+- **"Stacked"**: in the allshader geometry path, `WaveformWidgetType::Stacked` is just the filtered renderer with RGB
+  colours (overlaid). The textured path uses `res/shaders/stackedsignal.frag`, which is truly **cumulative** (low from
+  0, mid above low, high above both) with unscaled "ghost" bands drawn at 60 % alpha. Mixxx's naming is
+  inconsistent.
+- The geometry is rebuilt every frame from the uint8 data. This is cheap on a GPU, and Mixxx renders at vsync through
+  `VSyncThread` with `VisualPlayPosition` for latency-compensated positions (§4).
+
+What to take from Mixxx: the peak-per-stride `uint8` model, the summary-by-averaging idea, the versioned zlib cache,
+the progressive completion counter and `VisualPlayPosition`. What not to copy: 441 Hz × 2 channels is more than Selecta
+needs (Pioneer uses 150 Hz mono), and fidlib's runtime filter design is unnecessary when fixed biquads will do.
 
 ## 7. Recommended analysis pipeline for Selecta
 
-TODO: crossovers, filters, peak vs RMS, perceptual scaling, overview vs zoom resolution, cache format, < 300 ms for a
-6-minute track on Apple Silicon, progressive analysis.
+### 7.1 Signal path (per track; runs as bytes arrive)
+
+1. Decode to float32 at the native rate. Mix to mono `(L+R)/2`. Pioneer's 3Band is mono, and the mirrored display does
+   not need L/R.
+2. Split into 3 bands with **Linkwitz–Riley 4th-order (LR4) crossovers**: each crossover is two cascaded 2nd-order
+   Butterworth biquads (RBJ cookbook). LR4 bands sum to a flat magnitude, so "how much is in each band" stays honest,
+   and the slopes (24 dB/oct) are steep enough that the colours do not bleed. Mixxx's 4th-order Bessel has gentler
+   transitions, which mixes the bands more.
+3. **Default crossovers: 200 Hz and 2.5 kHz** (low confidence; tune on the mock and against rekordbox). Context: Mixxx
+   uses 600 Hz / 4 kHz. A community sine-sweep test of rekordbox (bbc/audiowaveform #210, 2025) estimated a blue low
+   band rolling off around ~110 Hz, orange mids around 180–800 Hz and white highs from ~2.5 kHz, with odd gaps,
+   i.e. not plain crossovers. A third-party "rekordbox-style" generator (mixgraph.io) uses 200 Hz / 2 kHz. Keep the
+   crossovers as named constants and calibrate them (§12).
+4. Per **column of 1/150 s** (294 samples at 44.1 kHz, 320 at 48 kHz: the Pioneer detail rate), compute per band:
+   - **peak** = `max |x|` (transients: kicks and hats read as sharp shapes), and
+   - **RMS** = `sqrt(mean x²)` (body/energy). Store both. Peak drives the shape. RMS can drive a slightly darker "inner
+     body" like Pioneer's RGB/blue waveforms, and is better for perceptual tuning later.
+5. Quantise each value to `uint8` with a **perceptual (compressive) curve** at *draw time*, not analysis time. Store
+   linear amplitude ×255 with a √ curve (`q = round(255·sqrt(min(1, a)))`) so quiet passages keep resolution, and map
+   to pixels with a configurable dB curve (default: −48 dB → 0, 0 dBFS → full height). Pioneer's detail scaling is
+   "non-linear" (§2.2), and a linear peak scale makes quiet intros invisible.
+6. A **per-track gain** for display: normalise so that the 99th percentile of the overall peak maps to ~90 % of the
+   height (cf. the `PWVC` "per-band gain" hypothesis). This makes quiet and loud masters comparable and is applied at
+   draw time.
+
+### 7.2 Resolutions and overview
+
+| Level | Columns | Use |
+|---|---|---|
+| Detail | 150 per second (54,000 for 6 min) | Zoomed view: 1 column ≈ 1 device pixel at the default zoom, which shows ~6–10 s across ~1,000 pt (2× DPR) |
+| Mip levels | ÷2, ÷4, … (max for peak, mean for RMS) | Zooming out without aliasing (a GPU texture mip chain or a CPU pyramid) |
+| Overview | Computed at draw time from the detail data for the actual pixel width (≈ 1,000–3,000 px) | Pioneer stores a fixed 1,200 columns. Deriving from detail data avoids a second analysis and fits any width. |
+
+Overview reduction: **max of peaks per pixel** keeps transients visible. Mixxx averages, which looks smoother but hides
+drops. Proposed: max of peaks for the shape, mean of RMS for the body.
+
+### 7.3 Cache format (analysis cache, CACHE-1 / PREV-8)
+
+- Key: **content hash** of the audio file. For a preview, before the file is complete: `(peer, remote path, size)` →
+  rekeyed when complete. The hash should be a fast non-cryptographic one (e.g. XXH3-128) over the whole file, or
+  head + tail + size for speed (decide in ADR-007).
+- Value: a small header `{magic, analysisVersion, sampleRate, totalFrames, columnRate=150, crossovers, flags}` + a
+  column array `[peakL, peakM, peakH, rmsL, rmsM, rmsH]` as `uint8` (6 bytes/column) → **~324 KB per 6-minute track
+  raw**, ~100–200 KB with zstd/zlib. Optional spectrum summary (§9) adds a few KB.
+- That is more than PREV-8's "a few KB per track". For "a few KB", store only an overview (e.g. 1,200 × 3 bytes ≈
+  3.6 KB) for the library and keep full detail for previews and recent tracks under an LRU cap. Decide in ADR-007.
+- Version the format. Bump `analysisVersion` when filters, crossovers or the column rate change, and re-analyse
+  lazily.
+
+### 7.4 Performance (measured on this machine: Apple M2 Pro, 8 P-cores; FFmpeg 9.0.2 CLI; synthetic 6-min stereo 44.1 kHz)
+
+| Step (6-minute track) | Wall time | How measured |
+|---|---|---|
+| Decode MP3 320 CBR | ~330 ms (one stream) | `ffmpeg -benchmark -i six320.mp3 -f null -` |
+| Decode MP3 V0 | ~285 ms | same |
+| Decode FLAC 16/44.1 | ~180 ms | same |
+| Decode AAC 256 (M4A) | ~245 ms | same |
+| Read WAV | ~30 ms | same |
+| Demux only (MP3, FLAC) | ~20–25 ms | `-c copy -f null -` |
+| **8 parallel segments** (45 s each), MP3 320 | **~130 ms** | 8 `ffmpeg -ss … -t 45` processes, including process start-up |
+| 8 parallel segments, FLAC | ~80 ms | same |
+| 3-band LR4 split (8 biquads) + peak/RMS per 1/150 s, scalar C++ `-O2`, 1 thread | **~150 ms** | own micro-benchmark (`bandbench.cpp`, not in repo) |
+
+The FFmpeg CLI figures include CLI overhead, so library decode is slightly faster.
+
+Conclusions:
+- A naive sequential decode + analyse of a 6-minute MP3 takes **~450 ms** and **misses the 300 ms target** (NFR-2).
+- Meet it with **chunked parallelism**: split the file into N byte ranges at frame boundaries (MP3: from our frame
+  index; FLAC: frame sync), decode each with ~2 frames of preroll (MP3 bit reservoir), and analyse each chunk with
+  ~50 ms of filter warm-up overlap. Then concatenate the columns. Expect **~80–120 ms** on 6–8 cores.
+- Further gains if needed: process the 4 biquad chains as one NEON `float32x4` lane set, or run the band analysis at
+  half rate for the low band.
+- For **previews** the budget hardly matters: analysis runs *during* the download, which is far slower than decoding,
+  so when the last byte arrives only the last chunk remains (< 20 ms). The 300 ms target matters for files already on
+  disk (Inbox, collection, re-opened previews with an evicted analysis cache).
+- Run analysis on a worker pool at background QoS, but at **user-interactive priority for the track being
+  previewed**.
 
 ## 8. Rendering in Qt (Widgets / Qt Quick / QRhi) at 60–120 fps
 
