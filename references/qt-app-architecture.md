@@ -252,11 +252,166 @@ paint time (never accumulate per-frame deltas). Fallback elsewhere: `QTimer` at 
 
 ## 5. Modern CMake structure
 
-TODO (next commit).
+### 5.1 Facts that shape the build
+
+| Fact | Confidence / source |
+|---|---|
+| Qt 6.12 needs CMake ≥ 3.25 to *use* Qt; Homebrew ships CMake 4.4.4 (4.3.4 installed) | high — whatsnew612, `.cmake.conf`, `brew info` |
+| `qt_standard_project_setup([REQUIRES v] [SUPPORTS_UP_TO v] [I18N_*])`: sets `CMAKE_AUTOMOC`/`CMAKE_AUTOUIC`, includes `GNUInstallDirs`, `USE_FOLDERS`; with `REQUIRES` sets every Qt CMake policy up to that version to NEW (QTP0001…QTP0008 exist in 6.12) and errors on older Qt | high — `qtbase@v6.12.0:src/corelib/doc/src/cmake/qt_standard_project_setup.qdoc`, `policy/` |
+| `qt_generate_deploy_app_script(TARGET … OUTPUT_SCRIPT … [EXCLUDE_PLUGIN_TYPES …] [DEPLOY_TOOL_OPTIONS …])` runs `macdeployqt` at `cmake --install` for app bundles; `EXCLUDE_PLUGIN_TYPES/EXCLUDE_PLUGINS` since 6.10; `DEPLOY_TOOL_OPTIONS` since 6.7 | high — `qt_generate_deploy_app_script.qdoc` |
+| Qt 6.12 still only requires C++17 from users | high — `qcompilerdetection.h` |
+| `QT_ENABLE_STRICT_MODE_UP_TO=0x060C00` turns on `QT_DISABLE_DEPRECATED_UP_TO`, `QT_NO_FOREACH`, `QT_NO_CAST_TO_ASCII`, `QT_NO_CAST_FROM_BYTEARRAY`, `QT_NO_URL_CAST_FROM_STRING`, `QT_NO_NARROWING_CONVERSIONS_IN_CONNECT`, `QT_NO_JAVA_STYLE_ITERATORS`, `QT_NO_CONTEXTLESS_CONNECT`, `QT_NO_QASCONST`, `QT_NO_QPAIR`, `QT_LEAN_HEADERS=2`, … | high — `qtconfigmacros.h` |
+| Xcode 27's clang ships ASan, TSan, UBSan and profile runtimes for macOS — **no libFuzzer, no standalone LSan**; no `clang-tidy` | high — `ls …/lib/clang/21/lib/darwin`, `which clang-tidy` |
+| Homebrew LLVM 23.1.3 provides `clang-tidy`, libFuzzer; `clang-format` 22.1.8 installed locally | high — `brew info` |
+
+### 5.2 Proposed layout of the build
+
+- One top-level `CMakeLists.txt`; each module (`src/slsk`, `src/governor`, …) is a **static library target**
+  (`selecta_slsk`, …) with explicit `target_link_libraries` that encode the allowed dependency graph (section 12).
+  Static libs keep one `.app` binary and let tests link single modules.
+- `cmake/` holds small helpers: `SelectaWarnings.cmake` (an INTERFACE target `selecta::warnings`),
+  `SelectaSanitizers.cmake`, `SelectaMacBundle.cmake` (Info.plist, entitlements, icons), `SelectaVersion.cmake`
+  (version from `git describe`).
+- Objective-C++ only under `src/app/platform/mac/` (`enable_language(OBJCXX)` inside `if(APPLE)`), compiled with
+  `-fobjc-arc`.
+- Generated `compile_commands.json` (`CMAKE_EXPORT_COMPILE_COMMANDS ON`) for clang-tidy/clangd (already git-ignored).
+
+```cmake
+# CMakeLists.txt (sketch)
+cmake_minimum_required(VERSION 3.28...4.4)
+project(Selecta VERSION 0.1.0 LANGUAGES CXX)
+if(APPLE)
+  enable_language(OBJCXX)
+endif()
+
+set(CMAKE_CXX_STANDARD 20)            # ADR: 20, or 23 if the M1 CI matrix compiles it
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(SELECTA_BUILD_TESTS          "Build unit/integration tests" ON)
+option(SELECTA_BUILD_FUZZERS        "Build libFuzzer targets (needs Homebrew/upstream clang)" OFF)
+option(SELECTA_WARNINGS_AS_ERRORS   "-Werror (CI)" OFF)
+option(SELECTA_ALLOW_LIVE_SERVER    "Allow connecting to the live Soulseek server (SAFE-3)" OFF)
+
+find_package(Qt6 6.12 REQUIRED COMPONENTS Core Gui Widgets Network Concurrent Svg)
+qt_standard_project_setup(REQUIRES 6.12)
+add_compile_definitions(QT_ENABLE_STRICT_MODE_UP_TO=0x060C00 QT_NO_KEYWORDS)
+
+include(cmake/SelectaWarnings.cmake)
+include(cmake/SelectaSanitizers.cmake)
+
+add_subdirectory(src)        # libraries + the Selecta app target
+add_subdirectory(tools/selecta-cli)
+if(SELECTA_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
+```
+
+```cmake
+# src/app/CMakeLists.txt (sketch)
+qt_add_executable(Selecta MACOSX_BUNDLE WIN32 main.cpp)
+target_link_libraries(Selecta PRIVATE selecta_core selecta_library selecta_audio selecta_convert Qt::Widgets)
+set_target_properties(Selecta PROPERTIES
+  MACOSX_BUNDLE_GUI_IDENTIFIER "org.selecta.Selecta"          # TODO: final bundle id
+  MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/packaging/macos/Info.plist.in")
+if(APPLE)
+  target_sources(Selecta PRIVATE platform/mac/MacToolbar.mm platform/mac/MacMenus.mm platform/mac/VsyncTicker.mm)
+  target_link_libraries(Selecta PRIVATE "-framework AppKit" "-framework UserNotifications")
+endif()
+install(TARGETS Selecta BUNDLE DESTINATION .)
+qt_generate_deploy_app_script(TARGET Selecta OUTPUT_SCRIPT deploy_script
+  EXCLUDE_PLUGIN_TYPES qmltooling)                            # trim what we don't use
+install(SCRIPT ${deploy_script})
+```
+
+`QT_NO_KEYWORDS` (use `Q_SIGNALS`/`Q_SLOTS`/`Q_EMIT`) avoids clashes with other libraries' `signals`/`emit`
+identifiers; `QT_ENABLE_STRICT_MODE_UP_TO` forces explicit string conversions (useful for a protocol client that must
+be precise about encodings).
+
+### 5.3 Presets
+
+`CMakePresets.json` (committed; per-user overrides in the git-ignored `CMakeUserPresets.json`):
+
+| Preset | Generator / type | Flags | Used by |
+|---|---|---|---|
+| `dev` | Ninja, Debug | `-O0 -g`, live server locked off | daily work |
+| `asan` | Ninja, Debug | `-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined` | CI + local |
+| `tsan` | Ninja, Debug | `-fsanitize=thread` (cannot combine with ASan) | CI nightly (network/storage threads) |
+| `release` | Ninja, RelWithDebInfo | `-O2`, dSYM, LTO optional | packaging |
+| `fuzz` | Ninja, Debug, `CMAKE_CXX_COMPILER=/opt/homebrew/opt/llvm/bin/clang++` | `-fsanitize=fuzzer-no-link,address` on parsers, `-fsanitize=fuzzer` on harnesses | local + Linux CI |
+| `ci-linux`, `ci-windows` | Ninja / MSVC | warnings as errors | CI |
+
+Add `workflowPresets` (configure → build → test) so CI and humans run `cmake --workflow --preset asan`.
+Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset for the Qt location (Homebrew:
+`/opt/homebrew`, aqtinstall: `~/Qt/6.12.0/macos`).
+
+### 5.4 Code quality tooling
+
+- **clang-format**: commit `.clang-format` (e.g. based on LLVM/WebKit style with 120 columns, matching this repo's
+  Markdown width); CI checks with the same major version (pin via Homebrew `clang-format` or `pip install clang-format==<ver>`).
+- **clang-tidy** (Homebrew LLVM): `bugprone-*`, `performance-*`, `modernize-*` (minus `use-trailing-return-type`),
+  `cppcoreguidelines-*` subset, `readability-identifier-naming`; run on changed files in CI via
+  `run-clang-tidy -p build`. Qt-specific checks come from **clazy** (KDE, LGPL-2.0-or-later tool — only run, not
+  linked) — TODO(verify) clazy availability on Homebrew/macOS.
+- **ccache** (`CMAKE_CXX_COMPILER_LAUNCHER=ccache`; `ccache` 4.14.2 on Homebrew) locally and in CI; moc/uic output is
+  deterministic so it caches well.
+- Warnings: `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wcast-align -Wunused -Woverloaded-virtual
+  -Wnull-dereference -Wdouble-promotion -Wformat=2 -Wimplicit-fallthrough`; `-Wconversion -Wsign-conversion` only on the
+  `slsk` codec (bounds/size arithmetic from the network), where they are worth the noise. MSVC: `/W4 /permissive-
+  /Zc:__cplusplus` (Qt requires `/Zc:__cplusplus`).
 
 ## 6. Dependency management
 
-TODO.
+### 6.1 What each dependency is for and where it comes from
+
+| Dependency | Use | Homebrew (local metadata, 2026-10-19) | vcpkg port (registry HEAD 2026-10-18) | Notes |
+|---|---|---|---|---|
+| Qt 6.12 | everything | `qtbase` etc. **6.12.0** (split formulae; 6.11.1 installed) | `qtbase` **6.11.2** (lags) | Official binaries via aqtinstall have the documented min macOS; Homebrew bottle `minos` 14.0 |
+| zlib | protocol (compressed messages) | macOS SDK `libz` | `zlib` 1.3.2 | Use the system zlib on macOS (always present) |
+| FFmpeg (avformat/avcodec/swresample) | decode, transcode | `ffmpeg` 9.0.2 — **GPL-3.0-or-later build** (`--enable-gpl --enable-version3 --enable-libmp3lame`), links 22 dylibs (x264, x265, dav1d, libvpx, svt-av1, openssl…) | `ffmpeg` 9.0.2 with features `gpl`, `version3`, `mp3lame`, `soxr`, `opus`; `nonfree` exists — never enable | For release: a minimal audio-only FFmpeg (see 6.3) |
+| LAME | MP3 encode (CONV) | `lame` 4.0 | `mp3lame` 3.100 | TODO(verify) LAME 4.0 changes; vcpkg licence field says LGPL-2.0-only, Homebrew LGPL-2.0-or-later |
+| libFLAC | FLAC encode/verify (if not via FFmpeg) | `flac` 1.5.0 | `libflac` 1.5.0 (BSD-3-Clause) | |
+| libsoxr | resampling | `libsoxr` 0.1.3 (LGPL-2.1-or-later) | `soxr` 0.1.3 | or FFmpeg's swresample with soxr engine |
+| TagLib 2.x | tags | `taglib` 2.3.2 (LGPL-2.1-only OR MPL-1.1; needs `utf8cpp`) | `taglib` 2.3.1 | CMake-native, FetchContent-friendly |
+| Chromaprint | fingerprints (P2) | `chromaprint` 1.6.2 (depends on ffmpeg) | `chromaprint` 1.6.1 | |
+| miniupnpc / libnatpmp | port mapping (P1) | 2.3.3 / 20230423 (BSD-3-Clause) | 2.3.2 / 2025-04-03 | Small, CMake; FetchContent or vcpkg |
+| QtKeychain | Keychain | `qtkeychain` **0.17.0** (BSD-2-Clause per Homebrew) | `qtkeychain-qt6` **0.14.3** (BSD-3-Clause per port; old) | Prefer FetchContent of a pinned tag; licence field differs — TODO(verify) upstream COPYING |
+| SQLite | storage | `sqlite` 3.54.1 | `sqlite3` 3.53.4 | See 7.x: own copy vs Qt SQL |
+| Sparkle 2 | updates (P2) | cask `sparkle` 2.9.6 | — | Binary framework from Sparkle releases; MIT |
+| Catch2 / GoogleTest / RapidCheck | tests | 3.16.1 / 1.18.0 / — | 3.16.0 / 1.18.0 / 2023-12-14 | FetchContent is simplest |
+| KDSingleApplication | single instance (optional) | — | 1.2.1 (MIT) | macOS already enforces single instance for bundles |
+
+### 6.2 Options compared
+
+| Approach | Pros | Cons | Fit |
+|---|---|---|---|
+| **Homebrew** | Zero build time; current versions (Qt 6.12.0, FFmpeg 9.0.2); maintainer already uses it | **Not reproducible** (no version pinning; upgrades under your feet); bottles are built for the host OS — local FFmpeg/LAME dylibs have **`minos 27.0`**, so a bundle that copies them runs only on macOS 27+; Homebrew FFmpeg drags in 22 codec/network dylibs | Local dev; "me first" builds |
+| **vcpkg (manifest mode)** | Version baseline pinning in `vcpkg.json`; feature selection (audio-only FFmpeg); sets `VCPKG_OSX_DEPLOYMENT_TARGET`; same recipe on macOS/Linux/Windows; CMake toolchain integration | First build is slow (FFmpeg minutes; Qt tens of minutes — avoid Qt from vcpkg); binary cache needs NuGet/GitHub Packages or `files` + `actions/cache` (`x-gha` was removed in vcpkg 2025.06) | Release + CI for non-Qt deps |
+| **Conan 2** | Similar pinning; good binary model | Second ecosystem to learn; recipes for Qt/FFmpeg lag; less common in Qt desktop apps — TODO(verify) current conancenter versions | Not recommended |
+| **FetchContent** | Pure CMake; ideal for small CMake-native libs (TagLib, QtKeychain, miniupnpc, libnatpmp, Catch2, SQLite amalgamation) | Builds from source every clean configure; wrong tool for autotools projects (FFmpeg, LAME) | Small deps |
+| **Qt from aqtinstall** (official binaries) | Fast in CI (cached), official min-macOS, universal binaries | Not a dep manager for anything else | Qt in CI and release |
+
+### 6.3 Recommendation (ADR-004)
+
+1. **Qt:** Homebrew locally (`brew install qtbase qtsvg qttools`, plus `qtmultimedia` only if ADR-003 picks
+   `QAudioSink`); **official Qt 6.12.x via aqtinstall** in CI and for release builds.
+2. **Small CMake-native deps** (TagLib, QtKeychain, miniupnpc, libnatpmp, Catch2/GoogleTest, SQLite amalgamation):
+   `FetchContent` with pinned tags/hashes and `FIND_PACKAGE_ARGS` so a system/Homebrew copy can be used instead
+   (`FetchContent_Declare(... FIND_PACKAGE_ARGS)` — CMake ≥ 3.24).
+3. **FFmpeg + LAME (+ soxr):** Homebrew for local dev; for release a **minimal FFmpeg built by vcpkg** (features:
+   `avcodec`, `avformat`, `swresample`, `mp3lame`, `soxr`, `gpl`? — only if a GPL-only component is needed;
+   `default-features: false` to drop avdevice/avfilter/swscale) or a scripted `./configure --disable-everything
+   --enable-decoder=mp3*,flac,alac,aac,pcm_*,vorbis,opus --enable-demuxer=… --enable-encoder=libmp3lame,flac,pcm_*
+   --enable-muxer=mp3,flac,wav,aiff,ipod` build with `-mmacosx-version-min` = the app's deployment target.
+   Either way the bundle stays small and runs on every macOS the app claims to support.
+4. Keep a `Brewfile` for contributors and a `vcpkg.json` (+ `vcpkg-configuration.json` baseline) for CI/release.
+   Document both in `docs/BUILDING.md` (Phase 1).
+
+Confidence: high for the facts; medium for the split (it trades one extra mechanism for reproducible, portable
+release builds — if the maintainer only ever runs Selecta on his own macOS 27 Mac, Homebrew-only is acceptable and
+simpler for v1).
 
 ## 7. Architecture patterns
 
