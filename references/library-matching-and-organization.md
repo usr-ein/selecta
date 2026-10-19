@@ -508,7 +508,7 @@ UI thread.
 | `exact_key → [track ids]` hash map | collection + Inbox + history | ~20 MB with keys |
 | `loose_key → [ids]` hash map | same | ~15 MB |
 | token postings `token → sorted [ids]` + document frequency | title/artist tokens (≈ 5 per track) | ~1M postings × 4 B ≈ 4 MB + vocabulary |
-| `album_key → [album ids]` | local albums | small |
+| `album_key → [album ids]`; `(track count, shortest-duration band) → [album ids]` | local albums: names and duration signatures (§8) | small |
 | `(size, basename_key) → [download ids]`, `(peer, remote_path) → id` | history | small |
 | per-track compact record | keys, version, duration, quality rank | ~100 B × 200k = 20 MB |
 
@@ -648,6 +648,7 @@ CREATE TABLE album (                            -- a local album folder (collect
   is_va          INTEGER NOT NULL DEFAULT 0,
   track_count    INTEGER,
   album_key      TEXT,                          -- artist_key ␟ album_title_key
+  duration_sig   TEXT,                          -- sorted track durations in whole seconds, e.g. '187,201,245,…' (§8)
   norm_version   INTEGER NOT NULL,
   UNIQUE (root_id, dir_rel)
 );
