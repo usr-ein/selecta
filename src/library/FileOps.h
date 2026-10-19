@@ -1,0 +1,72 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include <QString>
+#include <QStringList>
+
+#include <functional>
+
+namespace selecta::library {
+
+// The result of a file operation: the final path on success, a reason on failure.
+struct FileResult
+{
+    bool ok = false;
+    QString path;  // the resulting file (published, filed or trashed location if known)
+    QString error; // why it failed
+
+    static FileResult success(QString path) { return {true, std::move(path), {}}; }
+    static FileResult failure(QString error) { return {false, {}, std::move(error)}; }
+};
+
+// The only code that writes outside Selecta's caches (ADR-009, PRD principle 2):
+// - in collection roots it can only create new files, never overwrite, move, rename or delete anything;
+// - in the Inbox it can publish, rename and move files to the Trash;
+// - every path is canonicalised and must stay inside its root (no "..", no symlink escapes).
+// Moves within one volume use an atomic exclusive rename; across volumes, copy → flush → verify (SHA-256) → rename,
+// then the source is removed. A crash at any step leaves either the old or the new file, never neither.
+//
+// Thread-safe: holds only immutable configuration. File I/O is blocking: call it from worker threads, never from the
+// UI or engine threads.
+class FileOps
+{
+public:
+    // Moves a file to the Trash; returns false on failure. Injected so tests never touch the user's Trash.
+    using TrashFunction = std::function<bool(const QString &path, QString *trashedPath)>;
+
+    FileOps(const QString &inboxRoot, const QStringList &collectionRoots, TrashFunction trash = {});
+
+    QString inboxRoot() const { return m_inboxRoot; }
+
+    // Moves `sourceFile` (typically a verified temporary file) to `relativePath` inside the Inbox. If that name is
+    // taken, " (2)", " (3)"… is added before the extension. Creates parent folders.
+    FileResult publishIntoInbox(const QString &sourceFile, const QString &relativePath) const;
+
+    // Files an Inbox file into a collection root at `relativePath`: copy (or rename on the same volume), verify, then
+    // remove it from the Inbox. Refuses if the target exists. `collectionRoot` must be one of the configured roots.
+    FileResult fileIntoCollection(const QString &inboxFile, const QString &collectionRoot,
+                                  const QString &relativePath) const;
+
+    // Moves a file or folder inside the Inbox to the Trash. Anything outside the Inbox is refused.
+    FileResult trashFromInbox(const QString &path) const;
+
+    // Whether `path` (existing or not) resolves inside `root`.
+    static bool isInside(const QString &path, const QString &root);
+
+    // For tests: force the cross-volume copy path even within one volume.
+    void setForceCopy(bool force) { m_forceCopy = force; }
+
+private:
+    FileResult moveExclusive(const QString &from, const QString &to) const;
+    FileResult copyVerifyRename(const QString &from, const QString &to) const;
+
+    QString m_inboxRoot;
+    QStringList m_collectionRoots;
+    TrashFunction m_trash;
+    bool m_forceCopy = false;
+};
+
+// Default Trash implementation (QFile::moveToTrash).
+bool moveToSystemTrash(const QString &path, QString *trashedPath);
+
+} // namespace selecta::library
