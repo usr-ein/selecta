@@ -396,22 +396,116 @@ again. A ban is an IP-level event in practice; a second "test account" does not 
 
 ## 9. Implications for Selecta
 
-### 9.1 Recommended default limits
+### 9.1 Recommended default limits (input to ADR-006)
 
-TODO — table: searches per window, batch pacing, wishlist, reconnect backoff, per-peer and global download
-concurrency, queued files per peer, per-peer daily cap, browse rate, upload slots, preview behaviour.
+"Default" is what ships; "Ceiling" is the `constexpr` bound that settings can never exceed (PRD SAFE-2). All search
+sources (manual, batch, wishlist, user/room search, refresh) draw from **one** search budget. Rates are enforced
+as token buckets or sliding windows — never fixed windows (see §4.3). Confidence: **H** = backed by code or official
+text, **M** = consistent with several reports, **L** = judgement, tune on the local network and in M9.
+
+| Limit | Default | Ceiling | Justification | Source | Conf. |
+|---|---|---|---|---|---|
+| **Network searches** (all sources) | Token bucket: burst **6**, refill **1 per 20 s** (3/min; ≤ 17 in any 220 s) | Burst 10, refill ≥ 12 s (≤ 28 in any 220 s, i.e. ≥ 18 % below the 34/220 s edge) | 34/220 s is the *ban edge* measured once in 2023; soularr was banned at ~6/min sustained; a user still banned at 34/220 s switched to 1/min. A human digging session rarely exceeds 2–3/min | §4.3 | M |
+| **Same query repeated** | Not re-sent within **10 min** (cache answers; "Refresh" also obeys this) | ≥ 5 min | Ban message: "Do not quickly repeat a search" | §4.1 | H (trigger) / L (value) |
+| **Query hygiene** | Drop 1-character tokens; refuse queries < 3 characters; refuse > 256 characters; warn on excluded phrases and do not send | Same | SoulseekQt drops one-character tokens (2015); Soulseek.NET `removeSingleCharacterSearchTerms`; N+ answers only ≥ 3 chars; Soulfind drops > 256 | §4.3, §7.3 | H |
+| **Batch pacing** | Uses the search bucket at its refill rate, keeping **2 tokens reserved** for manual searches; one search per line; cached lines are free; no automatic fallback queries (a "broaden unresolved lines" pass is a user action and costs budget). 100 lines ≈ 33 min | Same bucket | slsk-batchdl's multi-query `--desperate` mode multiplies load; bans with automated tools are the main report | §4.3 | M |
+| **Per-search collection cap** (SRCH-16) | Stop after **15 s**, 300 responses or 10 000 files | 60 s / 1 000 / 50 000 | Soulseek.NET defaults 15 s / 250 / 25 000; SoulseekQt 10 000 results; N+ shows 2 500 | §4.3, Qt changelog | H (refs) / L (values) |
+| **Wishlist** (SRCH-14) | One term per **server-provided interval** (`WishlistInterval`, usually 12 min; 2 min if privileged), round-robin; nothing if the server sent no interval | Never more often than the server interval, never < 120 s | N+ behaviour; protocol doc | §4.4 | H |
+| **Login / reconnect** (NET-4) | First retry random **10–30 s**, then ×2 with ±25 % jitter, cap **10 min**. After the ban PM: wait **30 min + 1–5 min**, auto-pause, ask the user. After a login timeout (possible silent ban): ≥ 5 min, ×2, cap 60 min. No auto-reconnect after `Relogged` or any login rejection except `SVRFULL` (≥ 5 min) | First retry ≥ 5 s; cap ≥ 5 min; ≤ **10 login attempts per hour** | "Do not connect and disconnect quickly"; N+ 5–15 s ×2 to ~5 min; slskd 1 s ×2 to 5 min + jitter; Soulfind jitters to spread reconnects | §4.2, §4.5 | H (shape) / M (values) |
+| **Sessions** | **1** Selecta session per account per machine (lock file) | 1 | Rules: ≤ 5 clients per IP; ban message: "many clients at once from the same IP"; `Relogged` | §3.1 | H |
+| **Peer lookups / new peer connections** (`GetPeerAddress`, `ConnectToPeer`) | ≤ **10 in flight**, ≤ **30 per minute** | ≤ 60/min | They are server operations; "too many operations at once" is the ban trigger. No public figure | §4.1 | L |
+| **Active downloads per peer** (FAIR-2) | **1** | 2 | N+ and Soulseek.NET serve one upload per user at a time; extra requests only lengthen the peer's queue | §5.1 | H |
+| **Queued files per peer** (FAIR-2) | **20** (an album download counts its files; larger albums queue the rest locally) | 50 | Below every observed uploader limit: N+ 100 files; slskd example 150 (default group) / 15 (leechers); SoulseekQt has a per-user limit on by default (value unknown) | §5.2 | M |
+| **Per-peer daily cap** (FAIR-2) | Soft **20 files or 1 GB** (warning); hard **50 files or 3 GB** (blocked unless overridden per item); 7-day hard cap 150 files | Hard ≤ 100 files / 6 GB per day | slskd's example limits (30/day for a leecher, 1 500/week for an ordinary user) show uploaders think in tens of files per day for a stranger | §5.2 | L |
+| **Global concurrent downloads** | **4** active + 1 preview | 10 | Each active transfer holds one uploader's slot (N+ default: 3 slots in total); slsk-batchdl's 20 concurrent jobs are in the ban reports | §5.2, §4.3 | M |
+| **Global queued downloads** | 200 files | 1 000 | Bounds `QueueUpload` traffic and queue-position polling | — | L |
+| **Place-in-queue polling** | Head of our queue at each peer only, **every 10 min** (and on demand when the user opens the transfer) | ≥ 2 min per file | N+ polls every queued file every 5 min | §5.3 | M |
+| **Automatic retries** (DL-2) | Connection failures: **3** retries at 3, 10 and 30 min, then "failed". `Too many files/megabytes`: re-queue only as earlier files finish. `Banned`, `File not shared.`, unknown strings: **never** | ≤ 5 retries; ≥ 3 min first delay | SoulseekQt: max 3 retries every 5 min; slskd: 3 attempts; N+: every 3 min | §5.3 | H |
+| **Peer denial back-off** (FAIR-4) | `Banned`/custom ban text: no requests to that peer for **30 days** (and flag it); repeated `File not shared.`: 24 h; `Pending shutdown.`: ≥ 15 min | — | Peers' explicit signals | §5.3 | M |
+| **Browse requests** (BRWS-2) | Burst 3, then **1 per 100 s** (≤ 6 per 10 min); same user not re-browsed within the 24 h cache TTL unless "Refresh" (≥ 10 min apart) | ≤ 30 per hour | A browse makes the peer compress and send its whole share list; crawling looks like a bot | — | L |
+| **User info / folder contents** | User info: ≤ 1 per user per 10 min, ≤ 30/h. Folder contents: ≤ 1 per folder per cache TTL, burst 5, ≤ 20 per 10 min | 2× default | Same reasoning | — | L |
+| **Private messages** (NET-7) | User-typed only; ≤ 1 per 2 s, identical text to the same user not repeated within 10 min; no automatic messages in v1 | Same | Repeated identical PMs → 30-min ban; N+ ResponseThrottle | §4.6 | M |
+| **Previews** (PREV-*) | Auto-preview after the selection rests **≥ 600 ms**; **only for results whose peer reports a free slot** (others need an explicit Space and queue like a download); **1** active preview; not started if we already have an active transfer with that peer; ≤ **30 previews per 10 min**; counted in per-peer caps (PREV-7); on skip **cancel** unless ≥ 85 % received; answer later offers with `Cancelled`; ignore `UploadFailed` for cancelled previews | ≤ 2 active; ≤ 60 per 10 min | §6 | §6 | M (cancel) / L (values) |
+| **Upload side** (SHARE-3, belongs to the sharing note) | **3** slots, **1** active upload per user, round-robin, **privileged users first**, per-user queue limits 100 files / 10 GiB answered with exactly `Too many files` / `Too many megabytes`, `File not shared.` for anything not in the index | Slots ≥ 1 while sharing | N+ defaults; slskd interop note; Rules require respect of privileges | §5.2, §7.1 | H |
+
+Two numbers deserve a UI explanation, because users will want them higher: the search budget (show "3 searches per
+minute keeps you clear of Soulseek's 30-minute search ban") and the per-peer cap (show the peer's counters and why).
 
 ### 9.2 Never do this
 
-TODO.
+1. Connect to `server.slsknet.org` from tests, CI, scripts or debug builds; run automated searches or downloads on
+   the live network (CLAUDE.md).
+2. Use another client's login version numbers (157 official, 160 Nicotine+, 170 Soulseek.NET, 175 aioslsk, …), or
+   try other numbers after `INVALIDVERSION`.
+3. Create accounts automatically, invent usernames, or rotate accounts or IP addresses to dodge a ban (sockseek's
+   `--random-login` is the anti-pattern).
+4. Report fake share counts or fake user stats (`SharedFoldersFiles`, user info).
+5. Evade server-side query filters or excluded phrases (no wildcard rewriting like sockseek's `bannedTerms`); return
+   results whose paths contain an excluded phrase.
+6. Reconnect automatically after `Relogged` or a login rejection; reconnect in a tight loop; log in during a ban window.
+7. Repeat the same search within minutes, or fan one user query out into several network searches automatically.
+8. Send automatic or repeated private messages (auto-replies, "please share" warnings, mass messages).
+9. Queue a whole share, exceed the per-peer caps, re-queue after `Banned` / `File not shared.`, or queue-jump
+   (cancel-and-requeue tricks, second accounts).
+10. Run more than one session per account, or more than one Selecta per machine.
+11. Send `GlobalUserList` (code 67 — "the official server disconnects the user", Soulfind comment), admin commands,
+    or obsolete/experimental messages to the live server; fuzz or probe it (ToS §12(b)); try to measure its limits.
+12. Bypass the governor "just once" (for a retry, a refresh, a background task or a test helper).
+13. Send `QueueUpload` before the share index is loaded and true counts are reported.
+14. Re-download a preview because the uploader sent `UploadFailed` after we cancelled it.
 
 ### 9.3 Developer safety checklist
 
-TODO.
+For every change that touches networking:
+
+- [ ] Every new outbound message goes through the governor, and a test proves it (the send path is unreachable
+      otherwise).
+- [ ] Every new limit has a `constexpr` ceiling, `static_assert(default <= ceiling)`, and settings can only tighten it.
+- [ ] Pacing tests use the injectable fake clock; no test sleeps or touches a real network.
+- [ ] Integration scenarios run on `devenv` only, through the counting proxy (§8.3), and pass its budgets.
+- [ ] A test shows debug builds refuse a public (resolved) server address.
+- [ ] The new action is written to the activity log (SAFE-4) with its outcome and any denial reason.
+- [ ] Failure, denial and ban paths are specified: what happens on `Banned`, `Too many files`, timeouts, disconnects.
+- [ ] Any retry has a backoff, jitter and a maximum attempt count.
+- [ ] Fixtures were captured on the local network and scrubbed of usernames and paths.
+
+Before any live session (maintainer, M9 onwards):
+
+- [ ] Build from a tagged commit; version fields are the reserved (or agreed experimental) numbers.
+- [ ] No other client is logged in with this account; only one Selecta is running.
+- [ ] Shares are loaded and their counts reported; uploads enabled with privileged-first queueing.
+- [ ] Limits at defaults or stricter; activity log visible; "Pause network activity" within reach.
+- [ ] After the session: read the activity log for denials, disconnects and `server` messages; record them.
+
+### 9.4 Decisions for the maintainer
+
+| # | Decision | Recommendation |
+|---|---|---|
+| E1 | The Rules tolerate third-party clients that implement "chat, search, wishlist, download, upload, and respect / recognition of privileges". Chat rooms are a v1 non-goal. | Add a **minimal chat-room view (join, read, send) as P1**, next to private messages — cheap compared with the risk of being a "partial client". Alternatively record the accepted risk in ADR-006. |
+| E2 | Login identity | Use major **177** (experimental) during development on the local network; **ask the Nicotine+ maintainers to reserve a major version for Selecta** (they keep the registry in `doc/SLSKPROTOCOL.md`) before M9. Put "Selecta <version>" in user info. |
+| E3 | Privileges | Add to SHARE-3 (P0): privileged users are served first. |
+| E4 | Preview policy | Accept §6/§9.1: auto-preview only for free-slot results; cancel on skip (≥ 85 % finishes). Confirms PREV-6 / OQ-5. |
+| E5 | Search budget | Accept 3/min sustained with a burst of 6 (OQ-4); expose remaining budget and refill time (SRCH-13). |
+| E6 | Per-peer caps | Accept 1 active / 20 queued / 20–50 files per day (OQ-4). |
+| E7 | Excluded phrases on outgoing searches | Warn and do not send (no override): compliant peers would return nothing anyway. |
 
 ## 10. Open questions and things to verify on a local test server
 
-TODO.
+Never verify a limit by approaching it on the live network. Local-network experiments only, unless stated.
+
+| # | Question | How to settle it |
+|---|---|---|
+| Q1 | Does the official server count `WishlistSearch`, `UserSearch` and `RoomSearch` in the same flood budget as `FileSearch`? | Unknown and not testable safely. Assume yes (one shared budget). |
+| Q2 | Do bursts of `GetPeerAddress` / `ConnectToPeer` contribute to the flood ban? | Unknown. Keep the L-confidence peer-lookup bucket; watch M9 logs. |
+| Q3 | Is "34 per 220 s" still the edge in 2026? Does the ban escalate for repeat offenders? | Unknown; never probe. Defaults stay far below. Record any ban in M9 with full context. |
+| Q4 | Does the server send the ban PM before closing the connection, and are logins during the ban silently ignored (as Soulfind assumes)? | Only observable if it happens; the ban detector must handle both orders. |
+| Q5 | What does slskd record (Cancelled / Errored / Aborted) when the downloader closes mid-transfer, and does it count toward failure limits? | devenv: slskd peer with `failures` limits set; preview-cancel scenario. |
+| Q6 | How do Nicotine+ and slskd react to many short previews from one downloader (queue position, `UploadFailed`, bans)? | devenv scenario with both as uploaders. |
+| Q7 | How do Nicotine+, slskd and SoulseekQt react to `TransferResponse(false, "Cancelled")` for a queued item? | devenv for N+/slskd; SoulseekQt: TODO(verify) whether it can use a custom server — otherwise observe only in normal M9 use. |
+| Q8 | SoulseekQt's default per-user upload limits (files/MB) and slot count. | TODO(verify): official client options, not documented on slsknet.org. |
+| Q9 | Does Selecta filter its own responses with Soulfind's client-side phrases, and show the "may be filtered" hint for Soulfind server-side phrases? | devenv test with `soulsetup` → Search filters. |
+| Q10 | Distributed-network behaviour (parents, branch level, `DistribSearch`) — Soulfind does not implement it. | aioslsk mock server or a scripted parent peer; then M9 observation. |
+| Q11 | Are any of the private-message rate values (§9.1) too strict for normal conversation? | M9 usage. |
 
 ## 11. Sources
 
