@@ -581,7 +581,6 @@ All accessed 2026-10-19. Repositories were shallow-cloned read-only into `local/
 | https://www.slsknet.org/news/node/682 — Terms of Use | §2 accounts, §8 termination, §12(b) no probing/testing, §12(c) no flooding/spamming |
 | https://www.slsknet.org/news/faq-page — FAQ | Username recycling after 30 days, IP bans, non-sharer policy, "dos and don'ts" quote |
 | https://www.slsknet.org/news/node/523 — Nir, "Empty share warnings, fixes and more" (2012-05-11) | Refusal of auto-bans, background browse + warning, place in line |
-| https://en.wikipedia.org/wiki/Soulseek (secondary) | Third-party clients historically harmful when buggy; usual ban reasons; single-source transfers |
 | https://www.slsknet.org/news/changelog — SoulseekQt changelog (2012–2026) | Per-user upload limit on by default, MB-per-user limit, retry policy, 10 000-result cap, one-character tokens, too-many-files handling |
 
 ### Issue trackers, discussions, forums
@@ -600,6 +599,8 @@ All accessed 2026-10-19. Repositories were shallow-cloned read-only into `local/
 | https://groups.google.com/g/soulseek-discussion/c/t_L_SwzPbzk (2023-04) | Hearsay: "30-minute" search ban that lasted months |
 | https://groups.google.com/g/soulseek-discussion/c/AktBq4ehYGI (2025-04) | Repeated bans for automatic warning PMs |
 | https://groups.google.com/g/soulseek-discussion/c/yH8YGNcxH84 (2025-05) | Nir Arbel: empty-share message once per user, only on download attempts |
+| https://en.wikipedia.org/wiki/Soulseek (secondary source) | Third-party clients historically harmful when buggy; usual ban reasons; single-source transfers |
+| https://github.com/MeshDigital/Orbit-pure (`Services/SoulseekAdapter.cs`, `DOCS/memory/network_resilience_and_library_reconciliation.md`; weak source) | Ban message assumed on the global channel; "~28 searches per 10 min" claim |
 
 ### Source code and project documentation
 
