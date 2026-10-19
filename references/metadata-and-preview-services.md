@@ -404,7 +404,7 @@ spawning `osascript` per poll.
 |---|---|---|
 | Free accounts? | Expected to work: AppleScript drives the desktop app directly and does not go through the Premium-gated Web API, and the desktop app plays on demand for Free users (with ads). No source confirms `play track` on Free specifically. | Medium (X9) |
 | Position polling latency | One Apple event round trip to a running app is typically milliseconds to a few tens of ms (estimate). Poll `player position` at 4–10 Hz and interpolate between polls; poll `player state` at 1–2 Hz. Community tools also listen to the app's `com.spotify.client.PlaybackStateChanged` distributed notification to avoid polling (undocumented). | Medium (measure in X9) |
-| Permissions (TCC) | First use shows the macOS Automation prompt ("“Selecta” wants access to control “Spotify”…") with the app's `NSAppleEventsUsageDescription` text ("This key is required if your app uses APIs that send Apple events"). The choice lives in System Settings › Privacy & Security › Automation. | High |
+| Permissions (TCC) | First use shows the macOS Automation prompt ("“Selecta” wants access to control “Spotify”…") with the app's own `NSAppleEventsUsageDescription` text — Apple: "This key is required if your app uses APIs that send Apple events". The choice lives in System Settings › Privacy & Security › Automation. | High |
 | Hardened runtime | A hardened-runtime (notarised) build needs the `com.apple.security.automation.apple-events` entitlement ("whether the app may prompt the user for permission to send Apple events to other apps"; Xcode: Hardened Runtime › Resource Access › Apple Events). Selecta is not sandboxed (no App Store), so no `scripting-targets` entitlement. Consent is tied to the code signature: ad-hoc re-signed builds may re-prompt after each build (OQ-8). | High (Apple docs) |
 | Officially supported and stable? | The dictionary ships in the current app, but Spotify documents no AppleScript interface on its developer site, and past updates broke it silently (2015: `play track` became a no-op; a later update broke `current track` name/artist under Connect). Treat it as best-effort. | Medium |
 | Terms | The Developer Terms cover the "Spotify Platform" ("developer tools … (e.g. APIs, SDKs, Widgets) and documentation described on our Developer Website"); the scripting dictionary is not among them, so this is the user driving their own app. The Policy's no-overlap rule (S8) is still good practice: Selecta pauses its own player first. | Medium (inference) |
@@ -454,8 +454,9 @@ the player rather than hide it (S9). Uses the PKCE token of §4.2.
 - Player rules (YouTube API Services "Required Minimum Functionality"): "Embedded players must have a viewport that is
   at least 200px by 200px"; no overlays or actions on hover; the client must identify itself through the HTTP
   Referer, and in native apps "use one of the OS-provided WebView types when available" (`WKWebView` on Apple
-  platforms), loading the player with an HTTPS base URL whose domain is the app identifier. Since 2025-07-09 the player
-  shows **error 153** when no Referer arrives (WKWebView apps loading `about:blank`/custom schemes hit it).
+  platforms), loading the player with an HTTPS base URL whose domain is the app identifier. Since 2025-07-09 (developer
+  reports) the player shows **error 153** when no Referer arrives; WKWebView apps loading `about:blank` or custom
+  schemes hit it.
 - Developer Policies (updated 2026-10-15): no "background player, meaning a player that is not displayed in the page,
   tab, or screen that the user is viewing"; must not "separate, isolate, or modify the audio or video components"; must
   not "download, import, backup, cache, or store copies of YouTube audiovisual content". → A **visible** video panel,
