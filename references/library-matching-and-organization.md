@@ -1,26 +1,26 @@
 # Library matching and organisation
 
 > Research note for Selecta (PRD LIB-1…8, SRCH-11, BATCH-3/5, DL-3…11; PLAN M4, ADR-005, ADR-008).
-> Status: **draft in progress** — sections marked `TODO` are not yet verified against primary sources.
-> Accessed/written: 2026-10-19.
+> Status: complete first version. Code-level claims were verified in the cloned sources listed under Sources;
+> remaining `TODO`s are measurements or platform facts to confirm. Written 2026-10-19.
 
 ## TL;DR
 
-- A Soulseek search result gives us only a **remote path** (`@@share\Artist\Album\01 - Title.flac`, Windows-style
-  backslashes), a **size**, and optional **attributes** (bitrate, duration in seconds, VBR flag, sample rate, bit
-  depth). No tags. Every "do I already have this?" answer is therefore a *guess from a path*, and Selecta must say how
+- A Soulseek search result gives us only a **remote path** (`share\Artist\Album\01 - Title.flac`, Windows-style
+  backslashes), a **size**, and optional **attributes** (bitrate, duration in whole seconds, VBR flag, sample rate,
+  bit depth). No tags. Every "do I already have this?" answer is a *guess from a path*, so Selecta must say how
   confident it is (PRD LIB-3: exact / likely / none).
-- Matching = **parse** the path (folder + filename) into artist / title / version / album / track number / year,
-  **normalise** every string into comparison keys, **retrieve** candidates from an in-memory index of the collection,
-  Inbox and history, then **score** with title/artist similarity, a version check and a duration check.
-- Existing tools converge on the same recipe (TODO: verify constants): beets/Lidarr use a weighted *distance* over
-  fields with a duration grace window; slsk-batchdl uses hard "path must contain title/artist" checks plus a length
-  tolerance; Picard uses per-word edit distance. None of them parse Soulseek paths into fields as a first step for
-  "already owned" detection — that part is Selecta's own design.
-- Version (Original / Extended / Radio Edit / remix-by-X) is the main precision trap for a DJ library: two files with
-  the same artist and title can be different tracks. Version mismatch must block "exact".
-- Speed is not a problem at 50k–200k tracks if keys are precomputed: exact-key hash lookups are O(1) and fuzzy
-  candidate retrieval through a token index stays well under 1 ms per result (TODO: benchmark numbers).
+- Matching = **parse** the path (folder + filename, validated against sibling files) into artist / title / version /
+  album / track / year, **normalise** every string into comparison keys, **retrieve** candidates from an in-memory
+  index of the collection, Inbox and history, then **score**: title 0.45, artist 0.30, duration 0.20, album 0.05,
+  with multiplicative vetoes for version conflicts, artist contradictions and duration mismatches.
+- Existing tools (beets, Picard, Lidarr, Sockseek/sldl, soularr) supply proven pieces — weighted distances, duration
+  grace windows, per-word similarity, folder-consistent filename patterns, boundary-aware "title in filename" checks —
+  but none parses Soulseek paths blind for "already owned" detection; that part is Selecta's own design.
+- Version (Original / Extended / Radio Edit / remix-by-X) is the main precision trap for a DJ library: same artist and
+  title can be different tracks. Version conflicts block "exact" and surface as "other version owned".
+- Speed is not a problem at 50k–200k tracks with precomputed keys: O(1) exact-key lookups and rarest-token candidate
+  retrieval, estimated ≤ 100 µs per result (to benchmark in M4). Past downloads match exactly on (size, basename).
 - Supersede (DL-7/DL-8) must be conservative: trash an Inbox single only on an *exact* match against a *verified,
   completed* album track of equal-or-better quality; everything else is a flag. Trash goes through the macOS Trash
   with Undo and an audit log; filed files are never touched.
