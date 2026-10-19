@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "selecta",
+  "version": "0.1.0",
+  "description": "A quality-first Soulseek client for DJs and collectors",
+  "license": "GPL-3.0-or-later",
+  "builtin-baseline": "664933b8d385dfc01f4e0cdff4c7c74e71f6a740",
+  "dependencies": [
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": [
+        "concurrent",
+        "doubleconversion",
+        "future",
+        "gui",
+        "harfbuzz",
+        "jpeg",
+        "network",
+        "openssl",
+        "pcre2",
+        "png",
+        "testlib",
+        "thread",
+        "widgets"
+      ]
+    }
+  ],
+  "features": {
+    "tests": {
+      "description": "Unit and UI test frameworks",
+      "dependencies": [ "gtest" ]
+    },
+    "media": {
+      "description": "Decoding, MP3 encoding, resampling and tags (milestones M5 and M6)",
+      "dependencies": [
+        {
+          "name": "ffmpeg",
+          "default-features": false,
+          "features": [ "avcodec", "avformat", "swresample" ]
+        },
+        "mp3lame",
+        "soxr",
+        "taglib"
+      ]
+    }
+  }
+}

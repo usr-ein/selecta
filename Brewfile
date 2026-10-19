@@ -1,0 +1,10 @@
+# Local development dependencies (ADR-004). Install with: brew bundle
+brew "cmake"
+brew "ninja"
+brew "qt"
+brew "ffmpeg"
+brew "lame"
+brew "libsoxr"
+brew "taglib"
+brew "clang-format"
+brew "ccache"
