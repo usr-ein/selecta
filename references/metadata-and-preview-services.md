@@ -24,39 +24,43 @@
 - **Spotify's Web API is now a 5-user sandbox for apps like Selecta.** Extended quota is reserved for registered
   organisations with ≥ 250k monthly users (since 2025-05-15). Development Mode (2026) requires the app owner to have
   **Premium**, allows **5 users**, caps search at **10 results**, removed batch lookups, album `label`, `popularity`
-  and genres, limits playlist reading to the user's **own or collaborative playlists**, and refresh tokens now expire
-  after **6 months**. ISRCs (`external_ids`) survived (restored March 2026). `preview_url` is gone since 2024-11.
-  → Spotify works for the maintainer (Premium: yes, per the question round) through **PKCE with a user-owned Client
-  ID**; it cannot be a feature that "just works" for other users.
-- **Spotify's terms conflict with a Soulseek client** (quotes in §5): no use of Spotify Content in an app that
-  "facilitates … the illegal or unauthorized use or sharing of audio" (Terms §IV); no product "integrated with streams
-  or content from another service" (Policy §III.5); no storing Spotify Content "indefinitely", only "temporary caching
-  of metadata and cover art", and no functionality that makes "permanent copies of Spotify Content" (Terms §IV) —
-  which is what **writing Spotify tags and artwork into MP3s** does; attribution with the Spotify logo and a link back
-  wherever Spotify data shows (Policy §II.4). The realistic consequence is revocation of the user's developer app or
-  API access, not a lawsuit — but it is a real, named risk for D29 (MQ1).
-- **Recommended split:** use Spotify (opt-in) to *match and display*; write file tags from **MusicBrainz** (CC0
-  core data, built for tagging) and artwork from **Deezer** (1000 px) or the **Cover Art Archive** (1200 px), keyed by
-  the ISRC. Keep "Spotify-first tags" as an explicit maintainer setting with a `WOAS` link-back.
-- **Deezer is the best keyless source** and the default clip source: search hits already carry the ISRC, albums carry
-  label + UPC + 1000-px covers, tracks carry BPM, and `preview` is a **30-s MP3 at 128 kbps** behind a URL signed for
-  ~15 minutes. Its terms carry the same P2P-association clause and forbid storing audio → stream clips from memory.
-  **iTunes** is the fallback clip (30-s AAC ~256 kbps, no ISRC, ~20 calls/min, promo-only terms with a store badge).
-- **MusicBrainz** turns an ISRC into recordings and releases with **label, catalogue number, barcode and direct store
-  links** (Bandcamp, Beatport, Traxsource, Spotify, Deezer); 1 request/s with a contact User-Agent. **Discogs** adds
-  styles and catalogue numbers (token, 60/min, 6-hour freshness rule). **Beatport** (partner-only API),
-  **Traxsource** (no API) and **Bandcamp** (API for labels only; scraping forbidden) are deep links and purchase
-  sources, with purchases imported into the Inbox.
-- **No C++ Spotify library fits:** spotify-qt's `lib` is GPL-3.0 and active but uses a client secret, misses ISRCs
-  and is tied to its app; the others are stale MIT/libcurl code. Write a small Qt client on
-  `QOAuth2AuthorizationCodeFlow` (PKCE since Qt 6.8; Qt Network Authorization is GPLv3/commercial).
-- **spotDL** (MIT) searches by ISRC first, then "artists - title"; scores with RapidFuzz on slugified, token-sorted
-  strings; drops candidates with title ≤ 60, artists < 70 or a duration score `100·exp(−0.1·Δs)` < 25; and tags
-  ID3v2.3 (with the label wrongly in `TENC`). Since March 2026 its default Spotify backend is an **unofficial**
-  web-player client — not an option for Selecta (D21).
-- **Matching:** identifiers before text, but an **ISRC is not a release** (one ISRC sat on 20 MusicBrainz releases;
-  Deezer's ISRC lookup returned the album copy); reject DJ-mix "(Mixed)" segments and derivative junk; the chosen
-  release's duration drives the ±3 s Soulseek ranking (D23).
+  and genres, limits playlist reading to the user's **own or collaborative playlists**, and refresh tokens expire
+  after **6 months**. ISRCs (`external_ids`) survived (restored March 2026); `preview_url` is gone since 2024-11.
+  Spotify still gives a new app what D29 needs except the label (§3.6).
+- **Secret-free access = Authorization Code with PKCE** (§4.2): only a client ID, loopback redirect
+  `http://127.0.0.1/callback` (no `localhost`), 1-hour access tokens, 6-month refresh tokens. It works today for the
+  maintainer, who has Premium; public users would each need their own app and Premium. **spotDL's "no setup"** was a
+  client ID *and secret* hard-coded in `spotdl/utils/config.py`, shared by every user (24-hour "rate/request limit"
+  lockouts in Jan 2026); since v4.5.0 its default is an unofficial web-player client instead. Spotify's terms forbid
+  disclosing Security Codes; **Selecta ships no secret, ever** (§4.1). Spotify oEmbed resolves a pasted link
+  without sign-in only to a track title and a 300-px cover — no artist (§4.3).
+- **Spotify's terms conflict with a Soulseek client** (quotes in §5): no Spotify Content in an app that "facilitates
+  … the illegal or unauthorized use or sharing of audio"; no product "integrated with streams or content from another
+  service"; no storing Spotify Content "indefinitely" and no "permanent copies of Spotify Content" — which is what
+  **D29's Spotify tags and cover in the MP3s** do; logo and link-back wherever Spotify data shows. The realistic
+  consequence is losing the developer app or API access, not a lawsuit. D29 stands; MQ1 asks the maintainer to
+  confirm the risk for personal builds, with "Deezer first" tags as the alternative.
+- **Keyless default = Deezer, enriched by MusicBrainz** (§4.4, §9, §10): Deezer search hits carry the ISRC and a
+  30-s 128 kbps MP3 clip (signed URL, ~15 min; never store the audio); albums carry label, UPC and 1000-px covers. In a
+  4-track club sample Deezer found 3, but DJ-mix "(Mixed)" segments and many versions crowd the results;
+  **MusicBrainz knew only 1 of 4 ISRCs**, so it enriches (catalogue numbers, store links) rather than tags. iTunes is
+  the fallback clip (AAC ~256 kbps, promo-only terms).
+- **Listen in full** (§6): deep links first; then the **Spotify desktop app via AppleScript** (dictionary read from
+  the installed app: `play track`, read/write `player position`, `player state`; one macOS Automation prompt; Free
+  accounts expected to work, unverified); Connect playback needs a sign-in and Premium; embedded players (YouTube
+  IFrame, Spotify Web Playback SDK) only in a **WKWebView**, and only as P2 experiments: QtWebEngine has no Widevine,
+  YouTube requires a visible ≥ 200-px player with a proper Referer, and Google blocks sign-in (so no Premium) in
+  embedded views. None of these gives Selecta the audio, so no waveform.
+- **yt-dlp previews (D26)** (§12): discover the user's binary (explicit Homebrew paths), check its date version and
+  Deno; search with `ytsearch10:` + `--flat-playlist -J` (entries carry duration and channel; flat YouTube Music
+  search entries do not); pick ±3 s, preferring "Artist - Topic" channels; fetch `bestaudio[ext=m4a]` into the
+  preview cache with `--no-part --fixup never` and fixed safety flags (`--ignore-config`, no cookies, no plugins);
+  don't pass `--max-downloads` (success then exits 101); pause 60 min on rate-limit or bot-check texts; test with a
+  stub. **The installed yt-dlp here is 2025.07.21 without Deno — expect failures until `brew upgrade yt-dlp`.**
+- **No C++ Spotify library fits** (§7); write small Qt clients (PKCE via `QOAuth2AuthorizationCodeFlow`, Qt 6.8+).
+  **spotDL's matching** (§8: ISRC first, RapidFuzz on slugs, `100·exp(−0.1·Δs)` duration score, hard thresholds)
+  transfers with version handling inverted for DJs. **Matching** (§14.5): identifiers before text, but an ISRC is not
+  a release; reject DJ-mix segments and junk; the release's duration drives the ±3 s Soulseek ranking (D23).
 
 ## 2. Key findings
 
@@ -78,6 +82,16 @@
 | K14 | Beatport API v4 is partner-only; Traxsource has no API; Bandcamp's API serves labels/merch partners only and its policy forbids scraping. | Medium–high | Beatport discussion, Bandcamp developer page and policy |
 | K15 | Beatport site previews are 2 minutes from the middle of the track. | Medium (third-party, consistent) | Proton Radio, Label Engine; Beatport support (length only) |
 | K16 | One ISRC maps to many releases (and a recording can carry several ISRCs); an ISRC lookup does not pick the original release. | High (observed on one track; general pattern known) | MusicBrainz + Deezer requests |
+| K17 | spotDL hard-codes a client ID and secret (`SPOTIFY_OPTIONS`, spread into `DEFAULT_CONFIG`); shared use produced 24-hour "rate/request limit" lockouts; since v4.5.0 the default backend is the unofficial SpotipyFree. | High | Source @ `cd4a420`; release notes; issues #2585/#2596 |
+| K18 | PKCE needs no secret; access tokens last 1 h; refresh tokens 6 months and may not rotate; redirect must be HTTPS, a loopback IP literal (any port) or a custom scheme — not `localhost`. | High | Spotify PKCE, refreshing-tokens, redirect-URI pages; 2025-02-12 post |
+| K19 | Spotify oEmbed (no auth) returns only the title and a 300-px thumbnail for a track — no artist. | High (one request + docs) | oEmbed |
+| K20 | Club-track sample: Deezer found 3 of 4 (ISRC + preview on every hit, label on every album checked, BPM 2 of 3); MusicBrainz knew 1 of 4 ISRCs. | Medium (n = 4) | Manual requests 2026-10-20 |
+| K21 | Spotify's macOS app still ships an AppleScript dictionary (`play track`, read/write `player position`, `player state`, current-track fields). | High (read from 1.3.0.277) | `Spotify.sdef` |
+| K22 | Spotify embeds play full tracks only with encrypted media and a logged-in session; otherwise < 30 s. The Web Playback SDK requires Premium. | High (docs) / medium (login detail) | Embeds troubleshooting; SDK page |
+| K23 | QtWebEngine ships no Widevine; WKWebView has FairPlay. YouTube embeds need a visible ≥ 200-px player and a Referer (error 153 since 2025-07-09); official search is capped at 100 `search.list` calls/day/project. | High | Qt docs; YouTube RMF, quota page |
+| K24 | yt-dlp flat `ytsearch` entries carry `duration` and `channel`; flat YouTube Music search entries carry only `id`/`title`. | High (source) | yt-dlp `_tab.py` @ `8973412` |
+| K25 | yt-dlp: `--fixup never` avoids a post-download rewrite of DASH m4a; `--max-downloads 1` turns success into exit 101; YouTube rate limits are reported as "rate-limited by YouTube for up to an hour". | High (source) | `YoutubeDL.py`, `_video.py` |
+| K26 | The maintainer's installed yt-dlp is 2025.07.21 without Deno; Homebrew's current yt-dlp (2026.8.19) depends on Deno. | High | `yt-dlp --version`; `brew info` |
 
 ## 3. Spotify Web API (state on 2026-10-19)
 
@@ -922,7 +936,7 @@ YouTube's Terms of Service (effective 2023-12-15) say users may not "access, rep
 Service or any Content except: (a) as expressly authorized by the Service; or (b) with prior written permission from
 YouTube", nor "access the Service using any automated means (such as robots, botnets or scrapers)", nor "circumvent …
 features that (a) prevent or restrict the copying or other use of Content". D26 runs against those terms; the
-maintainer accepted that for his personal tool ("Selecta is not breaking any term, it simply calls yt-dlp that is
+maintainer accepted that for a personal tool ("Selecta is not breaking any term, it simply calls yt-dlp that is
 already on my machine"). With no account involved, the practical exposure is IP-level throttling and bot checks,
 which would also hit the maintainer's normal YouTube use from the same address — hence on-demand only, one process at a
 time, and the pauses above. (The YouTube API Services policies of §6.3 govern the IFrame player and Data API, not
