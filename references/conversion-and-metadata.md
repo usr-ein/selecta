@@ -15,7 +15,7 @@
   from Selecta's own metadata model**. Never let FFmpeg copy metadata: it turns BPM, key, ISRC, label and track totals
   into `TXXX` frames and ignores folder artwork (H, `libavformat/id3v2enc.c`).
 - **Default filing format (CONV-2):** MP3, LAME 3.100, CBR 320 kbps, joint stereo, 44.1 kHz (48 kHz sources stay
-  48 kHz), genuine LAME "Info" tag, **ID3v2.3, UTF-16 text**, one APIC front cover as baseline JPEG ≤ 800 px with a
+  48 kHz), genuine LAME "Info" tag, **ID3v2.3** (the brief's "IDFv3"), **UTF-16 text**, one APIC front cover as baseline JPEG ≤ 800 px with a
   Latin-1 description, no ID3v1, no APEv2.
 - **Use LAME's own header, not FFmpeg's:** FFmpeg's MP3 muxer writes a `Lavf` Xing/Info frame that Traktor decodes as
   26 ms of audio while rekordbox skips it — the documented "26 ms cue shift" between DJ apps (H code / M effect).
