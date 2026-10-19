@@ -244,6 +244,13 @@ sections (Search, Wishlists ⌘2, Transfers, Chat, Browse, Friends, Statistics, 
 slots) — `site/src/content/docs/guide/searching.md`. Closest *native macOS* prior art; MIT, so fragments may be ported
 with notice. Also: Soulseek-Arpeggio (SwiftUI, MIT, 2026-10), several iOS clients.
 
+**Lua (inside a media player):** **PowerVLC** (`Olsro/powervlc`, VLC fork, GPL-2.0-or-later, ~86★) ships
+`share/lua/extensions/soulseek.lua`, a "lightweight, download-only Soulseek client" that streams the file "through a
+bounded loopback TCP buffer so VLC can start decoding before the download completes" — **prior art for progressive
+preview** (PREV-1). It identifies as major 177 / minor 77 and has sensible input bounds (16 MiB max frame, 2 MiB
+compressed search reply, ≤ 3000 files and ≤ 300 users per search, 12 s search window). It "never advertises or uploads
+local files" — i.e. a pure leecher, the opposite of Selecta's sharing stance.
+
 **Go:** bh90210/soul (Unlicense, client library incl. some distributed handling, last push 2025-04), goose (no licence,
 2021 stub), spotseek (no licence), oto (AGPL-3.0 TUI), waves (GPL-3.0 terminal player with Soulseek integration).
 **JavaScript/TypeScript:** slsk-client (MIT, Node, search/download, v2.0.2 2026-09; used by soulseek-cli), soulseek-ts
@@ -419,7 +426,19 @@ No official test server exists (nothing found on slsknet.org or in any client's 
 its own mock.
 
 ### 5.3 Wireshark dissectors
-TODO
+
+- **Built-in `packet-slsk.c`** (Wireshark, GPL-2.0-or-later; written 2003 by Christian Wagner, Univ. Karlsruhe;
+  ~2.4k lines; maintenance commits through 2026-07 — URLs now point to Nicotine+'s protocol doc). Registers on TCP ports
+  **2234, 2240, 5534** by default (preference `tcp.port` range — add 2242 and your test peers' ports, or use *Decode
+  As*); desegments messages; can inflate zlib payloads (`slsk.decompress` preference). It knows ~60 message codes with
+  dated names (102 = "Random Parent Addresses", 104 = "Type 104", no ExcludedSearchPhrases 160) and **guesses message
+  layouts heuristically** (`check_slsk_format`) because server and peer codes overlap. Good enough to eyeball local
+  test-network captures; not authoritative. (Source: `wireshark/wireshark` master `epan/dissectors/packet-slsk.c`, via
+  GitHub API; commits `f1ee34b4ad` 2026-07-05, `4b1fd41f01` 2026-01-18.)
+- No maintained Lua dissector found on GitHub.
+- Recommendation: rather than invest in Wireshark, give `selecta-cli` a **`decode` command** that turns a pcap or a
+  raw-socket log from the local test network into a message-by-message log using Selecta's own codec. The same captures
+  become golden fixtures for codec tests and fuzz seeds (PLAN M2). Live-network captures are for the maintainer only.
 
 ## 6. Write our own protocol layer vs reuse/port
 
