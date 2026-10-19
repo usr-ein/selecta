@@ -1139,7 +1139,7 @@ Design (confirms and refines the brief):
    - **no wildcards** to work around spelling: `*yksopp` is also the filter-evasion pattern the etiquette note forbids
      (its §7.3); if a word contains an excluded phrase, warn instead of searching.
 3. **"Search wider"**: one explicit click = one budgeted search. The etiquette note forbids fanning one query out into
-   several searches automatically (its "never" rule 7). Ladder: (1) **spelling variant** — words with diacritics in
+   several searches automatically (its §9.2 "Never do this", rule 7). Ladder: (1) **spelling variant** — words with diacritics in
    their folded form (`royksopp`), a multi-word artist in its joined form (`okumadrift`); a different spelling, not a
    wildcard; (2) **fewer words** — drop the least reliable words (symbols, and the longest word, the likeliest to be
    misspelled in files), typically leaving the title words only; (3) **artist only**, for short or generic titles,
@@ -1362,6 +1362,6 @@ All accessed 2026-10-19. Code read from shallow clones under `local/research-clo
 | J. Pollock, A. Zamora, "Automatic spelling correction in scientific and scholarly text", CACM 27(4), 1984, https://dl.acm.org/doi/pdf/10.1145/358027.358048; JASIS 34(1), 1983 | First-letter error 7.8 %, single-error share, omissions most common |
 | rapidfuzz-cpp `rapidfuzz/fuzz_impl.hpp` (WRatio, partial_ratio), `rapidfuzz/distance/OSA_impl.hpp`, `JaroWinkler.hpp`, `Levenshtein.hpp` (same commit as above) | Scorer semantics, bit-parallel algorithms, parameters |
 | Nicotine+ `pynicotine/utils.py` (`PUNCTUATION`), `pynicotine/search.py` (`_create_search_result_list`) (same commit as above) | Responder word splitting; complete word required |
-| Selecta `references/soulseek-protocol.md` §10, `references/network-etiquette-and-safe-development.md` §7.3 and "never" list | Search semantics; no wildcard evasion; no automatic fan-out |
+| Selecta `references/soulseek-protocol.md` §10, `references/network-etiquette-and-safe-development.md` §7.3 and §9.2 | Search semantics; no wildcard evasion; no automatic fan-out |
 | Own experiment (2026-10-19): Python prototype over 80 000 random lowercase ASCII words from macOS `/usr/share/dict/words` (web2), seed 42; budgets of §17.3; 3 000 queries with one random insertion/deletion/substitution/transposition (two edits for half of the ≥ 9-char words); symmetric-delete index (prefix 7) verified with OSA; BK-tree on Levenshtein (150 queries per radius); padded trigram index with count filter "grams(q) − 3k" (1 000 queries) | Numbers in §17.3 and §17.6 (a natural-language proxy, not a music vocabulary) |
 | Selecta `docs/PRD.md` v0.2+ (SRCH-17/18, BATCH-5, META-*, D23), `docs/PLAN.md` v0.2 | Requirements and module boundaries |
