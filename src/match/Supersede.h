@@ -9,9 +9,13 @@
 
 namespace selecta::match {
 
-// Supersede guards (note §15, PRD DL-7/DL-8, ADR-008).
+// Supersede guards (note §15, PRD DL-7/DL-8, ADR-008). The circuit breaker catches runaway batches (a matcher bug, a
+// VA album matching everything): it trips when more than 10 singles would go in one album event, or when at least 4
+// would go and that is more than 30 % of the Inbox singles. One to three singles never trip it: an album replacing
+// a few singles is the normal case, and they only go to the Trash (head implementer's decision, 2026-10-20).
 inline constexpr int kCircuitBreakerMaxTrash = 10;      // more trashes than this in one album event: ask first
-inline constexpr double kCircuitBreakerMaxShare = 0.30; // or more than this share of the Inbox singles
+inline constexpr int kCircuitBreakerShareFloor = 4;     // the share rule applies from this many trashes
+inline constexpr double kCircuitBreakerMaxShare = 0.30; // share of the Inbox singles
 
 enum class AlbumDownloadState : quint8 {
     InProgress,
@@ -86,7 +90,7 @@ struct SupersedeDecision
 {
     QList<SupersedePair> pairs;     // one per single that matched an album track (best album track), input order
     int trashCount = 0;             // pairs whose action is Trash
-    bool needsConfirmation = false; // circuit breaker: trashCount > 10 or > 30 % of the Inbox singles (T42)
+    bool needsConfirmation = false; // circuit breaker: trashCount > 10, or ≥ 4 and > 30 % of the Inbox singles (T42)
     QString confirmationReason;     // why, for the confirmation sheet
 };
 

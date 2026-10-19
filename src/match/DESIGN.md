@@ -73,11 +73,14 @@ Types ── Normalizer ── VersionClassifier ── Lexicon (all word lists,
 9. **Mojibake repair (P1) is implemented**: cheap, strict (valid UTF-8 required), idempotent; T47 is exact.
 10. **History is exact only** ((size, basename), (peer, path)); no fuzzy history matches (T20/T21).
 11. **"Only this release" with an unknown length** keeps a file when the name-only fit is ≥ 0.8 and marks it
-    `lengthUnknown` (SRCH-18 hides files whose length *doesn't fit*; unknown isn't a misfit). Open question Q-M1.
+    `lengthUnknown` (SRCH-18 hides files whose length *doesn't fit*; unknown isn't a misfit). Confirmed by the head
+    implementer (Q-M1, 2026-10-20).
 12. **Excluded phrases block, never rewrite**: a query containing one is `Blocked` (T84; etiquette §7.3 forbids
     evasion). Words are never wildcarded.
-13. **Supersede circuit breaker** is literal: > 10 trashes or > 30 % of the Inbox singles asks first, even for a small
-    Inbox (1 of 2 singles). Open question Q-M2.
+13. **Supersede circuit breaker with a floor** — decided by the head implementer (Q-M2, 2026-10-20): it trips when
+    more than 10 singles would go, or when at least 4 would go and that is more than 30 % of the Inbox singles.
+    Supersedes of 1–3 files never trip it (the normal case; they only go to the Trash). Tested: 3 of 5 (no trip),
+    4 of 10 (trips), 11 of 100 (trips).
 14. **Out of scope here:** T52 (scanner read-only open: `library/`), the trash/Undo/notification side of T36–T42
     (core); the decision side of T36–T42 is tested. Aliases (LIB-6) are not built: the alias table belongs to storage
     and can be applied when building `MatchIndexInput`.
@@ -115,6 +118,8 @@ Benchmark numbers: pending (X3).
 
 ## Progress
 
-- Done: public headers and this design (first commit).
+- Done: public headers and this design (first commit, approved by the head implementer).
 - Next: X1 — lexicon, Normalizer, VersionClassifier, their tests.
-- Open questions: Q-M1 (unknown length and "Only this release"), Q-M2 (circuit breaker on a small Inbox).
+- Open questions: none (Q-M1 and Q-M2 answered, decisions 11 and 13).
+- Working rules from the head implementer: `tools/lint.sh src/match tests/match` before each commit; a note to
+  `main` at each milestone; `Matcher` and everything else safe to call concurrently on one shared index.
