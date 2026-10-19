@@ -141,6 +141,16 @@ Selecta should copy this structure (per-message caps, "solicited-only" for big r
 values; the parser must never pre-allocate from a length or count field without checking it against the bytes
 remaining.
 
+Other implementations, for contrast:
+- **Soulseek.NET has no upper bound** on inbound message length (it reads `length − 4` bytes for any length; only
+  negative lengths and strings longer than the payload are rejected) — `src/Network/MessageConnection.cs:228-242`,
+  `src/Network/ListenerHandler.cs:70-73` @ `c07c187`. Do not copy.
+- **Soulfind disconnects a client that sends a frame larger than 8 192 bytes** (`src/defines.d:28`,
+  `src/server/conns.d:277-284` @ `5a256f5`). Every message Selecta sends to the server is far smaller, but keep
+  outbound server messages (PMs, long queries) bounded; the official server's limit is unknown.
+- Soulseek NS sends file sizes > 2 GB as a negative 32-bit value sign-extended to 64 bits: if the `u64` has all
+  high 4 bytes `0xFF`, use the low 4 bytes as `uint32` (Soulseek.NET `src/Messaging/MessageReaderExtensions.cs:43-79`).
+
 ## 3. Connections
 
 ### 3.1 Connection types and the init handshake
@@ -170,14 +180,29 @@ attempt fails; NS retries the indirect request every 20 s up to three times [N+d
 
 Rules that follow:
 
-- A `GetPeerAddress` reply with **port 0 / IP 0** means "user offline/unknown" (TODO verify in code).
+- A `GetPeerAddress` reply with **IP 0.0.0.0 / port 0** means "user not connected" (aioslsk
+  `docs/source/SOULSEEK.rst:75-78, 915-923`; Soulfind `msghandler.d:72-88`; Soulseek.NET throws
+  `UserOfflineException`, `src/SoulseekClient.cs:4240-4243`).
+- A `ConnectToPeer` for an offline user is answered at once with `CantConnectToPeer(token)` by the server
+  (aioslsk `SOULSEEK.rst:91-105`; Soulfind `msghandler.d:198-216`).
+- **Race, don't sequence.** Soulseek.NET runs the direct and the indirect attempt in parallel for `P`, `F` and `D`
+  connections; the first to complete wins and the other is cancelled (`src/Network/PeerConnectionManager.cs:453-491,
+  609-642`, `src/Network/DistributedConnectionManager.cs:869-902`). aioslsk's docs call this the "race method"
+  and note the legacy fallback order is slow (`SOULSEEK.rst:50-55`).
 - Whoever has data to send opens the connection; if a usable `P` connection to that user already exists (either
-  direction), reuse it.
+  direction), reuse it. If both a direct and an indirect socket end up established, keep one and close the other
+  (Soulseek.NET: an inbound direct `PeerInit P` replaces the cached connection, `PeerConnectionManager.cs:106-172`).
 - Incoming `ConnectToPeer` from the server = a *request to connect out*; answer with `PierceFireWall` on a new
-  outbound socket, or `CantConnectToPeer` if it fails.
-- Nicotine+ timers: `CONNECTION_INIT_TIMEOUT = 2` s, `INDIRECT_REQUEST_TIMEOUT = 20` s, idle peer connection closed
-  after `CONNECTION_MAX_IDLE = 60` s (10 s for "ghost" connections), cached user address TTL 30 min ([N+]
-  `slskproto.py:340-344`). TODO: confirm exact semantics of each timer.
+  outbound socket, or `CantConnectToPeer(token, user)` if it fails. (Soulseek.NET never sends `CantConnectToPeer`,
+  `src/Messaging/Messages/Server/CannotConnect.cs:88-102` — another reason not to rely on receiving it.)
+- For `F` solicitations, only dial back if we actually expect a transfer from that user (Soulseek.NET handles
+  `ConnectToPeer(F)` only for a known download, `ServerMessageHandler.cs:374-399`); for `D`, only if we accept
+  children.
+- Timers in the wild: Nicotine+ `CONNECTION_INIT_TIMEOUT = 2` s, `INDIRECT_REQUEST_TIMEOUT = 20` s, idle peer
+  connection closed after `CONNECTION_MAX_IDLE = 60` s (10 s for "ghost" connections), cached user address TTL
+  30 min ([N+] `slskproto.py:340-344`). Soulseek.NET: connect timeout 10 s, peer inactivity timeout **15 s** (idle
+  `P` connections die after 15 s), request/response wait 5 s (`src/Options/ConnectionOptions.cs:47-54`,
+  `src/Options/SoulseekClientOptions.cs:112-145`).
 
 ### 3.3 Tokens
 
@@ -191,10 +216,14 @@ can echo any token. Validate against (username, token, expected state).
 - Default listen port **2234** [N+doc §2]; reported with `SetWaitPort` after login.
 - Reachability decides connectivity: reachable↔anyone works; unreachable↔unreachable fails. UPnP/NAT-PMP (NET-3)
   and a port check therefore matter for result counts and upload contribution.
-- **Obfuscation** (type 1, "rotated") is a SoulseekQt-only scheme for a second, obfuscated listening port, advertised
-  as optional fields of `SetWaitPort` and returned in `GetPeerAddress`/`ConnectToPeer`. Nicotine+ deliberately does
-  not support it (no evidence of ISP throttling today; one forwarded port is simpler) [N+doc §2]. Selecta: do not
-  implement; parse and ignore the fields. TODO: check Soulseek.NET/aioslsk for an implementation.
+- **Obfuscation** (type 1, "rotated") is a SoulseekQt scheme for a second, obfuscated listening port (usually
+  port + 1), advertised as optional fields of `SetWaitPort` and returned in `GetPeerAddress`/`ConnectToPeer`. Only
+  `P` traffic and the init messages are obfuscated: each message is prefixed by a random 4-byte key; every 4-byte
+  block is XORed with the key rotated left by 1 bit (aioslsk: "circular shift of 31 bits to the right"), the
+  rotated key feeding the next block (aioslsk `docs/source/SOULSEEK.rst:33-43, 148-258`, with a worked example).
+  Nicotine+ deliberately does not support it (no evidence of ISP throttling today; one forwarded port is simpler)
+  [N+doc §2]; Soulseek.NET does not either (comment at `src/SoulseekClient.cs:4701-4702`); Soulfind only stores and
+  relays the fields. Selecta: do not implement; parse and ignore the fields; send `SetWaitPort(port)` only.
 
 ## 4. Server messages
 
@@ -209,7 +238,7 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 1 | Login | → ← | → `str user, str pass, u32 major, str md5hex(user+pass), u32 minor`; ← `bool ok`; ok: `str greet(MOTD), ip own_ip, str md5hex(pass), bool supporter`; fail: `str reason` [+ `str detail` if `INVALIDUSERNAME`] | First message. See §4.2 | active | P0 |
 | 2 | SetWaitPort | → | `u32 port` [opt: `u32 obfuscation_type, u32 obfuscated_port`] | Our listening port | active | P0 |
 | 3 | GetPeerAddress | → ← | → `str user`; ← `str user, ip, u32 port, u32 obfuscation_type, u16 obfuscated_port` | Address lookup | active | P0 |
-| 5 | WatchUser | → ← | → `str user`; ← `str user, bool exists`; exists: `u32 status, u32 avgspeed, u32 uploadnum, u32 unknown, u32 files, u32 dirs`; if status away/online: `str countrycode` | Subscribe to status changes (`GetUserStatus` pushes). Stats are a snapshot, not updated later. `uploadnum` rolls over; incremented by `SendUploadSpeed` | active | P0 |
+| 5 | WatchUser | → ← | → `str user`; ← `str user, bool exists`; exists: `u32 status, u32 avgspeed, u32 uploadnum, u32 unknown, u32 files, u32 dirs`; if status away/online: `str countrycode` | Subscribe to status changes (`GetUserStatus` pushes). Stats are a snapshot, not updated later. `uploadnum` rolls over; incremented by `SendUploadSpeed`. Soulseek.NET/aioslsk read `uploadnum`+`unknown` as one `u64` — same bytes. Watching yourself is implicit (Soulfind) and aioslsk notes no `GetUserStatus` for self ever arrives | active | P0 |
 | 6 | UnwatchUser | → | `str user` | | active | P0 |
 | 7 | GetUserStatus | → ← | → `str user`; ← `str user, u32 status, bool privileged` | status 0 offline, 1 away, 2 online | active | P0 |
 | 11, 12 | IgnoreUser, UnignoreUser | | `str user` | no longer functional | obsolete | drop |
@@ -217,18 +246,18 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 14 | JoinRoom | → ← | → `str room, u32 private`; ← room + users + statuses + stats + slotsfull + countries [+ owner, operators] | chat rooms | active | drop |
 | 15–17 | LeaveRoom, UserJoinedRoom, UserLeftRoom | | | chat rooms | active | drop |
 | 18 | ConnectToPeer | → ← | → `u32 token, str user, str type`; ← `str user, str type, ip, u32 port, u32 token, bool privileged, u32 obfuscation_type, u32 obfuscated_port` | Indirect connection request / solicitation (§3.2) | active | P0 |
-| 22 | MessageUser | → ← | → `str user, str msg`; ← `u32 id, u32 timestamp, str user, str msg, bool new` | Private message. `new=false` = re-delivery of an offline/unacked message | active | P0 receive+ack, P1 UI |
+| 22 | MessageUser | → ← | → `str user, str msg`; ← `u32 id, u32 timestamp, str user, str msg, bool new` | Private message. `new=false` = re-delivery of an offline/unacked message. Messages from user **`server`** are server notices (e.g. "connection restricted", errors), and Soulfind's admin commands are PMs to/from `server` | active | P0 receive+ack, P1 UI |
 | 23 | MessageAcked | → | `u32 id` | **Must ack** or the server keeps re-sending | active | P0 |
 | 25 | FileSearchRoom | → | `u32 token, u32 room_id, str query` | superseded by 120 | obsolete | drop |
 | 26 | FileSearch | → ← | → `u32 token, str query`; ← `str user, u32 token, str query` | Send: global search. Receive: a `UserSearch`/`RoomSearch` aimed at us, delivered outside the distributed network | active | P0 |
 | 28 | SetStatus | → | `i32 status` (1 away, 2 online) | Server echoes `GetUserStatus` only when going away | active | P0 |
-| 32 | ServerPing | → | empty | Keep-alive, "at most once per minute"; server no longer replies; Nicotine+ uses TCP keepalive instead | active | P0 (or TCP keepalive) |
+| 32 | ServerPing | → | empty | Keep-alive, "at most once per minute"; server no longer replies (Soulfind doesn't either); Nicotine+ uses TCP keepalive instead; aioslsk pings every 300 s | active | P0 (every 5 min + TCP keepalive) |
 | 33 | SendConnectToken | → ← | `str user, u32 token` | forwarded by server, used by nobody; re-adding it would isolate the client | obsolete | drop |
 | 34 | SendDownloadSpeed | → | `str user, u32 speed` | superseded by 121 | obsolete | drop |
 | 35 | SharedFoldersFiles | → | `u32 dirs, u32 files` | Our share counts (shown to others) | active | P0 |
 | 36 | GetUserStats | → ← | → `str user`; ← `str user, u32 avgspeed, u32 uploadnum, u32 unknown, u32 files, u32 dirs` | On request, or pushed for room co-members | active | P0 parse, P1 request |
 | 40 | UploadSlotsFull | → ← | `u32 slotsfull` | | obsolete | drop |
-| 41 | Relogged | ← | empty | Someone logged in with our name; server disconnects us. **No auto-reconnect** (NET-4) | active | P0 |
+| 41 | Relogged | ← | empty | Someone logged in with our name; server disconnects us. Soulfind also sends it before disconnecting a deleted account, "to stop the client re-registering". **No auto-reconnect** (NET-4) | active | P0 |
 | 42 | UserSearch | → | `str user, u32 token, str query` | Search one user's shares; target receives code 26 | active | P1 |
 | 50 | SimilarRecommendations | | | server sends empty list | obsolete | drop |
 | 51, 52 | AddThingILike, RemoveThingILike | → | `str item` | interests | active | drop |
@@ -248,17 +277,17 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 83 | ParentMinSpeed | ← | `u32 speed` | Min upload speed to be a parent | active | P0 parse |
 | 84 | ParentSpeedRatio | ← | `u32 ratio` | max children = upload speed ÷ ratio | active | P0 parse |
 | 86–88, 90, 91 | ParentInactivityTimeout, SearchInactivityTimeout, MinParentsInCache, DistribPingInterval, AddToPrivileged | ← | `u32` / `str` | no longer sent | obsolete | drop |
-| 92 | CheckPrivileges | → ← | → empty; ← `u32 seconds_left` | Our remaining privileges | active | P0 (cheap) |
+| 92 | CheckPrivileges | → ← | → empty; ← `u32 seconds_left` | Our remaining privileges (seconds per N+doc, aioslsk, Soulfind; Soulseek.NET's doc comment says "days" — treat as seconds). Soulfind also pushes it when privileges change | active | P0 (cheap) |
 | 93 | EmbeddedMessage | ← | `u8 distrib_code` + raw distributed message (rest of payload, no length) | Only `DistribSearch`. Receiving it means **we are a branch root**: forward the *unpacked* distributed message to children | active | P0 |
 | 100 | AcceptChildren | → | `bool accept` | Whether we take distributed children | active | P0 |
-| 102 | PossibleParents | ← | `[str user, ip, u32 port]` (≤ 10) | Sent periodically while we report `HaveNoParent(true)` | active | P0 |
+| 102 | PossibleParents | ← | `[str user, ip, u32 port]` (≤ 10) | Sent every ~60 s while we report `HaveNoParent(true)` (aioslsk `SOULSEEK.rst:290-295`) | active | P0 |
 | 103 | WishlistSearch | → | `u32 token, str query` | One wishlist query per interval | active | P1 |
-| 104 | WishlistInterval | ← | `u32 seconds` | "Almost always 12 minutes, or 2 minutes for privileged users" | active | P0 parse, P1 use |
+| 104 | WishlistInterval | ← | `u32 seconds` | "Almost always 12 minutes, or 2 minutes for privileged users"; Soulfind sends 720 / 120 and re-sends it when privileges change | active | P0 parse, P1 use |
 | 110–112 | SimilarUsers, ItemRecommendations, ItemSimilarUsers | | | interests | active | drop |
 | 113–116 | RoomTickers, RoomTickerAdded/Removed, SetRoomTicker | | | chat rooms | active | drop |
 | 117, 118 | AddThingIHate, RemoveThingIHate | → | `str item` | interests | active | drop |
 | 120 | RoomSearch | → | `str room, u32 token, str query` | Search a room's members | active | drop (no rooms) |
-| 121 | SendUploadSpeed | → | `u32 bytes_per_s` | After a finished upload; feeds our `avgspeed` (which decides parent eligibility and child count) and `uploadnum` | active | P0 |
+| 121 | SendUploadSpeed | → | `u32 bytes_per_s` | After each finished upload: speed of *that* transfer. Server keeps a running mean (aioslsk docs: `avg = (avg·n + speed)/(n+1)`; Soulfind: `0.8·old + 0.2·new`) that becomes our `avgspeed` (shown to others; decides parent eligibility and child count) and bumps `uploadnum` | active | P0 |
 | 122 | UserPrivileged | → ← | `str user` → `str user, bool` | use 5/7 | deprecated | drop |
 | 123 | GivePrivileges | → | `str user, u32 days` | | active | drop |
 | 124, 125 | NotifyPrivileges, AckNotifyPrivileges | | | | deprecated | drop |
@@ -271,7 +300,7 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 149 | MessageUsers | → | `[str user], str msg` | broadcast PM | active | drop |
 | 150–152 | JoinGlobalRoom, LeaveGlobalRoom, GlobalRoomMessage | | | public room feed | active | drop |
 | 153 | RelatedSearch | | | server sends empty list | obsolete | drop |
-| 160 | ExcludedSearchPhrases | ← | `[str phrase]` | **Paths containing a phrase must not be returned in search results** (NET-6, SHARE-2) | active | P0 |
+| 160 | ExcludedSearchPhrases | ← | `[str phrase]` | **Paths containing a phrase must not be returned in search results** (NET-6, SHARE-2). aioslsk: case-insensitive substring match on the path, "highly recommended". Sent after login; Soulfind re-broadcasts when the list changes | active | P0 |
 | 1001 | CantConnectToPeer | → ← | → `u32 token, str user`; ← `u32 token` | Indirect connection failed (§3.2) | active | P0 |
 | 1003 | CantCreateRoom | ← | `str room` | | active | drop |
 
