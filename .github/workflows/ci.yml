@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Static vcpkg build, tests and the lint pipeline on macOS. Never touches the live Soulseek network.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: brew install ninja llvm clazy cppcheck clang-format
+
+      - name: Restore the vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: vcpkg at the manifest baseline
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout "$(jq -r '."builtin-baseline"' vcpkg.json)"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure, build, test
+        run: cmake --workflow --preset dev
+
+      - name: Lint
+        run: tools/lint.sh
+
+      - name: Static linking check
+        run: |
+          bad=$(otool -L build/dev/src/app/Selecta.app/Contents/MacOS/Selecta | tail -n +2 | awk '{print $1}' \
+                | grep -v -E '^/System/Library/|^/usr/lib/' || true)
+          if [ -n "$bad" ]; then echo "non-system dynamic libraries: $bad"; exit 1; fi

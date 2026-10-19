@@ -19,6 +19,81 @@ constexpr std::array kMigrations{
             ended_at   INTEGER           -- NULL while running, or when Selecta didn't quit cleanly
         ) STRICT;
     )sql"},
+    Migration{2, R"sql(
+        -- The Inbox (PRD DL-3, DL-4): downloads converted and tagged on arrival (D29), waiting to be filed.
+        CREATE TABLE inbox_items (
+            id            INTEGER PRIMARY KEY,
+            kind          TEXT NOT NULL CHECK (kind IN ('single', 'album')),
+            relative_path TEXT NOT NULL UNIQUE, -- the file (single) or folder (album), relative to the Inbox root
+            state         TEXT NOT NULL CHECK (state IN ('processing', 'ready', 'failed')),
+            error         TEXT,
+            artist        TEXT NOT NULL DEFAULT '',
+            title         TEXT NOT NULL DEFAULT '', -- the track title, or the album title for albums
+            version       TEXT NOT NULL DEFAULT '',
+            album         TEXT NOT NULL DEFAULT '',
+            year          INTEGER,
+            track_count   INTEGER,
+            duration_ms   INTEGER NOT NULL DEFAULT 0,
+            format        TEXT NOT NULL DEFAULT '', -- as it is now, e.g. 'MP3'
+            bitrate       INTEGER,                  -- kbps, lossy formats
+            sample_rate   INTEGER,
+            bit_depth     INTEGER,
+            size_bytes    INTEGER NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
+            source_format TEXT NOT NULL DEFAULT '', -- as downloaded, e.g. 'FLAC 16/44.1'
+            tag_source    TEXT NOT NULL DEFAULT '', -- 'spotify', 'musicbrainz', 'deezer' or 'file'
+            release_json  TEXT,                     -- the matched release used for the tags
+            peer          TEXT NOT NULL DEFAULT '',
+            remote_path   BLOB,                     -- raw bytes, as the peer sent them
+            session       INTEGER REFERENCES sessions(id),
+            created_at    INTEGER NOT NULL          -- Unix time, ms
+        ) STRICT;
+
+        -- Every completed download (PRD DL-9) and where it is now.
+        CREATE TABLE history (
+            id           INTEGER PRIMARY KEY,
+            session      INTEGER REFERENCES sessions(id),
+            completed_at INTEGER NOT NULL,
+            kind         TEXT NOT NULL CHECK (kind IN ('single', 'album', 'preview')),
+            peer         TEXT NOT NULL,
+            remote_path  BLOB NOT NULL,
+            size_bytes   INTEGER NOT NULL CHECK (size_bytes >= 0),
+            quality      TEXT NOT NULL DEFAULT '',
+            artist       TEXT NOT NULL DEFAULT '',
+            title        TEXT NOT NULL DEFAULT '',
+            version      TEXT NOT NULL DEFAULT '',
+            inbox_item   INTEGER REFERENCES inbox_items(id) ON DELETE SET NULL,
+            whereabouts  TEXT NOT NULL DEFAULT 'inbox' CHECK (whereabouts IN ('inbox', 'filed', 'trashed', 'preview')),
+            filed_path   TEXT
+        ) STRICT;
+        CREATE INDEX history_by_session ON history(session, completed_at);
+
+        -- What Selecta took from each peer per local day, so the fairness caps survive restarts (FAIR-2).
+        CREATE TABLE peer_days (
+            peer  TEXT NOT NULL,
+            day   TEXT NOT NULL, -- ISO date
+            files INTEGER NOT NULL DEFAULT 0 CHECK (files >= 0),
+            bytes INTEGER NOT NULL DEFAULT 0 CHECK (bytes >= 0),
+            PRIMARY KEY (peer, day)
+        ) STRICT, WITHOUT ROWID;
+
+        -- Peers that denied us, and until when Selecta leaves them alone.
+        CREATE TABLE peer_backoffs (
+            peer     TEXT PRIMARY KEY,
+            until_at INTEGER NOT NULL, -- Unix time, ms
+            reason   TEXT NOT NULL
+        ) STRICT;
+
+        -- The network activity log (PRD SAFE-4): every governor decision and notable network event.
+        CREATE TABLE activity (
+            id          INTEGER PRIMARY KEY,
+            at          INTEGER NOT NULL,
+            operation   TEXT NOT NULL,
+            subject     TEXT NOT NULL DEFAULT '',
+            outcome     TEXT NOT NULL, -- 'allowed', or the refusal
+            explanation TEXT NOT NULL DEFAULT ''
+        ) STRICT;
+        CREATE INDEX activity_by_time ON activity(at);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

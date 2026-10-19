@@ -19,6 +19,7 @@
         "VCPKG_TARGET_TRIPLET": "arm64-osx-selecta",
         "VCPKG_HOST_TRIPLET": "arm64-osx-selecta",
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-ports",
         "CMAKE_OSX_DEPLOYMENT_TARGET": "14.4",
         "CMAKE_OSX_ARCHITECTURES": "arm64"
       }
