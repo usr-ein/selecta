@@ -404,7 +404,7 @@ spawning `osascript` per poll.
   fails with 403 "Player command failed: Premium required" (`PREMIUM_REQUIRED`, community reports). Scopes
   `user-modify-playback-state`, `user-read-playback-state`.
 - Needs a running Connect device (desktop app, phone, speaker). No device → an error (community reports a 404
-  `NO_ACTIVE_DEVICE`; the reference page lists only 204/401/403/429 — check in X3).
+  `NO_ACTIVE_DEVICE`; the reference page lists only 204/401/403/429 — check in X13).
 - Dev-mode limits apply (owner Premium, 5 users, per-account quota). Every position poll costs quota; when the target
   is the local desktop app, read the position through AppleScript instead.
 - "The order of execution is not guaranteed when you use this API with other Player API endpoints." Latency is a
@@ -987,11 +987,16 @@ flowchart LR
     TP --> CAA[CoverArt: CAA / Deezer]
     PS[PreviewService] --> CLIP[ClipPreview<br/>Deezer by ISRC → iTunes]
     PS --> PEER[PeerFilePreview<br/>Soulseek transfer]
-    PS --> EXT[External tool preview<br/>D26 — separate note]
+    PS --> YTP[YtDlpPreview<br/>user's yt-dlp, D26]
+    PL --> LIF[ListenInFull<br/>deep links, AppleScript, Connect]
+    LIF --> SP
     SP & DZ & MB & CAA & CLIP --> HC[MetaHttp: cache + governor ticket]
+    YTP --> PROC[QProcess runner<br/>one at a time, timeout]
   end
   HC --> GOV[governor]
+  PROC --> GOV
   HC --> DB[(SQLite meta cache)]
+  YTP --> PC[(preview cache)]
 ```
 
 ```cpp
@@ -1032,8 +1037,32 @@ public:
 class PreviewService : public QObject {
     Q_OBJECT
 public:
-    QFuture<PreviewHandle> clip(const ReleaseTrack &t);  // Deezer by ISRC → iTunes by text+duration; memory only
-    // peer-file and external-tool previews live in their own providers (PREV-1…12)
+    QFuture<PreviewHandle> clip(const ReleaseTrack &t);       // Deezer by ISRC → iTunes by text+duration; memory only
+    QFuture<PreviewHandle> fullTrack(const ReleaseTrack &t);  // D26: yt-dlp search (±3 s) + fetch into the preview cache
+    // peer-file previews live in their own provider (PREV-1…8); the source order follows PREV-12
+};
+
+class YtDlpRunner : public QObject {   // the only place that starts yt-dlp
+    Q_OBJECT
+public:
+    struct Install { QString path, version; QString denoPath; bool stale = false; };
+    std::optional<Install> discover() const;                            // §12.1
+    QFuture<QList<YtCandidate>> search(const QString &query, int n = 10); // §12.2, flat JSON
+    QFuture<QString> fetchAudio(const QString &videoId, const QDir &dir); // §12.4, returns the growing file's path
+signals:
+    void progress(qint64 downloaded, qint64 total);
+    void failed(YtFailure kind, const QString &stderrTail);             // §12.6
+};
+
+class ListenInFull : public QObject {  // §6: control official players, never receive audio
+    Q_OBJECT
+public:
+    void openInSpotify(const ReleaseTrack &t);                // deep link
+    QFuture<bool> playInSpotifyApp(const QString &trackUri, double startSeconds);  // AppleScript (macOS)
+    QFuture<bool> playOnConnectDevice(const QString &trackUri, int positionMs, const QString &deviceId); // Web API
+    void openInYouTubeMusic(const ReleaseTrack &t, const QString &videoId = {});
+signals:
+    void externalPosition(double seconds, bool playing);      // mirrored on a plain progress bar
 };
 }
 ```
@@ -1049,8 +1078,11 @@ bucket; all meta traffic stops with "Pause network activity" (SAFE-5).
 
 | Host | Documented limit | Ceiling | Default | Concurrency | Back-off |
 |---|---|---|---|---|---|
-| `api.spotify.com` | rolling 30 s, unpublished; quota per developer account | 2 req/s, burst 10 | 1 req/s, burst 5 | 2 | 429: `Retry-After` + jitter (default 5 s if absent); `QUOTA_EXCEEDED`: stop Spotify for 1 h, then one probe; 401: refresh once, then re-auth |
+| `api.spotify.com` | rolling 30 s, unpublished; quota per developer account | 2 req/s, burst 10 | 1 req/s, burst 5 | 2 | 429: honour `Retry-After` whatever its size (spotDL users saw 86,400 s, §4.1) + jitter, 5 s if absent; `QUOTA_EXCEEDED`: stop Spotify until the `Retry-After` time (1 h if none), then one probe; fall back to Deezer meanwhile; 401: refresh once, then re-auth |
 | `accounts.spotify.com` | — | 1 req/10 s | on demand | 1 | `invalid_grant` → drop tokens, ask to reconnect |
+| `open.spotify.com/oembed` | unpublished | 1 req/s | on paste only | 1 | 429/5xx → no retry; ask the user for artist/title |
+| yt-dlp process (YouTube) | none published; YouTube rate-limits sessions "for up to an hour" | 1 process at a time; ≥ 2 s between launches; 30 launches / 10 min | same | 1 | rate-limit or bot-check text → no yt-dlp for 60 min (§12.6) |
+| Spotify app via AppleScript (local) | — | 10 events/s | position 4 Hz while playing, state 1 Hz | 1 | Automation denied (−1743) → stop and show how to allow it |
 | `api.deezer.com` | 50 / 5 s per IP (2nd-hand) | 5 req/s | 2 req/s | 2 | error code 4 (quota) → pause 5 s, ×2 up to 5 min |
 | `cdnt-preview.dzcdn.net`, `audio-ssl.itunes.apple.com` | — | 2 req/s | 1 clip at a time | 1 | 403 on Deezer URL → re-resolve once (expired signature) |
 | `itunes.apple.com` | ~20 / min | 20 / min | 10 / min | 1 | 403/429 → pause 60 s, ×2 |
@@ -1075,6 +1107,10 @@ the downloads. Matching stays well ahead of Soulseek searches, which the Soulsee
 | iTunes search | SQLite | 24 h | Apple suggests caching search and lookup requests. |
 | MusicBrainz lookups / searches | SQLite | 30 days / 7 days | CC0; the data changes slowly; spares the 1/s budget. |
 | Cover art (CAA, Deezer) | disk artwork cache | 30 days, LRU 500 MB | Needed at arrival/tagging; small. |
+| oEmbed answers (title, thumbnail URL) | SQLite | 24 h | Spotify Content: temporary only. |
+| yt-dlp search candidates | memory / SQLite | 24 h | Avoids repeating a YouTube search for the same release. |
+| yt-dlp preview audio | preview cache (PREV-8: 2 GB LRU) | LRU; never moved to the Inbox | D20/D26: preview only. |
+| yt-dlp's own cache (`--cache-dir`) | Selecta caches folder | cleared with the preview cache | Fewer requests per preview (§12.5). |
 | Discogs | SQLite | ≤ 6 h | Terms: no display of content older than 6 h. |
 | "No match" results | SQLite | 24 h | Avoids re-querying unresolvable lines. |
 | Spotify/Deezer/iTunes 429/quota state | memory | until reset | — |
@@ -1096,7 +1132,7 @@ flowchart TD
   I --> J[Enrich by ISRC, lazily<br/>label, catno, artwork, store links]
   J --> K[Release card + confidence]
   K --> L[Rank Soulseek files against release<br/>length ±3 s first — library §9.1, §17.5]
-  K --> M[Clip: Deezer preview by ISRC → iTunes by text+duration]
+  K --> M[Preview: clip Deezer by ISRC → iTunes, or full track via yt-dlp ±3 s — D26]
   K --> N[Tag plan on arrival — §14.7]
 ```
 
@@ -1158,20 +1194,21 @@ Rules learned from spotDL and from the requests made for this note:
 
 ### 14.7 Tag plan on arrival (META-4, DL-3)
 
-Two policies; the default is the left column (R3). The mapping to frames follows `conversion-and-metadata.md`.
+Two policies. D29 ("Spotify first") applies when the user is signed in to Spotify; "Deezer first" applies without a
+sign-in, or by choice (MQ1). The mapping to frames follows `conversion-and-metadata.md`.
 
-| Field | Default policy "open data" (source order) | Opt-in policy "Spotify first" (D29 as worded) | Frame (ID3v2.3) |
+| Field | "Spotify first" (D29, signed in) | "Deezer first" (no sign-in, or chosen) | Frame (ID3v2.3) |
 |---|---|---|---|
-| Title, version | MusicBrainz → Deezer | Spotify → MusicBrainz → Deezer | `TIT2` (version in the title, Beatport style "Title (Extended Mix)") |
-| Artists, album artist | MusicBrainz → Deezer | Spotify → … | `TPE1` (`/`-separated in v2.3), `TPE2` |
-| Album, track/disc n/N, date | chosen release (MB → Deezer) | Spotify release → … | `TALB`, `TRCK`, `TPOS`, `TYER` (+`TDAT`) |
-| Label | MusicBrainz label-info → Deezer `label` | same (Spotify has none in dev mode) | `TPUB` (not `TENC` as spotDL does) |
+| Title, version | Spotify → Deezer | Deezer → MusicBrainz | `TIT2` (version in the title, Beatport style "Title (Extended Mix)"; Spotify's " - Extended Mix" rewritten as "(Extended Mix)") |
+| Artists, album artist | Spotify → Deezer | Deezer → MusicBrainz | `TPE1` (`/`-separated in v2.3), `TPE2` |
+| Album, track/disc n/N, date | Spotify release (§3.6) | Deezer release → MusicBrainz | `TALB`, `TRCK`, `TPOS`, `TYER` (+`TDAT`) |
+| Label | Deezer `label` → MusicBrainz label-info (Spotify has none) | same | `TPUB` (not `TENC` as spotDL does) |
 | Catalogue number | MusicBrainz → Discogs (P2) | same | `TXXX:CATALOGNUMBER` |
-| ISRC | any source (an identifier) | same | `TSRC` |
-| Genre | none by default; Discogs style (P2) or Deezer genre on request | same | `TCON` |
+| ISRC | Spotify `external_ids` | Deezer | `TSRC` |
+| Genre | none by default; Deezer genre or Discogs style on request (MQ6) | same | `TCON` |
 | BPM, key | not written (rekordbox analyses; Deezer BPM is often 0) | same | — |
-| Artwork | Deezer `cover_xl` (1000 px) or CAA front-1200 → JPEG ≤ 800×800 (D29) | Spotify (≤ 640 px: never upscaled) → Deezer/CAA | `APIC` type 3 |
-| Provenance | `WOAS` = source page of the release; `TXXX:MusicBrainz Track Id`/`Release Id` (Picard names) | `WOAS` = Spotify track URL (link-back) | `WOAS`, `TXXX` |
+| Artwork | Spotify 640 px (fits ≤ 800 × 800, never upscaled) or Deezer 1000 px → 800 | Deezer `cover_xl` → JPEG ≤ 800 × 800 (D29); CAA front-1200 when MusicBrainz has the release | `APIC` type 3 |
+| Provenance | `WOAS` = Spotify track URL (link-back) | `WOAS` = Deezer track URL; `TXXX:MusicBrainz Track Id`/`Release Id` when known | `WOAS`, `TXXX` |
 
 ### 14.8 Privacy: what leaves the machine
 
@@ -1182,6 +1219,10 @@ Two policies; the default is the left column (R3). The mapping to frames follows
 | iTunes | Search terms; clip downloads; storefront country | IP only | Fallback only |
 | MusicBrainz / CAA | Search terms, ISRCs, MBIDs; User-Agent with a contact | IP + UA | UA contact = project URL, not the user's e-mail |
 | Discogs | Search terms | Discogs account (token) | Opt-in |
+| Spotify oEmbed | The pasted Spotify URL | IP only | Only on paste |
+| YouTube via yt-dlp (D26) | Search terms ("artist title"), the chosen video ID, the audio fetch; yt-dlp's own User-Agent | **IP** (no account) — and YouTube may tie it to the user's other YouTube use from the same address | On demand only; one at a time; no cookies; the player says "YouTube preview" |
+| Spotify app via AppleScript | Nothing leaves Selecta; the Spotify app then streams as usual | the user's Spotify account (inside the Spotify app) | Local Apple events only |
+| Embedded players (P2) | Page loads, playback events, cookies of that web view | Spotify/Google session if the user logs in there | WKWebView with its own data store; "Clear web data" in Settings |
 | Deep links | Query in the opened URL | the browser/app session | User-initiated |
 
 Never sent to any of them: Soulseek usernames, peer names, raw remote paths, local paths, file lists or download
@@ -1193,7 +1234,12 @@ path (paths can contain peer usernames and private folder names). No telemetry (
 | Service | Selecta use | Relevant clause | Risk | Mitigation |
 |---|---|---|---|---|
 | Spotify | Any use inside a P2P client | Terms §IV "illegal or unauthorized … sharing of audio" (S1); Policy §III.5 "integrated with … content from another service" (S2) | **High** — revocation of the user's developer app and possibly of the linked account's API access | Opt-in, BYO Client ID, warning text before connecting, personal builds by default |
-| Spotify | Writing metadata/artwork into files | "Do not store Spotify Content indefinitely"; temporary caching only; "permanent copies of Spotify Content" (S3, S4); attribution + link-back (S5) | **High** | Default R3 (open data in files); Spotify-first only as an explicit maintainer setting, with `WOAS` link-back |
+| Spotify | Writing metadata/artwork into files (D29) | "Do not store Spotify Content indefinitely"; temporary caching only; "permanent copies of Spotify Content" (S3, S4); attribution + link-back (S5) | **High** | Maintainer's decision (MQ1 confirms the risk); personal builds with the user's own Client ID; `WOAS` link-back; "Deezer first" available |
+| Spotify | Bundling or reusing a client secret | Terms §VI: Security Codes not "accessible by third parties", not disclosed, one per SDA | **Prohibited** | Never (§4.1) |
+| Spotify | Embed / Web Playback SDK in a web view (P2) | Widget Terms: "website or webpage controlled by you", "streams from another service", no local caching; SDK not for commercial projects | Medium–high | Experiment only; visible player with metadata and logo |
+| Spotify | Desktop app via AppleScript | Not a Platform tool; no-overlap rule kept as practice | Low | Pause Selecta's player first |
+| YouTube | yt-dlp previews (D26) | ToS: no download "except … as expressly authorized"; no "automated means"; no circumvention of copy restrictions | **High (accepted by the maintainer for a personal tool)** | On demand only, one process, no account, 60-min pauses, preview cache only, never filed or shared (§12.8) |
+| YouTube | IFrame player + Data API (P2) | RMF: visible ≥ 200 × 200, Referer; policies: no background player, no audio isolation, no caching; keys not in open-source projects | Medium | Visible player only; user's own API key or the D26 video ID |
 | Spotify | Matching + display in the UI | S1/S2; attribution (S5); "Don't manipulate … metadata" (S6) | Medium | Spotify logo + link next to Spotify data; show Spotify's strings unmodified on the release card |
 | Spotify | Playlist import | Policy §III.9 exception for "the metadata of the user's playlists" (S7) | Low–medium | Own playlists only (API reality anyway) |
 | Spotify | Playback via Web API | Streaming SDA duties (S9); no overlap with other audio (S8) | Low | Pause Selecta's player; show cover art + metadata + logo |
@@ -1204,19 +1250,22 @@ path (paths can contain peer usernames and private folder names). No telemetry (
 | Discogs | Catno, styles (P2) | 6-h freshness; notices; "illegal purposes" | Low–medium | 6-h cache; notices in About and next to data |
 | Beatport / Bandcamp / Traxsource | Deep links, purchases | Site terms; Bandcamp forbids scraping | Low | Links only; purchases enter via the user's own downloads |
 
-Overall: **every commercial catalogue API forbids association with unauthorised sharing; only MusicBrainz is clean.**
-The practical consequence is not legal action against a personal tool but loss of API access for the account that
-owns the key; Selecta should be designed so that losing any one commercial source degrades features (no clip, fewer
-fields) rather than breaking Get tracks.
+Overall: **every commercial catalogue API forbids association with unauthorised sharing; only MusicBrainz is clean,
+and it covers club singles poorly.** The practical consequence is not legal action against a personal tool but loss of
+API access for the account that owns the key, and throttling of the user's IP by YouTube; Selecta should be designed
+so that losing any one source degrades features (no clip, no full preview, fewer fields) rather than breaking Get
+tracks.
 
 ### 14.10 Proposed defaults
 
 | Setting | Default |
 |---|---|
-| Metadata sources | Deezer + MusicBrainz on; Spotify off until connected; Discogs off (P2) |
-| Tag policy | "Open data" (R3); "Spotify first" available as an explicit choice |
-| Clip source | Deezer by ISRC → iTunes; never stored |
-| Artwork | Deezer 1000 px or CAA 1200 → JPEG ≤ 800×800, quality 90; never upscale |
+| Metadata sources | Spotify first once signed in (D29); Deezer + MusicBrainz always on; Discogs off (P2) |
+| Tag policy | "Spotify first" when signed in (D29), else "Deezer first" (§14.7) |
+| Preview source (PREV-12) | Automatic: yt-dlp full track when installed and healthy (D26), else the official clip (Deezer by ISRC → iTunes, never stored), with the peer's file one key away |
+| Listen in full | "Open in Spotify / YouTube Music" links; Spotify app control via AppleScript when Spotify is installed (asks once for Automation) |
+| yt-dlp | Found automatically (§12.1); warn if older than 90 days or Deno missing; budgets §14.3 |
+| Artwork | Spotify 640 px as is, or Deezer 1000 px / CAA 1200 → JPEG ≤ 800×800, quality 90; never upscale |
 | Confidence for auto-pick | Confident (≥ 0.92, margin 0.05) or Exact |
 | Duration tolerance vs release | ±3 s (D23) |
 | Meta cache TTLs | §14.4 |
@@ -1229,7 +1278,7 @@ fields) rather than breaking Get tracks.
 
 | # | Question | Default until answered |
 |---|---|---|
-| MQ1 | D29 asks for "metadata from spotify in the mp3 id3v2, cover in there too". Spotify's Developer Terms forbid storing Spotify Content indefinitely and making permanent copies of it, and require attribution (§5, S3–S5). Accept that risk for personal builds ("Spotify first" tag policy), or tag from MusicBrainz/Deezer by ISRC and use Spotify only to match and display? | "Open data" tags (R3); Spotify used for matching and display |
+| MQ1 | D29 writes "metadata from spotify in the mp3 id3v2, cover in there too". Spotify's Developer Terms forbid storing Spotify Content indefinitely and making permanent copies of it, and require attribution (§5, S3–S5); the exposure is your developer app/account. Confirm "Spotify first" tags for personal builds, or switch to "Deezer first" (similar data, no metadata-storage clause, but the same P2P clause)? | D29 as decided, personal builds only, `WOAS` link-back |
 | MQ2 | Is the Spotify integration for personal builds only (your Client ID pre-filled, ≤ 5 users, your Premium), or should public builds ask every user for their own Client ID? | Settings field (META-1); a personal build may pre-fill your Client ID from `local/secrets.env`; public builds ship it empty |
 | MQ3 | Deezer's terms forbid association with unauthorised sharing (D-T1) too. Use Deezer keylessly for matching and clips anyway? | Yes, clips streamed only, Deezer logo shown |
 | MQ4 | Apply for Beatport partner API access (best electronic data and 2-min middle clips)? A P2P client is an unlikely candidate. | No; deep links only |
@@ -1237,6 +1286,9 @@ fields) rather than breaking Get tracks.
 | MQ6 | Genre and BPM tags: write Deezer genre/BPM or Discogs style, or leave them to rekordbox? | Not written |
 | MQ7 | Was your existing Spotify app created before 2026-02-11? (Its endpoint restrictions were postponed; Premium and the 5-user cap apply anyway.) | Treat as a new app |
 | MQ8 | Purchases: may Selecta watch `~/Downloads` for 2 h after a "Buy on Bandcamp/Beatport" click (read-only, confirm before import)? | Ask on first use |
+| MQ9 | Your installed yt-dlp is 2025.07.21 and Deno is missing; D26 previews will likely fail until `brew upgrade yt-dlp` (it now pulls in Deno). OK to show that hint in Settings? | Show the hint; never update anything ourselves |
+| MQ10 | "Listen in full" via the Spotify desktop app (AppleScript) asks once for macOS Automation permission. Build it in P1? | Yes (P1), after deep links |
+| MQ11 | Embedded players (YouTube IFrame, Spotify Web Playback SDK) in a WKWebView: worth a P2 experiment, given ads on YouTube embeds and the Widget/SDK terms? | P2 experiment only |
 
 ### 15.2 Things to verify (none of these touch the Soulseek network)
 
@@ -1250,8 +1302,12 @@ fields) rather than breaking Get tracks.
 | X6 | Clip positions | For ~30 owned tracks, fetch the Deezer and iTunes clips into memory and cross-correlate with the local file to find each clip's offset (store only the offsets). | Whether clips show the drop; waveform UX |
 | X7 | Deezer details | Preview URL lifetime, behaviour after expiry (403?), advanced search syntax status, quota error body, how often `bpm` is 0. | §9.1, §14.3 |
 | X8 | iTunes clip container | Is `moov` before `mdat` (progressive start)? Confirm it is unprotected AAC despite the `audio/x-m4p` content type. | PREV-1 streaming |
-| X9 | Spotify AppleScript | `play track` + `set player position` with the current macOS app; TCC prompt text. | §6 option C |
+| X9 | Spotify AppleScript | `play track` + `set player position` on the current app with a Premium and a Free account; units of `duration` (s or ms); round-trip latency of `player position`; the `PlaybackStateChanged` notification; TCC prompt text for ad-hoc vs Developer ID builds. | §6.1 |
 | X10 | MusicBrainz release choice | On X5's corpus, how often the "original single/EP" rule picks the release the maintainer would file. | §14.5 |
+| X11 | Official players in a WKWebView | YouTube IFrame player with an HTTPS base URL (no error 153; ads?); Spotify Web Playback SDK (Premium) and the Embed with a Spotify login inside the view: full track or 30-s preview? | §6.3, §6.4 |
+| X12 | yt-dlp after `brew upgrade` | One manual run by the maintainer of the §12.2 search and §12.4 fetch: confirm the flat-entry fields, that `--print before_dl/after_move` still downloads, the m4a starts with `moov`, and the progress lines. | §12 |
+| X13 | Connect playback errors | `PUT /me/player/play` with no active device and with a Free account: status codes and bodies. | §6.2 |
+| X14 | oEmbed for albums and playlists; MusicBrainz URL lookup | Fields returned for album/playlist links; how often `/ws/2/url?resource=<Spotify album URL>` finds a release. | §4.3 |
 
 ## 16. Sources
 
