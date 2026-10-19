@@ -15,9 +15,10 @@
   search. Do not connect and disconnect quickly. Do not connect many clients at once from the same IP." A banned login
   then gets **no response at all**.
 - **The only search-rate figure is empirical**: slsk-batchdl's author measured "around 34 searches every 220 seconds"
-  (2023) and made it the default; automated tools at or near that rate still report bans. Selecta's proposed
-  default is **3 searches/min with a burst of 6** (≤ 17 per 220 s), with a hard ceiling of ≤ 28 per 220 s, one shared
-  budget for every search source, no repeat of the same query within 10 min.
+  (2023) and made it the default; automated tools at or near that rate still report bans, and one (weakly sourced)
+  client puts the trigger at ~28 searches per 10 min. Selecta's proposed default is **2 searches/min with a burst of
+  6** (≤ 13 per 220 s, ≤ 26 per 10 min), one shared budget for every search source, no user setting to loosen it, and
+  no repeat of the same query within 10 min.
 - **Identify honestly**: the community version registry reserves login major versions per client; **177** is for
   experimental clients. Ask for a Selecta number before going live; never use 157 (official) or another client's.
 - **Peers enforce etiquette themselves**: one upload per user at a time, per-user queue limits (Nicotine+ 100 files),
@@ -39,7 +40,7 @@
 | K3 | ToS §12 forbids "overloading, flooding, spamming" and probing/testing the service without authorisation. | H | Terms of Use |
 | K4 | The automatic ban is **30 minutes**, announced by a PM from `server` listing its triggers (repeated searches, connect/disconnect churn, many clients per IP, chat/PM flooding, repeated text). | H (two independent verbatim reports, 2025–2026) | soularr #142; Lidarr.Plugin.Slskd #19 |
 | K5 | Banned logins get no response at all (`BANNED` is no longer sent); Soulfind copies this. | H | N+ `SLSKPROTOCOL.md`; Soulfind `user.d` |
-| K6 | slsk-batchdl's 34 searches / 220 s is one developer's black-box measurement (2023), implemented as a burst-prone fixed window; tools near that rate still get banned. | M | slsk-batchdl #12, #95; soularr #142 |
+| K6 | slsk-batchdl's 34 searches / 220 s is one developer's black-box measurement (2023), implemented as a burst-prone fixed window; tools near that rate still get banned; one weak source says ~28 per 10 min. | M | slsk-batchdl #12, #95; soularr #142; Orbit-pure notes |
 | K7 | Login major versions form a registry (157 official, 160 N+, 169 seeleseek, 170 Soulseek.NET, 175 aioslsk, 176 soulseek-rs, **177 experimental**); random usernames are "unacceptable". | H (community doc, not official) | N+ `SLSKPROTOCOL.md` |
 | K8 | Wishlist interval comes from the server: "almost always 12 minutes, or 2 minutes for privileged users"; clients send one term per interval. | H | N+ doc and `search.py`; Soulfind `defines.d` |
 | K9 | Uploaders serve one file per user at a time and cap per-user queues (N+ 100 files / 10 000 MiB; SoulseekQt per-user limit on by default; slskd optional queued/daily/weekly/failure limits). | H | N+ `config.py`/`uploads.py`; Qt changelog; slskd docs |
@@ -162,6 +163,7 @@ no documented appeal path.
 | Same release added `--random-login` "in case you are still getting banned" | Evasion by throw-away accounts — explicitly what the Nicotine+ doc calls "unacceptable" | — | High (as a "never do") |
 | sockseek issue #95 (2025-04): user banned after 10–20 downloads; "workaround" was **1 search per minute** plus a new IP | Even 34/220 s can be too much in practice (that tool runs up to 4 searches per track in `--desperate` mode and 2 concurrently) | < 9/min sustained is not safe | Medium (single report) |
 | soularr discussion #142 (2025-11): banned "regularly" with sequential album searches, 5 s search timeout + 5 s sleep and no cooldown; soularr later added `minimum_search_interval = 5` and a result cache | Back-to-back sequential searches (~6/min) for long runs trigger bans | ~6/min sustained, many repeats of the same queries across runs | Medium |
+| MeshDigital/Orbit-pure (C#, 2026), `DOCS/memory/network_resilience_and_library_reconciliation.md`: the ban comes "when the client fires too many searches in a short window (~28 searches per 10 min)" | Lowest figure found; no method or evidence given (an AI-agent memory file in a one-star repo) | ~2.8/min over 10 min | Low — but cheap to respect |
 | The ban message itself: "Do not quickly repeat a search" | **Repeating the same query** is a named trigger, independent of the global rate | Cache and de-duplicate | High |
 | Nicotine+ (`search.py`) | No outgoing limiter for manual searches (human-paced); wishlist sends **one** term per server interval | — | High |
 | Soulseek.NET (`SoulseekClientOptions`) | `maximumConcurrentSearches = 2`, `searchTimeout = 15000` ms, `responseLimit = 250`, `fileLimit = 25000` | ≤ 8/min if a caller chains searches | High (code) |
@@ -452,10 +454,10 @@ text, **M** = consistent with several reports, **L** = judgement, tune on the lo
 
 | Limit | Default | Ceiling | Justification | Source | Conf. |
 |---|---|---|---|---|---|
-| **Network searches** (all sources) | Token bucket: burst **6**, refill **1 per 20 s** (3/min; ≤ 17 in any 220 s) | Burst 10, refill ≥ 12 s (≤ 28 in any 220 s, i.e. ≥ 18 % below the 34/220 s edge) | 34/220 s is the *ban edge* measured once in 2023; soularr was banned at ~6/min sustained; a user still banned at 34/220 s switched to 1/min. A human digging session rarely exceeds 2–3/min | §4.3 | M |
+| **Network searches** (all sources) | Token bucket: burst **6**, refill **1 per 30 s** (2/min; ≤ 13 in any 220 s, ≤ 26 in any 10 min) | Burst 8, refill ≥ 30 s (≤ 15 per 220 s, ≤ 28 per 10 min); not user-adjustable (E8) | 34/220 s is the *ban edge* measured once in 2023; soularr was banned at ~6/min sustained; a user still banned at 34/220 s switched to 1/min; one weak source says ~28 per 10 min. The default satisfies all of them. A human digging session rarely needs more than 2/min sustained, and the burst covers quick re-typing | §4.3 | M |
 | **Same query repeated** | Not re-sent within **10 min** (cache answers; "Refresh" also obeys this) | ≥ 5 min | Ban message: "Do not quickly repeat a search" | §4.1 | H (trigger) / L (value) |
 | **Query hygiene** | Drop 1-character tokens; refuse queries < 3 characters; refuse > 256 characters; warn on excluded phrases and do not send | Same | SoulseekQt drops one-character tokens (2015); Soulseek.NET `removeSingleCharacterSearchTerms`; N+ answers only ≥ 3 chars; Soulfind drops > 256 | §4.3, §7.3 | H |
-| **Batch pacing** | Uses the search bucket at its refill rate, keeping **2 tokens reserved** for manual searches; one search per line; cached lines are free; no automatic fallback queries (a "broaden unresolved lines" pass is a user action and costs budget). 100 lines ≈ 33 min | Same bucket | slsk-batchdl's multi-query `--desperate` mode multiplies load; bans with automated tools are the main report | §4.3 | M |
+| **Batch pacing** | Uses the search bucket at its refill rate, keeping **2 tokens reserved** for manual searches; one search per line; cached lines are free; no automatic fallback queries (a "broaden unresolved lines" pass is a user action and costs budget). 100 lines ≈ 50 min; cached lines are instant | Same bucket | slsk-batchdl's multi-query `--desperate` mode multiplies load; bans with automated tools are the main report | §4.3 | M |
 | **Per-search collection cap** (SRCH-16) | Stop after **15 s**, 300 responses or 10 000 files | 60 s / 1 000 / 50 000 | Soulseek.NET defaults 15 s / 250 / 25 000; SoulseekQt 10 000 results; N+ shows 2 500 | §4.3, Qt changelog | H (refs) / L (values) |
 | **Wishlist** (SRCH-14) | One term per **server-provided interval** (`WishlistInterval`, usually 12 min; 2 min if privileged), round-robin; nothing if the server sent no interval | Never more often than the server interval, never < 120 s | N+ behaviour; protocol doc | §4.4 | H |
 | **Login / reconnect** (NET-4) | First retry random **10–30 s**, then ×2 with ±25 % jitter, cap **10 min**. After the ban PM: wait **30 min + 1–5 min**, auto-pause, ask the user. After a login timeout (possible silent ban): ≥ 5 min, ×2, cap 60 min. No auto-reconnect after `Relogged` or any login rejection except `SVRFULL` (≥ 5 min) | First retry ≥ 5 s; cap ≥ 5 min; ≤ **10 login attempts per hour** | "Do not connect and disconnect quickly"; N+ 5–15 s ×2 to ~5 min; slskd 1 s ×2 to 5 min + jitter; Soulfind jitters to spread reconnects | §4.2, §4.5 | H (shape) / M (values) |
@@ -476,7 +478,7 @@ text, **M** = consistent with several reports, **L** = judgement, tune on the lo
 | **Answering others' searches** (SHARE-2, belongs to the sharing note) | Answer only queries with ≥ 3 characters; at most **300 files** per response; never files matching an excluded phrase | ≤ 500 files | N+ `maxresults = 300`, `min_search_chars = 3`; slskd `ResponseFileLimit = 500`; Soulseek.NET README on excluded phrases | §7.3 | H |
 | **Upload side** (SHARE-3, belongs to the sharing note) | **3** slots, **1** active upload per user, round-robin, **privileged users first**, per-user queue limits 100 files / 10 GiB answered with exactly `Too many files` / `Too many megabytes`, `File not shared.` for anything not in the index | Slots ≥ 1 while sharing | N+ defaults; slskd interop note; Rules require respect of privileges | §5.2, §7.1 | H |
 
-Two numbers deserve a UI explanation, because users will want them higher: the search budget (show "3 searches per
+Two numbers deserve a UI explanation, because users will want them higher: the search budget (show "2 searches per
 minute keeps you clear of Soulseek's 30-minute search ban") and the per-peer cap (show the peer's counters and why).
 
 ### 9.2 Never do this
@@ -533,7 +535,7 @@ Before any live session (maintainer, M9 onwards):
 | E2 | Login identity | Use major **177** (experimental) during development on the local network; **ask the Nicotine+ maintainers to reserve a major version for Selecta** (they keep the registry in `doc/SLSKPROTOCOL.md`) before M9. Put "Selecta <version>" in user info. |
 | E3 | Privileges | Add to SHARE-3 (P0): privileged users are served first. |
 | E4 | Preview policy | Accept §6/§9.1: auto-preview only for free-slot results; cancel on skip (≥ 85 % finishes). Confirms PREV-6 / OQ-5. |
-| E5 | Search budget | Accept 3/min sustained with a burst of 6 (OQ-4); expose remaining budget and refill time (SRCH-13). |
+| E5 | Search budget | Accept 2/min sustained with a burst of 6 (OQ-4); expose remaining budget and refill time (SRCH-13). Revisit only with M9 evidence, and never above 3/min. |
 | E6 | Per-peer caps | Accept 1 active / 20 queued / 20–50 files per day (OQ-4). |
 | E7 | Excluded phrases on outgoing searches | Warn and do not send (no override): compliant peers would return nothing anyway. |
 | E8 | May settings loosen a limit above its default (up to the ceiling), or only tighten it? | Allow loosening up to the ceiling for the per-peer and concurrency limits (a privileged or very active user may want it). For the **search budget, reconnect and PM limits** — the ones the server bans for — expose no loosening setting in v1; their ceilings then only bound future changes of the defaults. |
@@ -546,7 +548,7 @@ Never verify a limit by approaching it on the live network. Local-network experi
 |---|---|---|
 | Q1 | Does the official server count `WishlistSearch`, `UserSearch` and `RoomSearch` in the same flood budget as `FileSearch`? | Unknown and not testable safely. Assume yes (one shared budget). |
 | Q2 | Do bursts of `GetPeerAddress` / `ConnectToPeer` contribute to the flood ban? | Unknown. Keep the L-confidence peer-lookup bucket; watch M9 logs. |
-| Q3 | Is "34 per 220 s" still the edge in 2026? Does the ban escalate for repeat offenders? | Unknown; never probe. Defaults stay far below. Record any ban in M9 with full context. |
+| Q3 | Is "34 per 220 s" (or "~28 per 10 min") the real edge in 2026, and is there more than one window? Does the ban escalate for repeat offenders? Does a ban disconnect, or silently block searches (Orbit-pure says searches "returned zero results silently")? | Unknown; never probe. Defaults stay far below. Record any ban in M9 with full context. |
 | Q4 | Does the server send the ban PM before closing the connection, and are logins during the ban silently ignored (as Soulfind assumes)? | Only observable if it happens; the ban detector must handle both orders. |
 | Q5 | What does slskd record (Cancelled / Errored / Aborted) when the downloader closes mid-transfer, and does it count toward failure limits? | devenv: slskd peer with `failures` limits set; preview-cancel scenario. |
 | Q6 | How do Nicotine+ and slskd react to many short previews from one downloader (queue position, `UploadFailed`, bans)? | devenv scenario with both as uploaders. |
