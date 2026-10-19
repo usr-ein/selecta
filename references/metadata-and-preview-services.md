@@ -353,21 +353,143 @@ Other notes:
 4. Make every Spotify feature **opt-in, off by default, behind a BYO Client ID**, with a plain-language warning. Offer
    the non-API routes first: "Open in Spotify" deep links (§11) and importing an exported CSV (§14.6).
 
-## 6. Full-length listening through the user's own Spotify app
+## 6. Listen in full: official players
 
-The maintainer wants a legitimate way to hear the whole track before downloading. Three options, from least to most
-coupling:
+The maintainer wants to hear a track from Spotify or YouTube Music before committing to a Soulseek download. Through
+an official player Selecta only **controls** playback: it never receives the audio, so these paths give no waveform,
+no 3-band analysis and nothing to keep (the waveform comes from the peer's file or the D26 preview, §12). Options
+below go from least to most integration; §6.6 recommends an order.
 
-| Option | How | Requirements | Notes |
+### 6.1 Spotify desktop app via AppleScript (macOS)
+
+Dictionary read from the installed app (Spotify 1.3.0.277, `Spotify.app/Contents/Resources/Spotify.sdef`, 137 lines,
+2026-10-20):
+
+| Kind | Name | Notes |
+|---|---|---|
+| Command | `play track <URI> [in context <URI>]` | "Start playback of a track in the given context." Accepts `spotify:track:…`; a context (album/playlist URI) is optional. |
+| Commands | `play`, `pause`, `playpause`, `next track`, `previous track` | Transport. |
+| Property (app) | `player state` (read-only) | `stopped` / `playing` / `paused`. |
+| Property (app) | `player position` (read-write, real) | "The player's position within the currently playing track in seconds" — setting it seeks. |
+| Property (app) | `sound volume` (0–100), `repeating`, `shuffling` | — |
+| Property (app) | `current track` (read-only) | `name`, `artist`, `album`, `album artist`, `duration` (the dictionary says seconds; widely reported to return milliseconds — check in X9), `id` (`spotify:track:…`), `spotify url`, `artwork url`, `track number`, `disc number`, `popularity`, `played count`, `starred`. |
+
+```applescript
+tell application "Spotify"
+    play track "spotify:track:<id>"
+    set player position to 95.0          -- jump to the drop
+    get {player state, player position, id of current track}
+end tell
+```
+
+From C++, send these through `NSAppleScript` (Objective-C++, compiled once and reused) on a worker thread, not by
+spawning `osascript` per poll.
+
+| Question | Answer | Confidence |
+|---|---|---|
+| Free accounts? | Expected to work: AppleScript drives the desktop app directly and does not go through the Premium-gated Web API, and the desktop app plays on demand for Free users (with ads). No source confirms `play track` on Free specifically. | Medium (X9) |
+| Position polling latency | One Apple event round trip to a running app is typically milliseconds to a few tens of ms (estimate). Poll `player position` at 4–10 Hz and interpolate between polls; poll `player state` at 1–2 Hz. Community tools also listen to the app's `com.spotify.client.PlaybackStateChanged` distributed notification to avoid polling (undocumented). | Medium (measure in X9) |
+| Permissions (TCC) | First use shows the macOS Automation prompt ("“Selecta” wants access to control “Spotify”…") with the app's `NSAppleEventsUsageDescription` text ("This key is required if your app uses APIs that send Apple events"). The choice lives in System Settings › Privacy & Security › Automation. | High |
+| Hardened runtime | A hardened-runtime (notarised) build needs the `com.apple.security.automation.apple-events` entitlement ("whether the app may prompt the user for permission to send Apple events to other apps"; Xcode: Hardened Runtime › Resource Access › Apple Events). Selecta is not sandboxed (no App Store), so no `scripting-targets` entitlement. Consent is tied to the code signature: ad-hoc re-signed builds may re-prompt after each build (OQ-8). | High (Apple docs) |
+| Officially supported and stable? | The dictionary ships in the current app, but Spotify documents no AppleScript interface on its developer site, and past updates broke it silently (2015: `play track` became a no-op; a later update broke `current track` name/artist under Connect). Treat it as best-effort. | Medium |
+| Terms | The Developer Terms cover the "Spotify Platform" ("developer tools … (e.g. APIs, SDKs, Widgets) and documentation described on our Developer Website"); the scripting dictionary is not among them, so this is the user driving their own app. The Policy's no-overlap rule (S8) is still good practice: Selecta pauses its own player first. | Medium (inference) |
+
+### 6.2 Spotify Web API playback (Spotify Connect)
+
+`GET /v1/me/player/devices` → `PUT /v1/me/player/play?device_id=…` with `{"uris": ["spotify:track:…"],
+"position_ms": N}`; `PUT /v1/me/player/seek?position_ms=…`, `PUT /v1/me/player/pause`, and `GET /v1/me/player` for
+`progress_ms`/`is_playing`. All are among the 43 endpoints left to dev-mode apps.
+
+- **Premium for the listening user** ("This API only works for users who have Spotify Premium"); without it the call
+  fails with 403 "Player command failed: Premium required" (`PREMIUM_REQUIRED`, community reports). Scopes
+  `user-modify-playback-state`, `user-read-playback-state`.
+- Needs a running Connect device (desktop app, phone, speaker). No device → an error (community reports a 404
+  `NO_ACTIVE_DEVICE`; the reference page lists only 204/401/403/429 — check in X3).
+- Dev-mode limits apply (owner Premium, 5 users, per-account quota). Every position poll costs quota; when the target
+  is the local desktop app, read the position through AppleScript instead.
+- "The order of execution is not guaranteed when you use this API with other Player API endpoints." Latency is a
+  network round trip plus Connect propagation (hundreds of ms; estimate).
+- It makes Selecta a **Streaming SDA** (S9): show cover art, metadata and the Spotify logo while it plays; no overlap
+  with Selecta's own audio (S8).
+
+### 6.3 Embedded official players inside Selecta
+
+**Spotify Embed / iFrame API.** The embed (`https://open.spotify.com/embed/track/<id>`, also `iframe_url` in oEmbed)
+is driven by the iFrame API: `window.onSpotifyIframeApiReady(IFrameAPI)` → `IFrameAPI.createController(element,
+{uri|url, width, height}, callback)` → `EmbedController.loadEntity(uriOrUrl, preferVideo, startAt)` (`loadUri` is
+legacy), `play()`, `togglePlay()`, `resume()`, `seek(seconds)`; events `ready` and `playback_update`
+(`playingURI`, `isPaused`, `isBuffering`, `duration` and `position` in ms).
+- Full tracks only with encrypted media and a logged-in Spotify session in that web view; otherwise "the Embed will
+  only stream a preview clip of less than 30 seconds" ("Spotify was not able to play encrypted media"; keep
+  `allow="encrypted-media"`; supported browsers "Chrome, Firefox, Edge, Opera and Safari"). Logged-in Free accounts
+  reportedly get full tracks on desktop; embeds inside desktop apps commonly fall back to previews because the web view
+  has no Spotify session (secondary sources).
+- Terms: the Widget Terms (v2.0, 2014) license display "on any website or webpage controlled by you" — a desktop app
+  view is not obviously that — and repeat the "illegal or unauthorized use or sharing of audio" clause, "You shall
+  not create any product or service by integrating the Spotify Platform … with … streams from another service", and
+  "You may not use a Widget to locally cache any Spotify Content".
+
+**Spotify Web Playback SDK** (a Connect device inside a web page): "requires a Spotify Premium subscription";
+"supported by most web browsers (Chrome, Firefox, Safari and Microsoft Edge)"; "must not be used in commercial projects
+without Spotify's prior written approval". Audio plays inside Selecta's web view, still DRM-protected (no audio
+access). A third-party macOS 26 client (Spotiglass, Oct 2026) reports SDK playback in a `WKWebView`; Selecta would show
+the player rather than hide it (S9). Uses the PKCE token of §4.2.
+
+**YouTube IFrame Player API.**
+- Player rules (YouTube API Services "Required Minimum Functionality"): "Embedded players must have a viewport that is
+  at least 200px by 200px"; no overlays or actions on hover; the client must identify itself through the HTTP
+  Referer, and in native apps "use one of the OS-provided WebView types when available" (`WKWebView` on Apple
+  platforms), loading the player with an HTTPS base URL whose domain is the app identifier. Since 2025-07-09 the player
+  shows **error 153** when no Referer arrives (WKWebView apps loading `about:blank`/custom schemes hit it).
+- Developer Policies (updated 2026-10-15): no "background player, meaning a player that is not displayed in the page,
+  tab, or screen that the user is viewing"; must not "separate, isolate, or modify the audio or video components"; must
+  not "download, import, backup, cache, or store copies of YouTube audiovisual content". → A **visible** video panel,
+  never a hidden audio-only player.
+- Finding the video officially needs the YouTube Data API v3 `search.list`: an API key from a Google Cloud project;
+  "default quota allocation of 100 search.list calls … per day" (1 unit per call, own bucket; page updated
+  2026-10-15). Keys must not be embedded "in open source projects", so each user would need their own project — or
+  Selecta reuses the video ID that the D26 yt-dlp search already found (§12.3), with no API at all.
+- Some videos disallow embedding (player errors 101/150) → fall back to a deep link.
+- YouTube Premium (ad-free) needs a signed-in Google session in the web view. Google blocks sign-in from embedded
+  browser frameworks (2019 policy; reported for QtWebEngine-based browsers, CEF and Electron), and sign-in inside other
+  apps' `WKWebView`s is generally refused too — expect signed-out behaviour, ads possible (medium confidence).
+
+### 6.4 Which web engine: QtWebEngine or WKWebView (macOS 26/27)
+
+| | QtWebEngine (Homebrew `qtwebengine` 6.11.2) | WKWebView (system WebKit) |
+|---|---|---|
+| Cost | Chromium-based module, a large binary addition (size to measure) | Ships with macOS |
+| Proprietary codecs (H.264, AAC, MP3) | The Homebrew formula builds with `-DFEATURE_webengine_proprietary_codecs=ON` | System codecs |
+| DRM | "The Widevine plugin is not shipped with Qt WebEngine"; found in "well-known locations, like the default Google Chrome installation directory" or via `--widevine-path`. macOS reports of Spotify failing under QtWebEngine (qutebrowser #4505; Qt forum, Qt 6.8) | FairPlay through WebKit EME (Safari is a supported Spotify browser); third-party report of Web Playback SDK working in a macOS `WKWebView`; Widevine unavailable |
+| Spotify full tracks | Unlikely | Plausible — experiment X11 |
+| YouTube IFrame player | Works for normal (non-DRM) videos; not an OS web view | Works with a proper Referer; YouTube asks for OS web views |
+| Google sign-in (YouTube Premium) | Blocked | Likely blocked |
+| Qt integration | `QWebEngineView` (Widgets) | Qt WebView (QML `WebView`, uses "the system web view" on macOS; LGPLv3/GPLv2) inside a `QQuickWidget`, or a `WKWebView` created in Objective-C++ and hosted with `QWidget::createWindowContainer(QWindow::fromWinId(...))` — the latter can set the Referer/base URL that YouTube requires |
+
+Recommendation: if Selecta embeds a player at all, use **WKWebView** through Objective-C++; do not add QtWebEngine for
+this feature.
+
+### 6.5 Deep links (zero-risk fallback)
+
+No API, no account linking, nothing to grant (formats in §11): `spotify:track:<id>` (opens the desktop app;
+`https://open.spotify.com/track/<id>` as the web fallback), `https://open.spotify.com/search/<query>`,
+`https://music.youtube.com/watch?v=<id>` when the D26 search found an ID, else
+`https://music.youtube.com/search?q=<query>` (opens in the browser; YouTube Music has no macOS app). Spotify's Design
+Guidelines ask integrations to "always link to the Spotify app" with the text "OPEN SPOTIFY", "PLAY ON SPOTIFY" or
+"LISTEN ON SPOTIFY".
+
+### 6.6 Recommendation for "Listen in full"
+
+| Order | Build | Needs | The user sees |
 |---|---|---|---|
-| **A. Deep link (recommended default)** | `QDesktopServices::openUrl(QUrl("spotify:track:<id>"))`, or `https://open.spotify.com/track/<id>` (opens the app if installed, else the web player). Without an ID: `https://open.spotify.com/search/<url-encoded query>` (TODO(verify) the `spotify:search:` URI form still works). | Spotify app installed (Free or Premium). No API, no Client ID. | The Design Guidelines ask integrations to "always link to the Spotify app … The Spotify app is the default playback mechanism", with link text "OPEN SPOTIFY", "PLAY ON SPOTIFY" or "LISTEN ON SPOTIFY". Selecta pauses its own player first. |
-| **B. Web API playback** | `GET /v1/me/player/devices` → `PUT /v1/me/player/play?device_id=…` with `{"uris": ["spotify:track:…"], "position_ms": N}` | Premium ("This API only works for users who have Spotify Premium"), scope `user-modify-playback-state` (+ `user-read-playback-state` for devices), a running Spotify client (desktop app or any Connect device), a dev-mode app the user owns (§3.1). | Can start at a position (e.g. jump past the intro). "The order of execution is not guaranteed when you use this API with other Player API endpoints." Turns Selecta into a Streaming SDA (S9): show cover art + metadata + Spotify logo while it plays, link to the app. Common failure: no active device (TODO(verify) exact status/body; the reference page lists only 204/401/403/429). |
-| C. macOS AppleScript | `tell application "Spotify" to play track "spotify:track:<id>"`; `set player position to N` | Spotify desktop app; macOS Automation (TCC) consent: `NSAppleEventsUsageDescription` in Info.plist. | Not part of the Web API (no Client ID). A third-party tool reported it working in Feb 2026; behaviour with a Free account is unverified. Unsupported: past app updates broke it silently (2015 `play track` no-op). Medium confidence; experiment only. |
+| 1 (P1) | **Deep links**: "Open in Spotify" / "Open in YouTube Music" next to the release card | nothing | the other app opens |
+| 2 (P1) | **Spotify desktop control via AppleScript**: play the matched track, seek to Selecta's playhead (e.g. the drop), mirror Spotify's position on a plain progress bar labelled "Playing in Spotify"; Space pauses it | Spotify app installed (Free or Premium, to verify) | one macOS Automation prompt ("Selecta wants access to control Spotify") |
+| 3 (P2) | **Web API Connect playback** to another device | the Spotify sign-in of §4.2 + Premium | Spotify's consent page in the browser, listing the playback scopes |
+| 4 (P2, experiments) | **Embedded players in a WKWebView**: YouTube IFrame player (visible ≥ 200 × 200, ads possible) for tracks missing on Spotify; Spotify Web Playback SDK (Premium) | the video ID from D26's search, or the user's own YouTube Data API key; the PKCE token for the SDK | a video/player panel inside Selecta |
 
-Recommendation: ship **A** in P1 (zero terms surface beyond linking). Offer **B** only inside the opt-in Spotify
-integration. Keep **C** as a lab experiment for the maintainer.
-
-Selecta never plays Spotify audio itself, never records it, and never overlaps it with its own preview audio (S8).
+Limits shared by every option: no audio access, so no waveform, no 3-band analysis, no spectrum check, nothing to keep
+or tag; position and state only; Selecta pauses its own player first and never plays two sources at once (S8). The
+waveform keeps coming from the peer preview (PREV-1) or the D26 preview (§12).
 
 ## 7. C++/Qt libraries for the Spotify Web API
 
