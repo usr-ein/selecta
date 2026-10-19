@@ -820,7 +820,7 @@ preview. The chosen ID also feeds "Open in YouTube Music" (§6.5).
 ### 12.4 Fetching the audio for one ID
 
 ```sh
-yt-dlp <safety flags §12.5> --no-playlist --abort-on-error --max-downloads 1 \
+yt-dlp <safety flags §12.5> --no-playlist --abort-on-error \
   -f "bestaudio[ext=m4a]/bestaudio[acodec=opus]/bestaudio" \
   -P "<preview cache>/yt" -o "%(id)s.%(ext)s" --no-part --no-mtime --fixup never \
   -q --progress --newline \
@@ -880,8 +880,9 @@ rate-limit or bot-check message.
 ### 12.6 Failure modes and what the UI says
 
 yt-dlp prints `ERROR: …` and `WARNING: …` lines on stderr. Exit codes (`yt_dlp/__init__.py`): 0 success, 1 error
-(`DownloadError`), 2 bad options (a Selecta bug: log it), 100 update failure, 101 downloads cancelled
-(`--max-downloads`).
+(`DownloadError`), 2 bad options (a Selecta bug: log it), 100 update failure, 101 downloads cancelled. Do not pass
+`--max-downloads 1`: `check_max_downloads()` raises after the one successful download, so success would exit with 101
+(`yt_dlp/YoutubeDL.py`); a single URL with `--no-playlist` is already one download.
 
 | Detectable text (from the source at `8973412`) | Meaning | UI |
 |---|---|---|
