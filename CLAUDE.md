@@ -20,13 +20,49 @@ Selecta is a GPLv3 Soulseek client in C++/Qt 6, macOS-first. Start here:
 
 - Do not run `git add -A` / `git add .` — several agents may work in this tree at once; stage explicit paths.
 - Roles (`docs/PLAN.md` §9): the head implementer, the main session, owns the app, integration, top-level CMake
-  and every cross-module change. A library agent (`slsk/`, `meta/`, `convert/`, `audio/` analysis) works in its own
-  worktree and branch, edits only its module and its tests, builds against the contract it was given, and hands back
-  for review and merge.
+  and every cross-module change. A library agent (`slsk/`, `meta/`, `match/`, media: `audio/` and `convert/`) works in
+  its own worktree and branch, edits only its directories, builds against its contract in `docs/contracts/` (read
+  `docs/contracts/README.md` first), and hands back for review and merge. Progress and autonomous decisions:
+  `docs/STATUS.md`.
 - Secrets (API keys, client secrets, cookies) are never committed, logged, or copied into docs or tests.
   Development secrets live in `local/secrets.env` (git-ignored); read them from there.
 - Files Selecta keeps (Inbox, collection, shares) come only from Soulseek peers (PRD D20). Preview audio may come from
   the user's own installed yt-dlp, run as an external process with no cookies or accounts. That audio stays in the
   preview cache and is never filed, shared or tagged. Never bundle, download or reimplement yt-dlp (PRD D26, PREV-11).
   Tests use a fake yt-dlp script, never the real one.
-- Code style, module layout and test commands will be defined in Phase 1 of `docs/PLAN.md`; update this file then.
+
+## Build, test, lint, debug
+
+```sh
+export VCPKG_ROOT="$HOME/vcpkg"             # vcpkg clone; every dependency is a static library (ADR-004)
+cmake --workflow --preset dev              # configure + build + test (build/dev)
+cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # likewise: tsan
+tools/lint.sh [paths…]                     # clang-format check, clang-tidy, clazy, cppcheck; must be clean
+tools/dev/run-headless.sh                  # start Selecta with a throwaway data folder and the debug socket
+tools/dev/app.sh state | tree | screenshot path=/abs.png | navigate view=<id> | click name=<objectName> | log
+```
+
+- Media modules (`audio/`, `convert/`) need `-DSELECTA_WITH_MEDIA=ON`.
+- Run the app with `--headless --debug-server` to inspect it without a window; never with a real library unless
+  `--data-dir` points elsewhere.
+
+## Code style and structure
+
+- C++20, Qt 6 Widgets. `namespace selecta::<module>`. Qt naming: PascalCase types, camelCase functions, `m_` members,
+  `k` constants. clang-format (`.clang-format`) decides layout. Braces around every conditional body.
+- `QT_NO_CAST_FROM_ASCII` and `QT_NO_KEYWORDS` are on: write `u"…"_s` / `"…"_L1`, `Q_EMIT`, `Q_SIGNALS`, `Q_SLOTS`.
+- Modules (`src/`): `base` (clock, logging, paths) · `governor` (limits, buckets, permits, server guard) · `storage`
+  (SQLite) · `slsk` · `meta` · `match` · `audio` · `convert` · `library` · `core` (services, engine thread) · `app`
+  (Widgets UI, devtools). Dependencies point downwards; nothing below `app` uses Qt Widgets; `slsk` has no policy.
+- Every budgeted network operation takes a `governor::Permit`; only the Governor creates them (tests use
+  `tests/support/PermitFactory.h`).
+
+## Engineering standards (definition of done)
+
+- Thread affinity, ownership and failure modes are documented on every public class; every failure path is handled and
+  tested; edge cases live in tests. No blocking calls on the UI or engine threads.
+- Input from the network or from files is bounded and treated as untrusted.
+- No half-built features: a view or control that can't work yet isn't shown, or says plainly that it isn't built.
+  No fake data in the app (the mock is the only place for that).
+- Warning-free with `-Werror`; `tools/lint.sh` clean; tests pass under `dev`, `asan` and `tsan`.
+- Commit early, in small steps, with explicit paths; grep for secrets before committing.
