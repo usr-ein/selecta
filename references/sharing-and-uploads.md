@@ -1,7 +1,8 @@
 # Sharing and uploads — share index, answering searches, upload queue
 
-> Status: **DRAFT in progress** — sections 3–4 verified against source; sections 5–10 still being filled
-> (`TODO(verify)` = from memory, not yet checked). Researched 2026-10-19. Clones and commits are listed in §11.
+> Status: complete research note, 2026-10-19. Protocol and client behaviour verified in source (repos and commits in
+> §11); `TODO(verify)` marks the few points still to be confirmed on the local test network or on macOS. Inputs for
+> ADRs; not decisions (see §9.3).
 
 ## 1. TL;DR
 
@@ -18,7 +19,16 @@
   `-word` exclusions, `*suffix` partial words (match words *ending* with the term), at least one complete word
   required, server **excluded phrases** filtered as substrings, result cap (Nicotine+ 300, slskd 500). Requests arrive at
   **~30/s** (slskd maintainer's measurement), so each must cost ≪ 33 ms.
-- See §9 for upload-queue and macOS recommendations (filled in later sections).
+- Uploads: per-user FIFO queues served **round-robin across users**, **one active upload per user** (Soulseek NS
+  can't take two from the same source), privileged users first, few slots (Nicotine+ 3, slskd 10), per-user queue
+  limits (Nicotine+ 100 files / 10 000 MB) with standard denial strings (`Too many files`, `File not shared.`, …),
+  45 s to start, 60 s idle timeout, resume via `FileOffset` (validate it), downloader closes the F connection.
+- macOS: scan off-thread and reuse the library scan; track changes with **FSEvents directly** (persisted event ID +
+  volume UUID — Qt's `QFileSystemWatcher` uses FSEvents but is per-directory and forgets history); skip iCloud
+  **dataless** files with materialisation turned off; add shares through the folder picker (TCC user intent); NFC on
+  the wire, native bytes on disk; don't follow symlinks; hide offline roots instead of deleting them.
+- Design and defaults: §8 (ShareIndex snapshot + UploadManager state machine + SQLite schema), §9.2 (defaults table),
+  §9.3 (seven decisions for the maintainer).
 
 ## 2. Key findings
 
@@ -39,6 +49,22 @@
 6. **Accepting a legacy download request (TransferRequest dir 0) is discouraged**: answer "Queued" and start the upload
    yourself later, so the F connection goes to the server-provided address of the real user (anti-spoofing).
    (High: Nicotine+ `slskmessages.py` TransferResponse docstring.)
+7. **One active upload per user is a de-facto protocol constraint**, not just fairness: Soulseek.NET hard-codes
+   `MaximumConcurrentUploadsPerUser = 1` because Soulseek NS can't handle concurrent downloads from one source;
+   Nicotine+'s round-robin never gives a user with an active upload a second slot. (High.)
+8. **Incoming search load is real**: ~30 requests/s on the live network (slskd maintainer, in code comments);
+   slskd bounds it with 10 concurrent resolutions and drops requests beyond 500 queued. Every response also costs an
+   outbound peer connection (address lookup via the server), which the governor must account for. (Medium-high on
+   the rate; the governor point is an inference.)
+9. **iCloud/File Provider "dataless" files are a trap**: `stat` reports the full size, but reading triggers a
+   download (or fails with `EDEADLK` when materialisation is off). Scanner threads must disable materialisation and skip
+   `SF_DATALESS` files. (High: SDK headers + several independent reports.)
+10. **Qt on macOS converts names: NFC when reading directories, NFD when opening** (`qfile.h`). Peers use NFC. Store
+    the native byte path for opening and an NFC wire name. (High on Qt behaviour; risk on exFAT/SMB to verify.)
+11. **Nicotine+ refuses to rescan when a share root is missing** (unmounted disk), so a missing volume never wipes the
+    index — Selecta should do the same per root. (High.)
+12. **Licences**: Nicotine+ GPL-3.0-or-later and aioslsk GPL-3.0-or-later (reusable with attribution);
+    Soulseek.NET GPL-3.0-only with additional Section 7 terms; slskd AGPL-3.0-only — read for ideas only.
 
 ## 3. How shares appear on the protocol
 
@@ -681,12 +707,20 @@ user-initiated work and can't be abused to make Selecta spam the server with `Ge
 
 ## 11. Sources
 
-Clones (shallow, read-only) under `local/research-clones/sharing/`, accessed 2026-10-19:
+All accessed 2026-10-19. Clones are shallow and read-only, under `local/research-clones/sharing/`.
 
-| Repo | Commit (date) | Licence | Use |
+| Source | Commit / version | Licence | Used for |
 |---|---|---|---|
-| nicotine-plus/nicotine-plus | `f3b9d4d` (2026-10-18) | GPL-3.0-or-later | `pynicotine/shares.py`, `search.py`, `uploads.py`, `transfers.py`, `slskproto.py`, `slskmessages.py`, `config.py`, `doc/SLSKPROTOCOL.md` |
-| slskd/slskd | `6a450e4` (2026-10-18) | AGPL-3.0-only (read for ideas only; do not copy code) | `src/slskd/Core/Options.cs`, `Shares/SqliteShareRepository.cs`, `Transfers/Uploads/*.cs`, `Users/UserService.cs`, `Application.cs` |
-| JurgenR/aioslsk | `a90ad82` (2026-10-11) | GPL-3.0 (`TODO(verify)` exact SPDX) | `src/aioslsk/shares/*.py`, `search/model.py` |
-| jpdillingham/Soulseek.NET | `c07c187` (2026-10-11) | GPL-3.0 (`TODO(verify)`) | `src/SearchQuery.cs`, message builders |
-| qt/qtbase (sparse: `src/corelib/io`) | `dd7a64e` (2026-10-19) | LGPL-3.0/GPL | QFileSystemWatcher backends, `QFile::decodeName` |
+| [nicotine-plus/nicotine-plus](https://github.com/nicotine-plus/nicotine-plus) | `f3b9d4d` (2026-10-18) | GPL-3.0-or-later | `pynicotine/shares.py` (scanner, virtual paths, permission levels, browse/folder handlers, `SharedFoldersFiles`), `search.py` (incoming search matching, excluded phrases, response fields), `uploads.py` (queue checks, round-robin, privileges, denial reasons, place in queue, `SendUploadSpeed`, `UploadFailed`), `transfers.py` (45 s timeout, statistics), `slskproto.py` (FileOffset handling, idle timeouts), `slskmessages.py` (message layouts, reject reasons, attributes), `config.py` (defaults) |
+| [Nicotine+ Soulseek protocol documentation](https://nicotine-plus.org/doc/SLSKPROTOCOL.html) (= `doc/SLSKPROTOCOL.md` at the same commit) | — | GPL-3.0-or-later | Upload permissions, rejection reasons, attribute combinations, message layouts, example download flow |
+| [slskd/slskd](https://github.com/slskd/slskd) | `6a450e4` (2026-10-18) | AGPL-3.0-only (+ §7 terms) | `Core/Options.cs` (share aliases/validation, upload slots, groups, leecher thresholds, limits, search throttling), `Shares/SqliteShareRepository.cs` (FTS5 search, exclusions), `Transfers/Uploads/UploadQueue.cs`, `UploadGovernor.cs`, `UploadService.cs`, `Users/UserService.cs`, `Application.cs` (search response resolver, ~30 req/s note), `docs/config.md` (group examples, blacklist) |
+| [JurgenR/aioslsk](https://github.com/JurgenR/aioslsk) | `a90ad82` (2026-10-11) | GPL-3.0-or-later | `shares/manager.py` (term map, query, locked results, folder reply, counts), `shares/utils.py`, `search/model.py` (query syntax) |
+| [jpdillingham/Soulseek.NET](https://github.com/jpdillingham/Soulseek.NET) | `c07c187` (2026-10-11) | GPL-3.0-only (+ §7 terms) | `SoulseekClient.cs` (per-user upload semaphore, offset validation), `Options/SoulseekClientOptions.cs`, `SearchQuery.cs` |
+| [qt/qtbase](https://github.com/qt/qtbase) `src/corelib/io` (sparse) | `dd7a64e` (2026-10-19) | LGPL-3.0 / GPL | `qfilesystemwatcher.cpp` (macOS → FSEvents engine), `qfilesystemwatcher_fsevents.mm` (per-path watching, 0.5 s latency, no persisted history), `qfile.h` (NFD encode / NFC decode on Darwin), `qfilesystemiterator_unix.cpp` |
+| macOS SDK headers and man pages (Xcode, local) | MacOSX.sdk | — | `sys/stat.h` (`SF_DATALESS`, `UF_HIDDEN`), `sys/resource.h` + `getiopolicy_np(3)` (materialisation policy), `FSEvents.h` (event IDs, `FSEventsCopyUUIDForDevice`, flags) |
+| [Eclectic Light: Privacy — how locations are protected](https://eclecticlight.co/2026/04/20/privacy-how-locations-are-protected/), [What controls access to files?](https://eclecticlight.co/2026/10/08/what-controls-access-to-files/) | 2026 | — | TCC-protected locations on macOS 26, user-intent grants (MACL), removable vs boot-mounted volumes |
+| [Apple Platform Security: Controlling app access to files](https://support.apple.com/guide/security/controlling-app-access-to-files-secddd1d86a6/web) | — | — | Files & Folders categories |
+| [Apple Developer Forums: file open intent paths (TCC)](https://developer.apple.com/forums/thread/750962) | — | — | Intent grants via security-scoped URLs/bookmarks/extended attribute (Apple DTS) |
+| [Qiita: dataless files and EDEADLK](https://qiita.com/acs-developer/items/4552dd8a749cedbd85d1), [MacRumors thread quoting Apple's iCloud Drive note](https://forums.macrumors.com/threads/ios-16-speculation-thread.2339171/page-277), [DEV: iCloud evicted files and EDEADLK](https://dev.to/bokuwalily/icloud-silently-evicted-69-article-files-and-killed-4-days-of-publishing-edeadlk-and-a-1n6i) | — | — | Materialisation behaviour, `EDEADLK` = 11 on macOS, launchd default off (secondary sources, consistent with each other) |
+| [GitHub issue: TCC with ad-hoc signed builds](https://github.com/jonstump/the-outfitter/issues/515) | — | — | Anecdotal: unsigned builds may get `EPERM` without a prompt |
+| [mlnl221/Ban-SoulseekLeechers](https://github.com/mlnl221/Ban-SoulseekLeechers) | — | — | Example community leech rule (Nicotine+ plugin: 100 files / 5 folders) — hearsay-level, not adopted |
