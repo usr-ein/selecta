@@ -921,6 +921,217 @@ to rekordbox stays a non-goal.
 
 ---
 
+## 17. Typo tolerance and position-independent matching
+
+The maintainer asked for "a Levenshtein distance kind of thing": tolerate typos and missing letters, and find artist,
+title and album wherever they sit in a path. This section is the fuzzy layer under §4–§9. It serves three
+consumers: ownership badges (remote ↔ collection), release-first search and batch (remote ↔ chosen release,
+SRCH-17/18, BATCH-5, D23), and building network queries (release → query words).
+
+### 17.1 Error model
+
+| Error | Example | Handled by |
+|---|---|---|
+| Missing letter | `Okum Drift`, `Bicp` | OSA deletion within the token budget (§17.3) |
+| Extra or doubled letter | `Gallaxy`, `Biccep` | OSA insertion; single-letter skeleton |
+| Wrong letter | `Firestorter` | OSA substitution, only on longer tokens (§17.3) |
+| Swapped neighbours | `Firestatrer`, `Bciep` | OSA transposition = 1 edit (Levenshtein charges 2) |
+| Joined or split words | `okumadrift` ↔ `okuma drift`, `DaftPunk`, `dead mau5` | CamelCase split, squashed keys, joined-pair alignment (§17.4) |
+| Diacritics, transliteration | `Röyksopp` ↔ `Royksopp` ↔ `Roeyksopp`, `Müller` ↔ `Mueller` | Folding (§4.2) plus one edit for `oe`/`ue` |
+| Symbols, leetspeak | `Ke$ha`, `P!nk`, `deadmau5`, `S3RL`, `A$AP` | `$`→`s` (§4.2), leet-folded secondary key, alias table |
+| Abbreviations | `feat.`/`ft.`, `&`/`and`, `pt`/`part`, `Part II`/`Part 2` | Canonicalisation (§4.2 step 8) |
+| Order and level | `Title - Artist`, `Artist\Album\NN Title`, `Album - Artist\…`, scene names | Evidence-scored parse (§17.5 A) or reference-guided token bag (§17.5 B) |
+
+Background: Damerau (1964) reported that over 80 % of misspellings are one insertion, deletion, substitution or
+transposition of adjacent letters — exactly the operations OSA counts as one edit. Pollock & Zamora's SPEEDCOP data
+(50 000+ misspellings) found 90–95 % of misspelled words contain a single error, omission the most common, and only
+7.8 % have a wrong first letter (vs 11.7 % second, 19.2 % third).
+
+### 17.2 Which edit distance
+
+| Measure | Transposition | Metric | rapidfuzz-cpp | Role in Selecta |
+|---|---|---|---|---|
+| Levenshtein | 2 edits | yes | `distance::Levenshtein`, bit-parallel; weights `{1,1,1}`, `score_cutoff`, `score_hint` | Only where a metric is required (BK-tree — not chosen) |
+| **OSA** (restricted Damerau) | **1 edit** | no | `distance::OSA`, `CachedOSA`: bit-parallel, O(n) when the first string ≤ 64 chars (Hyyrö; `OSA_impl.hpp`) | **Per-token decision** against an edit budget |
+| Damerau-Levenshtein (unrestricted) | 1 edit | yes | `distance::DamerauLevenshtein` (not bit-parallel) | Not needed: differs from OSA only when a transposed pair is edited again |
+| Indel → `fuzz::ratio` | 2 (substitution also 2) | yes | `fuzz::ratio`, `CachedRatio`, `CachedIndel`; bit-parallel LCS | **Whole-string check** on squashed keys; field similarity in §6/§9 |
+| Jaro-Winkler | partial | no | `JaroWinkler`, `prefix_weight = 0.1` default | Not a decision measure: different short names score high (`max`/`mix` ≈ 0.80) and the scale is not an edit count. Optional tie-breaker for artist names ≥ 6 chars |
+| `partial_ratio` | — | — | window search with a cached Indel scorer | Avoid for titles (`love` inside `lovely` = 100); token alignment does the same job safely |
+| `token_set_ratio` | — | — | sorted intersection/remainders | Never a decision score (`Love` vs `Love Story` = 100); at most a "subset" feature |
+| `WRatio` | — | — | if length ratio < 1.5: `max(ratio, token_ratio × 0.95)`; else partial variants × 0.9 (× 0.6 beyond 8×) (`fuzz_impl.hpp`) | Search-box heuristic with opaque thresholds; not for match decisions |
+
+Cost (estimates for one Apple Silicon core, to benchmark in M4): cached OSA/Indel on short tokens are bit-parallel —
+tens of nanoseconds per pair; `token_*` scorers add tokenising and sorting (around a microsecond); `partial_ratio`
+costs several ratio evaluations; `WRatio` runs several scorers. The C++ library has no `process::extract` (the README
+shows one as sample code), so Selecta writes its own top-k loop and passes `score_cutoff` to every call so hopeless
+pairs exit early.
+
+**Choice: per-token OSA with a length-dependent edit budget, tokens aligned one by one, plus `fuzz::ratio` on squashed
+keys as the whole-string check.** This is the shape of the method Cohen, Ravikumar & Fienberg (2003) found best for
+name matching: token weighting combined with a soft per-token similarity ("SoftTFIDF").
+
+### 17.3 Token rules: budgets that depend on length
+
+Measured on an 80 000-token proxy vocabulary (macOS `/usr/share/dict/words`, method in Sources): how many *other*
+tokens lie within one edit of a token.
+
+| Token length | Any single edit: mean neighbours; tokens with ≥ 1 | Insertion/deletion/transposition only |
+|---|---|---|
+| 3 | 9.8; 100 % | 2.9; 88 % |
+| 4 | 5.5; 96 % | 1.4; 72 % |
+| 5 | 2.1; 80 % | 0.7; 47 % |
+| 6 | 1.1; 58 % | 0.34; 28 % |
+| 7 | 0.6; 42 % | 0.21; 19 % |
+| 8 | 0.3; 23 % | 0.12; 11 % |
+| 10 | 0.15; 14 % | 0.05; 5 % |
+
+A short token almost always has a real word one edit away (`noon`/`neon`/`moon`, `max`/`mix`, `love`/`live`), so one
+edit on it is as likely to be a different word as a typo. Rules:
+
+| Normalised token | Allowed | Conditions |
+|---|---|---|
+| ≤ 3 chars (`dj`, `mk`, `ii`, `mc`, `uk`, `ep`, `vs`), pure numbers (`1999`, `808`, `182`) | exact only (aliases allowed) | — |
+| 4–5 chars | 1 edit: insertion, deletion or adjacent transposition — **no substitution** | same first letter, and corroborated: another token of the field matches exactly, or the duration is within ±3 s |
+| 6–8 chars | 1 OSA edit of any kind | same first letter unless the edit swaps the first two letters; a substitution needs corroboration as above |
+| ≥ 9 chars | 2 OSA edits | at most one substitution |
+| letters mixed with digits/symbols (`deadmau5`, `s3rl`, `ke$ha`) | exact on the primary key or on a leet-folded key (`0→o 1→i 3→e 4→a 5→s 7→t $→s @→a !→i`) | never edit the digits (`blink 182` ≠ `blink 183`) |
+
+Per field: at most **1 edit for fields ≤ 12 characters, 2 above**, and at most one fuzzy token in a field of one or
+two tokens. A fuzzy token scores `1 − 0.15 × edits` in the coverage sums (§17.4), so typos never look exact. The
+first-letter rule gives up the ~8 % of typos that hit the first letter (Pollock & Zamora) in exchange for far fewer
+false neighbours. Doubled letters: also compare a single-letter skeleton (`gallaxy` → `galaxy`), for tokens ≥ 5 chars
+only (`too`/`to` stay different).
+
+### 17.4 Align tokens, not whole strings
+
+Whole-string distances punish reordering and extra words and hide where the difference is. Token alignment gives
+every token its own budget and makes extra and missing words explicit:
+
+1. Reference tokens R (from the release or a library candidate) against remote tokens P (one zone of the path,
+   §17.5 B).
+2. For each r in R, longest first, take the best unused p in P that passes §17.3. Greedy is enough for ≤ 10 tokens.
+3. Joined or split words: also offer adjacent pairs of P joined (`okuma`+`drift` → `okumadrift`) and adjacent pairs
+   of R joined, each counted as one token with no edit. Split CamelCase on the raw string before case-folding
+   (`OkumaDrift` → `okuma drift`); the odd wrong split (`McCartney` → `mc cartney`) is harmless because squashed keys
+   still compare equal.
+4. **Coverage** = Σ w(r)·sim(r) / Σ w(r), with w = token length or an IDF from the collection and cached results, so
+   `the`, `mix`, `feat` weigh little. **Unexplained share** u = characters of P not used by R (ignoring junk, track
+   number, catalogue and version tokens) / characters of P.
+5. Whole-string check: `fuzz::ratio(squash(R), squash(P)) ≥ 85` is an alternative route to full coverage, for
+   concatenations the pair join misses.
+
+### 17.5 Position independence
+
+Two strategies, chosen by whether a reference exists.
+
+**A. Evidence-scored parse (no reference).** Extends §4.1 step 6: generate field hypotheses and score them instead of
+applying a fixed order.
+
+| Layout | Example | Hypotheses |
+|---|---|---|
+| `Artist - Title` or `Title - Artist` | `Glue - Bicep.mp3` | swapped or not |
+| `Artist\Album\NN Title` | `Bicep\Isles (2021)\03 Apricots.flac` | artist from D2, album from D1 |
+| `Artist - Album\NN - Title` | `Bicep - Isles\03 - Apricots.flac` | split the folder name |
+| `Album - Artist\…` | `Isles - Bicep\03 Apricots.flac` | reversed folder split |
+| `Various\Album\NN - Artist - Title` | compilations | per-file artist |
+| `Label\Year\Artist - Title`, `Genre\…` | DJ promo folders | generic folders ignored |
+| scene | `Bicep-Isles-WEB-2021-GRP\03-bicep-apricots.mp3` | split on `-`, artist repeated per file |
+
+Evidence, summed as log-odds per hypothesis:
+- *strong* — a segment constant across ≥ 3 siblings is the artist or the album; a hit in the known-artist dictionary,
+  looked up through the fuzzy token index (§17.6): the collection's artists with their track counts, the chosen
+  release's artists (SRCH-17), and the artists of the current search's release candidates;
+- *medium* — agreement with a folder component; title-like features in a segment (version brackets, `feat.`, a track
+  number in front);
+- *weak* — the `Artist - Title` order prior (≈ 4:1, to calibrate on recorded results, E3).
+
+If the two best hypotheses are within a small margin, keep both and cap the tier at likely.
+
+**B. Reference-guided token bag (a reference exists).** Skip field assignment. Split the path into zones:
+F = filename body (no extension, track number, quality or junk tags), B = bracketed parts of the filename,
+D1 = parent folder, D+ = higher folders (generic names removed). Then:
+- `cov_T` = coverage of the reference's title tokens in F (D1 accepted with a 0.8 factor, for `Title\01.flac`
+  layouts);
+- `cov_A` = coverage of the reference's artist tokens in F ∪ D1 ∪ D+. **An artist found only inside B is a remixer,
+  not the artist**: it counts as version evidence (`<artist> Remix`), never as artist evidence;
+- version check (§5) on B and on a trailing ` - … Mix` segment of F: a remix or edit missing from the reference is a
+  conflict;
+- u (§17.4) > 0.3 means another title that contains ours (`Love Story` for `Love`, `Title Part 2`);
+- duration within ±3 s (SRCH-18) — ranked first per D23.
+
+```
+fit = (0.35·s_dur + 0.40·cov_T + 0.25·cov_A) × multipliers
+multipliers: version conflict × 0 · artist only inside brackets × 0.3 · u > 0.3 × 0.5
+"Only this release" (SRCH-18) keeps fit ≥ 0.8 with s_dur = 1
+```
+
+| Situation | Approach |
+|---|---|
+| Search with a chosen release (SRCH-17/18), batch line (BATCH-5), wishlist, metadata match (META-2) | **B**, the release is the reference |
+| Ownership badge on any result | A to get lookup tokens → retrieve library candidates (§10, §17.6) → **verify each candidate with B**, using the candidate's tags as the reference; keep the better of the A and B scores (the §9 tier rules still apply) |
+| "Any (name only)" search, album grouping, display and filing names | A |
+
+The hybrid makes ownership robust to unusual layouts: parsing only has to find some good lookup tokens, not the right
+field assignment.
+
+### 17.6 Scale: fuzzy retrieval without scanning the library
+
+Fuzzy matching runs on **tokens**, not tracks: a token that misses the exact postings (§10) is mapped to vocabulary
+tokens within its budget, whose postings give the candidate tracks. Options measured on the same 80 000-token proxy
+with 3 000 misspelled lookups (one random edit; two edits on half the tokens ≥ 9 chars; Python prototype):
+
+| Structure | Index size | Work per misspelled token | Recall | Notes |
+|---|---|---|---|---|
+| **Symmetric-delete index** (SymSpell idea: deletes of the first 7 chars up to the token's budget, candidates verified with OSA) | 1.61 M postings, 20 per token (this dictionary is long-word heavy, mean length 9.6) ≈ 40 MB in C++ (estimate) | 51 candidates mean (p95 194) → 1.3 verified | 98.6 % | Transpositions handled by OSA verification. Python 1.3 ms per lookup |
+| BK-tree (Levenshtein) | one node per token | 2 120 distance computations (2.6 % of the vocabulary) at radius 1; 13 477 (16.8 %) at radius 2 | complete for Levenshtein | Needs a metric, so transpositions cost 2; 40–260× more distance computations than the delete index's checks |
+| Padded trigram index, q-gram count filter | 0.85 M postings, 10.6 per token | 23 candidates mean (p95 95) | 90.4 % | The count filter guarantees nothing for short tokens (q-gram lemma); fine for long strings and for UI substring search (FTS5 `trigram`, §10) |
+
+**Choice: a symmetric-delete index over the token vocabulary.** Sizing for Selecta: a 200k-track collection plus
+history has perhaps 50k–150k distinct tokens (estimate). With the budgets of §17.3 a token adds 1 posting (≤ 3
+chars), ≤ 6 (4–5), ≤ 8 (6–8) or ≤ 29 (≥ 9: prefix 7, two deletes). With an assumed music mix of 12 / 28 / 40 / 20 %
+that is ≈ 10 postings per token: 0.5–1.5 M postings, ≈ 12–40 MB. A C++ lookup is ≤ 29 hash probes plus ~50 OSA checks:
+estimated ≈ 5 µs per misspelled token (benchmark in M4). Only tokens that miss the exact postings take this path, and
+only the 2–3 rarest tokens of a field need it, so the ≤ 100 µs per result of §10 holds. SymSpell itself is MIT-licensed
+(changed from LGPL-3.0 in v6.1); its README reports 0.033 ms per word at edit distance 2 and "1,870 times faster than
+BK-tree" (500 000 words, edit distance 3). The idea is small enough to implement directly.
+
+### 17.7 The query side: what peers match, and how to choose words
+
+Facts (`references/soulseek-protocol.md` §10, Nicotine+ source): **the server does not match queries**, it routes them;
+every responding client matches its own shares. Consensus behaviour: **whole words**, case-insensitive, all words
+required, `-word` excludes, a leading `*` is a suffix wildcard, and at least one complete word is required ("Matches
+official clients", Nicotine+ `search.py` `_create_search_result_list`). Nicotine+ responders ignore queries shorter
+than 3 characters; Soulseek.NET drops one-character words. Word boundaries are punctuation — Nicotine+ splits on
+`! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ { | } ~` and Unicode punctuation (`pynicotine/utils.py`
+`PUNCTUATION`) — so a shared `Ke$ha` is indexed as `ke` + `ha`, `Don't` as `don` + `t`, `AC/DC` as `ac` + `dc`.
+**No accent folding**: `Beyoncé` and `Beyonce` are different words.
+
+Consequences: a typo in the query misses every correctly spelled file; a typo in a file is missed by every query that
+contains the misspelled word; `okumadrift` and `okuma drift` are different words; diacritics split the network into
+two spellings.
+
+Design (confirms and refines the brief):
+1. **Correct the query through the release lookup** (SRCH-17). The typed text goes to Spotify/Deezer/MusicBrainz,
+   which tolerate typos; the network query uses the release's spelling. Confirmed as the default path.
+2. **Choose the words with the responders' splitting in mind:**
+   - start from the release's primary artist and title, plus the remixer for remix versions; split with the
+     punctuation set above; case-fold;
+   - drop words under 3 characters, stop and version words (`the`, `a`, `feat`, `ft`, `and`, `original`, `extended`,
+     `radio`, `edit`, `mix`, `remix`, `version`) and punctuation fragments (`t` from `don't`);
+   - prefer words without diacritics, apostrophes or symbols when the remaining words are selective enough (≥ 2 words
+     of ≥ 4 characters, or one of ≥ 6); otherwise keep the release's spelling (tagged files usually keep diacritics);
+   - at most 4–5 words: every extra word is one more chance that a spelling variant excludes a file;
+   - **no wildcards** to work around spelling: `*yksopp` is also the filter-evasion pattern the etiquette note forbids
+     (its §7.3); if a word contains an excluded phrase, warn instead of searching.
+3. **"Search wider"**: one explicit click = one budgeted search. The etiquette note forbids fanning one query out into
+   several searches automatically (its "never" rule 7). Ladder: (1) drop the least reliable words (diacritics, symbols,
+   and the longest word, the likeliest to be misspelled in files) or use the joined form of a multi-word artist
+   (`okumadrift`) — a spelling variant, not a wildcard; (2) title words only; (3) artist only, for short or generic
+   titles, relying on per-search caps (SRCH-16). Wide results go through the reference-guided scorer (§17.5 B) with
+   the ±3 s window, so precision holds even when the query is broad. In Batch, one click may queue wider searches for
+   all unresolved lines, paced by the governor with the budget shown. Wide results are cached like any search
+   (SRCH-12).
+
 ## Implications for Selecta
 
 ### Components (`src/library/`, PLAN M4)
