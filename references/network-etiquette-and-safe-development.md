@@ -532,7 +532,7 @@ Before any live session (maintainer, M9 onwards):
 | E5 | Search budget | Accept 3/min sustained with a burst of 6 (OQ-4); expose remaining budget and refill time (SRCH-13). |
 | E6 | Per-peer caps | Accept 1 active / 20 queued / 20–50 files per day (OQ-4). |
 | E7 | Excluded phrases on outgoing searches | Warn and do not send (no override): compliant peers would return nothing anyway. |
-| E8 | May settings loosen a limit above its default (up to the ceiling), or only tighten it? | Allow loosening up to the ceiling for the per-peer and concurrency limits (a privileged or very active user may want it); keep **search budget, reconnect and PM limits fixed at their defaults** (ceiling = default), since those are the ones the server bans for. |
+| E8 | May settings loosen a limit above its default (up to the ceiling), or only tighten it? | Allow loosening up to the ceiling for the per-peer and concurrency limits (a privileged or very active user may want it). For the **search budget, reconnect and PM limits** — the ones the server bans for — expose no loosening setting in v1; their ceilings then only bound future changes of the defaults. |
 
 ## 10. Open questions and things to verify on a local test server
 
