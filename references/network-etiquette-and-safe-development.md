@@ -76,6 +76,11 @@ conventions maintained by the Nicotine+ developers (who are the de-facto keepers
 - "Platforms other than Microsoft Windows": the official client (SoulseekQt) now exists on Windows, macOS and Linux,
   so this clause is anachronistic. Selecta is macOS-first; Windows builds are CI-only in v1, which keeps us on the
   safe side of the literal text. **Inference**, not an official interpretation.
+- Why the tolerance is grudging: "Development of third-party clients was discouraged (but not prohibited), as coding
+  errors or explicit circumvention of network rules in third-party clients had, at times, a drastic negative impact on
+  the Soulseek network" (Wikipedia, "Soulseek", History › Versions — secondary source). A buggy reconnect loop or an
+  unpaced search queue in a new client is exactly that failure mode; the governor and the local test network (§8)
+  exist to prevent it.
 - Admins can disconnect anyone for any reason; there is no appeal process documented. A ban during development costs
   the maintainer his account and possibly his IP (K2/K5) — hence the safe-development rules in §8.
 
@@ -221,7 +226,9 @@ their uploads is active — `uploads.py` `_activate_transfer`/`_update_user_coun
 `MaximumConcurrentUploadsPerUser = 1`), so asking one peer for several files at once only lengthens *their* queue.
 
 The culture has a long "leecher" grievance: the official FAQ concedes that "Soulseek has a reputation for mean,
-pedantic users that have a great list of 'dos and don'ts' in their userinfo". The author refused automatic bans of
+pedantic users that have a great list of 'dos and don'ts' in their userinfo". Wikipedia lists the usual ban reasons:
+free-riding, nuisance in chat, "taking up a user's bandwidth by downloading too many files, or simply on the whim of
+the banning user" — and "users with download privileges can still be banned". The author refused automatic bans of
 non-sharers as "too harsh" (2012) and built a polite warning instead; uploaders built the bans themselves.
 
 ### 5.2 How uploaders enforce their rules (what Selecta will run into)
@@ -574,6 +581,7 @@ All accessed 2026-10-19. Repositories were shallow-cloned read-only into `local/
 | https://www.slsknet.org/news/node/682 — Terms of Use | §2 accounts, §8 termination, §12(b) no probing/testing, §12(c) no flooding/spamming |
 | https://www.slsknet.org/news/faq-page — FAQ | Username recycling after 30 days, IP bans, non-sharer policy, "dos and don'ts" quote |
 | https://www.slsknet.org/news/node/523 — Nir, "Empty share warnings, fixes and more" (2012-05-11) | Refusal of auto-bans, background browse + warning, place in line |
+| https://en.wikipedia.org/wiki/Soulseek (secondary) | Third-party clients historically harmful when buggy; usual ban reasons; single-source transfers |
 | https://www.slsknet.org/news/changelog — SoulseekQt changelog (2012–2026) | Per-user upload limit on by default, MB-per-user limit, retry policy, 10 000-result cap, one-character tokens, too-many-files handling |
 
 ### Issue trackers, discussions, forums
