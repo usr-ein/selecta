@@ -19,4 +19,5 @@ foreach(_module IN LISTS _selecta_libraries)
 endforeach()
 
 add_subdirectory(library)
+add_subdirectory(core)
 add_subdirectory(app)

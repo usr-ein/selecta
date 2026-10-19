@@ -146,6 +146,13 @@ void ReconnectPolicy::handle(Event event)
         m_delay = std::min<Duration>(m_delay, limits::kAfterLoginTimeoutCap);
         waitAtLeast(m_delay);
         return;
+    case Event::ProtocolViolation:
+        // Retrying can't help, and a codec bug must never turn into hammering a server.
+        m_loggedInSince.reset();
+        m_needsUser = true;
+        m_needsUserReason = u"The server sent something Selecta couldn't read, so it disconnected. Connect again "
+                            u"when you are ready."_s;
+        return;
     case Event::UserRequested:
         // The user can lift the "needs user" block, but not a ban's waiting time or the hourly cap.
         m_needsUser = false;

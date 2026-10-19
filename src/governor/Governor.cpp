@@ -379,7 +379,8 @@ void Governor::downloadFinished(const QString &peer, qint64 bytes, bool complete
 {
     m_ledger.finished(peer);
     if (completed) {
-        m_ledger.recordCompleted(peer, bytes);
+        const auto counted = m_ledger.recordCompleted(peer, bytes);
+        Q_EMIT peerDayChanged(peer, counted.day, counted.totals.files, counted.totals.bytes);
     }
 }
 
@@ -390,7 +391,9 @@ void Governor::downloadWithdrawn(const QString &peer)
 
 void Governor::peerDenied(const QString &peer, const QString &reason)
 {
-    m_ledger.denied(peer, reason);
+    if (const auto backoff = m_ledger.denied(peer, reason)) {
+        Q_EMIT peerBackoffStarted(peer, backoff->count(), reason);
+    }
 }
 
 bool Governor::downloadSlotFree() const
@@ -457,6 +460,43 @@ QString refusalName(Refusal refusal)
         return u"login-backoff"_s;
     case Refusal::LiveServerRefused:
         return u"live-server-refused"_s;
+    }
+    return u"unknown"_s;
+}
+
+QString operationName(Operation operation)
+{
+    switch (operation) {
+    case Operation::Login:
+        return u"login"_s;
+    case Operation::Search:
+        return u"search"_s;
+    case Operation::PeerLookup:
+        return u"peer-lookup"_s;
+    case Operation::QueueDownload:
+        return u"queue-download"_s;
+    case Operation::PlaceInQueue:
+        return u"place-in-queue"_s;
+    case Operation::Browse:
+        return u"browse"_s;
+    case Operation::UserInfo:
+        return u"user-info"_s;
+    case Operation::FolderContents:
+        return u"folder-contents"_s;
+    case Operation::PrivateMessage:
+        return u"private-message"_s;
+    case Operation::RoomMessage:
+        return u"room-message"_s;
+    case Operation::SpotifyRequest:
+        return u"spotify"_s;
+    case Operation::MusicBrainzRequest:
+        return u"musicbrainz"_s;
+    case Operation::CoverArtRequest:
+        return u"cover-art"_s;
+    case Operation::DeezerRequest:
+        return u"deezer"_s;
+    case Operation::YtDlpRun:
+        return u"yt-dlp"_s;
     }
     return u"unknown"_s;
 }

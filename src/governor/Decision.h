@@ -47,5 +47,7 @@ struct Decision
 };
 
 QString refusalName(Refusal refusal);
+// Stable short names for logs and the activity table ("search", "queue-download"…).
+QString operationName(Operation operation);
 
 } // namespace selecta::governor

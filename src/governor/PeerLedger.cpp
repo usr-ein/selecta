@@ -13,7 +13,6 @@ constexpr auto kBannedBackoff = std::chrono::days(30);
 constexpr auto kNotSharedBackoff = 24h;
 constexpr auto kNotSharedWindow = 24h;
 constexpr auto kShutdownBackoff = 15min;
-constexpr qint64 kDaysKept = 8; // today plus the 7-day window, with a day of slack
 
 // Peers reply with exact strings (protocol note §6.5); anything mentioning a ban counts as one.
 bool isBan(const QString &reason)
@@ -45,13 +44,16 @@ void PeerLedger::pruneDays(Peer &entry) const
     entry.days.removeIf([&](const auto &item) { return item.key() < oldest; });
 }
 
-void PeerLedger::recordCompleted(const QString &name, qint64 bytes)
+PeerLedger::DayTotals PeerLedger::recordCompleted(const QString &name, qint64 bytes)
 {
     Peer &entry = peer(name);
-    PeerDay &day = entry.days[m_today()];
+    const QDate today = m_today();
+    PeerDay &day = entry.days[today];
     day.files += 1;
     day.bytes += std::max<qint64>(0, bytes);
+    const DayTotals result{.day = today, .totals = day};
     pruneDays(entry);
+    return result;
 }
 
 void PeerLedger::restoreDay(const QString &name, QDate day, PeerDay totals)

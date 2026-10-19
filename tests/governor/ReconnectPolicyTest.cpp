@@ -113,6 +113,16 @@ TEST_F(ReconnectPolicyTest, ReloggedAndRejectionNeverReconnectAlone)
     EXPECT_EQ(policy.mayLogin().refusal, Refusal::LoginNeedsUser);
 }
 
+TEST_F(ReconnectPolicyTest, ProtocolViolationNeedsTheUser)
+{
+    policy.handle(Event::ProtocolViolation);
+    clock.advance(24h);
+    EXPECT_EQ(policy.mayLogin().refusal, Refusal::LoginNeedsUser);
+    EXPECT_FALSE(policy.mayLogin().explanation.isEmpty());
+    policy.handle(Event::UserRequested);
+    EXPECT_TRUE(canLogin());
+}
+
 TEST_F(ReconnectPolicyTest, InstantEofWaitsHalfAnHour)
 {
     random = 1.0;

@@ -27,14 +27,15 @@ class ReconnectPolicy
 public:
     enum class Event {
         LoginSucceeded,
-        ConnectionLost, // the session dropped after a successful login
-        LoginTimeout,   // no reply to the login request
-        InstantEof,     // the server closed the connection immediately
-        BanNotice,      // the "banned for 30 minutes" message from the server
-        Relogged,       // the account logged in elsewhere
-        LoginRejected,  // the server refused the login (wrong password, invalid username, …)
-        ServerFull,     // the server refused the login because it's full
-        UserRequested,  // the user asked to connect
+        ConnectionLost,    // the session dropped after a successful login
+        LoginTimeout,      // no reply to the login request
+        InstantEof,        // the server closed the connection immediately
+        BanNotice,         // the "banned for 30 minutes" message from the server
+        Relogged,          // the account logged in elsewhere
+        LoginRejected,     // the server refused the login (wrong password, invalid username, …)
+        ServerFull,        // the server refused the login because it's full
+        ProtocolViolation, // the server sent an oversized or impossible frame (or our codec has a bug)
+        UserRequested,     // the user asked to connect
     };
 
     ReconnectPolicy(const base::Clock &clock, std::function<double()> random01);

@@ -94,6 +94,10 @@ Q_SIGNALS:
                  const QString &explanation);
     void pausedChanged(bool paused);
     void searchBudgetChanged(int available);
+    // State that must survive a restart (GovernorStore saves it): a peer's totals for `day` after a completed
+    // download, and a back-off a peer's denial started.
+    void peerDayChanged(const QString &peer, QDate day, int files, qint64 bytes);
+    void peerBackoffStarted(const QString &peer, qint64 remainingMs, const QString &reason);
 
 private:
     Decision decide(Operation operation, const Request &request);

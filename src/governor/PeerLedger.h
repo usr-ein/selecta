@@ -25,10 +25,20 @@ struct PeerDay
 class PeerLedger
 {
 public:
+    // Days of totals kept: today plus the 7-day window, with a day of slack.
+    static constexpr qint64 kDaysKept = 8;
+
     PeerLedger(const base::Clock &clock, std::function<QDate()> today);
 
     // --- downloads completed (counted toward the daily and weekly caps) ---
-    void recordCompleted(const QString &name, qint64 bytes);
+    struct DayTotals
+    {
+        QDate day;
+        PeerDay totals;
+    };
+    // Counts one completed download and returns the day it counted toward with that day's new totals (read in one
+    // step, so a save can't pair the totals with the wrong day around midnight).
+    DayTotals recordCompleted(const QString &name, qint64 bytes);
     // Restores a day's totals saved by an earlier session (today's counters must survive a restart).
     void restoreDay(const QString &name, QDate day, PeerDay totals);
     PeerDay today(const QString &name) const;
