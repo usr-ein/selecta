@@ -757,6 +757,175 @@ download manager — TODO(verify) current Beatport flow). Proposed flow:
 4. The History records the source as "Purchase (Bandcamp)" rather than a peer, so per-peer counters and the ratio
    are unaffected; the item can still be matched against the pending purchase's release for tags.
 
+## 12. yt-dlp as a preview source (D26)
+
+Decision D26 (maintainer): Selecta may run the user's **own installed** yt-dlp to fetch preview audio for the matched
+release (PREV-11, PREV-12). Selecta runs it as an external process (`QProcess`, argument list, no shell), one process
+at a time, with a timeout, without cookies or accounts; it never bundles, downloads, updates or reimplements yt-dlp;
+the audio stays in the preview cache and is never filed, shared, converted or tagged (D20). Sources: yt-dlp
+(Unlicense) README and source at `8973412` (master, 2026-10-10; last release 2026.08.19). No yt-dlp query was run for
+this note; output shapes come from the source.
+
+### 12.1 Discovery and version check
+
+- **Where to look**, in order: the path set in Settings → `/opt/homebrew/bin/yt-dlp` → `/usr/local/bin/yt-dlp` →
+  `~/.local/bin/yt-dlp` (pipx) → `QStandardPaths::findExecutable("yt-dlp")` on the inherited `PATH`. An app started
+  from the Finder inherits launchd's minimal `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), so the Homebrew paths must be
+  probed explicitly. Never look in the working directory.
+- **Validate** the file: regular, executable, not group/world-writable, owned by the user or root; resolve symlinks
+  (Homebrew: `/opt/homebrew/bin/yt-dlp → ../Cellar/yt-dlp/<version>/bin/yt-dlp`, a Python script whose shebang is
+  Homebrew's own Python).
+- **Version**: `yt-dlp --version` prints a date version (`2026.08.19`). Show it in Settings; warn when it is more than
+  ~90 days old ("YouTube changes often; run `brew upgrade yt-dlp`"). Selecta never runs `-U`.
+- **JavaScript runtime**: the README lists "`yt-dlp-ejs` and a supported JavaScript runtime/engine" as highly
+  recommended and "Required for full YouTube support"; only Deno is enabled by default. Homebrew's `yt-dlp` formula
+  (2026.8.19) depends on `deno`. Probe `deno` in the same places and pass `--js-runtimes deno:<path>`, because the child
+  process may not see Homebrew on its `PATH`. Without it yt-dlp warns that "YouTube extraction without a JS runtime has
+  been deprecated, and some formats may be missing".
+- **On this machine** (2026-10-20): `/opt/homebrew/bin/yt-dlp` is **2025.07.21** (Homebrew stable is 2026.8.19) and
+  Deno is not installed. Expect D26 previews to fail until `brew upgrade yt-dlp`, which also installs Deno.
+
+### 12.2 Searching for candidates without downloading
+
+```sh
+yt-dlp <safety flags §12.5> --flat-playlist -J "ytsearch10:<artist> <title> [<remixer> remix]"
+```
+
+- `-J` ("Quiet, but print JSON information for each URL … If the URL refers to a playlist, the whole playlist
+  information is dumped in a single line") simulates by default; `--flat-playlist` ("Do not extract a playlist's URL
+  result entries") keeps it to the search request itself — no per-video extraction, nothing downloaded.
+- **`ytsearchN:` entries** (`_extract_video` in `yt_dlp/extractor/youtube/_tab.py`): `id`, `url`
+  (`https://www.youtube.com/watch?v=…`), `title`, `duration` (seconds, from the result's length text), `channel`,
+  `channel_id`, `channel_url`, `uploader`, `uploader_id`, `view_count`, `thumbnails`, `live_status`, `availability`,
+  `_type: "url"`, `ie_key: "Youtube"`. The search uses YouTube's "Videos only" filter
+  (`_SEARCH_PARAMS = 'EgIQAfABAQ=='`). Official audio ("Art Tracks") appears as videos on auto-generated
+  "`<Artist> - Topic`" channels — the YouTube counterpart of spotDL's "verified" results.
+- **`https://music.youtube.com/search?q=…#songs`** (extractor `youtube:music:search_url`; sections `songs`, `videos`,
+  `albums`, `artists`, playlists) searches the YouTube Music catalogue, but its flat entries
+  (`_music_reponsive_list_entry`) carry only `url` (`music.youtube.com/watch?v=…`), `id` and `title` — **no duration
+  and no artist**. Checking ±3 s would need one full extraction per candidate (more requests, slower). → Use
+  `ytsearch10:`; keep the music URL as a fallback limited to 3 candidates.
+- `--print "%(id)s\t%(duration)s\t%(channel)s\t%(title)s"` is the line-based alternative (it "Implies --quiet.
+  Implies --simulate"). The README asks programs to "avoid parsing the normal stdout … Instead, they should use options
+  such as `-J`, `--print`, `--progress-template`".
+
+### 12.3 Picking the candidate
+
+Keep entries with a `duration` within **±3 s** of the release (D23, PREV-11); drop live or upcoming entries; apply the
+version, DJ-mix and junk rules of §14.5 (no "(Mixed)", "slowed", "nightcore", "1 hour", "live" unless asked); require
+the title tokens. Prefer the channel "`<main artist> - Topic`", then a channel named like the artist or the label,
+then the highest `view_count`. No candidate → say "No YouTube match within ±3 s" and fall back to the clip or the peer
+preview. The chosen ID also feeds "Open in YouTube Music" (§6.5).
+
+### 12.4 Fetching the audio for one ID
+
+```sh
+yt-dlp <safety flags §12.5> --no-playlist --abort-on-error --max-downloads 1 \
+  -f "bestaudio[ext=m4a]/bestaudio[acodec=opus]/bestaudio" \
+  -P "<preview cache>/yt" -o "%(id)s.%(ext)s" --no-part --no-mtime --fixup never \
+  -q --progress --newline \
+  --progress-template "download:SELECTA-PROGRESS %(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s %(progress.eta)s" \
+  --print "before_dl:SELECTA-FORMAT %(format_id)s %(ext)s %(acodec)s %(abr)s %(duration)s" \
+  --print "after_move:SELECTA-FILE %(filepath)s" \
+  "https://www.youtube.com/watch?v=<id>"
+```
+
+- **Format**: `bestaudio` ("Select the best quality audio-only format"), preferring `m4a` (AAC; about 128 kbps for an
+  account-less session) over WebM/Opus (about 130–160 kbps): a YouTube DASH m4a begins with its `moov`, which suits
+  progressive decoding (audio note §5.2), and both FFmpeg and AudioToolbox decode it. The result is lossy: fine for
+  audition and the waveform, **not** for the spectrum check (PREV-9) or any quality judgement; the player labels it
+  "YouTube preview (lossy)".
+- `--no-playlist` keeps a `watch?v=…&list=…` URL to one video. Pass the full URL, never a bare ID (IDs may begin
+  with `-`, which the option parser would take as a flag).
+- `--no-part` ("write directly into output file") lets the growing-file reader of the audio note (§5.4) open
+  `<id>.m4a` as soon as it appears; with the default `.part` the reader would open `<id>.m4a.part` and see a rename at
+  the end.
+- `--fixup never`: by default (`detect_or_warn`) yt-dlp runs `FFmpegFixupM4aPP` on DASH m4a
+  (`container == 'm4a_dash'`) after the download when ffmpeg is present, rewriting the file under the reader.
+- YouTube DASH formats are fetched front to back in 10 MiB HTTP range chunks (`CHUNK_SIZE = 10 << 20`), so the file
+  grows sequentially.
+- `--print` normally implies `--simulate`, "unless --no-simulate or later stages of WHEN are used"; `before_dl` and
+  `after_move` are later stages, so the download still happens (confirm with a real run in X12).
+- Timeouts: kill the process when no progress line has arrived for 30 s or after 120 s in total, then delete the
+  partial file.
+
+**Streaming to stdout (`-o -`)** works ("To output to stdout use `-o -`"): with one audio-only format the bytes arrive
+in file order, so Selecta could write them into its own cache file and reuse the same growing-file reader. Caveats:
+the stdout default format becomes `best/bestvideo+bestaudio`, so `-f` must be explicit; `--print` cannot share stdout;
+no fixups and no resume; cancelling means closing the pipe (yt-dlp exits on the broken pipe). Recommendation: start
+with file mode + `--no-part` (one code path with the Soulseek preview: a growing file in the preview cache); keep `-o -`
+as the alternative if file watching proves unreliable.
+
+### 12.5 Flags that keep it quiet and safe (always passed)
+
+| Flag | Why |
+|---|---|
+| `--ignore-config` | Load no user or system config (it could add cookies, proxies or `--exec`). |
+| `--no-plugin-dirs` | Load no third-party plugins. |
+| `--no-cookies`, `--no-cookies-from-browser` | No account, ever (D26). |
+| `--no-remote-components` | Fetch no JavaScript components at run time; use what the installation ships. |
+| `--js-runtimes deno:<path>` | Only when Selecta found Deno (§12.1). |
+| `--cache-dir <Selecta caches>/yt-dlp` | yt-dlp caches player data ("client ids and signatures"); a Selecta-owned cache avoids re-fetching it for every preview and is cleared with the preview cache (CACHE-2). `--no-cache-dir` is the stricter alternative at the cost of extra requests. |
+| `--color never`, `-q --progress --newline --progress-template …` | Stable, parseable output. |
+| `--socket-timeout 15`, `--retries 2`, `--fragment-retries 2` | Fail fast; Selecta handles retries. |
+| `--sleep-requests 0.75` | The README's `-t sleep` value for requests during extraction. (That preset's `--sleep-interval 10 --max-sleep-interval 20` would add 10–20 s per preview, so Selecta paces launches itself instead.) |
+| Never: `-U`/`--update-to`, `--exec`, `--cookies*`, `--username`/`--password`/`--netrc`, `--config-locations`, `--batch-file`, `--load-info-json`, `--impersonate`, `--extractor-args` | Selecta never updates yt-dlp, runs commands, uses accounts or changes clients. |
+
+Process hygiene: argument list only; a minimal environment (`HOME`, `PATH` including the Homebrew directories,
+`LANG=en_US.UTF-8`, `TMPDIR`); working directory = the preview-cache subdirectory; one yt-dlp process at a time (D26).
+Governor budget (proposed): one search plus one fetch in flight, ≥ 2 s between launches, ≤ 30 launches per 10 minutes,
+previews only on an explicit audition (never prefetched for a whole Get tracks list), and a 60-minute pause after any
+rate-limit or bot-check message.
+
+### 12.6 Failure modes and what the UI says
+
+yt-dlp prints `ERROR: …` and `WARNING: …` lines on stderr. Exit codes (`yt_dlp/__init__.py`): 0 success, 1 error
+(`DownloadError`), 2 bad options (a Selecta bug: log it), 100 update failure, 101 downloads cancelled
+(`--max-downloads`).
+
+| Detectable text (from the source at `8973412`) | Meaning | UI |
+|---|---|---|
+| executable missing or not runnable | not installed | "yt-dlp not found. Install it with `brew install yt-dlp`, or set its path in Settings." |
+| `--version` older than ~90 days | outdated | "Your yt-dlp is from 2025-07-21. YouTube changes often; update it with `brew upgrade yt-dlp`." |
+| "No supported JavaScript runtime could be found. Only deno is enabled by default…" | no Deno | "yt-dlp needs Deno for YouTube. Install it with `brew install deno`." |
+| "Signature solving failed: Some formats may be missing" / "n challenge solving failed: Some formats may be missing" | outdated yt-dlp or missing runtime | "yt-dlp couldn't read this YouTube page. Updating yt-dlp usually fixes this." |
+| "Requested format is not available" | often the same cause | same message, then try the next candidate once |
+| "This content isn't available, try again later. … The current session has been rate-limited by YouTube for up to an hour" | YouTube rate limit | pause yt-dlp previews for 60 min: "YouTube is rate-limiting previews for up to an hour. Using the peer's file instead." |
+| `HTTP Error 429: Too Many Requests` | rate limit during download | same pause |
+| `HTTP Error 403: Forbidden` during the download | usually outdated yt-dlp | "YouTube refused the audio; yt-dlp may be out of date." |
+| a reason containing "Sign in" (e.g. "Sign in to confirm you're not a bot"), followed by yt-dlp's hint to pass cookies | bot check | "YouTube wants a sign-in to prove you're not a bot. Selecta doesn't use accounts, so YouTube previews are paused for an hour." Never follow the cookie hint. |
+| "YouTube is requiring a captcha challenge before playback" | bot check | same as above |
+| "Sign in to confirm your age" | age-gated | "Age-restricted on YouTube" → next candidate |
+| "This video is not available from your location due to geo restriction" (from "The uploader has not made this video available in your country") | region block | "Not available in your region" → next candidate |
+| "Video unavailable", "Private video", "This video is DRM protected" | unplayable | next candidate, else "No playable YouTube match" |
+| no progress for 30 s / over 120 s | stall | kill the process: "YouTube preview timed out" |
+
+### 12.7 Testing with a fake yt-dlp
+
+Point the "yt-dlp path" setting at a stub, `tests/fixtures/fake-yt-dlp` (POSIX sh), so CI never runs the real tool
+(PLAN M5). The stub:
+- **checks its arguments**: the §12.5 safety flags must be present and the forbidden ones absent, otherwise it exits
+  with code 99 and the test fails;
+- answers `--version` with a configurable date;
+- answers `--flat-playlist -J ytsearch…` with canned JSON in the §12.2 shape (synthetic IDs, titles, channels and
+  durations, including Topic channels, a "(Mixed)" decoy and a ±3 s near-miss);
+- in download mode, writes a synthetic test tone (generated by FFmpeg at test setup; NFR-7) to the `-P`/`-o` path in
+  chunks with short sleeps, printing `SELECTA-FORMAT`, `SELECTA-PROGRESS` and `SELECTA-FILE` lines;
+- with `FAKE_YTDLP_MODE=noruntime|outdated|ratelimit|bot|captcha|age|geo|drm|hang|crash`, prints the exact §12.6
+  stderr text with the matching exit code, or hangs to exercise the timeout.
+
+### 12.8 Terms
+
+YouTube's Terms of Service (effective 2023-12-15) say users may not "access, reproduce, download, … any part of the
+Service or any Content except: (a) as expressly authorized by the Service; or (b) with prior written permission from
+YouTube", nor "access the Service using any automated means (such as robots, botnets or scrapers)", nor "circumvent …
+features that (a) prevent or restrict the copying or other use of Content". D26 runs against those terms; the
+maintainer accepted that for his personal tool ("Selecta is not breaking any term, it simply calls yt-dlp that is
+already on my machine"). With no account involved, the practical exposure is IP-level throttling and bot checks,
+which would also hit the maintainer's normal YouTube use from the same address — hence on-demand only, one process at a
+time, and the pauses above. (The YouTube API Services policies of §6.3 govern the IFrame player and Data API, not
+yt-dlp.)
+
 ## 13. Comparison table (all services)
 
 | Service | Metadata | Preview | Auth | Rate limit | Electronic coverage | Terms risk in a Soulseek client | Role in Selecta |
