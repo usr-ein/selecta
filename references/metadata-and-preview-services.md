@@ -552,7 +552,7 @@ signals:
     void quotaExceeded(QDateTime retryAfter);   // 429 with reason QUOTA_EXCEEDED
 };
 
-struct SpTrack {   // only what Selecta displays/matches; never written to files (§5.2)
+struct SpTrack {   // what Selecta matches, displays and (per D29) tags with — see §5.2 for the terms risk
     QString id, name, isrc, albumId, albumName, albumType, releaseDate, releaseDatePrecision;
     QStringList artists;
     int durationMs = 0, trackNumber = 0, discNumber = 0;
@@ -635,7 +635,7 @@ Spotify album image (JPEG); `USLT` lyrics. FLAC/Opus/Vorbis get the equivalent V
 | Forbidden-word penalty | **Invert it for DJs.** "remix", "extended", "dub", "edit", "VIP", "instrumental" are versions the user may want. | Parse the version descriptor on both sides and require equality (or show "different version") instead of penalising words. Keep penalties for junk only: "slowed", "reverb", "8d", "bass boosted", "sped up", "nightcore". |
 | "Verified" candidates | Partly. | Soulseek analogue: a result inside a release-like folder (track numbers, cover, consistent names) gets a small bonus; a lone file with a junk name gets none. |
 | Popularity tie-break | No (no Spotify popularity in dev mode; peer fairness and quality are Selecta's tie-breakers, BATCH-5). | — |
-| Tag set | Mostly. | Same frames, but label → `TPUB`, provenance URL → `WXXX`/`WOAS` of the *metadata source actually used*, no `POPM`. Values from MusicBrainz, not Spotify (§5.2). Mapping details: `conversion-and-metadata.md`. |
+| Tag set | Mostly. | Same frames, but label → `TPUB`, provenance URL → `WXXX`/`WOAS` of the *metadata source actually used*, no `POPM`. Values per the tag policies of §14.7 (Spotify first under D29, else Deezer). Mapping details: `conversion-and-metadata.md`. |
 
 ## 9. Official 30-second preview sources
 
