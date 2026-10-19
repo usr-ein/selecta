@@ -134,9 +134,26 @@ PCM, but only AIFF carries usable tags and artwork in rekordbox.
 - Never write 32-bit float WAV/AIFF for DJ use: rekordbox and CDJs accept only 16/24-bit integer PCM (H, rekordbox 7
   manual table; M for CDJs).
 
-### 2.4 Verification
+### 2.4 Verification (CONV-7, DL-6)
 
-- TODO.
+1. **Write safely:** encode into a temporary file in the *destination directory* (same volume), `fsync`, then
+   publish it with a no-overwrite rename (`renamex_np(tmp, final, RENAME_EXCL)` on macOS; `link()` + `unlink()` or
+   `QFile::rename` + existence check elsewhere). A crash leaves only a temp file, never a half file under the final name,
+   and an existing file is never replaced (DL-5).
+2. **Decode fully** with FFmpeg: no decoder errors; count output samples.
+3. **Length:** lossless → exactly the source's sample count (after any resampling ratio); MP3 with a valid LAME tag →
+   FFmpeg trims delay/padding, so the count should match exactly; accept ± 1152 samples (one frame) to be robust.
+4. **Content:** lossless at unchanged rate/depth → compare an MD5 of decoded PCM with the source's (FLAC's STREAMINFO
+   MD5 can serve when present) — bit-exact or fail.
+5. **Stream facts:** sample rate, channels, bit depth as requested; MP3: every frame at 320 kbps for CBR 320; first
+   frame `Info` with a `LAME` version string and valid CRC-16 (§4.4).
+6. **Tags:** reopen with TagLib, compare the property map with what Selecta intended *after* its v2.3 transformations;
+   exactly one front-cover picture whose bytes decode with `QImage` at the intended size.
+7. Only then report success, register the file in the library index, and (when filing) remove the Inbox source.
+
+Note for the worker pool (CONV-8): FFmpeg marks its libmp3lame wrapper `FF_CODEC_CAP_NOT_INIT_THREADSAFE` (H) →
+serialise `lame_init()`/`lame_init_params()` behind a mutex; encoding itself runs in parallel, one LAME instance per
+job.
 
 ## 3. Metadata mapping
 
@@ -313,12 +330,89 @@ baseline is Qt's default; strip EXIF/ICC after converting to sRGB).
 
 ## 6. Quality warning matrix and true-quality detection
 
-TODO.
+### 6.1 Establishing the *true* quality of a source (input to the advisor)
+
+| Check | How | Catches | Cost | Confidence |
+|---|---|---|---|---|
+| Container/codec facts | FFmpeg stream info: codec, sample rate, bit depth (`bits_per_raw_sample`), channels, duration | basic class (lossy/lossless, hi-res) | trivial | H |
+| Real MP3 bitrate & mode | scan MPEG frame headers (or packet sizes): all frames 320 → CBR 320; mixed → VBR; read Xing/Info + LAME tag (encoder string, VBR method, lowpass, preset) | "320" claims that are really VBR or lower; encoder identity | < 50 ms | H |
+| Spectral cutoff | from the audio module's analysis (PREV-9): highest frequency with sustained energy vs time; LAME CBR lowpass reference: 128 → 17.0 kHz, 160 → 17.5, 192 → 18.6, 224 → 19.4, 256 → 19.7, 320 → 20.5 kHz (`lame.c` `freq_map`, H); other encoders differ (FhG/iTunes 128 often ~16 kHz, L) | lossless or "320" files transcoded from low-bitrate lossy | shared with waveform analysis | M (heuristic; false positives on dark masters, old recordings) |
+| Fake 24-bit | while decoding, OR together the low 8 bits of every 24-bit sample; zero → effectively 16-bit (FLAC exposes the same as "wasted bits") | 16-bit masters padded to 24 | free during decode | H (exact) |
+| Fake hi-res | no energy above ~22 kHz (or ~24 kHz) in an 88.2/96/192 kHz file | 44.1/48 kHz material upsampled | shared with spectrum | M |
+| Size plausibility | bytes ÷ duration vs declared bitrate (SRCH-7) | mislabelled results before download | trivial | H |
+
+Combine into a `SourceQuality` record: `{codec, lossless, sampleRate, bitDepth, effectiveBitDepth, realBitrate, cbr,
+encoder, cutoffHz, verdict ∈ {genuine, likelyTranscode(fromKbps), upsampled, padded24, unknown}}`. Spectral verdicts are
+always worded as "likely", never as fact.
+
+### 6.2 Source → target matrix (CONV-6)
+
+Rows = what the source *really* is (after §6.1); columns = requested output. ✓ = proceed silently; ℹ = proceed with an
+info note; ⚠ = warning, needs explicit confirmation (CONV-6 "no-gain conversions need explicit confirmation"); ⛔ =
+not offered by the filing pipeline (manual converter only, behind ⚠).
+
+| Source ↓ / Target → | MP3 320 CBR | MP3 V0 / V2 / ≤ 256 | Lossless, same rate & depth | Lossless, lower rate / depth | Lossless, higher rate / depth |
+|---|---|---|---|---|---|
+| **Lossless 16/44.1–48 (genuine)** | ✓ | ✓ | ✓ (verify bit-exact) | ℹ I-DITHER / I-RESAMPLE | ⚠ W-UPSAMPLE / W-UPDEPTH |
+| **Lossless hi-res (24-bit and/or > 48 kHz)** | ℹ I-RESAMPLE (→ 44.1 kHz) | ℹ I-RESAMPLE | ✓ (+ ⚠ W-HW-RATE if the hardware profile can't play it) | ℹ I-DITHER / I-RESAMPLE | ⚠ W-UPSAMPLE |
+| **Lossless but likely transcode / padded / upsampled** | ⚠ W-SUSPECT ("result is a 2nd-generation lossy file") | ⚠ W-SUSPECT | ℹ W-SUSPECT shown, conversion harmless | ℹ (reducing padded 24 → 16 is lossless; say so) | ⚠ W-UPSAMPLE |
+| **MP3 320 CBR / V0** | ✓ **file as-is, no re-encode** (CONV-2) | ⚠ W-GENERATION | ⚠ W-LOSSY-TO-LOSSLESS | ⚠ W-LOSSY-TO-LOSSLESS | ⛔ |
+| **MP3 ≤ 256 / V2…** | ⛔ in filing: file as-is + "below target" badge (CONV-2); manual: ⚠ W-LOSSY-UP | ⚠ W-GENERATION (lower) or ⚠ W-LOSSY-UP (higher) | ⚠ W-LOSSY-TO-LOSSLESS | ⚠ W-LOSSY-TO-LOSSLESS | ⛔ |
+| **AAC / M4A (rekordbox plays it)** | ⛔ in filing: file as-is + "format differs from target" badge; manual: ⚠ W-GENERATION | ⚠ W-GENERATION | ⚠ W-LOSSY-TO-LOSSLESS | ⚠ W-LOSSY-TO-LOSSLESS | ⛔ |
+| **Ogg Vorbis / Opus / WMA (rekordbox can't play)** | ⚠ W-NOT-PLAYABLE + W-GENERATION (offered: this or AIFF) | ⚠ idem | ⚠ W-NOT-PLAYABLE + W-LOSSY-TO-LOSSLESS (no further loss, large) | ⚠ idem | ⛔ |
+| **Other lossless (APE, WavPack, DSD)** | ✓ (+ W-NOT-PLAYABLE explains why) | ✓ | ✓ → AIFF/FLAC | ℹ (DSD → PCM needs a low-pass; P2) | ⛔ |
+
+Size factors for messages: PCM 16/44.1 stereo = 1411 kbps; FLAC typically 50–70 % of PCM; so MP3 320 → AIFF ≈ 4.4×,
+→ FLAC ≈ 2.5–3×; MP3 192 → AIFF ≈ 7.3×. Compute from the actual numbers instead of quoting constants.
+
+### 6.3 Warning texts (UI copy, short form + detail)
+
+| ID | Short text | Detail |
+|---|---|---|
+| W-LOSSY-TO-LOSSLESS | "No quality gain — about {N}× larger" | "{src} is a lossy file. Converting it to {dst} keeps exactly the sound of the {src} file; it cannot restore what the lossy encoding removed." |
+| W-LOSSY-UP | "No quality gain — generation loss" | "{src} at {kbps} kbps cannot become better at {dstKbps} kbps. Re-encoding adds a second round of compression artefacts. Selecta files it as-is and marks it 'below target'." |
+| W-GENERATION | "Generation loss" | "Re-encoding a lossy file to another lossy format loses quality each time. Keep the original if you can." |
+| W-UPSAMPLE | "No quality gain — larger file" | "Raising {srcRate} to {dstRate} adds no information; the file becomes {N}× larger." |
+| W-UPDEPTH | "No quality gain" | "Converting {srcBits}-bit to {dstBits}-bit only pads with zeros." |
+| W-SUSPECT | "Source is probably not what it claims" | "Its spectrum stops at about {cutoff} kHz, typical of a {kbps} kbps MP3. Converting it cannot improve it." / "This 24-bit file contains only 16 bits of real data." / "This {rate} kHz file has no content above {cutoff} kHz; it was probably upsampled." |
+| W-NOT-PLAYABLE | "rekordbox can't play {fmt}" | "rekordbox 7 plays MP3, AAC, WAV, AIFF, FLAC and ALAC. Choose MP3 320 (small, one more lossy generation) or AIFF (no further loss, large)." |
+| W-HW-RATE | "May not play on your players" | "{rate} kHz / {bits}-bit exceeds {profile} (max {maxRate} kHz / {maxBits}-bit)." |
+| W-WAV-TAGS | "Tags limited in WAV" | "rekordbox reads only basic RIFF INFO from WAV: no artwork, label or key. Use AIFF to keep them." |
+| I-RESAMPLE | "Resampled to {rate} kHz" | "{fmt} cannot store {srcRate} kHz; Selecta uses a high-quality SoX resampler." |
+| I-DITHER | "Reduced to 16-bit with dither" | "TPDF dither avoids quantisation distortion when reducing bit depth." |
 
 ## 7. Naming templates and filename sanitisation
 
-TODO: NFC/NFD, forbidden characters (macOS / Windows / FAT32 / exFAT), path and component length, collisions on
-case-insensitive APFS. beets reference rules recorded in §8.
+### 7.1 Templates
+
+Tokens (values come from the *output* tags after mapping): `{artist}`, `{albumartist}`, `{title}`, `{album}`,
+`{year}`, `{track}` / `{track:02}`, `{disc}`, `{disctotal}`, `{label}`, `{catalognumber}`, `{key}`, `{bpm}`, `{ext}`,
+plus conditional sections `[…]` dropped when a token inside is empty (Picard/beets-style). Proposed defaults:
+
+| Item | Template | Example |
+|---|---|---|
+| Single (OQ-11) | `{artist} - {title}.{ext}` | `Floorplan - Never Grow Old (Original Mix).mp3` |
+| Album folder (DL-3/DL-5) | `{albumartist} - {album}[ ({year})]` | `Robert Hood - Paradygm Shift (2015)` |
+| Album track | `[{disc}-]{track:02} {artist} - {title}.{ext}` (disc prefix only when `disctotal` > 1) | `03 Robert Hood - Alpha.mp3` |
+
+Missing values: fall back to the parsed remote path (library module), then `Unknown Artist` / `Untitled`; never
+produce an empty component.
+
+### 7.2 Sanitisation (untrusted input: tags and paths come from peers)
+
+| Step | Rule | Why |
+|---|---|---|
+| 1. Normalise | Unicode **NFC** (`QString::normalized(NormalizationForm_C)`) for every generated component | APFS stores names as given (normalization-*preserving*, normalization-*insensitive* lookups, H Apple APFS FAQ); HFS+ forces its NFD variant; peers on macOS/HFS+ send NFD. NFC everywhere keeps Selecta's DB keys, rekordbox paths and other OSes consistent. |
+| 2. Strip dangerous code points | C0/C1 controls, U+007F, bidi controls U+200E/F, U+202A–U+202E, U+2066–U+2069, U+FEFF | invisible names, extension spoofing (U+202E makes `x\u202Egpj.mp3` display as `x3pm.jpg`) |
+| 3. Replace separators | `/` and `\` → `-` (e.g. `AC/DC` → `AC-DC`) | path traversal; Finder shows POSIX `:` as `/` |
+| 4. Replace reserved | `:` → ` -` (collapse spaces), `?` `*` `"` `<` `>` `|` → `_` (beets uses `_` for all) | Windows, FAT32 and exFAT forbid them (USB sticks, SMB) |
+| 5. Edges | trim whitespace; strip trailing `.` and spaces; leading `.` → `_`; leading `-` → `_` | hidden files on macOS; Windows/FAT ignore trailing dots; CLI ambiguity (beets rules) |
+| 6. Reserved names | `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9` (with or without extension) → append `_` | Windows/FAT |
+| 7. Length | component ≤ **200 UTF-8 bytes** (beets' cap; APFS limit is 255 bytes, FAT/exFAT 255 UTF-16 units) incl. extension; cut at a grapheme boundary (`QTextBoundaryFinder`), shorten `title` first, then `artist`; full path ≤ 1 000 bytes (macOS `PATH_MAX` = 1024) | leaves room for ` (2)` suffixes and copies to other filesystems |
+| 8. Collisions | compare candidate names **case-insensitively and normalization-insensitively** (APFS default) against the directory and against pending jobs; append ` (2)`, ` (3)`; never overwrite (DL-5) | APFS default volume is case-insensitive |
+| 9. Re-check | run steps 2–6 again after truncation (beets does up to three rounds) | truncation can expose a trailing space/dot |
+
+An "ASCII-only" option (transliterate) is not needed for rekordbox and is left out of v1.
 
 ## 8. Reference implementations
 
