@@ -626,12 +626,117 @@ Topology B images. Inject the governor's fake clock so pacing tests never sleep.
 
 ## 10. Implications for Selecta
 
-TODO
+### 10.1 Recommendations
+
+1. **ADR-002: write Selecta's own `slsk` library in C++/Qt (option A, §6).** Specification sources: Nicotine+'s
+   `doc/SLSKPROTOCOL.md` and aioslsk's `SOULSEEK.rst`; behaviour cross-checks: Nicotine+, aioslsk, soulseek-rs.
+2. **Licence hygiene (feeds ADR-010 / OQ-7).** Never copy or translate code from Soulseek.NET, slskd, Seeker, sockseek
+   (AGPL since 2026-05) or soulseekcpp. Ported fragments from GPL-3.0-or-later/MIT sources go into
+   `THIRD-PARTY-NOTICES.md` with upstream path and commit. This keeps GPL-3.0-or-later available.
+3. **Client identity (NET-9).** Use major **177** ("experimental development and testing" in the Nicotine+ registry)
+   with a distinctive non-zero minor during development; **before the first live session (M9), ask the Nicotine+
+   maintainers to reserve a major version for Selecta** in `doc/SLSKPROTOCOL.md` (seeleseek 169, aioslsk 175 and
+   soulseek-rs 176 did this). Never reuse 157/160/170/175/176/169. This also satisfies the "unique identifier"
+   expectation written into Soulseek.NET's licence terms. Note: PowerVLC already uses 177/77.
+4. **Feature-set expectation (risk for PRD D4).** The official rules tolerate alternative clients "that implement the
+   full range of features … (including chat, search, wishlist, download, upload, and respect / recognition of
+   privileges)" and bar clients "failing to implement the full range" (slsknet.org Rules). Selecta v1 drops chat rooms.
+   Uploads (P0), wishlist (P1), privileged-user priority in the upload queue, and private messages (P1) cover most of
+   the list; whether "chat" means rooms is open. **Decision for the maintainer:** accept the risk, or add a minimal
+   rooms implementation (join/list/read/say — soulseek-rs and Soulfind show it is a small, well-tested surface).
+   Cross-check with the etiquette note.
+5. **Test network (PLAN §5.1, M1 `devenv/`)**: Soulfind as the server — the release binary for native runs (pin
+   SHA-256; Homebrew SQLite via `DYLD_LIBRARY_PATH`), the ghcr image pinned by digest for Docker/CI; Nicotine+ (headless)
+   and slskd as reference peers with pre-written configs; aioslsk's mock server only for distributed-network tests;
+   per-test Soulfind instances in CTest following soulseek-rs's harness (§9.3). Keep Selecta's own `FakeNetwork` (Seeker
+   idea) for UI work without any server.
+6. **Governor (feeds ADR-006, numbers owned by the etiquette note).** Ecosystem lessons: use a smoothed token bucket,
+   not a fixed window (sldl bursts 2× at the boundary); count **every** network search (retries, fallbacks, wishlist,
+   batch); enforce a **minimum spacing between search starts** (soularr #124: zero-result searches complete instantly);
+   cap concurrent searches (Soulseek.NET default 2); treat sldl's 34/220 s as a **folklore upper bound** from one
+   developer's 2023 testing — at least one user reports bans even at that rate; reconnect with ban-aware backoff
+   (sldl's 1→8 s loop is the counter-example).
+7. **Search intake caps (SRCH-16).** Start from Soulseek.NET's defaults — complete 15 s after the *last* response, stop at
+   250 responses or 25 000 files — and PowerVLC's bounds for parsing (≤ 16 MiB frame, ≤ 2 MiB compressed reply). slskd
+   #1598 shows broad queries can open thousands of peer connections; cap concurrent result connections.
+8. **Zero results are ambiguous.** The server silently drops queries containing excluded phrases (sockseek #128). Show
+   "this query contains a phrase the server excludes" using the server-sent ExcludedSearchPhrases list (NET-6); never
+   evade it with wildcards (sldl's hard-coded `*` trick).
+9. **Filters.** Accept the SoulseekQt/slskd text syntax as a shortcut onto the structured filters; make the
+   unknown-attribute policy explicit (SRCH-6) because which attributes SoulseekQt sends is contested; offer presets like
+   seeleseek's "MP3 320 / FLAC / Lossless / Hi-Res".
+10. **Ranking (BATCH-5, SRCH-10).** Borrow sldl's ordering principle — identity (title/artist/album) before quality,
+    then free slot, speed buckets and consensus across results, with per-run downranking of failing peers — but treat
+    mix/version names ("Extended Mix", "Original Mix") as identity, not as bracket noise to penalise.
+11. **Uploads (SHARE-3/4).** Model the upload manager on slskd's groups (privileged > buddies > default > leechers;
+    round-robin; slots; queued/daily/weekly file and byte limits with standard rejection strings). Report true share
+    counts (sockseek #163/#165 controversy).
+12. **Debug tooling.** Wireshark's dissector is enough for eyeballing; build `selecta-cli decode` on Selecta's codec and
+    turn local captures into golden fixtures and fuzz seeds.
+13. **Upstream relations.** Soulfind forbids AI-generated contributions; any issue or patch upstream must be written by
+    the maintainer himself. The same courtesy applies to the Nicotine+ version-number request.
+
+### 10.2 Decisions to make
+
+| # | Decision | Recommendation |
+|---|---|---|
+| E1 | ADR-002 build vs reuse | Own C++/Qt library (§6 option A). |
+| E2 | Licence (OQ-7) | GPL-3.0-or-later stays possible only if no Soulseek.NET-family code is used — make that a rule in CONTRIBUTING. |
+| E3 | Client version | 177/<minor> in dev; request a reserved major before M9. |
+| E4 | Chat rooms vs the official "full range of features" rule | Maintainer's call; minimal rooms are cheap if needed. |
+| E5 | Test-network topology | Native (dev loop) + Docker internal network (CI); per-test Soulfind in CTest. |
+| E6 | Distributed-network testing | aioslsk mock server in a pinned container, plus unit fixtures. |
 
 ## 11. Open questions and things to verify on a local test server
 
-TODO
+1. Does the Soulfind macOS arm64 binary start with the system SQLite, or is the Homebrew `DYLD_LIBRARY_PATH` workaround
+   needed (soulseek-rs report)? Does the 127.0.0.1 → LAN-IP rewrite work with no network interface up?
+2. Exact Nicotine+ config syntax for a pre-written headless config (`[server] server`, `[transfers] shared`): let it
+   write a default config offline, then edit.
+3. Do Nicotine+ and slskd peers use obfuscated connections when Selecta advertises an obfuscated port through
+   Soulfind? (Determines whether obfuscation can be interop-tested locally.)
+4. Which file attributes do Nicotine+ and slskd send for MP3 CBR/VBR, FLAC, WAV, AIFF, M4A in search results and
+   browse lists? (Capture on the test network; SoulseekQt's behaviour needs a maintainer-run capture.)
+5. Can the indirect-connection path be forced reliably in Docker (block inbound on one peer) so ConnectToPeer /
+   PierceFirewall / CantConnectToPeer are covered by CI?
+6. aioslsk mock server fidelity for the distributed network vs the official server: which behaviours (branch level
+   reporting, parent selection, EmbeddedMessage unwrapping) can only be validated live?
+7. Soulfind sends searches back to the searcher: confirm Selecta ignores its own queries and does not answer itself.
+8. Does `soulsetup` accept piped input for scripted admin/privilege setup, or should `devenv/` edit the SQLite DB
+   directly (`users` table: `privileges`, `admin`, `unsearchable` columns)?
+9. Search-ban thresholds on the official server are unknown; nothing in the ecosystem measures them reliably. Do not try
+   to measure them; the governor's ceilings must be conservative by design.
+10. Will the Nicotine+ maintainers reserve a major version for Selecta, and what do they expect (feature completeness,
+    uploads, privileges)?
+11. Does SoulseekQt still send bitrate/VBR attributes (sldl and slskd claim not; aioslsk documents them)?
 
 ## 12. Sources
 
-TODO (all accessed 2026-10-19).
+All accessed 2026-10-19. Repository facts via GitHub API; code read from shallow clones under
+`local/research-clones/ecosystem/` (git-ignored) at the commits listed in §7.
+
+| Source | Used for |
+|---|---|
+| https://github.com/nicotine-plus/nicotine-plus (`f3b9d4d`), `doc/SLSKPROTOCOL.md`; https://nicotine-plus.org/doc/SLSKPROTOCOL.html | Architecture, version registry, Soulfind statement, Login docstring, wishlist pacing, result caps |
+| https://github.com/jpdillingham/Soulseek.NET (`c07c187`): `LICENSE`, `NOTICE`, `src/Options/*.cs`, `src/Common/Waiter.cs`, `src/Network/*` | Additional Terms, search defaults, waiter and connection-racing patterns |
+| https://github.com/jpdillingham/Soulseek.NET/pull/883 | Concurrent search limit lowered to 2 |
+| https://github.com/slskd/slskd (`6a450e4`): `LICENSE`, `docs/config.md`, `src/slskd/Search/*`, `src/web/src/lib/searches.js` | Additional Terms (AGPL), groups/limits, throttling, retention, filter syntax |
+| https://github.com/slskd/slskd/issues/1306, /1598, /1767, /1866, /1618, /pull/402 | Soulfind load testing, connection storms, login-ban hearsay, filter syntax |
+| https://github.com/JurgenR/aioslsk (`a90ad82`): `docs/source/*.rst`, `src/aioslsk/*`, `tests/e2e/mock/*`, `README.rst` | Protocol flows, query rules, attributes, mock server |
+| https://github.com/fiso64/sockseek (`ff9a3ac`), commits `20d8310d`, `7d521792`, `b30135b2`; issues #12, #95, #128, #163, #165 | Rename/relicence, rate limiter and its origin, filters, ranking, matching, ban reports, share-count episode |
+| https://github.com/mrusse/soularr (`2037399`), issue #124 | Search interval, quality specs, album matching, ban report |
+| https://github.com/soulfind-dev/soulfind (`5a256f5`): README, CONTRIBUTING, NEWS, `src/*`, Dockerfile, workflows; issues #6, #50, #53, #60, #62; PRs #80, #81, #84, #88; releases/tag/latest | Test-server facts, AI policy, routing, limits |
+| https://github.com/michel/soulseek-rs (`20bd676`): README, `docs/protocol-coverage.md`, `soulseek-rs-lib/tests/e2e.rs`, `.github/workflows/ci.yml`, `Cargo.toml` | Soulfind CI harness, coverage, design |
+| https://github.com/jackBonadies/SeekerAndroid (`ff1dcc6`): README, DEVELOPMENT.md, `Common/MockSoulseekClient.cs` | Mock network idea, Soulseek.NET lineage |
+| https://github.com/comedyjohn/soulseekcpp (`bade51b`) | C++20 port of Soulseek.NET: licence, maturity |
+| https://github.com/bretth18/seeleseek (`195eddc`): README, site docs, `RowAudioPreview.swift` | macOS-native prior art, presets |
+| https://github.com/IvaKap/seek (`1317c84`): README, RECON.md, `sidecar/seek_sidecar/core_host.py` | Closest product prior art; Python-sidecar architecture; preview mechanism |
+| https://github.com/eLvErDe/museek-plus (`36c3e9b`), https://github.com/KenjiTakahashi/newsoul (`178bcd1`) | Historical C++ implementations |
+| https://github.com/Olsro/powervlc `share/lua/extensions/soulseek.lua` | Streaming download-only client, identity 177/77, parsing bounds |
+| https://github.com/siohaza/nafsi, https://github.com/fstxz/souls, https://github.com/catuhana/soulsex, https://github.com/v72nico/python-SunSeek | Other servers |
+| https://github.com/TypNull/Tubifarry, https://github.com/jaenib/setseeker, https://github.com/Riley-Development/decksmith | Other automation tools |
+| https://github.com/wireshark/wireshark `epan/dissectors/packet-slsk.c` | Dissector facts |
+| https://www.slsknet.org/news/node/267 ("Fun with Filters", 2011-11-09), /node/303 (2011-12-14), /node/103, https://www.slsknet.org/news/ | SoulseekQt filter syntax, saved filters, release history |
+| https://www.slsknet.org/news/node/681 (Rules) | Third-party client and bot rules, 5 clients per IP |
+| https://en.wikipedia.org/wiki/Soulseek; https://www.filehorse.com/download-soulseekqt/ | SoulseekQt background and latest build (secondary sources) |
+| GitHub search (`gh search repos soulseek|slsk …`, by language) | Landscape survey |
