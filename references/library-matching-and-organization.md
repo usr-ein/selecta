@@ -222,27 +222,199 @@ Selecta has to combine their ideas. Code read at the commits listed in Sources.
 
 ## 4. Normalisation pipeline
 
-TODO.
+Two stages with separate tests: **parse** (remote path → fields, §4.1) and **normalise** (any field → comparison
+keys, §4.2). Stage 2 is the *same function* for remote fields, local tags and filenames, otherwise keys drift apart.
+Every stored key carries a `norm_version`; bumping the rules triggers a background re-keying (cheap: no file I/O).
+
+### 4.1 Remote path → `ParsedRemote`
+
+1. **Split** on `\` (fall back to `/` if there is no backslash). Last component = filename; extension = text after the
+   last dot if it is 1–5 alphanumerics; audio if in the known list (`mp3 flac wav aif aiff m4a alac aac ogg opus wma ape
+   wv`), compared case-insensitively.
+2. **Classify folders**, deepest first: *disc* folder (`^(cd|dis[ck]|dvd)[\W_]*\d+$`, also `^(cd|disc) ?\d+ ?- ?.+` with a
+   title), *generic* (stop-list: `music`, `mp3`, `flac`, `audio`, `shared`, `share`, `downloads`, `complete`,
+   `incoming`, `soulseek`, `singles`, `albums`, `various`, `new`, `misc`, year `^(19|20)\d\d$`, letter buckets
+   `^([a-z]|#|0-9)$`, and genre words), *album* folder (first non-disc, non-generic parent), *artist* folder (the
+   next non-generic parent, only if the album folder name has no ` - `).
+3. **Pre-clean** each name: NFC; `_` → space when the name has no spaces (or ≥ 2 underscores); dots-as-spaces when
+   there are no spaces and ≥ 2 dots; all dash variants (`–`, `—`, `‒`, `−`) → `-`; curly quotes → `'`; strip website
+   prefixes/suffixes (`www.x.com - `), web junk (`(Official Video)`, `(Official Audio)`, `[HQ]`, `(Lyrics)`,
+   `[Free Download]`, `(Premiere)`); extract-and-strip quality tags (`[FLAC]`, `[FLAC 24-96]`, `(320)`, `[V0]`, `WEB`,
+   `Vinyl`, `CD`), catalogue numbers (`[ABC123]`, `(ABC 123)`: letters+digits in brackets), years (`(2019)`, `[2019]`).
+4. **Track/disc prefix**: `^(?:(\d{1,2})[-.](\d{1,3})|(\d{1,3}))(?:\s*[-.)_]\s*|\s+)` → (disc, track); vinyl
+   `^([A-H])(\d{1,2})(?:\s*[-.)_]\s*|\s+)` → side/position. Strip only if (a) siblings form a sequence, or (b) the number
+   is followed by a separator *and* the remainder still has ≥ 1 word. Keep numeric titles (`1999.mp3`, `22 - …`
+   with no siblings) — see tests T10/T11.
+5. **Segment** the body on spaced dashes (` - `). Candidate patterns, most specific first, validated across the
+   folder's siblings like beets' `fromfilename` (§3.1): `artist - title`; `artist - album - title`
+   (Bandcamp: the middle segment equals the folder album); `title` (artist from folder); scene `artist-title` (split on
+   bare `-` only for scene-style folders).
+6. **Order artist vs title** when there are two segments: (a) the segment constant across ≥ 3 siblings is the artist;
+   (b) the segment matching the folder's artist is the artist; (c) exactly one segment matches a known collection
+   artist key → artist; (d) default `Artist - Title`. Record which rule fired (it feeds confidence).
+7. **Featured artists**: pull `(feat. X)`, `[ft. X]`, ` feat. X`, ` featuring X` out of both artist and title into
+   `feat[]`. Split primary artists on ` & `, `, `, ` and `, ` x `, ` vs. ` **only into a matching set** (keep the raw
+   string for display).
+8. **Version**: from trailing `(…)`/`[…]` groups and a trailing ` - … Mix|Edit|Remix|Version|Dub` segment → §5.
+9. Output: `ParsedRemote { artist?, artists_set, title, version{class, by?, raw}, feat[], album?, album_artist?, year?,
+   disc?, track?, catalogue?, quality_hint?, is_va, rule_ids[], field_confidence }`.
+
+### 4.2 Field → keys (shared by remote and local)
+
+| Step | Rule | Why / example |
+|---|---|---|
+| 1 | Unicode NFKC | Full-width forms, ligatures (`ﬁ`), superscripts. |
+| 2 | Case-fold (`QString::toCaseFolded`) | `DJ` = `dj`; ß handled in step 4. |
+| 3 | Diacritics: NFD, drop non-spacing marks, recompose | `Röyksopp` → `royksopp`, `Beyoncé` → `beyonce`. |
+| 4 | Transliteration table for letters that do not decompose | `ø→o`, `æ→ae`, `œ→oe`, `ß→ss`, `ł→l`, `đ/ð→d`, `þ→th`, `ı→i`. Cyrillic/Greek/CJK kept as is (P2: transliteration). |
+| 5 | Symbols | `&`, `+` → ` and `; `$` → `s` (`Ke$ha`, `A$AP`); apostrophes removed without a space (`What's` → `whats`); dots between single letters removed (`A.T.F.C.` → `atfc`); every other non-alphanumeric → space. |
+| 6 | Tokenise on whitespace | |
+| 7 | Artist-only: drop a leading `the` (unless it is the only token) and `, the` suffix forms | `The Prodigy` = `Prodigy, The` = `Prodigy`. |
+| 8 | Light canonicalisation | `pt`/`pt.` → `part`, `vol` → `volume`, `&` already `and`; roman numerals → digits only after `part`/`volume`/`chapter`. |
+| 9 | Keys | `artist_key` (primary artists, tokens joined), `artist_set` (each primary artist's key, sorted), `title_key` (title without version and feat.), `version_key` (class + remixer key), `squash(x)` = key without spaces (`daft punk` ≡ `daftpunk`, `ac dc` ≡ `acdc`), `exact_key` = `artist_key ␟ title_key ␟ version_key`, `loose_key` = `squash(first artist) ␟ squash(title_key)`. |
+
+Aliases that no normaliser can derive (`P!nk` vs `Pink`, `Mø` vs `MO`, `KRS-One` vs `KRS One` is fine) go into a
+user-editable alias table (and come from user corrections, LIB-6).
 
 ## 5. Version handling
 
-TODO.
+For a DJ, *Original Mix*, *Extended Mix*, *Radio Edit* and *X Remix* are **different tracks** with different
+durations. Album-oriented taggers deliberately discount parentheses (beets weight 0.3, Lidarr strips
+`version|single|…` brackets), which is right for album identity and wrong for Selecta. Selecta keeps the version as a
+first-class field.
+
+| Class | Recognised forms (case-insensitive, in `()`/`[]` or after ` - `) | Notes |
+|---|---|---|
+| `UNSPECIFIED` | no version text | Most non-Beatport files. |
+| `ORIGINAL` | Original Mix, Original Version, Original, Main Mix, Album Version | Beatport's default label. |
+| `EXTENDED` | Extended Mix/Version/Edit, Extended, Club Mix, 12" / 12 Inch Mix/Version, Long Version, Full Length | Typically 5–8 min. |
+| `RADIO` | Radio Edit/Mix/Version, Edit (no name before it), Short Edit, Single Version/Edit, 7" Version | Typically 2.5–4 min. |
+| `REMIX(by)` | `<X> Remix`, `<X> Mix` (X not a class word), `<X> Rework`, `<X> Re-Edit`/`<X> Edit`, `<X> Refix`, `<X> Flip`, `<X> Bootleg`, `<X> Reconstruction`, `<X> Rerub`, `<X> Version`, `<X> Dub` | `by` = remixer key; `X Edit` by a named artist is a remix-class edit. |
+| `VIP` | VIP, VIP Mix, `<X> VIP` | Artist's own variant. |
+| `DUB` / `INSTRUMENTAL` / `VOCAL` / `ACAPELLA` | Dub, Dub Mix; Instrumental (Mix); Vocal Mix; Acapella / A Cappella | Distinct DJ tools. |
+| `LIVE` / `ACOUSTIC` / `DEMO` | Live, Live at …, Live Version; Acoustic, Unplugged; Demo | |
+| `REMASTER` (attribute) | Remaster(ed), `<year>` Remaster, Remastered `<year>` | **Not** a version: same recording; recorded as a flag, never blocks a match. |
+| other bracket text | anything else (`(Intro)`, `(Part 2)`, `(Interlude)`) | Kept in `title_extra`; compared, and a mismatch prevents "exact". |
+
+Compatibility (result vs owned item):
+
+| Pair | Same track? | Tier ceiling |
+|---|---|---|
+| Same class and same remixer (or both `UNSPECIFIED`) | yes | exact |
+| `UNSPECIFIED` vs `ORIGINAL` | probably | exact if duration within the exact tolerance, else likely |
+| `UNSPECIFIED` vs `EXTENDED`/`RADIO`/`REMIX` | unknown | likely if duration within tolerance of that version, else none |
+| Different explicit classes, or remix by X vs by Y | **no** | none, but report the relation "other version owned" |
+| Only `REMASTER` differs | yes | exact |
+
+Recommendation: add an informational badge **"Other version in collection"** (e.g. you own the Radio Edit, the
+result is the Extended Mix). It is not a duplicate warning — decision for the maintainer (open question Q3).
 
 ## 6. Similarity measures
 
-TODO.
+| Measure | Behaviour | Use in Selecta |
+|---|---|---|
+| Exact key equality | O(1) hash lookup; catches most real duplicates once normalised | First pass: `exact_key`, `loose_key`. |
+| Normalised Levenshtein / Indel ratio (`fuzz::ratio`) | Typos, small spelling differences | Title and album similarity. |
+| Token-sort ratio | Word order (`Title - Artist` mistakes, `Prodigy, The`) | Max with `ratio` for titles; artists. |
+| Token-set ratio | Ignores extra words in one string — **dangerous**: `Love` vs `Love Story` = 100 | Only with a length-ratio guard (shorter ≥ 70 % of the longer), never alone for titles. |
+| `partial_ratio` | Best substring alignment — same danger | Not for titles; OK for "artist appears somewhere in the path" checks. |
+| Per-word Levenshtein (Picard `similarity2`) | Order-insensitive and typo-tolerant | Equivalent quality to token-sort + ratio; pick one implementation. |
+| Jaro-Winkler | Prefix-weighted, good for short names | Short artist names (≤ 6 chars) as a secondary signal. |
+| Trigram overlap (FTS5 `trigram`) | Retrieval of fuzzy candidates | Candidate generation only (§10). |
+| Boundary-aware containment (Sockseek) | "Title words appear in the filename" | Fallback when parsing failed (unparsed filename vs owned title). |
+
+Implementation: **rapidfuzz-cpp** (MIT, header-only, `cxx_std_11` interface target, v3.3.4) provides
+`fuzz::ratio`, `partial_ratio`, `token_sort_ratio`, `token_set_ratio`, `token_ratio`, `WRatio`, `QRatio` and cached
+one-to-many variants (`fuzz::CachedRatio`, `CachedTokenSortRatio`, …) plus `distance::Levenshtein`, `Indel`,
+`JaroWinkler`, `DamerauLevenshtein`, `OSA`, `LCSseq` (`rapidfuzz/fuzz.hpp`, `rapidfuzz/distance/*`). It is
+GPL-compatible and avoids writing our own bit-parallel Levenshtein. It works on any character sequence, so feed it the
+already-normalised keys as `std::u32string` or UTF-16 code units. SIMD paths are x86 (SSE2/AVX2); on Apple Silicon
+the scalar bit-parallel path is used — still microseconds for short strings (TODO: benchmark).
+
+Proposed field similarities (all in [0, 1]):
+- `s_title = max(ratio(t1, t2), token_sort_ratio(t1, t2)) / 100`, forced to 1.0 if `squash(t1) == squash(t2)`.
+- `s_artist`: compare artist **sets**: 1.0 if the sets are equal; 0.95 if one set contains the other (`A & B` vs `A`);
+  else max pairwise `max(ratio, token_sort_ratio)/100`; 1.0 if `squash` keys are equal. If the remote artist is
+  unknown (title-only filename), `s_artist` is *missing*, not 0.
+- `s_album`: ratio on album keys after stripping edition junk (`Deluxe`, `Expanded`, `Remastered`, `Bonus Tracks`,
+  `Anniversary Edition`).
 
 ## 7. Duration tolerance
 
-TODO.
+| Source | Rule | Context |
+|---|---|---|
+| Sockseek | `|Δ| ≤ 3 s`, missing length accepted | Spotify/YouTube metadata vs Soulseek files; README suggests 10 s for CD rips. |
+| beets / Lidarr | free up to 10 s, then linear to full penalty at +30 s (40 s) | Album identification against MusicBrainz. |
+| Picard | linear 1 → 0 over 30 s; extra multiplier 1 → 0.3 between 60 s and 600 s | Same. |
+
+Selecta's comparison is remote **integer seconds** (rounding varies by client; VBR MP3s without a Xing/VBRI header can
+have badly wrong durations if the peer's client estimated them) vs an exact local duration (TagLib). Versions differ
+by minutes, edits by seconds. Proposal:
+
+```
+Δ        = |d_remote − d_local|            (seconds; missing or 0 on either side → s_dur = unknown)
+t_exact  = 2 + max(1, 0.01 · d_local)      (1 s for integer rounding; ≈ 3.5 s for a 6-min track)
+t_likely = max(6, 0.03 · d_local)          (≈ 11 s for 6 min)
+t_far    = max(15, 0.08 · d_local)         (≈ 29 s for 6 min)
+s_dur    = 1                         if Δ ≤ t_exact
+         = 1 − 0.5·(Δ−t_exact)/(t_likely−t_exact)   if Δ ≤ t_likely   (1 → 0.5)
+         = 0.5·(t_far−Δ)/(t_far−t_likely)            if Δ ≤ t_far      (0.5 → 0)
+         = 0                         otherwise
+veto     = Δ > max(60, 0.25 · d_local) → not the same track (a different edit, a mix, or a wrong file)
+```
+
+Files longer than 20 min are treated as mixes/sets: no track matching, only exact-history matching.
 
 ## 8. Album-level matching
 
-TODO.
+Used for (a) ownership of a remote **folder** (the grouped results view), (b) DL-7/DL-8 supersede, (c) DL-11 duplicate
+guard ("this single is on an album you own").
+
+1. **Remote folder → album candidate**: parse the folder name with Lidarr-style patterns (`Artist - Album (Year)`,
+   `Artist - Year - Album`, scene `Artist-Album-WEB-Year-GRP`, `[CAT] Artist - Album`); merge disc sub-folders into
+   their parent (Lidarr's `(dis[ck]|cd)[\W_]*\d` sibling rule, Picard's `CD|DVD|Disc n` rule); artist from the
+   constant file segment if the folder has none; VA if no artist covers ≥ 75 % of files (Lidarr).
+2. **Retrieve** local albums by `album_key = artist_key ␟ album_title_key` (exact), else by album-title tokens.
+3. **Map tracks**: cost = track distance (§9 without album term) + 0.1 if track numbers differ; solve with the
+   Hungarian algorithm (beets `lap.lapjv`, Lidarr `Munkres.cs`). n ≤ 40, so an O(n³) implementation is trivial.
+4. **Album score**: weighted like beets — artist 3, album title 3, year 1 (±1 year free), track mapping mean 2,
+   missing 0.9 and extra 0.6 per track — normalised to a distance.
+5. **Report coverage**, which matters more to a DJ than a single verdict: "owned 7/12 (3 as singles)". The album is
+   "In collection" when distance ≤ 0.20 and ≥ 90 % of remote tracks map to owned tracks with tier ≥ likely
+   (Lidarr's album/track thresholds 0.20/0.40 are a sane starting point).
 
 ## 9. Confidence tiers and scoring formula
 
-TODO.
+Per (remote result R, local candidate L) after retrieval (§10). Missing evidence is *skipped* (its weight leaves the
+denominator), never scored as 0 — the beets/Picard convention.
+
+```
+base = (0.45·s_title + 0.30·s_artist + 0.20·s_dur + 0.05·s_album) / Σ(weights of available terms)
+
+multipliers (Picard-style discriminators for contradicting evidence):
+  version conflict (§5 "no")                          → × 0    (record relation "other version")
+  s_title ≥ 0.9 and s_artist < 0.5 (artist known)     → × 0.5  (same title, different artist: covers, namesakes)
+  Δ > t_far                                           → × 0.4
+  duration veto                                       → × 0
+  R parsed by fallback rule only (no segment split)   → × 0.9
+
+score = base × Π multipliers
+```
+
+| Tier | Rule (initial values — tune on the labelled corpus) |
+|---|---|
+| **Exact** | `exact_key` hit with version compatibility "same", **and** duration within `t_exact` (or duration unknown on one side *and* both versions explicit and equal); or score ≥ 0.97 with `s_title ≥ 0.97`, `s_artist ≥ 0.95`, `s_dur = 1`. History only: same (size, basename) or same (peer, remote path) as a past download is exact regardless of text. |
+| **Likely** | score ≥ 0.85, `s_title ≥ 0.85`, and `s_artist ≥ 0.70` (or artist unknown in R but the folder artist or album matches L); no version conflict. |
+| **None** | everything else. |
+| Ambiguity | If the two best candidates are both ≥ likely but different versions, cap at likely (beets' "gap" idea). |
+
+**Upgrade** (LIB-4): tier ≥ likely and `quality_rank(R) > quality_rank(L)`, where R's quality is *established*
+(strict-mode attributes present and plausible, SRCH-6/7). Initial rank: lossless ≥ 24-bit (6) > lossless 16-bit (5)
+> MP3 320 CBR / AAC ≥ 256 (4) > MP3 V0 / 256 (3) > V2 / 192 (2) > < 192 (1). An upgrade to a format above the
+filing target (e.g. FLAC when the collection is MP3 320) is still shown, labelled "lossless source".
+
+Badge precedence on a result (several can show; the first is the headline): In collection (exact) → Upgrade → Likely
+in collection → In Inbox → Queued → Downloaded this session → Downloaded in a past session → Other version owned.
 
 ## 10. Speed: indexing 50k–200k tracks
 
