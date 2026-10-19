@@ -13,3 +13,7 @@ selecta_add_test_suite(selecta_slsk_tests
         fixtures/Samples.h fixtures/Samples.cpp
     LIBRARIES selecta_slsk)
 target_include_directories(selecta_slsk_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
+if(SELECTA_SLSK_FUZZ)
+    add_subdirectory("${PROJECT_SOURCE_DIR}/tests/fuzz/slsk" "${CMAKE_BINARY_DIR}/tests/fuzz/slsk")
+endif()

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "slsk/DistributedMessages.h"
+#include "slsk/Frame.h"
 #include "slsk/PeerMessages.h"
 #include "slsk/ServerMessages.h"
 
@@ -25,7 +26,7 @@ QList<DistribMessage> distribSamples();
 template <typename Variant>
 QByteArray frameOf(const Variant &message)
 {
-    return std::visit([](const auto &m) { return frame(m); }, message);
+    return std::visit([](const auto &m) { return slsk::frame(m); }, message);
 }
 
 template <typename Variant>
