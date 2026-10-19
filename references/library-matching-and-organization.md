@@ -304,7 +304,7 @@ Every stored key carries a `norm_version`; bumping the rules triggers a backgrou
 | 1 | Unicode NFKC | Full-width forms, ligatures (`ﬁ`), superscripts. |
 | 2 | Case-fold (`QString::toCaseFolded`) | `DJ` = `dj`; ß handled in step 4. |
 | 3 | Diacritics: NFD, drop non-spacing marks, recompose | `Röyksopp` → `royksopp`, `Beyoncé` → `beyonce`. |
-| 4 | Transliteration table for letters that do not decompose | `ø→o`, `æ→ae`, `œ→oe`, `ß→ss`, `ł→l`, `đ/ð→d`, `þ→th`, `ı→i`. Cyrillic/Greek/CJK kept as is (P2: transliteration). |
+| 4 | Transliteration table for letters that do not decompose | `ø→o`, `æ→ae`, `œ→oe`, `ß→ss`, `ł→l`, `đ/ð→d`, `þ→th`, `ı→i`. Cyrillic/Greek/CJK kept as is (P2). Qt has no transliteration API; macOS `CFStringTransform` accepts ICU transform ids, but keys must be identical on every platform (unit tests run on Linux/Windows CI), so use a **fixed in-repo table**, never a platform transform. |
 | 5 | Symbols | `&`, `+` → ` and `; `$` → `s` (`Ke$ha`, `A$AP`); apostrophes removed without a space (`What's` → `whats`); dots between single letters removed (`A.T.F.C.` → `atfc`); every other non-alphanumeric → space. |
 | 6 | Tokenise on whitespace | |
 | 7 | Artist-only: drop a leading `the` (unless it is the only token) and `, the` suffix forms | `The Prodigy` = `Prodigy, The` = `Prodigy`. |
@@ -523,10 +523,28 @@ and incremental as results arrive (TODO: benchmark in M4 with a synthetic 200k-t
 The snapshot is rebuilt off-thread on scanner commits and swapped atomically (generation counter); results annotated
 with an older generation are re-scored lazily when visible.
 
-**SQLite FTS5** is still useful for the Library view's search box and ad-hoc lookups: `unicode61 remove_diacritics 2`
-for word search, optionally the `trigram` tokenizer for substring/`LIKE` search. TODO (pending verification): SQLite
-version in Qt 6.11's bundled QSQLITE driver and whether it is compiled with FTS5 — otherwise use the system/Homebrew
-SQLite via `QT_FEATURE_system_sqlite` or ship our own SQLite build.
+**SQLite FTS5** is still useful for the Library view's search box and ad-hoc lookups (facts from sqlite.org/fts5.html
+and local checks by a helper agent, 2026-10-19):
+- `unicode61 remove_diacritics 2` for word search (1, the default, misses code points with several diacritics; 2 is
+  correct for all Latin).
+- `trigram` for substring and `LIKE`/`GLOB` search: queries shorter than 3 characters match nothing; with
+  `remove_diacritics 1` LIKE/GLOB are no longer index-assisted; `case_sensitive 1` indexes GLOB only. Version
+  history (trigram 3.34, its `remove_diacritics` 3.45) is unverified but irrelevant with the versions below.
+- External-content tables (`content='track'`) must be kept in sync by triggers; `'rebuild'` regenerates the index.
+- `spellfix1` is a loadable extension, not in the amalgamation.
+
+**Which SQLite Selecta actually gets** (high confidence):
+- Qt 6.11.1's *bundled* SQLite is 3.53.0, compiled with FTS3/FTS4/**FTS5**, JSON1, RTREE, GEOPOLY, MATH_FUNCTIONS
+  (`qtbase v6.11.1: src/3rdparty/sqlite/qt_attribution.json`, `src/plugins/sqldrivers/sqlite/CMakeLists.txt`).
+- But **Homebrew's qtbase 6.11.1 QSQLITE plugin links the system `/usr/lib/libsqlite3.dylib`** (SQLite 3.54.0 on the
+  maintainer's macOS, with FTS5 and `OMIT_LOAD_EXTENSION`), checked with `otool`. So builds differ by Qt source.
+- Custom SQL functions (e.g. registering the normaliser as `selecta_key()`) need `sqlite3_create_function_v2` on the
+  `sqlite3*` from `QSqlDriver::handle()`, which requires linking SQLite in the app; plugins that bundle SQLite export
+  no `sqlite3_*` symbols. Linking a *second* copy into the process is a documented corruption hazard (POSIX lock
+  handling; sqlite.org "How To Corrupt", from memory). **Recommendation: do not depend on custom SQL functions or
+  extensions** — compute keys in C++ and store them as columns (§13); require only FTS5, which every candidate SQLite
+  has. Pin the SQLite choice in ADR-005 (system SQLite on macOS via Homebrew Qt, or Qt's bundled copy in CI/release
+  builds) and add a start-up check `PRAGMA compile_options` for `ENABLE_FTS5`.
 
 Rejected alternatives: per-result SQL queries on the hot path (contention with the single writer, unpredictable
 latency); `spellfix1`/edit-distance search in SQL (not compiled by default, slower than in-memory scoring); trigram
@@ -547,8 +565,9 @@ Verified in `acoustid/chromaprint` (v1.6.2, commit 3b38c10):
   average bit error is below `kDefaultMatchThreshold = 10.0` (bits out of 32). The public API also has
   `chromaprint_hash_fingerprint` (a 32-bit simhash; hashes differing in > 15 bits are "completely different",
   `chromaprint.h`), useful as a cheap index key.
-- **AcoustID web service** needs an application API key and is rate-limited; not needed for Selecta's local
-  duplicate detection (TODO: confirm current terms and limits).
+- **AcoustID web service** (acoustid.org/webservice): requires a registered application key (`client`), at most
+  3 requests per second, free for non-commercial use only. Not needed for Selecta's local duplicate detection; any
+  future use (P2 auto-tagging) goes through the governor-like rate limiting and stays opt-in.
 
 Where it helps Selecta:
 1. **LIB-7 (P2)**: duplicates inside the collection (same recording under different names/formats).
@@ -583,10 +602,21 @@ directory, then reconcile — same inode at a new path ⇒ move (keep `file.id`,
 plus a new path with equal `(size, partial_hash)` ⇒ cross-volume move; otherwise delete/insert. Never trust rename
 events alone.
 
-**FSEvents (LIB-2)** — details to confirm (TODO, pending verification): a stream per root with file-level events,
-persisting the last event id and the event-database UUID per volume so changes made while Selecta was closed are
-replayed at launch; a full (stat-only) rescan whenever the history is unavailable or the stream reports dropped
-events or "must scan sub-dirs". `QFileSystemWatcher` is not suitable for recursive trees of this size.
+**FSEvents (LIB-2)** (SDK `FSEvents.h` and Apple's FSEvents Programming Guide; high confidence unless noted):
+- Events are kept in a persistent **per-volume** database, so changes made while Selecta was not running can be
+  replayed: persist `FSEventStreamGetLatestEventId()` together with `FSEventsCopyUUIDForDevice()` per volume, and on
+  launch create the stream with `sinceWhen` = saved id (per-device streams via `FSEventStreamCreateRelativeToDevice`)
+  if the UUID is unchanged. A `HistoryDone` event marks the end of the replay.
+- The UUID changes when history was purged, the disk was erased or ids wrapped; NULL means no history (e.g. read-only
+  media). A disk modified by an older macOS discards its log. `EventIdsWrapped` invalidates saved ids. In all these
+  cases: full stat-only rescan.
+- `kFSEventStreamCreateFlagFileEvents` is required for per-item flags (`ItemRenamed`, `ItemRemoved`, …). There is no
+  inode flag: the inode comes from the extended-data key `fileID`, which needs `UseExtendedData` (macOS 10.13) +
+  `UseCFTypes` + `FileEvents`. Whether both halves of a rename share the `fileID` is undocumented (unverified) —
+  hence the directory re-stat + inode reconciliation above.
+- `MustScanSubDirs` → rescan that subtree; `UserDropped`/`KernelDropped` → events were lost. Apple calls the flags
+  "hints" and the stream "not a historical log": treat FSEvents as an invalidation signal, never as truth.
+- `QFileSystemWatcher` is not suitable for recursive trees of this size.
 
 **The Inbox is indexed like a collection root** (`root.kind = 'inbox'`): the user may rename, re-tag or delete
 files there, and supersede/filing decisions must see the current state.
@@ -851,8 +881,10 @@ flowchart TD
 **Safety rules (each one a test):**
 1. Only `FileOps.trashFromInbox` can remove a file, and it refuses any path whose canonical form (symlinks resolved,
    NFC) is outside the Inbox root; supersede additionally checks `root.kind = 'inbox'` and `single_location = 'inbox'`.
-2. Trash, never unlink: macOS Trash via `NSFileManager trashItemAtURL:resultingItemURL:error:`; keep the resulting URL
-   in `file_op.trash_path` for Undo. If trashing fails (volume without a Trash), flag instead — never fall back to delete.
+2. Trash, never unlink: macOS Trash via `NSFileManager trashItemAtURL:resultingItemURL:error:` (macOS 10.8+); the
+   resulting URL is the item's location in the Trash and **its name may have been changed**, so store it in
+   `file_op.trash_path` for Undo. If trashing fails (volume without a Trash), flag instead — never fall back to delete.
+   Whether Finder's "Put Back" works for items trashed this way is unverified — Selecta's own Undo must not rely on it.
 3. Undo = move `trash_path` back to `src_path` (suffix if occupied), logged as `restore_from_trash`. Available from the
    notification and from a "Recently removed by Selecta" list in the Library view (30 days). If the Trash was emptied,
    Undo is shown as unavailable.
