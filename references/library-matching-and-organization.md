@@ -229,8 +229,10 @@ Selecta has to combine their ideas. Code read at the commits listed in Sources.
   `CloseTrackMatchSpecification`); fingerprinting is triggered when album distance > 0.15, worst track > 0.40, or there
   are extra/missing tracks (`IdentificationService.ShouldFingerprint`).
 - **Grouping files into releases** (`TrackGroupingService`): first by folder, accepted if `LooksLikeSingleRelease`
-  (album tag: at most 25 % distinct values after merging values with Levenshtein coefficient > 0.9); fallback to
-  album tag, then artist+album. VA when no artist covers ≥ 75 %. Multi-disc folders: sibling folders whose names match
+  (the most common album tag — after merging values with Levenshtein coefficient > 0.9 — covers ≥ 75 % of files and
+  ≤ 25 % of values are distinct; same test for the artist unless the folder is VA); fallback to album tag, then
+  artist+album. VA when > 75 % of artist values are distinct or the most common artist covers < 25 % of files.
+  Multi-disc folders: sibling folders whose names match
   `^(?<root>.*(dis[ck]|cd)[\W_]*)\d` with the same root are merged into one release.
 
 ### 3.6 What none of them do (Selecta's own design work)
@@ -394,7 +396,8 @@ guard ("this single is on an album you own").
 1. **Remote folder → album candidate**: parse the folder name with Lidarr-style patterns (`Artist - Album (Year)`,
    `Artist - Year - Album`, scene `Artist-Album-WEB-Year-GRP`, `[CAT] Artist - Album`); merge disc sub-folders into
    their parent (Lidarr's `(dis[ck]|cd)[\W_]*\d` sibling rule, Picard's `CD|DVD|Disc n` rule); artist from the
-   constant file segment if the folder has none; VA if no artist covers ≥ 75 % of files (Lidarr).
+   constant file segment if the folder has none; VA if the most common artist covers < 25 % of files or > 75 % of
+   artist values are distinct (Lidarr `IsVariousArtists`), or if the folder/artist says `VA`/`Various Artists`.
 2. **Retrieve** local albums by `album_key = artist_key ␟ album_title_key` (exact), else by album-title tokens.
 3. **Map tracks**: cost = track distance (§9 without album term) + 0.1 if track numbers differ; solve with the
    Hungarian algorithm (beets `lap.lapjv`, Lidarr `Munkres.cs`). n ≤ 40, so an O(n³) implementation is trivial.
