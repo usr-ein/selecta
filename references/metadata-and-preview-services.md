@@ -931,36 +931,42 @@ yt-dlp.)
 
 | Service | Metadata | Preview | Auth | Rate limit | Electronic coverage | Terms risk in a Soulseek client | Role in Selecta |
 |---|---|---|---|---|---|---|---|
-| Spotify Web API | Strong, but no label/genre in dev mode | None | PKCE, BYO Client ID, owner Premium, 5 users | Unpublished; per-account quota | High | **High** (S1–S5) | Optional matcher, playlist import, deep links/playback |
-| Deezer Simple API | Strong; label, UPC, ISRC, BPM, 1000-px art | 30 s MP3 128k | None | 50/5 s (2nd-hand) | High | **Medium–high** (D-T1; audio never stored) | Default keyless matcher + preview |
-| iTunes Search API | Good; no ISRC/label | 30 s AAC 256k | None | ~20/min | High | Medium (promo-only, badge, stream-only) | Preview fallback + store link |
+| Spotify Web API | Strong, but no label/genre in dev mode | None | PKCE, own Client ID, owner Premium, 5 users | Unpublished; per-account quota | High | **High** (S1–S5) | Primary matcher when signed in (D29), playlist import, Connect playback |
+| Spotify oEmbed | Track title + 300-px cover only | — | None | Unpublished | High | Low (Developer Terms, attribution) | Resolve a pasted link when not signed in |
+| Spotify desktop app (AppleScript) | Current track, position | Full track in the Spotify app (no audio access) | macOS Automation consent | — | High | Low (not a Platform tool) | "Listen in full" (P1) |
+| Spotify Embed / Web Playback SDK | — | Full track only with session + EME (SDK: Premium); else ≤ 30 s | Spotify login in the web view / PKCE | — | High | Medium–high (Widget Terms, S1/S2) | P2 experiment in WKWebView |
+| Deezer Simple API | Strong; label, UPC, ISRC, BPM, 1000-px art | 30 s MP3 128k | None | 50/5 s (2nd-hand) | High (3 of 4 club tracks found, §4.4) | **Medium–high** (D-T1; audio never stored) | Keyless matcher, label/cover fill, default clip |
+| iTunes Search API | Good; no ISRC/label | 30 s AAC 256k | None | ~20/min | High | Medium (promo-only, badge, stream-only) | Clip fallback + store link |
 | Apple Music API | Strong; ISRC | 30 s | Paid membership + private key | Unpublished | High | Medium | Not used |
-| MusicBrainz + CAA | Good; label/catno/barcodes, store links | None | None (UA) | 1/s | Medium | **Low** (CC0) | Tag source of record, identifiers, store links, artwork |
+| MusicBrainz + CAA | Good when present; label/catno/barcodes, store links | None | None (UA) | 1/s | **Low for club singles** (1 of 4 ISRCs, §4.4) | **Low** (CC0) | Enrichment: catalogue numbers, store links, artwork |
 | Discogs | Good for vinyl; catno, styles | None | Token | 60/min | Medium–high (vinyl) | Low–medium (6-h freshness, notices) | P2 enrichment (catno, style) |
+| YouTube IFrame player + Data API v3 | Video titles | Full video in a visible ≥ 200-px player (no audio access) | API key for search (100 searches/day) | 100 `search.list`/day/project | High | Medium (RMF, no background or audio-only playback) | P2 "Listen in full" embed |
+| yt-dlp (user's install, D26) | Video title, channel, duration | Full track, lossy (~128–160 kbps), into the preview cache | None (no account) | Selecta-paced (§12.5) | High | **High vs YouTube ToS** (accepted by the maintainer, D26) | Waveform preview source |
 | Beatport | Best for DJs | 2 min (site) | Partner only | — | Highest | Needs partner agreement | Deep link, purchase |
 | Traxsource | Good for house | Site/embed | None (no API) | — | High (house) | — | Deep link |
 | Bandcamp | Long tail | Embed | Labels only | — | Long tail | Scraping forbidden | Deep link, purchase |
 
 ## 14. Implications for Selecta
 
-Inputs to ADR-011 and to the `src/meta/` module (PLAN). PRD state at the time of writing: v0.4 (D19–D29, META-1…8).
-The full-track preview runner of D26 is a separate provider behind the same `PreviewService` interface; this note
-does not cover it (scope rule).
+Inputs to ADR-011 and to the `src/meta/` module (PLAN). PRD state at the time of writing: v0.4 (D19–D29, META-1…8,
+PREV-11/12).
 
 ### 14.1 Recommended decisions
 
 | # | Recommendation | Why |
 |---|---|---|
-| R1 | **Keyless baseline, Spotify on top when connected.** Without any account: Deezer (match, ISRC, label, cover, clip) → MusicBrainz (identifiers, label/catno, store links, CAA artwork) → iTunes (clip fallback). When the user has connected their own Spotify app, Spotify ranks first for *matching* (SRCH-17, D29), and the keyless sources still supply label, catalogue number, artwork and clips. | Works for everyone with no Premium and no Client ID; Get tracks survives losing Spotify access; Deezer's catalogue is close to Spotify's. |
-| R2 | **Spotify via PKCE with a user-owned Client ID** (META-1). Personal builds may pre-fill the maintainer's Client ID (it is not a secret), but it serves at most 5 allow-listed users and needs the owner's Premium; public builds ask for the user's own. No client secret in releases. | §3.1, §3.2. |
-| R3 | **File tags come from open data by default:** MusicBrainz (CC0) for text and identifiers, Deezer/CAA for artwork, keyed by the ISRC found through any source. Writing **Spotify-sourced text or artwork into files** is a maintainer decision with a named risk (§5, S3–S5): if chosen (D29 as worded), make it an explicit setting, add a `WOAS` link-back to the Spotify track, and keep it to personal builds. | Spotify Terms forbid indefinite storage and permanent copies of Spotify Content; MusicBrainz data is public domain and built for tagging. In practice the strings are usually identical. |
+| R1 | **Spotify first when signed in (D29); Deezer as the keyless baseline.** With a Spotify sign-in: Spotify resolves the release (title, artists, version, duration, ISRC, numbers, date, cover); Deezer fills the label (and a larger cover if wanted); MusicBrainz adds catalogue numbers and store links when it knows the ISRC. Without a sign-in: Deezer resolves the release, MusicBrainz enriches, iTunes is the clip fallback. | Spotify is the maintainer's trusted source; Deezer covers its gaps (label) and works with no account; MusicBrainz coverage of club singles is thin (§4.4). Get tracks survives losing Spotify access. |
+| R2 | **Spotify via PKCE with a user-owned Client ID** (META-1, §4.2). Personal builds may inject the maintainer's Client ID at configure time from `local/secrets.env`; public builds ship the field empty. It serves at most 5 allow-listed users and needs the owner's Premium. **No client secret in any build**; never reuse spotDL's or anyone's key (§4.1). | §3.1, §4. |
+| R3 | **Tags on arrival follow D29 (Spotify first)**, with the label from Deezer/MusicBrainz, a `WOAS` link-back to the Spotify track, and no `POPM`. This is where Spotify's terms bite hardest (§5, S3–S5: no indefinite storage, no "permanent copies of Spotify Content", attribution): keep it to personal builds with the user's own Client ID and say so in Settings (MQ1). The alternative policy for users without Spotify — or who prefer lower exposure — is Deezer first (§14.7). | The maintainer's decision; the risk is his developer app/account, not third parties. MusicBrainz alone cannot tag most club singles. |
 | R4 | **Clips are streamed, never stored.** Play Deezer/iTunes clips from memory (`QBuffer` or `QMediaPlayer` on the URL); derive the 30-s waveform in memory; do not put clip audio in the preview cache. Show the source logo/attribution and a store/"Open in" link next to the player. | Deezer forbids local storage of audio; Apple requires stream-only + badge + "provided courtesy of iTunes". |
 | R5 | **Every meta request through the governor** with per-host buckets, compile-time ceilings, the global pause switch, and an activity-log line per request (META-7, SAFE-1/4/5). | §14.3. |
 | R6 | **Release-first resolution** uses identifiers before text, rejects DJ-mix segments and derivative junk, and hands the chosen release's duration to the Soulseek ranker (D23, `library-matching-and-organization.md` §9.1/§17.5). | §14.5. |
 | R7 | **Playlist import** = (a) Spotify own/collab playlists, Liked Songs and any album link via the API; (b) for other playlists, tell the user to add them to a playlist they own in the Spotify app, or import an Exportify CSV; (c) plain text as today. | Dev-mode 403 on others' playlists (§3.3). |
-| R8 | **Full-length listening** = deep links (P1, no API); Web API playback only inside the opt-in Spotify integration (P2); Selecta pauses its own player first and never overlaps audio. | §6, S8/S9. |
+| R8 | **"Listen in full"** = deep links (P1, nothing to grant) → Spotify desktop control via AppleScript (P1, one Automation prompt) → Web API Connect playback (P2, sign-in + Premium) → WKWebView embeds (P2 experiments). No audio access in any of them; Selecta pauses its own player first and never overlaps audio. | §6.6, S8/S9. |
 | R9 | **No unofficial endpoints** (Spotify web-player APIs à la SpotipyFree, Beatport docs client ID, Bandcamp mobile API, preview scrapers). | Terms; brittleness; D21. |
 | R10 | Write a **small in-house client per service** (Spotify ~800 lines, Deezer ~300, MusicBrainz+CAA ~400, iTunes ~150) on `QNetworkAccessManager` + `QJsonDocument`, with recorded HTTP fixtures for tests. Reuse no Spotify C++ library. | §7; testability (PLAN `meta/` agent). |
+| R11 | **yt-dlp runner (D26)** exactly as §12: discovery with explicit Homebrew paths, version and Deno checks; `ytsearch10:` flat JSON search; ±3 s pick; m4a `bestaudio` into the preview cache with `--no-part --fixup never`; the fixed safety flags; one process at a time; on-demand only; 60-min pause on rate-limit or bot-check messages; a stub executable for tests. | Least surprise, least load on YouTube, testable without the network. |
+| R12 | **oEmbed for pasted Spotify links when not signed in** (title + cover only), confirmed by a Deezer search; with a sign-in, `GET /tracks/{id}`. | §4.3. |
 
 ### 14.2 Module design (`src/meta/`)
 
