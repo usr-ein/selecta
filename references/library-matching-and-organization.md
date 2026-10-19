@@ -559,8 +559,13 @@ analysis cache keyed by content hash. Not useful *before* download: search resul
 
 ## 12. Library scanning
 
-**Reading (LIB-1).** TagLib 2.x (LGPL-2.1/MPL-1.1, see `references/conversion-and-metadata.md`) opened read-only;
-never call `save()` on collection files (principle 2). Read: title, artist, album, album artist, track/disc (+ totals),
+**Reading (LIB-1).** TagLib 2.x (LGPL-2.1/MPL-1.1, see `references/conversion-and-metadata.md`; 2.3.2 at commit
+5fb1099). **Open collection files through a read-only stream**: `TagLib::FileRef(FileName)` uses
+`FileStream(fileName, openReadOnly = false)`, which *first tries `fopen(…, "rb+")`* and only falls back to read-only
+(`taglib/toolkit/tfilestream.cpp`). Construct `TagLib::FileStream(path, /*openReadOnly=*/true)` and pass it to
+`FileRef(IOStream*, true, AudioProperties::Average)` instead, so a write handle never exists (principle 2; also avoids
+failures on read-only volumes). `ReadStyle` is `Fast`/`Average`/`Accurate` (`taglib/audioproperties.h`); use
+`Average` for the scan and `Accurate` only when verifying a download. Read: title, artist, album, album artist, track/disc (+ totals),
 date, genre, label/publisher, catalogue number, ISRC, BPM, key, MusicBrainz recording id when present, plus audio
 properties (codec, duration in ms, bitrate, sample rate, bit depth, channels; for MP3 the Xing/Info header tells
 VBR vs CBR). Filenames are parsed with the same parser as remote paths when tags are missing (`meta_source`).
@@ -580,6 +585,9 @@ events alone.
 persisting the last event id and the event-database UUID per volume so changes made while Selecta was closed are
 replayed at launch; a full (stat-only) rescan whenever the history is unavailable or the stream reports dropped
 events or "must scan sub-dirs". `QFileSystemWatcher` is not suitable for recursive trees of this size.
+
+**The Inbox is indexed like a collection root** (`root.kind = 'inbox'`): the user may rename, re-tag or delete
+files there, and supersede/filing decisions must see the current state.
 
 **Offline volumes.** Roots on external drives: on unmount mark the root's files `offline` (never delete rows);
 badges still say "In collection" with an "offline volume" note; rescan (stat-only) on mount.
