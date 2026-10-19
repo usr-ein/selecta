@@ -103,9 +103,16 @@ The maintainer runs **macOS 27** (local `sw_vers`: 27.0.1). Since macOS 26 the s
 rounder, taller controls; toolbar items grouped in glass capsules; a sidebar that floats as a glass panel inset from
 the window edge; glass menus and popovers. An app gets this look by using AppKit controls and AppKit window chrome
 (`NSToolbar`, `NSSplitViewController` sidebar/inspector items) built with the 26+ SDK. Opting out
-(`UIDesignRequiresCompatibility`) is a stopgap that Qt itself treats as ineffective on macOS 27. (Search results
-also mention a Liquid Glass "revamp" announced at WWDC 2026 for macOS 27 — hearsay, low; it would mean another round
-of style adjustments in Qt.)
+(`UIDesignRequiresCompatibility`) is a stopgap that Qt itself treats as ineffective on macOS 27.
+
+**macOS 27 ("Golden Gate", announced 2026-06-08) refines it** (high — WWDC26 session 289 "Modernize your AppKit app";
+Apple press text via MacRumors): "uniform toolbars, edge-to-edge sidebars, and updated window shapes"; sidebars
+"extend to the window's edges" with **semi-bold** selected text and content flowing behind them; bordered toolbar items
+over the sidebar adopt glass; every window gets the same corner radius; coloured sidebar icons return for the active
+app; a user slider sets glass from clear to tinted; new opt-in APIs (`NSView.cornerConfiguration` concentric corners,
+an interactive "bounce" glass effect). Apps that adopted Liquid Glass in macOS 26 get most of this automatically —
+i.e. **apps using AppKit chrome track Apple's design for free; apps that draw their own chrome must chase it every
+year.** Edge-to-edge sidebars make a Qt-drawn sidebar easier to match on 27 than the floating 26 sidebar was.
 
 So "native" decomposes into three layers with different Qt answers:
 
@@ -187,7 +194,8 @@ Window and chrome
 - [ ] Content under the title bar where it helps (`Qt::ExpandedClientAreaHint`, `QWindow::safeAreaMargins()` to clear
       the traffic lights; `WA_ContentsMarginsRespectsSafeArea`).
 - [ ] Single main window; closing it keeps transfers running (Music-style); Dock click reopens it; ⌘Q with active
-      transfers asks in a sheet. Disable automatic window tabbing (single-window app) — TODO(verify) Qt default.
+      transfers asks in a sheet. Qt already sets `tabbingMode = NSWindowTabbingModeDisallowed` and `restorable = NO` on
+      every `NSWindow` (`qcocoawindow.mm`) — keep it; persist geometry with `saveGeometry()/saveState()` instead.
 - [ ] Inspector toggle: PRD says ⌘I; macOS convention for "Show Inspector" is ⌥⌘I (Finder) — decide.
 - [ ] Settings window in macOS style: toolbar-tab panes, instant apply, no OK/Cancel, ⌘, (`QAction::PreferencesRole`,
       label it "Settings…" as on macOS 13+).
@@ -206,17 +214,19 @@ Controls and content
       style metrics and layout defaults; test with and without Liquid Glass (Xcode-16-built or macOS 26 opt-out build).
 - [ ] Tables: no grid, alternating rows from the palette, uniform row heights, sort indicator on click, header context
       menu to hide/show columns, persistent column state, type-ahead, tabular digits for numbers
-      (`QFont::setFeature("tnum")` — TODO(verify) API name in 6.7+), right-aligned numeric columns, ellipsis middle for
-      paths.
+      (`font.setFeature(QFont::Tag("tnum"), 1)` — API present in the 6.11 headers), right-aligned numeric columns,
+      `Qt::ElideMiddle` for paths.
 - [ ] Selection colours from the palette at paint time (accent changes live); unemphasized selection when the view or
       window is inactive.
-- [ ] Sidebar: section headers in secondary label colour, SF Symbol icons tinted with the accent colour, count badges,
-      rounded inset selection, row height following System Settings › Appearance › Sidebar icon size — TODO(verify)
-      how to read it (`NSUserDefaults` `NSTableViewDefaultSizeMode`).
+- [ ] Sidebar: section headers in secondary label colour, SF Symbol icons tinted with the accent colour (coloured
+      only while the app is active, as on macOS 27), count badges, rounded inset selection with **semi-bold** text on
+      macOS 27, edge-to-edge on 27, row height following System Settings › Appearance › Sidebar icon size —
+      TODO(verify) how to read it (believed: `NSUserDefaults` key `NSTableViewDefaultSizeMode`).
 - [ ] Search field: `QLineEdit` with leading `magnifyingglass` action, clear button, ⌘F focus — or `NSSearchToolbarItem`.
 - [ ] Segmented choices (Grouped/Flat, Any/=/≥/≤): native `NSSegmentedControl` in the toolbar; in content use
       `QTabBar`-style or radio-like `QToolButton` groups.
-- [ ] Overlay scroll bars follow the system setting (QMacStyle transient scroll bars) — TODO(verify).
+- [ ] Overlay scroll bars: QMacStyle returns `SH_ScrollBar_Transient` from `NSScroller.preferredScrollerStyle`, so
+      item views follow System Settings automatically — don't override scroll bar styling.
 - [ ] System font everywhere (`QFontDatabase::systemFont`); no bundled fonts; SF Mono only for paths/logs if at all.
 - [ ] Dark waveform "screen" in both appearances (UI-3); everything else follows the palette.
 - [ ] Colour is never the only signal (UI-4): symbol + label in badges.
@@ -353,8 +363,8 @@ Use `"cacheVariables": {"CMAKE_PREFIX_PATH": "$env{QTDIR}"}` with a user preset 
   Markdown width); CI checks with the same major version (pin via Homebrew `clang-format` or `pip install clang-format==<ver>`).
 - **clang-tidy** (Homebrew LLVM): `bugprone-*`, `performance-*`, `modernize-*` (minus `use-trailing-return-type`),
   `cppcoreguidelines-*` subset, `readability-identifier-naming`; run on changed files in CI via
-  `run-clang-tidy -p build`. Qt-specific checks come from **clazy** (KDE, LGPL-2.0-or-later tool — only run, not
-  linked) — TODO(verify) clazy availability on Homebrew/macOS.
+  `run-clang-tidy -p build`. Qt-specific checks come from **clazy** (KDE; Homebrew `clazy` 1.17.1,
+  LGPL-2.0-or-later — a tool we only run, never link): connect/signal misuse, detaching containers, `QString` misuse.
 - **ccache** (`CMAKE_CXX_COMPILER_LAUNCHER=ccache`; `ccache` 4.14.2 on Homebrew) locally and in CI; moc/uic output is
   deterministic so it caches well.
 - Warnings: `-Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Wcast-align -Wunused -Woverloaded-virtual
@@ -442,8 +452,10 @@ Rules of thumb:
   filtering/sorting (badge updates).
 - No exceptions across the event loop (Qt does not support throwing through signal/slot dispatch). Return
   `std::expected`-style results (C++23) or a small `Result<T, Error>` (C++20).
-- Coroutines: Qt 6.12 has no first-party coroutine support. QCoro (MIT, third party) exists — TODO(verify) Qt 6.12
-  support. Not recommended for the protocol core: explicit state machines are easier to test and to fuzz.
+- Coroutines: Qt 6.12 has no first-party coroutine support. **QCoro** (MIT, ~580 stars; 0.13.0 released 2026-02,
+  fixes for Qt 6.10; packaged by Debian/Fedora/OpenBSD) makes `co_await` work on `QNetworkReply`, `QFuture`, signals,
+  sockets (medium — maintainer blog). Possible for UI-side async flows (e.g. "convert, then file"); not recommended for
+  the protocol core: explicit state machines are easier to test, fuzz and reason about under the governor.
 - **Qt TaskTree** (since 6.11, LGPL/GPL; declarative `Group`/`For`/`When` recipes with wrappers for `QTcpSocket`,
   `QNetworkReply`, `QProcess`, thread functions) could orchestrate batch searches or conversion queues; optional,
   evaluate in M8 (young public module).
@@ -724,11 +736,75 @@ policy (it never decides *whether* to send — `core` asks `governor`).
 
 ## Implications for Selecta
 
-TODO (see TL;DR for the toolkit decision).
+### Decisions to record (with proposed answers)
+
+| ADR / PRD item | Proposal | Confidence |
+|---|---|---|
+| **ADR-001 UI toolkit** | Qt Widgets only; Objective-C++ mac shell behind `PlatformShell` interfaces (native `NSToolbar`, native context menus via `QMenu::toNSMenu()`, vsync ticker, notifications, Dock badge); no Qt Quick/QML in v1; waveform = raster QPainter widget with tile cache, GPU (`QRhiWidget`) only if profiling demands | high (Widgets) / medium (extent of shell — decided by the M1 spike, 2.4) |
+| **Qt version** (PLAN §2.1 "pin latest stable, track LTS") | Pin **Qt 6.12.x** now; plan a minor-version bump every ~6 months (6.13 ≈ 2027-04) because open-source LTS patches stop ≈ 2027-04-01; "track LTS" only helps commercial licensees | high |
+| Minimum macOS (NFR-1) | **macOS 14.4** if release builds use official Qt + vcpkg deps; **macOS 27** if bundles copy Homebrew dylibs (their `minos` is 27.0). For "me first", 27 is acceptable; write it into `LSMinimumSystemVersion` honestly | high |
+| Build SDK | Always the newest Xcode (27) → Liquid Glass on; do **not** ship `UIDesignRequiresCompatibility` (ignored on 27) | high |
+| **ADR-004 dependencies** | Homebrew (+ `Brewfile`) for local dev; official Qt via aqtinstall in CI; vcpkg manifest for FFmpeg (audio-only feature set)/LAME/soxr in CI and release; FetchContent for small CMake deps | medium |
+| Persistence (ADR-005 input) | Own pinned SQLite + thin wrapper rather than Qt SQL (environment-dependent SQLite under Qt SQL) | medium-high |
+| C++ standard | C++20 baseline; switch to C++23 if the M1 CI matrix (Apple clang 21, MSVC 2022, GCC 13+) builds it — gains `std::expected` | medium |
+| Test stack | GoogleTest + gMock + RapidCheck for logic; Qt Test helpers (`QSignalSpy`, `QAbstractItemModelTester`) for models/UI; libFuzzer via Homebrew/Linux clang | medium-high |
+| CI | GitHub Actions: macos-26 (build, unit, UI smoke, ASan), ubuntu-24.04 (unit, integration in Docker, fuzz, clang-tidy), windows-2025 (compile + unit); Docker integration on Linux only | high |
+| Signing (PRD OQ-8) | Until a Developer ID exists: local builds signed with a **stable identity** (free Apple Development cert or self-signed), not raw ad-hoc, to stop Keychain/TCC/firewall re-prompts; no hardened runtime without Developer ID. With a Developer ID: hardened runtime + notarytool + stapled DMG; only then a Homebrew cask or Sparkle | medium-high |
+| **ADR-010 licence** (PRD OQ-7) | Keep **GPL-3.0-or-later** for Selecta's code; every planned dependency is compatible; GPL-3.0-only Qt add-ons (Canvas Painter) are fine; never FFmpeg `--enable-nonfree`; never commit SF Symbols/SF fonts | high |
+
+### Concrete defaults
+
+- `qt_standard_project_setup(REQUIRES 6.12)`, `QT_ENABLE_STRICT_MODE_UP_TO=0x060C00`, `QT_NO_KEYWORDS`.
+- Presets: `dev`, `asan`, `tsan`, `release`, `fuzz`, `ci-*`, with workflow presets.
+- Info.plist: `LSApplicationCategoryType=public.app-category.music`, `NSLocalNetworkUsageDescription`,
+  `CFBundleIconName=AppIcon` (+ Icon Composer `.icon` compiled with `actool`).
+- Logging: categories `selecta.<module>[.<sub>]`; os_log via Qt + rotating file in `~/Library/Logs/Selecta/`.
+- UI: `setUnifiedTitleAndToolBarOnMac(true)` in M1 (cheap) → native `NSToolbar` after the spike if chosen; native
+  context menus from day one; `QStyleHints::setColorScheme()` for the System/Light/Dark setting (UI-2); palette roles
+  everywhere except the always-dark waveform screen (UI-3).
+
+### Consequences for other plans
+
+- PLAN §2.1 "Pin to the latest stable at M1; track LTS for releases" → replace with "pin 6.12.x; bump minors".
+- PLAN §2.1 Persistence "SQLite via Qt SQL" → revisit in ADR-005 (7.3).
+- PLAN §7 risk "Qt Widgets can't hit some macOS-native touches" → concrete list now in sections 2.3 and 3; add the risk
+  "Apple's yearly design changes (Liquid Glass 26 → 27) hit Qt-drawn chrome; AppKit chrome follows automatically".
+- PLAN M1 exit criterion should include the native-chrome spike (2.4) and an app icon built from an `.icon` file.
+- The audio research note should pick the playback API knowing that Qt Multimedia from Homebrew pulls in
+  `qtdeclarative`, `qtquick3d` and `qtshadertools` as dependencies (`brew info qtmultimedia`), whereas CoreAudio via
+  Objective-C++/C needs nothing extra.
 
 ## Open questions and experiments
 
-TODO.
+Experiments for M1 (local machine only; nothing here touches the Soulseek network):
+
+1. **Chrome spike** (2.4): Qt unified toolbar vs native `NSToolbar` vs effect-view sidebar, on macOS 27 light/dark,
+   with clear and tinted glass slider settings, accent colours; maintainer picks.
+2. `QMenu::toNSMenu()` + `popUpMenuPositioningItem:` — actions trigger, shortcuts display, checkable state, submenus,
+   SF Symbol icons via `QIcon::fromTheme`.
+3. `NSToolbar` attached to a Qt `NSWindow`: survives `setWindowFlags`/full-screen/NSWindow recreation
+   (`recreateWindowIfNeeded()` in `qcocoawindow.mm`), keyboard focus between toolbar search field and Qt views, VoiceOver
+   order.
+4. Waveform frame pacing: raster widget + `NSView` display link at 120 Hz on a ProMotion display — measure frame times
+   with Instruments; repeat with `QRhiWidget` in a unified-toolbar window to check the composition caveat.
+5. Results table: 10 000 rows streaming at 10 batches/s with a sort active — UI frame times, `QSortFilterProxyModel`
+   vs in-model sort keys; `QAbstractItemModelTester` clean.
+6. VoiceOver walk-through of a `QTreeView` with grouped results (rows/cells announced, custom delegates' badges exposed
+   via accessible text roles).
+7. Signing: Keychain item created by (a) ad-hoc, (b) self-signed, (c) free Apple Development–signed builds — does
+   "Always Allow" survive a rebuild? Same for the Local Network decision and the firewall prompt.
+8. Local Network prompt: does connecting to a Docker test server on `127.0.0.1` stay prompt-free; does a LAN test peer
+   or NAT-PMP to the router prompt (expected yes)?
+9. Bundle check: `qt_generate_deploy_app_script` + Homebrew FFmpeg → list of copied dylibs, bundle size, `minos` of
+   each; same with a vcpkg audio-only FFmpeg.
+
+Open questions:
+- Does the maintainer want Selecta to run on Macs other than his own (decides 14.4 vs 27 minimum and whether vcpkg
+  release builds are needed in v1)?
+- Will there be an Apple Developer ID (OQ-8)? It gates notarisation, a Homebrew cask, Sparkle and frictionless sharing.
+- Acceptable effort for native chrome: is a Qt-drawn toolbar "native enough" if the spike shows it next to Finder?
+- TODO(verify): Sparkle 2 with non-Developer-ID builds; notification permission for self-signed builds; whether
+  `~/Music` triggers a Files & Folders prompt (no evidence found that it does; external volumes do).
 
 ## Sources
 
