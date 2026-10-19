@@ -25,8 +25,9 @@
 - **Client identification is a registry**: major version `157` = official, `160` = Nicotine+, `170` = Soulseek.NET,
   `175` = aioslsk, `176` = soulseek-rs, `169` = seeleseek; **`177` = experimental development**. Selecta must not
   reuse another client's number (see §4.2, §12.2).
-- MVP subset: ~30 server messages, 13 peer messages, 4 distributed messages and the file handshake. Chat rooms,
-  interests, tickers and private rooms can be decoded-and-dropped (framing makes skipping trivial).
+- MVP subset: ~30 server messages, 13 peer messages, 4 distributed messages and the file handshake. Interests,
+  tickers, private rooms and the public room feed can be decoded-and-dropped (framing makes skipping trivial); a
+  minimal chat-room view (list, join/leave, read, post, unread counts) is **P1** per maintainer decision D32 (§12.7).
 - The local test server (Soulfind) is good for login, presence, PMs, search delivery and peer/transfer flows, but
   **has no distributed network** — that part needs Selecta's own fake server/peers.
 
@@ -63,8 +64,9 @@
     Soulseek zlib streams (§2.5, §12.3).
 11. **Keep raw path bytes** and echo them back; decode UTF-8 with Latin-1 fallback only for display (§2.2).
 12. **Excluded search phrases** (server code 160) must filter every search reply we send (§10.2).
-13. Policy risk for the maintainer: the official rules expect alternative clients to implement "the full range" of
-    features *including chat*; Selecta v1 has PMs but no rooms (§12.6 P-10).
+13. The official rules expect alternative clients to implement "the full range" of features *including chat*. The
+    maintainer closed that gap with **D32**: a minimal chat-room view is P1 (NET-10); its protocol subset, caps and
+    etiquette are in §12.7.
 
 ## Contents
 
@@ -289,9 +291,11 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 6 | UnwatchUser | → | `str user` | | active | P0 |
 | 7 | GetUserStatus | → ← | → `str user`; ← `str user, u32 status, bool privileged` | status 0 offline, 1 away, 2 online | active | P0 |
 | 11, 12 | IgnoreUser, UnignoreUser | | `str user` | no longer functional | obsolete | drop |
-| 13 | SayChatroom | → ← | → `str room, str msg`; ← `str room, str user, str msg` | chat rooms | active | drop (non-goal) |
-| 14 | JoinRoom | → ← | → `str room, u32 private`; ← room + users + statuses + stats + slotsfull + countries [+ owner, operators] | chat rooms | active | drop |
-| 15–17 | LeaveRoom, UserJoinedRoom, UserLeftRoom | | | chat rooms | active | drop |
+| 13 | SayChatroom | → ← | → `str room, str msg`; ← `str room, str user, str msg` | Room chat; the server echoes our own lines back | active | P1 (NET-10, §12.7) |
+| 14 | JoinRoom | → ← | → `str room, u32 private`; ← room + users + statuses + stats + slotsfull + countries [+ owner, operators] (§12.7) | Join (creates the room if it doesn't exist) | active | P1 (§12.7) |
+| 15 | LeaveRoom | → ← | `str room` (echoed as confirmation) | | active | P1 (§12.7) |
+| 16 | UserJoinedRoom | ← | `str room, str user, u32 status, u32 avgspeed, u32 uploadnum, u32 unknown, u32 files, u32 dirs, u32 slotsfull, str countrycode` | | active | P1 (§12.7) |
+| 17 | UserLeftRoom | ← | `str room, str user` | | active | P1 (§12.7) |
 | 18 | ConnectToPeer | → ← | → `u32 token, str user, str type`; ← `str user, str type, ip, u32 port, u32 token, bool privileged, u32 obfuscation_type, u32 obfuscated_port` | Indirect connection request / solicitation (§3.2) | active | P0 |
 | 22 | MessageUser | → ← | → `str user, str msg`; ← `u32 id, u32 timestamp, str user, str msg, bool new` | Private message. `new=false` = re-delivery of an offline/unacked message. Messages from user **`server`** are server notices (e.g. "connection restricted", errors), and Soulfind's admin commands are PMs to/from `server` | active | P0 receive+ack, P1 UI |
 | 23 | MessageAcked | → | `u32 id` | **Must ack** or the server keeps re-sending | active | P0 |
@@ -314,7 +318,7 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 58 | AdminCommand | | | | obsolete | drop |
 | 59, 60 | PlaceInLineRequest/Response | | | superseded by peer 51/44 | obsolete | drop |
 | 62, 63 | RoomAdded, RoomRemoved | | | | obsolete | drop |
-| 64 | RoomList | → ← | 3 room lists with user counts | Sent unsolicited after login (rooms ≥ 5 users) | active | parse (skip) |
+| 64 | RoomList | → ← | → empty; ← public names + counts, owned private names + counts, member private names + counts, operated names (§12.7) | Partial list sent unsolicited after login (public rooms ≥ 5 users); a request returns the full list | active | P0 parse, P1 request (§12.7) |
 | 65 | ExactFileSearch | | | no results even with official client | obsolete | drop |
 | 66 | AdminMessage | ← | `str message` | Global admin notice | active | P0 (show in activity log / banner) |
 | 67, 68 | GlobalUserList, TunneledMessage | | | | obsolete | drop |
@@ -331,9 +335,9 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 103 | WishlistSearch | → | `u32 token, str query` | One wishlist query per interval | active | P1 |
 | 104 | WishlistInterval | ← | `u32 seconds` | "Almost always 12 minutes, or 2 minutes for privileged users"; Soulfind sends 720 / 120 and re-sends it when privileges change | active | P0 parse, P1 use |
 | 110–112 | SimilarUsers, ItemRecommendations, ItemSimilarUsers | | | interests | active | drop |
-| 113–116 | RoomTickers, RoomTickerAdded/Removed, SetRoomTicker | | | chat rooms | active | drop |
+| 113–116 | RoomTickers, RoomTickerAdded/Removed, SetRoomTicker | ← (116 →) | | 113 arrives after every `JoinRoom`, 114/115 while joined | active | drop (out of D32 scope) |
 | 117, 118 | AddThingIHate, RemoveThingIHate | → | `str item` | interests | active | drop |
-| 120 | RoomSearch | → | `str room, u32 token, str query` | Search a room's members | active | drop (no rooms) |
+| 120 | RoomSearch | → | `str room, u32 token, str query` | Search a room's members | active | drop (not in D32 scope) |
 | 121 | SendUploadSpeed | → | `u32 bytes_per_s` | After each finished upload: speed of *that* transfer. Server keeps a running mean (aioslsk docs: `avg = (avg·n + speed)/(n+1)`; Soulfind: `0.8·old + 0.2·new`) that becomes our `avgspeed` (shown to others; decides parent eligibility and child count) and bumps `uploadnum` | active | P0 |
 | 122 | UserPrivileged | → ← | `str user` → `str user, bool` | use 5/7 | deprecated | drop |
 | 123 | GivePrivileges | → | `str user, u32 days` | | active | drop |
@@ -342,14 +346,15 @@ Legend — **Dir**: `→` client to server, `←` server to client. **Selecta**:
 | 127 | BranchRoot | → | `str root_user` | Our branch root | active | P0 |
 | 129 | ChildDepth | → | `u32 depth` | SoulseekQt sends garbage; server computes it itself | obsolete | drop |
 | 130 | ResetDistributed | ← | empty | Drop parent and children, restart parent search | active | P0 |
-| 133–141, 143–148 | private rooms (members, operators, ownership, invitations) | | | chat rooms | active | drop |
+| 133–140, 143–148 | private rooms (members, operators, ownership) | mostly ← | | 133/148 arrive after login for private rooms we belong to; the rest when membership changes | active | drop (out of D32 scope) |
+| 141 | EnableRoomInvitations | → ← | `bool enable` | Whether others may add us to private rooms (echoed) | active | P1: send `false` after login |
 | 142 | ChangePassword | → ← | `str pass` | Response only if changed | active | P2 |
 | 149 | MessageUsers | → | `[str user], str msg` | broadcast PM | active | drop |
 | 150–152 | JoinGlobalRoom, LeaveGlobalRoom, GlobalRoomMessage | | | public room feed | active | drop |
 | 153 | RelatedSearch | | | server sends empty list | obsolete | drop |
 | 160 | ExcludedSearchPhrases | ← | `[str phrase]` | **Paths containing a phrase must not be returned in search results** (NET-6, SHARE-2). aioslsk: case-insensitive substring match on the path, "highly recommended". Sent after login; Soulfind re-broadcasts when the list changes | active | P0 |
 | 1001 | CantConnectToPeer | → ← | → `u32 token, str user`; ← `u32 token` | Indirect connection failed (§3.2) | active | P0 |
-| 1003 | CantCreateRoom | ← | `str room` | | active | drop |
+| 1003 | CantCreateRoom | ← | `str room` | Join refused: the name belongs to a private room | active | P1 (join failure) |
 
 ### 4.2 Login in detail
 
@@ -983,7 +988,7 @@ Selecta proposal (governor-owned, compile-time ceilings, SAFE-1/2):
 
 | Channel | P0 (M2) | P1 | Decode and drop |
 |---|---|---|---|
-| Server | 1 Login, 2 SetWaitPort, 3 GetPeerAddress, 5/6 Watch/UnwatchUser, 7 GetUserStatus, 18 ConnectToPeer, 22 MessageUser (receive), 23 MessageAcked, 26 FileSearch (both ways), 28 SetStatus, 32 ServerPing, 35 SharedFoldersFiles, 36 GetUserStats (parse), 41 Relogged, 66 AdminMessage, 69 PrivilegedUsers, 71 HaveNoParent, 83/84 ParentMinSpeed/Ratio, 92 CheckPrivileges, 93 EmbeddedMessage, 100 AcceptChildren, 102 PossibleParents, 104 WishlistInterval, 121 SendUploadSpeed, 126/127 BranchLevel/Root, 130 ResetDistributed, 160 ExcludedSearchPhrases, 1001 CantConnectToPeer | 22 send, 36 request, 42 UserSearch, 103 WishlistSearch | 64 RoomList and everything chat/interest/ticker/private-room; all obsolete codes |
+| Server | 1 Login, 2 SetWaitPort, 3 GetPeerAddress, 5/6 Watch/UnwatchUser, 7 GetUserStatus, 18 ConnectToPeer, 22 MessageUser (receive), 23 MessageAcked, 26 FileSearch (both ways), 28 SetStatus, 32 ServerPing, 35 SharedFoldersFiles, 36 GetUserStats (parse), 41 Relogged, 66 AdminMessage, 69 PrivilegedUsers, 71 HaveNoParent, 83/84 ParentMinSpeed/Ratio, 92 CheckPrivileges, 93 EmbeddedMessage, 100 AcceptChildren, 102 PossibleParents, 104 WishlistInterval, 121 SendUploadSpeed, 126/127 BranchLevel/Root, 130 ResetDistributed, 160 ExcludedSearchPhrases, 1001 CantConnectToPeer | 22 send, 36 request, 42 UserSearch, 103 WishlistSearch; **minimal rooms (D32, §12.7):** 13 SayChatroom, 14 JoinRoom, 15 LeaveRoom, 16 UserJoinedRoom, 17 UserLeftRoom, 64 RoomList (request), 141 EnableRoomInvitations(false), 1003 CantCreateRoom | 64 RoomList until P1; tickers 113–116, private rooms 133–140/143–148, public room feed 150–152, interests, RoomSearch 120; all obsolete codes |
 | Peer-init | 0 PierceFireWall, 1 PeerInit | | — |
 | Peer | 4/5 answer (send our share list), 9 both, 15/16 answer, 36/37 both, 40, 41, 43, 44, 46, 50, 51 | 4/5 request (browse, BRWS-1), 15/16 request | 1, 8, 10, 14, 33, 34, 42, 47–49, 52 |
 | Distributed | 3 DistribSearch, 4 BranchLevel, 5 BranchRoot, 93 (unpack) | | 0, 7 |
@@ -1090,7 +1095,86 @@ Search budgets, per-peer caps and batch pacing are in `network-etiquette-and-saf
 | P-7 | Legacy download request | Never send; accept as uploader by answering `Queued` |
 | P-8 | Remote path encoding | Raw bytes + display string; one Latin-1 retry on `File not shared.` |
 | P-9 | Search collection window | §12.4 proposal; confirm with the etiquette note |
-| P-10 | Chat rooms | Out of v1 (PRD). Note that the official rules ask alternative clients to implement "the full range of Soulseek features (including chat, search, wishlist, download, upload, and respect / recognition of privileges)" (slsknet.org/news/node/681): PMs, wishlist and privilege-aware uploads are planned; rooms are the gap. Maintainer's call |
+| P-10 | Chat rooms | **Decided — D32 (PRD `e7cec6d`):** minimal rooms view as P1 (NET-10): list, join/leave, read, post, unread counts; no tickers, private rooms or room administration. Closes the "full range of features (including chat…)" gap in the official rules (slsknet.org/news/node/681). Protocol subset in §12.7 |
+
+### 12.7 Minimal chat rooms (P1, NET-10, D32)
+
+Scope per D32: list rooms, join and leave, read, post, unread counts. Tickers, private rooms, room administration,
+the public room feed and room search stay out.
+
+**Messages** (layouts from [N+doc §13–17, §64]; behaviour from Nicotine+ `chatrooms.py`, aioslsk
+`docs/source/SOULSEEK.rst:1350-1460, 1628-1656, 2226-2300` and Soulfind `src/server/{room,user,messages}.d`):
+
+| Code | Message | We send | We receive | Notes |
+|---|---|---|---|---|
+| 64 | RoomList | empty | `u32 n, str name × n`, `u32 n, u32 users × n` (public) · same pair for private rooms we own · same pair for private rooms we're a member of · `u32 n, str name × n` (rooms we operate) | The list pushed after login is partial (public rooms with ≥ 5 users; a few big rooms such as `nicotine` and The Lobby are left out); an explicit request returns everything, so Nicotine+ requests one right after login (`chatrooms.py:105-121`). Show the public list only; decode and ignore the three private lists |
+| 14 | JoinRoom | `str room, u32 private` — always **0** | `str room` · `u32 n, str user × n` · `u32 n, u32 status × n` · `u32 n, (u32 avgspeed, u32 uploadnum, u32 unknown, u32 files, u32 dirs) × n` · `u32 n, u32 slotsfull × n` · `u32 n, str countrycode × n` · private rooms only: `str owner, u32 n, str operator × n` (present only if bytes remain, [N+] `slskmessages.py:933-988`) | Joining a name that doesn't exist **creates** a public room. Answer an unsolicited `JoinRoom` (a room we didn't ask for) with `LeaveRoom`, as Nicotine+ does (`chatrooms.py:319-327`) |
+| 15 | LeaveRoom | `str room` | `str room` (confirmation) | |
+| 13 | SayChatroom | `str room, str message` | `str room, str user, str message` | The server relays each line to every member **including the sender** (aioslsk notes; Soulfind `room.d:114-127`): display our own line when its echo arrives, which also confirms delivery |
+| 16 | UserJoinedRoom | — | `str room, str user, u32 status, u32 avgspeed, u32 uploadnum, u32 unknown, u32 files, u32 dirs, u32 slotsfull, str countrycode` | The joiner gets its own `UserJoinedRoom` *before* the `JoinRoom` reply (aioslsk notes; Soulfind `room.d:45-65`) — ignore it until the reply has arrived |
+| 17 | UserLeftRoom | — | `str room, str user` | |
+| 7, 36 | GetUserStatus, GetUserStats | — | as §4.1 | Pushed for every member while we are in the room — an implicit watch, no `WatchUser` needed. In a big room this is a steady stream: update a member table and coalesce UI refreshes |
+| 141 | EnableRoomInvitations | `bool false`, once after login | echo | Keeps us out of private rooms (Nicotine+ sends its setting at login; off by default) |
+| 1003 | CantCreateRoom | — | `str room` | Join refused: the name belongs to a private room |
+| 22 | MessageUser from `server` | — | text | Room errors arrive as PMs: `Could not create room. Reason: Room name empty.` / `… longer than 24 characters.` / `… contains leading or trailing spaces.` / `… contains multiple following spaces.` / `… contains invalid characters.`, `The room you are trying to enter (<room>) is registered as private.` (aioslsk notes; Soulfind `user.d:601-634, 700-735`) — show them in the room view |
+
+Room names: printable ASCII, 1–24 characters, no leading/trailing spaces, no double spaces. Validate before
+sending, like Nicotine+'s `sanitize_room_name` (`chatrooms.py:183-194`). Joining a name that is not in the room list
+creates a new public room, so ask for confirmation first.
+
+**Unread counts are client-side only.** The server keeps no room history: there is no backlog on join and nothing
+about lines missed while we were away. Count the `SayChatroom` lines received for a joined room while it isn't on
+screen. Exclude our own echoed lines and ignored users (NET-8); reset the count when the room is viewed.
+Mentions of our username can raise a stronger badge or a notification (UI-6).
+
+**Unsolicited room traffic that must still be decoded and dropped:**
+- `RoomList` (64), sent after every login;
+- `RoomMembers` (133) and `RoomOperators` (148), sent after login and after each change for private rooms we
+  belong to (aioslsk "room list update");
+- private-room membership and operator changes: 134, 135, 139, 140, 143–146;
+- `RoomTickers` (113) after every `JoinRoom`, and `RoomTickerAdded`/`Removed` (114/115) while joined;
+- `GlobalRoomMessage` (152), only sent after `JoinGlobalRoom`, which Selecta never sends;
+- 13/16/17 for rooms we haven't joined.
+
+**Size caps:**
+- JoinRoom:
+  - All five parallel lists must have the same count. Nicotine+ indexes them blindly (`slskmessages.py:588-615`), so a mismatch would crash it.
+  - Before allocating, check `n × 37 bytes ≤ remaining bytes`. 37 bytes is the minimum per member: a 1-byte name (5) + status (4) + stats (20) + slotsfull (4) + an empty country string (4).
+  - Sanity cap of **50 000 members** (about 2–3 MB). Above it, drop the message, leave the room and tell the user.
+- RoomList:
+  - Same parallel-count check. Minimum 9 bytes per public entry.
+  - Cap of **100 000 rooms**.
+- Both caps apply within the 16 MiB server-message cap (§12.4).
+- Displayed line length: cap at 4 KiB. Soulfind never relays lines over 2 048 bytes; the official limit is unknown.
+
+**Soulfind for local testing.** Soulfind supports:
+- the room list, and joining and leaving (with the name checks and PM errors above);
+- relaying lines to all members, including the sender;
+- join/leave notifications, tickers, private rooms and the global feed.
+
+It differs from the official server in these ways:
+- No "≥ 5 users" filter: it lists every active room and deletes empty ones.
+- Country codes are always empty (`messages.d:1240-1283`).
+- It silently drops lines over 2 048 bytes or containing `\r`/`\n` (`room.d:119-123`).
+- Its global feed also relays private-room chat (a bug).
+- No flood protection, so local tests cannot catch flooding. The governor enforces the limits, and the etiquette
+  note's test "referee" (§8.3 there) should assert them.
+
+**Etiquette constraints** (`network-etiquette-and-safe-development.md` §4.1, §4.6, §9.1):
+- **Posting is user-typed only.** No auto-replies, greetings on join, away messages, bots or scripted posts. Tests
+  post only on the local server.
+- **Room lines share the PM budget:** ≤ 1 line per 2 s, combined across PMs and rooms. The same text is not repeated
+  to the same room or user within 10 min. The server's 30-minute flood-ban notice names "Do not flood chat rooms…
+  Do not repeat the same text several times in a row."
+- **Replace CR/LF with spaces and cap a line at 2 000 bytes of UTF-8.** Nicotine+ does the replacement because the
+  server rejects newlines (`chatrooms.py:202-222`).
+- **Pace joins:** only user actions, or re-joining the rooms that were open at quit, at ≤ 1 `JoinRoom` per 2 s and
+  ≤ 10 rooms.
+- **Request `RoomList` only when the user opens the room browser**, at most once a minute.
+- **No per-member lookups.** Nicotine+ sends `GetPeerAddress` for every room member to look up countries and IP
+  ignores (`chatrooms.py:271-290`); in a large room that is a burst of server requests, so Selecta must not. Use
+  the country code in `JoinRoom`, which is often empty.
+- **Never send `JoinGlobalRoom`** (the public feed).
 
 ## 13. Open questions / verify on a local test server
 
