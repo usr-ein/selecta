@@ -1,9 +1,11 @@
 # Soulseek protocol — implementation reference for Selecta
 
-> Status: **DRAFT in progress.** Sections 1–8 are written from the Nicotine+ protocol document and spot-checked
-> against Nicotine+ code; items marked **TODO** are not yet verified. Compiled 2026-10-19.
+> Status: **v1, complete for M2 planning** — 2026-10-19. Research only; nothing here was run against any server.
 > Primary source: Nicotine+ `doc/SLSKPROTOCOL.md` ("Last updated on August 27, 2026", repo commit `f3b9d4d`),
-> cited below as **[N+doc]**; Nicotine+ code `pynicotine/*.py` at the same commit as **[N+]**.
+> cited as **[N+doc]**; Nicotine+ code `pynicotine/*.py` at the same commit as **[N+]**. Other code citations are
+> `path:line` in Soulseek.NET `c07c187`, aioslsk `a90ad82` or Soulfind `5a256f5` (§14). Confidence: message layouts
+> and flows **high** (four independent implementations agree unless a conflict is called out); official-server
+> behaviour **medium** (second-hand observations by library authors); anything marked "hearsay" or "inferred" low.
 
 ## TL;DR
 
@@ -22,13 +24,47 @@
   **The downloader closes the `F` socket** when it has everything.
 - **Client identification is a registry**: major version `157` = official, `160` = Nicotine+, `170` = Soulseek.NET,
   `175` = aioslsk, `176` = soulseek-rs, `169` = seeleseek; **`177` = experimental development**. Selecta must not
-  reuse another client's number (see §4.2, §12).
+  reuse another client's number (see §4.2, §12.2).
 - MVP subset: ~30 server messages, 13 peer messages, 4 distributed messages and the file handshake. Chat rooms,
   interests, tickers and private rooms can be decoded-and-dropped (framing makes skipping trivial).
+- The local test server (Soulfind) is good for login, presence, PMs, search delivery and peer/transfer flows, but
+  **has no distributed network** — that part needs Selecta's own fake server/peers.
 
 ## Key findings
 
-TODO — filled after source verification (Soulseek.NET, aioslsk, Soulfind, Nicotine+ code).
+1. **Identify as major 177 now, request a reserved number later** (§4.2, §12.2). The server distinguishes clients by
+   version and can log a client in yet "restrict" it (no search, no chat) with a PM from `server`; watch for it.
+2. **Without a distributed parent, nobody's global searches reach you.** Searches flow server → branch roots →
+   tree; a sharer with no parent only sees user/room searches. Distributed membership is therefore P0 for sharing,
+   the ratio (FAIR-3) and being a good citizen — not an optional extra (§8, §10.2).
+3. **Soulfind is a partial stand-in**: no distributed network at all (every search is pushed to every client as
+   server code 26, including back to the searcher), inbound frames > 8 KiB disconnect the client, and messages sent
+   before the Login reply sit unread. Wait for the Login reply; build a FakeServer/FakePeer fixture for `D` (§8, §13).
+4. **Bans are mostly silent.** No `BANNED` login reason any more: a banned account gets no reply; a throttled IP gets
+   an immediate EOF, and per aioslsk rapid reconnects trigger and *extend* an anti-DDoS ban. Reconnect policy must
+   treat "no reply"/"instant EOF" as stop-and-wait, and never auto-reconnect after `Relogged` (§4.2, §11).
+5. **Race direct and indirect connections** (Soulseek.NET, aioslsk, SoulseekQt); Nicotine+ starts both once the
+   address is known. Keep a local timeout — `CantConnectToPeer` is not reliably sent (Soulseek.NET never sends it).
+   IPv4 only; port reachability decides how many results and uploads Selecta gets (§3).
+6. **Two download dialects exist**: `QueueUpload` (Nicotine+, SoulseekQt, aioslsk — Selecta's choice) and the legacy
+   downloader-sent `TransferRequest(direction 0)` still used by Soulseek.NET (slskd, Seeker). As uploader Selecta
+   must answer the latter with `TransferResponse(false, "Queued")` and queue it (§6.4).
+7. **Cancelling = closing the `F` socket; there is no cancel message.** The uploader then sends `UploadFailed`, which
+   Nicotine+-style downloaders treat as "re-queue" — Selecta must mark a skipped preview cancelled first and ignore
+   that echo. Queued-but-unstarted requests are withdrawn by answering the later `TransferRequest` with `Cancelled`.
+   `FileOffset` is resume-only, so previews always stream from byte 0 and seeking ahead waits (§7, PREV-3/6).
+8. **Attributes are thin and uneven**: SoulseekQt sends no VBR flag and a blank extension; lossless carries
+   duration/sample rate/bit depth only; anything may be missing. Strict filters must treat "no VBR attribute" as
+   unknown, not CBR (§6.2, SRCH-3/6).
+9. **Rejection strings are exact and open-ended** (`File not shared.` with the dot, `Too many files`, `Banned`,
+   `Queued`, …); `File not shared.` may be an encoding mismatch (retry once in Latin-1) or a disguised ban (§6.5).
+10. **Bounded parsing is on us**: Nicotine+ has per-message caps (1 MiB default, 16 MiB search results, 448 MiB share
+    lists only if solicited, 16 KiB distributed); Soulseek.NET and aioslsk have none. `qUncompress` cannot be used on
+    Soulseek zlib streams (§2.5, §12.3).
+11. **Keep raw path bytes** and echo them back; decode UTF-8 with Latin-1 fallback only for display (§2.2).
+12. **Excluded search phrases** (server code 160) must filter every search reply we send (§10.2).
+13. Policy risk for the maintainer: the official rules expect alternative clients to implement "the full range" of
+    features *including chat*; Selecta v1 has PMs but no rooms (§12.6 P-10).
 
 ## Contents
 
@@ -99,8 +135,9 @@ Facts that shape the design:
 - **Design consequence for Selecta:** keep every remote path as the **original raw bytes** received from the peer
   (plus a decoded display string), and echo the raw bytes back in requests. That removes most encoding round-trip
   bugs; the Latin-1 retry then becomes a fallback only for paths typed or reconstructed locally.
-- Remote paths use `\` as separator (Windows style) regardless of the peer's OS (TODO: confirm with [N+]
-  `shares.py`). Never trust them: they are display data and lookup keys, never local paths.
+- Remote paths use `\` as separator (Windows style) regardless of the peer's OS (Nicotine+ converts `/` to `\` when
+  building virtual paths, [N+] `shares.py:449-468`). Never trust them: they are display data and lookup keys, never
+  local paths.
 
 ### 2.3 Message envelopes
 
@@ -433,7 +470,8 @@ Attribute codes [N+doc §Constants]: `0` bitrate (kbps), `1` duration (s), `2` V
 | SoulseekQt ≥ 2015-06 | `{0, 1}` for MP3/OGG/WMA/M4A — **no VBR flag** | `{1, 4, 5}` for FLAC/WAV/APE; `{0, 1, 4, 5}` for WV |
 
 Consequences for Selecta's strict filters (SRCH-3/6): "CBR 320" cannot be proven from SoulseekQt results (no VBR
-attribute); VBR files often report an *average* bitrate (e.g. 245–260 for V0) — TODO verify typical values; any
+attribute); a VBR file carries a single bitrate number whose meaning (average vs nominal) depends on the sharer's tag
+library (unverified — measure per reference client, §13 item 6); any
 attribute can be missing. Strict mode must treat "no VBR attribute" as "unknown CBR/VBR", not as CBR.
 
 `SharedFileListResponse` body (after inflate): `u32 n_dirs, (str dir, u32 n_files, file×n)×n_dirs, u32 unknown (0),
