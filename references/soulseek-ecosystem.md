@@ -423,15 +423,73 @@ TODO
 
 ## 6. Write our own protocol layer vs reuse/port
 
-TODO (draft position: write our own; see TL;DR).
+| Option | How | For | Against | Verdict |
+|---|---|---|---|---|
+| **A. Own C++/Qt `slsk` library, logic ported from GPL-3.0+/MIT sources** | QTcpSocket/QTcpServer on one network thread; codec + server/peer/distributed sessions + file streams; governor in-process | Full control of pacing (SAFE-1/2) at the socket boundary; one event loop; fuzzable codec (NFR-4); only zlib as dependency; no runtime to ship; keeps GPL-3.0-or-later open (OQ-7); matches PLAN M2 | Effort. Size guide: Nicotine+'s network thread + message catalogue ≈ 7.4k Python lines, aioslsk ≈ 15k, soulseek-rs-lib ≈ 23k Rust lines with tests — expect roughly 10–20k C++ lines for the full library with tests (low confidence) | **Recommended (ADR-002).** |
+| B. Embed Nicotine+ core (Python) | Frozen Python sidecar + IPC, as *Seek* does (Tauri + `sidecar/` running Nicotine+ headless, pinned to a 3.4.0.dev commit — `IvaKap/seek@1317c84:RECON.md`) | Battle-tested behaviour, GPL-compatible, fastest to "works" | Ships a Python runtime; two processes and IPC on the hot path (search results, progress); governor split across languages; tracks a moving upstream; harder to sign/notarise and fuzz | Fallback only if M2 slips badly. |
+| C. slskd as backend daemon | Selecta = GUI over slskd's REST API | Mature uploads/limits | AGPL-3.0 + Additional Terms; .NET runtime; daemon mode is a v1 non-goal; Selecta would log in **as slskd** (minor 760) — conflicts with NET-9; pacing not under Selecta's control; duplicated state | Rejected. |
+| D. Link soulseek-rs-lib via FFI | Rust staticlib behind a C ABI | MIT, zero deps, e2e-tested on Soulfind | Rust toolchain on 3 CI OSes; bridging its actor threads to Qt; one maintainer, fast version churn; opaque to the governor; identity 176 belongs to soulseek-rs | Not now; keep as behavioural cross-check. |
+| E. soulseekcpp | Vendor the C++20/asio port | Already C++ | Soulseek.NET licence terms; one commit, 790 lines of tests; second event loop (asio) | Rejected. |
+| F. Port seeleseek's Swift core | Swift/C++ interop | macOS-native, MIT | Swift on Linux/Windows CI; poor fit with Qt | Rejected (read for macOS ideas). |
+
+Rules for option A: implement from `doc/SLSKPROTOCOL.md` + aioslsk docs; consult Nicotine+/aioslsk/soulseek-rs code for
+behaviour; record any ported fragment (file + upstream path + commit + licence) in a `THIRD-PARTY-NOTICES.md`; read
+Soulseek.NET/slskd/sockseek/soulseekcpp **for behaviour only, never copy or translate**; prove interop with Soulfind +
+Nicotine+ + slskd peers (§9) before any live use.
 
 ## 7. Per-subsystem reading list
 
-TODO
+Commits: Nicotine+ `f3b9d4d`, aioslsk `a90ad82`, soulseek-rs `20bd676`, Soulseek.NET `c07c187`, slskd `6a450e4`, sockseek
+`ff9a3ac`, soularr `2037399`, Soulfind `5a256f5`, seeleseek `195eddc`, Seeker `ff1dcc6`. ✱ = behaviour-only source
+(licence) — read, don't copy.
+
+| Subsystem (PLAN module) | Read first | Then |
+|---|---|---|
+| Wire format, message catalogue (`slsk` codec) | Nicotine+ `doc/SLSKPROTOCOL.md` (packing, constants, every message); `pynicotine/slskmessages.py` (each message's pack/parse + docstrings; rejection strings `:105-117`, attribute codes `:120-126`) | aioslsk `protocol/messages.py`, `protocol/primitives.py` (declarative fields); soulseek-rs `soulseek-rs-lib/src/message/` (`server/message_factory.rs`). zlib: use the real zlib (soulseek-rs hand-rolls inflate in `utils/zlib.rs` to stay dependency-free; Qt's `qUncompress` expects a 4-byte length prefix — verify before using it). |
+| Server session: login, version, keep-alive, reconnect, Relogged | Nicotine+ `slskproto.py:1255-1347` (`_server_connect`, Login 160/3), `:1591` (`_server_disconnect`); Soulfind `src/server/user.d:104-207, 337-385` (what a server checks and sends after login) | aioslsk `network/network.py:382-500` (server connection watchdog); ✱ sockseek `SoulseekClientManager.cs:236-280` (reconnect loop — too aggressive, counter-example). |
+| Peer connections: direct, indirect (ConnectToPeer/PierceFirewall), timeouts, obfuscation | aioslsk `docs/source/SOULSEEK.rst:47-260` (direct, indirect, obfuscation with example); Nicotine+ `slskproto.py:593-635` (indirect timeouts), `:838-1000` (`_initiate_connection_to_peer`, `_connect_to_peer_indirect`), `:1850` (`_init_peer_connection`) | aioslsk `network/network.py:530+` (`create_peer_connection`); ✱ Soulseek.NET `Network/PeerConnectionManager.cs` (~200-250: **races direct vs indirect, first wins**). |
+| Distributed network (to receive searches as a sharer) | aioslsk `DESIGN.rst` "Distributed Network" + `SOULSEEK.rst:284-416` + `distributed.py` | Nicotine+ `slskproto.py:2236-2290` (children); soulseek-rs `client/distributed.rs`, `client/children.rs`; ✱ Soulseek.NET `Network/DistributedConnectionManager.cs`. Test with the aioslsk mock server (§5.2). |
+| Outgoing search + result intake (SearchService) | ✱ Soulseek.NET `Options/SearchOptions.cs` (completion = 15 s after *last* response; 250 responses / 25 000 files caps; 2 concurrent); Nicotine+ `search.py` (tokens, wishlist one-per-interval `:529-557`, excluded phrases) | aioslsk `search/manager.py`; ✱ sockseek `Search/Searcher.cs` (query cleaning `:661-696`, fallbacks `:554-637`). |
+| Governor / pacing | Selecta's own design (etiquette note); ✱ sockseek `Search/RateLimitedSemaphore.cs` (**anti-pattern**: fixed window bursts 2×); soularr `soularr.py:754-773` (min interval between search starts) | ✱ Soulseek.NET `Common/TokenBucket.cs`, aioslsk `network/rate_limiter.py` (speed buckets). |
+| Request/response correlation | ✱ Soulseek.NET `Common/Waiter.cs`, `WaitKey.cs` ("await-able server messages": wait on (code, user, token) with timeout; oldest wait completes first) | Nicotine+ token maps in `search.py`/`transfers.py`. |
+| Answering searches, share index (ShareService) | aioslsk `SOULSEEK.rst:2525-2595` (**query rules**: exclusions, prefix-only wildcard, boundary matching, directory-only path terms; attribute table); Nicotine+ `shares.py` (`Scanner` `:241`, `Database` `:101`) + `search.py:757-911` (word index lookup, `maxresults` 300) | aioslsk `shares/manager.py`; slskd `docs/config.md:999-1080` (incoming filters, circuit breaker); soulseek-rs `shares/mod.rs`, `shares/audio.rs` (cheap attribute extraction). |
+| Browse / folder contents | Nicotine+ `userbrowse.py` | soulseek-rs coverage table (codes 4/5, 36/37). |
+| Downloads: queue → TransferRequest/Response → F connection → FileOffset → resume; place in queue; UploadFailed/Denied | aioslsk `SOULSEEK.rst:417-517` + `transfer/state.py` (**explicit state machine**) + `transfer/manager.py` | Nicotine+ `downloads.py`, `transfers.py`; soulseek-rs `peer/download_peer.rs`, `download_store.rs` (`.part` resume). |
+| Uploads: slots, queues, fairness, limits | slskd `docs/config.md:325-605` (groups, priorities, round-robin, queued/daily/weekly limits) | Nicotine+ `uploads.py` + `tests/unit/transfers/test_get_upload_candidate.py`; soulseek-rs `client/upload_queue.rs`. |
+| Port mapping (NET-3) | Nicotine+ `portmapper.py` (UPnP + NAT-PMP, pure Python) | aioslsk `network/upnp.py`; seeleseek `NATService`. |
+| Test harness | soulseek-rs `soulseek-rs-lib/tests/e2e.rs:1-125` + `.github/workflows/ci.yml:74-181` | aioslsk `tests/e2e/mock/server.py`, `tests/e2e/fixtures.py`; Nicotine+ `tests/unit/protocol/`; ✱ Seeker `Common/MockSoulseekClient.cs` (fake network idea). |
+| Search filter syntax (power users) | SoulseekQt "Fun with Filters" (slsknet.org node/267) | slskd `src/web/src/lib/searches.js` + `searches.test.js`; seeleseek `site/src/content/docs/guide/searching.md` (presets). |
+| Batch matching and ranking | ✱ sockseek `Search/SearchProjection/ResultSorter.cs:213-542`, `Matching/Conditions/FileConditions.cs`, `Files/TrackSkipper.cs`, `Searcher.cs:356-470` (filename inference) | soularr `soularr.py:91-166, 265-310` (album match, exact quality specs). |
 
 ## 8. GUI client UX comparison for a DJ workflow
 
-TODO
+✓ = yes, ~ = partial, ✗ = no, ? = not verified. Sources: §2–§4, project docs/READMEs at the cited commits.
+
+| Need (PRD) | SoulseekQt | Nicotine+ | slskd (web) | seeleseek | Seek | sockseek (CLI) | Selecta target |
+|---|---|---|---|---|---|---|---|
+| Native macOS look (UI-1) | ~ (Qt, own look) | ✗ (GTK) | ✗ (browser) | ✓ (SwiftUI) | ~ (Tauri web view) | n/a | ✓ (Qt Widgets, native style) |
+| Hard format/quality filters (SRCH-2…4) | ~ (text: `iscbr`, `minbitrate`; no lossless rules) | ~ (filter bar: in/out words, type, size, bitrate, length, country) | ~ (text: + `islossless`, `minbitdepth`, `minlength`) | ✓ (format, bitrate ≥, sample rate ≥, bit depth ≥, free slot) | ? | ✓ (necessary vs preferred conditions) | ✓ incl. `=`/≤ operators, CBR/VBR classes |
+| Named presets (SRCH-8) | ✓ saved filters | ~ (filter history) | ✗ | ✓ quick presets (MP3 320, FLAC, Lossless, Hi-Res) | ? | ✓ (profiles) | ✓ |
+| Unknown-quality policy (SRCH-6) | ✗ (MP3-only attrs hide others) | ✗ | ~ (`islossless` drops files without SR/BD) | ? | ? | ✓ `--strict-conditions` | ✓ strict mode + "unknown" marker |
+| Plausibility / fake detection (SRCH-7, PREV-9) | ✗ | ✗ | ✗ | ✗ | ✓ spectrogram + confidence | ✗ | ✓ |
+| Folder (release) grouping, whole-folder download | ✓ "Download containing folder" | ✓ | ✓ (by user) | ✓ | ✓ (record-centric) | ✓ album mode | ✓ |
+| Audition before download (PREV-1…4) | ✗ | ✗ | ✗ | ~ (plays *downloaded* files) | ~ ("Preview before you commit"; mechanism ?) | ✗ | ✓ progressive, keyboard-driven |
+| Waveform | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ 3-band |
+| Owned / Inbox / history badges (SRCH-11) | ✗ | ✗ | ✗ | ? | ✓ ("not in my library") | ~ (skip-existing index) | ✓ |
+| Batch from tracklist (BATCH) | ✗ | ✗ (plugins) | ✗ (API tools) | ✗ | ~ (links/catalogues) | ✓ (core feature) | ✓ review-first |
+| Visible search budget (SRCH-13) | ✗ | ✗ | ✗ | ✗ | ? | ~ ("Waiting" status) | ✓ |
+| Per-peer counters/caps (FAIR-1/2) | ✗ | ✗ | ~ (upload-side limits only) | ? | ✓ ("your own history with them") | ~ (per-run failure downrank) | ✓ |
+| Ratio (FAIR-3) | ✗ | ~ (transfer stats) | ✗ | ~ (Statistics view) | ✓ | ✗ | ✓ |
+| Convert + tag on filing (CONV) | ✗ | ✗ | ✗ | ✗ | ~ ("Fix tags", "Organise") | ✗ | ✓ |
+| Wishlist / browse / PMs | ✓ / ✓ / ✓ | ✓ / ✓ / ✓ | ? / ✓ / ✓ | ✓ / ✓ / ✓ | ? / ? / ? | ✓ (wishlist mode) / ✗ / ✗ | ✓ / ✓ / ✓ |
+
+Takeaways: (1) nobody combines **audition + strict quality + ownership + pacing**; Selecta's niche is real.
+(2) **Seek** is the closest concept (diggers, ownership, spectrogram proof, ratio honesty, per-peer history) — its
+README is worth a careful read for copy and interaction ideas; it is Tauri + Python, not native. (3) **seeleseek**'s
+quick presets ("MP3 320 / FLAC / Lossless / Hi-Res") validate Selecta's preset approach. (4) Every GUI client hides why
+results disappear; Selecta's "N of M shown" breakdown (SRCH-9) is a differentiator. (5) Seek's README claims
+"Soulseek allows one search at a time" — not a protocol rule (Nicotine+ runs several; Soulseek.NET allows 2
+concurrently by default); treat as that app's own policy.
 
 ## 9. Standing up a local offline Soulseek test network
 
