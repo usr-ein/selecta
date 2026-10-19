@@ -1196,6 +1196,9 @@ Verify on the local network (Soulfind + reference clients), never on the live se
 6. Attribute coverage from each reference client for MP3 CBR/VBR, FLAC, WAV, AIFF, M4A/ALAC, OGG, OPUS (which
    attributes, VBR flag, extension field) — feeds SRCH-3/4/6.
 7. Excluded-phrase semantics with Soulfind's filter phrases (case, substring vs word).
+7a. Rooms (§12.7): order of `UserJoinedRoom`/`JoinRoom`/`RoomTickers` on join, echo of our own lines, `LeaveRoom`
+    confirmation, name-error PMs, `CantCreateRoom`, behaviour after reconnect (rooms are not rejoined by the server),
+    parallel-count validation with a fuzzed `JoinRoom`.
 
 Cannot be verified locally (needs reading other sources or one careful, manual, maintainer-run live session in M9):
 
@@ -1207,6 +1210,8 @@ Cannot be verified locally (needs reading other sources or one careful, manual, 
     search — etiquette note; never probe.
 11. Which server port to use for release builds (Nicotine+ 2242, Soulseek.NET 2271, aioslsk/SoulseekQt 2416 — all
     `server.slsknet.org`); pick the one Nicotine+ uses unless the official client documentation says otherwise.
+11a. Rooms on the official server: the size of the largest public rooms (sets the `JoinRoom` cap), the real maximum
+     line length, and whether own lines are always echoed — observe passively in M9; never probe.
 12. SoulseekQt's share-list and folder-contents quirks (extension blank, no VBR attribute, sizes 0 for > 2 GB in
     `TransferRequest`) are documented second-hand only; SoulseekQt cannot be run against Soulfind if it has no
     server-address setting (unknown).
@@ -1218,10 +1223,10 @@ All accessed 2026-10-19. Repositories were shallow-cloned read-only into `local/
 | Source | Commit / version | Used for |
 |---|---|---|
 | Nicotine+ protocol doc — https://nicotine-plus.org/doc/SLSKPROTOCOL.html, `doc/SLSKPROTOCOL.md` in https://github.com/nicotine-plus/nicotine-plus | `f3b9d4d` (2026-10-18; doc "last updated August 27, 2026") | Primary message reference: packing, constants, version registry, every message layout, connection order, transfer flow, distributed messages |
-| Nicotine+ code — `pynicotine/slskmessages.py`, `slskproto.py`, `downloads.py`, `uploads.py`, `transfers.py`, `search.py`, `shares.py`, `users.py`, `config.py`, `privatechat.py` | `f3b9d4d` | Size caps, timers, keepalive, reconnect, connection race details, parent selection, child limit, rejection-reason usage, search matching, share list construction, Latin-1 retries |
+| Nicotine+ code — `pynicotine/slskmessages.py`, `slskproto.py`, `downloads.py`, `uploads.py`, `transfers.py`, `search.py`, `shares.py`, `users.py`, `config.py`, `privatechat.py`, `chatrooms.py` | `f3b9d4d` | Size caps, timers, keepalive, reconnect, connection race details, parent selection, child limit, rejection-reason usage, search matching, share list construction, Latin-1 retries, room join/post/sanitising behaviour |
 | Soulseek.NET — https://github.com/jpdillingham/Soulseek.NET | `c07c187` (2026-10-11) | Race implementation, defaults/timeouts, legacy download flow, field layouts, distributed parent selection, absence of size caps |
 | aioslsk — https://github.com/JurgenR/aioslsk, docs https://aioslsk.readthedocs.io/en/latest/SOULSEEK.html (`docs/source/SOULSEEK.rst`, `MESSAGES.rst`, `USAGE.rst`) | `a90ad82` (2026-10-11, v1.7.1) | Official-server behaviour notes (post-login burst, restricted-version PM, presumed server defaults), search syntax, obfuscation algorithm, max-children formula, reconnect/ban warnings |
-| Soulfind — https://github.com/soulfind-dev/soulfind | `5a256f5` (2026-10-15) | Local test server behaviour and limitations (no distributed network, 8 KiB frame cap, login validation, post-login order, PM storage, search delivery) |
+| Soulfind — https://github.com/soulfind-dev/soulfind | `5a256f5` (2026-10-15) | Local test server behaviour and limitations (no distributed network, 8 KiB frame cap, login validation, post-login order, PM storage, search delivery, rooms: `room.d`, `user.d`, `messages.d`) |
 | museek+ — https://github.com/eLvErDe/museek-plus (mirror) | `36c3e9b` (2022-03-08) | Legacy C++ reference: obsolete major 178, `u64` queue length in search replies, index-based attribute codes; confirms it is not a reuse candidate |
 | Soulseek rules — https://www.slsknet.org/news/node/681 | page as of 2026-10-19 | Third-party client expectations ("full range of features"), bots barred, max 5 clients per IP, admins may close connections |
 | Soulseek FAQ — https://www.slsknet.org/news/faq-page | page as of 2026-10-19 | Checked for search syntax and limits: nothing protocol-relevant (privileges and IP bans only) |
