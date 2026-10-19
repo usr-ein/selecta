@@ -476,8 +476,278 @@ download manager — TODO(verify) current Beatport flow). Proposed flow:
 
 ## 12. Implications for Selecta
 
-TODO — MetadataService + PreviewService design, matching pipeline with confidence scoring, governor budgets,
-caching/TTLs, privacy, terms/legal risk table.
+Inputs to ADR-011 and to the `src/meta/` module (PLAN). PRD state at the time of writing: v0.4 (D19–D29, META-1…8).
+The full-track preview runner of D26 is a separate provider behind the same `PreviewService` interface; this note
+does not cover it (scope rule).
+
+### 12.1 Recommended decisions
+
+| # | Recommendation | Why |
+|---|---|---|
+| R1 | **Keyless first.** Default chain without any account: Deezer (match, ISRC, label, cover, clip) → MusicBrainz (identifiers, label/catno, store links, CAA artwork) → iTunes (clip fallback). Spotify is an optional, opt-in matcher when the user has connected their own app. | Works for everyone with no Premium and no Client ID; least terms exposure; Deezer's catalogue is close to Spotify's. |
+| R2 | **Spotify via PKCE with a user-owned Client ID** (META-1). Personal builds may pre-fill the maintainer's Client ID (it is not a secret), but it serves at most 5 allow-listed users and needs the owner's Premium; public builds ask for the user's own. No client secret in releases. | §3.1, §3.2. |
+| R3 | **File tags come from open data by default:** MusicBrainz (CC0) for text and identifiers, Deezer/CAA for artwork, keyed by the ISRC found through any source. Writing **Spotify-sourced text or artwork into files** is a maintainer decision with a named risk (§4, S3–S5): if chosen (D29 as worded), make it an explicit setting, add a `WOAS` link-back to the Spotify track, and keep it to personal builds. | Spotify Terms forbid indefinite storage and permanent copies of Spotify Content; MusicBrainz data is public domain and built for tagging. In practice the strings are usually identical. |
+| R4 | **Clips are streamed, never stored.** Play Deezer/iTunes clips from memory (`QBuffer` or `QMediaPlayer` on the URL); derive the 30-s waveform in memory; do not put clip audio in the preview cache. Show the source logo/attribution and a store/"Open in" link next to the player. | Deezer forbids local storage of audio; Apple requires stream-only + badge + "provided courtesy of iTunes". |
+| R5 | **Every meta request through the governor** with per-host buckets, compile-time ceilings, the global pause switch, and an activity-log line per request (META-7, SAFE-1/4/5). | §12.3. |
+| R6 | **Release-first resolution** uses identifiers before text, rejects DJ-mix segments and derivative junk, and hands the chosen release's duration to the Soulseek ranker (D23, `library-matching-and-organization.md` §9.1/§17.5). | §12.5. |
+| R7 | **Playlist import** = (a) Spotify own/collab playlists, Liked Songs and any album link via the API; (b) for other playlists, tell the user to add them to a playlist they own in the Spotify app, or import an Exportify CSV; (c) plain text as today. | Dev-mode 403 on others' playlists (§3.3). |
+| R8 | **Full-length listening** = deep links (P1, no API); Web API playback only inside the opt-in Spotify integration (P2); Selecta pauses its own player first and never overlaps audio. | §5, S8/S9. |
+| R9 | **No unofficial endpoints** (Spotify web-player APIs à la SpotipyFree, Beatport docs client ID, Bandcamp mobile API, preview scrapers). | Terms; brittleness; D21. |
+| R10 | Write a **small in-house client per service** (Spotify ~800 lines, Deezer ~300, MusicBrainz+CAA ~400, iTunes ~150) on `QNetworkAccessManager` + `QJsonDocument`, with recorded HTTP fixtures for tests. Reuse no Spotify C++ library. | §6; testability (PLAN `meta/` agent). |
+
+### 12.2 Module design (`src/meta/`)
+
+```mermaid
+flowchart LR
+  subgraph app[UI / app]
+    GT[Get tracks] --> MS
+    SR[Search release card] --> MS
+    IN[Inbox arrival] --> MS
+    PL[Player] --> PS
+  end
+  subgraph meta[src/meta]
+    MS[MetadataService] --> RES[Resolver + Scorer]
+    RES --> SP[SpotifyProvider<br/>opt-in, PKCE]
+    RES --> DZ[DeezerProvider<br/>keyless]
+    RES --> MB[MusicBrainzProvider<br/>keyless, UA]
+    MS --> TP[TagPlanner]
+    TP --> CAA[CoverArt: CAA / Deezer]
+    PS[PreviewService] --> CLIP[ClipPreview<br/>Deezer by ISRC → iTunes]
+    PS --> PEER[PeerFilePreview<br/>Soulseek transfer]
+    PS --> EXT[External tool preview<br/>D26 — separate note]
+    SP & DZ & MB & CAA & CLIP --> HC[MetaHttp: cache + governor ticket]
+  end
+  HC --> GOV[governor]
+  HC --> DB[(SQLite meta cache)]
+```
+
+```cpp
+// SPDX-License-Identifier: GPL-3.0-or-later — sketch for ADR-011, not final
+namespace selecta::meta {
+
+enum class Source { Spotify, Deezer, MusicBrainz, Discogs, ITunes, CoverArtArchive, File, User };
+enum class Confidence { None, Ambiguous, Likely, Confident, Exact };
+
+struct ReleaseTrack {                // "Release" in the PRD glossary
+    Source source; QString sourceId; QUrl sourceUrl;          // link-back
+    QString isrc, title, version, album, albumArtist, label, catalogNumber, releaseDate;
+    QStringList artists;
+    std::optional<int> durationMs, trackNo, trackTotal, discNo, discTotal;
+    QString releaseType;             // single / ep / album / compilation / dj-mix
+    QList<QUrl> artwork;             // largest first
+    QHash<QString, QUrl> links;      // spotify, deezer, musicbrainz, beatport, bandcamp, traxsource, discogs
+};
+
+struct Query {                       // from a Get tracks line, a parsed remote path or an Inbox file
+    QStringList artists; QString title; QString version; QString albumHint, labelHint;
+    std::optional<int> durationMs; QString isrc;               // ISRC from a file's TSRC or a playlist item
+};
+
+struct Match { ReleaseTrack best; Confidence confidence; double score; QList<ReleaseTrack> alternatives;
+               QStringList reasons; };   // shown in the inspector ("ISRC agrees on Deezer and MusicBrainz", …)
+
+class MetadataService : public QObject {
+    Q_OBJECT
+public:
+    QFuture<Match> resolve(const Query &q, ResolvePolicy policy);   // release-first (SRCH-17, META-2)
+    QFuture<ReleaseTrack> enrich(const ReleaseTrack &t);             // label, catno, artwork, links via ISRC
+    QFuture<QList<Query>> importSpotify(const QUrl &playlistOrAlbum); // META-3
+    QFuture<QList<Query>> importCsv(const QString &path);            // Exportify / generic CSV
+    TagPlan planTags(const ReleaseTrack &t, TagPolicy policy) const;  // META-4; terms-aware source choice
+};
+
+class PreviewService : public QObject {
+    Q_OBJECT
+public:
+    QFuture<PreviewHandle> clip(const ReleaseTrack &t);  // Deezer by ISRC → iTunes by text+duration; memory only
+    // peer-file and external-tool previews live in their own providers (PREV-1…12)
+};
+}
+```
+
+Threading: one meta worker thread owning the `QNetworkAccessManager` and the SQLite cache connection; results
+delivered as `QFuture` continuations on the UI thread. Every parser treats every JSON field as optional (Spotify
+removed fields without versioning in 2026).
+
+### 12.3 Governor budgets (proposed)
+
+Ceilings are `constexpr` (SAFE-2); defaults are what ships; settings can only lower them. Each host has its own
+bucket; all meta traffic stops with "Pause network activity" (SAFE-5).
+
+| Host | Documented limit | Ceiling | Default | Concurrency | Back-off |
+|---|---|---|---|---|---|
+| `api.spotify.com` | rolling 30 s, unpublished; quota per developer account | 2 req/s, burst 10 | 1 req/s, burst 5 | 2 | 429: `Retry-After` + jitter (default 5 s if absent); `QUOTA_EXCEEDED`: stop Spotify for 1 h, then one probe; 401: refresh once, then re-auth |
+| `accounts.spotify.com` | — | 1 req/10 s | on demand | 1 | `invalid_grant` → drop tokens, ask to reconnect |
+| `api.deezer.com` | 50 / 5 s per IP (2nd-hand) | 5 req/s | 2 req/s | 2 | error code 4 (quota) → pause 5 s, ×2 up to 5 min |
+| `cdnt-preview.dzcdn.net`, `audio-ssl.itunes.apple.com` | — | 2 req/s | 1 clip at a time | 1 | 403 on Deezer URL → re-resolve once (expired signature) |
+| `itunes.apple.com` | ~20 / min | 20 / min | 10 / min | 1 | 403/429 → pause 60 s, ×2 |
+| `musicbrainz.org` | 1 / s average per IP | 1 req/s | 1 req/s (start 1.1 s apart) | 1 | 503 → 2 s, ×2 up to 60 s |
+| `coverartarchive.org` (+ archive.org redirects) | none stated, 503 documented | 2 req/s | 1 req/s | 2 | 503 → as MusicBrainz |
+| `api.discogs.com` | 60/min authenticated, 25/min not (60-s moving window) | 60 / min | 30 / min | 1 | 429 → wait for `X-Discogs-Ratelimit-Remaining` to recover |
+
+Budget check for a 100-line Get tracks list: Spotify ≤ 2 searches/line ≈ 200 calls ≈ 3–4 min at 1/s; Deezer 1
+search/line ≈ 1 min; MusicBrainz enrichment ≈ 2 calls per *chosen* line, done lazily at arrival ≈ 3–4 min spread over
+the downloads. Matching stays well ahead of Soulseek searches, which the Soulseek governor paces far more slowly.
+
+### 12.4 Caching and TTLs
+
+| Data | Store | TTL | Why |
+|---|---|---|---|
+| Spotify search results, track/album objects | SQLite meta cache | 24 h; wiped on "Disconnect Spotify" | Terms allow only temporary caching "strictly necessary to enhance the performance"; Policy §I.2 requires deletion on disconnect. |
+| Spotify-derived fields on a downloaded item (History) | IDs only: Spotify track ID, ISRC, URL | permanent (IDs are references, not content) | Re-fetch display text when needed; avoids a "database of Spotify Content". |
+| Spotify tokens | Keychain | refresh token ≤ 6 months (Spotify's limit) | §3.1. |
+| Deezer search / entities | SQLite | 24 h / 7 days | No metadata storage clause; keep it fresh anyway. |
+| Deezer preview URL | memory | ≤ 10 min (signature expires ~15 min) | Observed `exp`. |
+| Clip audio (Deezer, iTunes) | memory only | playback session | Deezer: no local audio storage; Apple: stream only. |
+| iTunes search | SQLite | 24 h | Apple suggests caching search and lookup requests. |
+| MusicBrainz lookups / searches | SQLite | 30 days / 7 days | CC0; the data changes slowly; spares the 1/s budget. |
+| Cover art (CAA, Deezer) | disk artwork cache | 30 days, LRU 500 MB | Needed at arrival/tagging; small. |
+| Discogs | SQLite | ≤ 6 h | Terms: no display of content older than 6 h. |
+| "No match" results | SQLite | 24 h | Avoids re-querying unresolvable lines. |
+| Spotify/Deezer/iTunes 429/quota state | memory | until reset | — |
+
+### 12.5 Matching pipeline (line or result → release → ISRC → clip)
+
+```mermaid
+flowchart TD
+  A[Input: Get tracks line, Soulseek result, Inbox file, Spotify item] --> B[Normalise + parse<br/>artists, title, version, duration, label hint — library §4–5, §17]
+  B --> C{ISRC known?<br/>playlist item / file TSRC}
+  C -- yes --> D["Deezer /track/isrc: + MusicBrainz /isrc/<br/>+ Spotify isrc: if connected"]
+  C -- no --> E["Text search: Spotify track: + artist: filters, limit 10, if connected<br/>Deezer plain query, top 25"]
+  E --> F{confident?}
+  F -- no --> G["MusicBrainz recording search<br/>and Spotify retry with version words"]
+  F -- yes --> H
+  G --> H[Score candidates<br/>title, artists, version, duration, album, label]
+  D --> H
+  H --> I[Pick recording, then release<br/>original single/EP or album, never DJ-mix/compilation]
+  I --> J[Enrich by ISRC, lazily<br/>label, catno, artwork, store links]
+  J --> K[Release card + confidence]
+  K --> L[Rank Soulseek files against release<br/>length ±3 s first — library §9.1, §17.5]
+  K --> M[Clip: Deezer preview by ISRC → iTunes by text+duration]
+  K --> N[Tag plan on arrival — §12.7]
+```
+
+**Candidate score** (same conventions as `library-matching-and-organization.md` §9: missing evidence leaves the
+denominator; similarities from §17's token-level OSA):
+
+```
+s_title  = similarity of base titles (version text stripped)
+s_artist = 0.7 · main-artist similarity + 0.3 · set similarity of the other artists ("feat." folded in on both sides)
+s_dur    = 1 if |Δ| ≤ 3 s; 1 − (|Δ| − 3)/12 for 3 s < |Δ| ≤ 15 s; 0 beyond        (only if the input has a duration)
+s_album  = similarity to the album hint (album downloads, Inbox folders)
+s_label  = 1 if the label hint matches the release label
+
+base = (0.40·s_title + 0.30·s_artist + 0.20·s_dur + 0.05·s_album + 0.05·s_label) / Σ(available weights)
+
+multipliers
+  version conflict (library §5 "no")                               × 0   (kept as "other version" alternative)
+  DJ-mix segment: Deezer title_version "(Mixed)", Spotify " - Mixed",
+    MusicBrainz secondary type "DJ-mix" — unless the input asks for it × 0.3
+  derivative junk: slowed, sped up, nightcore, 8D, reverb, karaoke,
+    "in the style of", tribute, cover — unless in the input        × 0.2
+  same title, different artist (s_title ≥ 0.9, s_artist < 0.5)       × 0.5
+
+identifier rules (before text)
+  ISRC equal to a known ISRC and (|Δ| ≤ 3 s or a duration is missing) and s_title ≥ 0.6   → Exact
+  two independent sources agree on the ISRC of the best text candidate                    → +1 tier (max Confident)
+```
+
+| Tier | Rule (initial; tune on the labelled corpus of experiment X5) | UI |
+|---|---|---|
+| Exact | identifier rule above | release chosen automatically |
+| Confident | score ≥ 0.92 and ≥ 0.05 above the best candidate of a *different* recording or version | chosen automatically; eligible for "Approve all confident" (BATCH-6) |
+| Likely | score ≥ 0.80 | chosen, marked for a glance |
+| Ambiguous | best ≥ 0.60 | user picks from the alternatives |
+| None | best < 0.60 | "not found", deep links offered |
+
+Rules learned from spotDL and from the requests made for this note:
+- Identifiers beat text (spotDL accepts a lone verified ISRC hit without scoring), but **ISRC is not a release key**:
+  one ISRC sat on the single, the album, an EP and ~17 compilations in MusicBrainz, and Deezer's ISRC lookup returned
+  the album copy. Choose the recording by ISRC, then the release by rules (original single/EP for a single line,
+  the album for album downloads; never a compilation or DJ-mix release for tags).
+- Without a duration on the input (most text lines), the release's duration becomes the reference for the Soulseek
+  ranker; if candidates of one version disagree on duration by > 3 s, show both lengths.
+- spotDL's forbidden words are inverted for DJs: "remix", "extended", "dub", "instrumental" are versions, not noise.
+- spotDL takes the first Spotify hit for plain text; Selecta never does — it scores every hit.
+
+### 12.6 Playlist import (META-3)
+
+| Source | Works in dev mode? | What a line carries |
+|---|---|---|
+| The user's own or collaborative Spotify playlist; Liked Songs | Yes (scopes `playlist-read-private`, `playlist-read-collaborative`, `user-library-read`) | Spotify ID, title, artists, album, duration, ISRC |
+| Spotify album link | Yes (`/albums/{id}` + `/albums/{id}/tracks`, any album) | same (track-level ISRC needs `/tracks/{id}` per track, one request each) |
+| Someone else's or an editorial playlist | **No (403)** for apps under the 2026 rules (TODO(verify) X3 for an app created before 2026-02-11) | — → tell the user to add the tracks to a playlist they own in Spotify, or import a CSV |
+| Exportify CSV (MIT web app, exportify.app) | n/a (user runs it) | Columns include "Track Name", "Artist Name(s)", "Album Name", "Track Duration (ms)", "ISRC", "Track URI" |
+| Plain text | n/a | parsed line |
+
+`is_local` playlist entries (local files in Spotify) carry no ID or ISRC — import them as text lines.
+
+### 12.7 Tag plan on arrival (META-4, DL-3)
+
+Two policies; the default is the left column (R3). The mapping to frames follows `conversion-and-metadata.md`.
+
+| Field | Default policy "open data" (source order) | Opt-in policy "Spotify first" (D29 as worded) | Frame (ID3v2.3) |
+|---|---|---|---|
+| Title, version | MusicBrainz → Deezer | Spotify → MusicBrainz → Deezer | `TIT2` (version in the title, Beatport style "Title (Extended Mix)") |
+| Artists, album artist | MusicBrainz → Deezer | Spotify → … | `TPE1` (`/`-separated in v2.3), `TPE2` |
+| Album, track/disc n/N, date | chosen release (MB → Deezer) | Spotify release → … | `TALB`, `TRCK`, `TPOS`, `TYER` (+`TDAT`) |
+| Label | MusicBrainz label-info → Deezer `label` | same (Spotify has none in dev mode) | `TPUB` (not `TENC` as spotDL does) |
+| Catalogue number | MusicBrainz → Discogs (P2) | same | `TXXX:CATALOGNUMBER` |
+| ISRC | any source (an identifier) | same | `TSRC` |
+| Genre | none by default; Discogs style (P2) or Deezer genre on request | same | `TCON` |
+| BPM, key | not written (rekordbox analyses; Deezer BPM is often 0) | same | — |
+| Artwork | Deezer `cover_xl` (1000 px) or CAA front-1200 → JPEG ≤ 800×800 (D29) | Spotify (≤ 640 px: never upscaled) → Deezer/CAA | `APIC` type 3 |
+| Provenance | `WOAS` = source page of the release; `TXXX:MusicBrainz Track Id`/`Release Id` (Picard names) | `WOAS` = Spotify track URL (link-back) | `WOAS`, `TXXX` |
+
+### 12.8 Privacy: what leaves the machine
+
+| Service | Sent | Tied to an identity? | Mitigation |
+|---|---|---|---|
+| Spotify | Search terms (artist/title of every line and every identified result), ISRCs, track/playlist IDs, playback commands | **Yes — the user's Spotify account** (user token); also the developer account (Client ID) | Opt-in; per-feature scopes; disconnect = delete tokens + Spotify cache; inspector shows each request (META-7) |
+| Deezer | Search terms, ISRCs; clip downloads | IP only | Keyless; HTTPS |
+| iTunes | Search terms; clip downloads; storefront country | IP only | Fallback only |
+| MusicBrainz / CAA | Search terms, ISRCs, MBIDs; User-Agent with a contact | IP + UA | UA contact = project URL, not the user's e-mail |
+| Discogs | Search terms | Discogs account (token) | Opt-in |
+| Deep links | Query in the opened URL | the browser/app session | User-initiated |
+
+Never sent to any of them: Soulseek usernames, peer names, raw remote paths, local paths, file lists or download
+history. Queries derived from a Soulseek result are rebuilt from the parsed artist/title/version, never from the raw
+path (paths can contain peer usernames and private folder names). No telemetry (PRD NFR-5).
+
+### 12.9 Terms and legal risk
+
+| Service | Selecta use | Relevant clause | Risk | Mitigation |
+|---|---|---|---|---|
+| Spotify | Any use inside a P2P client | Terms §IV "illegal or unauthorized … sharing of audio" (S1); Policy §III.5 "integrated with … content from another service" (S2) | **High** — revocation of the user's developer app and possibly of the linked account's API access | Opt-in, BYO Client ID, warning text before connecting, personal builds by default |
+| Spotify | Writing metadata/artwork into files | "Do not store Spotify Content indefinitely"; temporary caching only; "permanent copies of Spotify Content" (S3, S4); attribution + link-back (S5) | **High** | Default R3 (open data in files); Spotify-first only as an explicit maintainer setting, with `WOAS` link-back |
+| Spotify | Matching + display in the UI | S1/S2; attribution (S5); "Don't manipulate … metadata" (S6) | Medium | Spotify logo + link next to Spotify data; show Spotify's strings unmodified on the release card |
+| Spotify | Playlist import | Policy §III.9 exception for "the metadata of the user's playlists" (S7) | Low–medium | Own playlists only (API reality anyway) |
+| Spotify | Playback via Web API | Streaming SDA duties (S9); no overlap with other audio (S8) | Low | Pause Selecta's player; show cover art + metadata + logo |
+| Spotify | Unofficial endpoints | Terms §IV "Improper use", "Unauthorized access" | **Prohibited** | Never (R9) |
+| Deezer | Keyless matching, label/cover, clips | §III.6 "associated or promotes … unauthorized … download, or sharing of music" (D-T1); non-commercial; no local audio storage; logo required | **Medium–high** | Stream clips only; Deezer logo next to Deezer data/clips; non-commercial project |
+| Apple (iTunes) | Clip fallback | Promo-only; badge linking to purchase; "provided courtesy of iTunes"; stream only | Medium | Badge/link + attribution in the player; no caching |
+| MusicBrainz / CAA | Identifiers, tags, artwork | CC0 core data; UA + 1/s | **Low** | Respect rate limit; credit MusicBrainz in About |
+| Discogs | Catno, styles (P2) | 6-h freshness; notices; "illegal purposes" | Low–medium | 6-h cache; notices in About and next to data |
+| Beatport / Bandcamp / Traxsource | Deep links, purchases | Site terms; Bandcamp forbids scraping | Low | Links only; purchases enter via the user's own downloads |
+
+Overall: **every commercial catalogue API forbids association with unauthorised sharing; only MusicBrainz is clean.**
+The practical consequence is not legal action against a personal tool but loss of API access for the account that
+owns the key; Selecta should be designed so that losing any one commercial source degrades features (no clip, fewer
+fields) rather than breaking Get tracks.
+
+### 12.10 Proposed defaults
+
+| Setting | Default |
+|---|---|
+| Metadata sources | Deezer + MusicBrainz on; Spotify off until connected; Discogs off (P2) |
+| Tag policy | "Open data" (R3); "Spotify first" available as an explicit choice |
+| Clip source | Deezer by ISRC → iTunes; never stored |
+| Artwork | Deezer 1000 px or CAA 1200 → JPEG ≤ 800×800, quality 90; never upscale |
+| Confidence for auto-pick | Confident (≥ 0.92, margin 0.05) or Exact |
+| Duration tolerance vs release | ±3 s (D23) |
+| Meta cache TTLs | §12.4 |
+| Governor budgets | §12.3 |
+| MusicBrainz User-Agent | `Selecta/<version> ( https://github.com/usr-ein/selecta )` (TODO: final repo URL) |
 
 ## 13. Open questions and things to verify
 
