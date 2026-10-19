@@ -85,8 +85,95 @@ the Nicotine+ maintainers (who keep this table) to reserve one before the first 
 
 ## 4. Server-side limits and bans
 
-TODO(verify): search rate limits (slsk-batchdl 34/220 s and its source; reported ~30-minute bans), login/reconnect
-limits, IP bans, ban signals and durations, wishlist interval, how other clients throttle, issue-tracker reports.
+The official server is closed source and publishes no limits. Everything below comes from what clients observe, from
+the server's own ban message, and from Soulfind (an open-source server whose maintainers — the Nicotine+ developers —
+deliberately mimic the official server's behaviour; their comments are cited as such).
+
+### 4.1 The automatic flood ban (verbatim)
+
+When a client does "too many operations at once", the server sends a **private message from the pseudo-user
+`server`** and drops the connection. The text, as reported verbatim by two independent users (slskd web UI "Chat"
+screen, soularr discussion #142, 2025-11-10; Lidarr.Plugin.Slskd issue #19, 2026-10-03):
+
+> System Message: You have been banned for 30 minutes. This is usually the result of doing too many operations at once.
+> Do not flood chat rooms or private chat with many messages. Do not repeat the same text several times in a row. Do
+> not quickly repeat a search. Do not connect and disconnect quickly. Do not connect many clients at once from the same
+> IP. This list is by no mean exhaustive. You will be able to reconnect to the service in 30 minutes. NOTE: This is an
+> automatic message, dont try to answer it.
+
+This is the closest thing to an official rate-limit policy. It names five triggers — message flooding, repeated text,
+**quickly repeated searches**, **rapid connect/disconnect**, **many clients per IP** — and a fixed **30-minute**
+duration. Nicotine+ already special-cases private messages from the user `server` (`privatechat.py`,
+`SERVER_USERNAME = "server"`); Soulfind sends its admin replies the same way (`defines.d`: `server_username = "server"`).
+
+### 4.2 Ban and disconnect signals
+
+| Situation | What the client sees | Correct client reaction | Confidence · source |
+|---|---|---|---|
+| Automatic flood ban | PM from `server` starting "System Message: You have been banned for 30 minutes…", then disconnect | Parse it; stop *all* automatic network activity; schedule the next login no earlier than **30 min + jitter**; surface it in the UI and the activity log | High · soularr #142, Lidarr.Plugin.Slskd #19 |
+| Logging in while banned | **No login response at all**; Soulfind closes the socket after 60 s + 0–15 s jitter, "the official server doesn't send a response when a user is banned" | Treat a login timeout as a *possible ban*: back off exponentially from minutes, not seconds | High · N+ `SLSKPROTOCOL.md` ("`BANNED` … No longer sent, server omits login response instead"); Soulfind `src/server/user.d` |
+| Same account logs in elsewhere | `Relogged` (server code 41), then disconnect | **Never reconnect automatically** (PRD NET-4) | High · N+ `slskproto.py` sets `_manual_server_disconnect`; slskd `KickedFromServerException` path does not start the watchdog |
+| Login rejected | `LoginResponse` failure with `INVALIDUSERNAME` (+ detail), `EMPTYPASSWORD`, `INVALIDPASS`, `INVALIDVERSION`, `SVRFULL`, `SVRPRIVATE` | No automatic retry except `SVRFULL` (long backoff). `INVALIDVERSION` means the version fields are wrong — never "try other numbers" | High · N+ `slskmessages.py` `LoginRejectReason`, Soulfind `messages.d` |
+| Admin kill | Plain disconnect, no reason | Normal reconnect backoff; if it repeats, stop and tell the user | High (rule text: admins "can kill any connections without prior notice") |
+| Global admin notice | `AdminMessage` (server code 66) | Show it | High · N+ doc |
+| Search returns nothing for a popular query | Silence: no error, no results | Do not "work around" (see §7.3); say in the UI that the query may be filtered | Medium · sockseek #128; Soulfind models *server-side* phrase filtering (`is_search_query_filtered` silently drops the search) |
+| Longer / IP-level bans | Logins keep timing out across accounts on one IP | Stop; manual only | Low–medium · sockseek #95 (user switched IP after "the one I used before got banned"); a Google Groups user says a "30 minute" search ban lasted months (hearsay, 2023); FAQ mentions IP bans as the admins' last resort |
+
+Admins also operate escalations we cannot observe (account termination, ISP notification per the Rules). There is
+no documented appeal path.
+
+### 4.3 Search rate: what is actually known
+
+| Evidence | What it says | Implied rate | Confidence |
+|---|---|---|---|
+| slsk-batchdl/sockseek author, issue #12 (2023-11): "You get banned for 30 minutes if you search too many times in a short timespan. I don't know the exact rate limits though." … "From my own testing it seems to be around **34 searches every 220 seconds**." | Became the defaults `SearchesPerTime = 34`, `SearchRenewTime = 220` (`Sockseek.Core/Settings/EngineSettings.cs`) | ≈ 9.3/min, but see the window caveat below | Medium: one person's black-box test, 3 years old, threshold not re-verified since |
+| Same release added `--random-login` "in case you are still getting banned" | Evasion by throw-away accounts — explicitly what the Nicotine+ doc calls "unacceptable" | — | High (as a "never do") |
+| sockseek issue #95 (2025-04): user banned after 10–20 downloads; "workaround" was **1 search per minute** plus a new IP | Even 34/220 s can be too much in practice (that tool runs up to 4 searches per track in `--desperate` mode and 2 concurrently) | < 9/min sustained is not safe | Medium (single report) |
+| soularr discussion #142 (2025-11): banned "regularly" with sequential album searches, 5 s search timeout + 5 s sleep and no cooldown; soularr later added `minimum_search_interval = 5` and a result cache | Back-to-back sequential searches (~6/min) for long runs trigger bans | ~6/min sustained, many repeats of the same queries across runs | Medium |
+| The ban message itself: "Do not quickly repeat a search" | **Repeating the same query** is a named trigger, independent of the global rate | Cache and de-duplicate | High |
+| Nicotine+ (`search.py`) | No outgoing limiter for manual searches (human-paced); wishlist sends **one** term per server interval | — | High |
+| Soulseek.NET (`SoulseekClientOptions`) | `maximumConcurrentSearches = 2`, `searchTimeout = 15000` ms, `responseLimit = 250`, `fileLimit = 25000` | ≤ 8/min if a caller chains searches | High (code) |
+
+**Caveat on sockseek's limiter** (`Sockseek.Core/Search/RateLimitedSemaphore.cs`): it is a *fixed window* — all 34
+permits come back at once when the window expires, and the window restarts at the moment of the refill. 34 searches at
+the end of one window plus 34 at the start of the next can go out within seconds. Selecta should use a token bucket
+or sliding window, so that no 220 s span (or any other span) ever exceeds the budget.
+
+**Server-side search mechanics worth knowing** (Soulfind `src/server/server.d`, `defines.d`; modelled on the official
+server, not guaranteed identical): queries longer than **256** characters are dropped; queries matching *server-side*
+filter phrases are dropped silently; searches are batched and fanned out every **650 ms**.
+
+### 4.4 Wishlist interval
+
+Server code 104 (`WishlistInterval`) tells the client how often it may run a wishlist search: "almost always 12
+minutes, or 2 minutes for privileged users" (N+ `SLSKPROTOCOL.md`); Soulfind uses the same values
+(`wish_interval = 12.minutes`, `wish_interval_privileged = 2.minutes`). Nicotine+ schedules a repeating timer at that
+interval and sends **one** wishlist term per tick, round-robin (`_do_next_wishlist_search`: "Search for a maximum of 1
+item at each search interval"), using `WishlistSearch` (code 103). A 30-item wishlist therefore cycles every 6 h for
+a normal user. This is the convention Selecta should follow (PRD NET-6, SRCH-14).
+
+### 4.5 Connection and reconnect behaviour
+
+| Client | First retry | Growth | Cap | Jitter | After `Relogged` | Source |
+|---|---|---|---|---|---|---|
+| Nicotine+ | random **5–15 s** ("to spread out connection attempts from Nicotine+ clients in case server goes down") | ×2 | stops doubling once ≥ 300 s (so 300–480 s) | initial value only | no auto-reconnect | `slskproto.py` `_set_server_timer` |
+| slskd | ~0 s (attempt 1), then `floor((2^n − 1)/2)` s: 1, 3, 7, 15, 31, 63, 127, 255 | ×2 | **300 s** | + U(0, 1 s) every attempt | no auto-reconnect | `ConnectionWatchdog.cs`, `Common/Compute.cs` |
+| Soulfind (server side) | — | — | a `kick` bans for 2 min by default; banned logins time out after 60–75 s | 0–15 s on login timeout "to spread out reconnect attempts" | — | `defines.d`, `user.d` |
+
+"Do not connect and disconnect quickly" and "Do not connect many clients at once from the same IP" (ban message) plus
+"a maximum 5 clients from the same IP" (Rules) mean: one session per machine, a first retry of several seconds, and no
+test harness that spins up many logins against the live server.
+
+### 4.6 Private-message and chat flooding
+
+Repeated identical private messages trigger the same 30-minute ban. Users of Nicotine+'s auto-"please share" message
+were banned several times a day for "sending the same message too often" (Google Groups, 2025-04-12; a 2025-05
+thread describes trolls exploiting this). Nir Arbel's answer (2025-05-05) is the reference behaviour: SoulseekQt sends
+its empty-share notice **once per user**, only when that user tries to download. Nicotine+'s leech-detector plugin
+warns "too many message lines may get you temporarily banned for spam", and its `ResponseThrottle` (plugin chat
+replies) refuses to answer the same request from the same user within 6 min, or any reply in the same room within
+30 s — "some of the throttle logic is guesswork as server code is closed source". Selecta v1 sends no automatic
+messages; if auto-replies are ever added, they need a per-user once-per-session rule.
 
 ## 5. Peer-side etiquette
 
