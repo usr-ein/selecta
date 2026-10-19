@@ -39,9 +39,9 @@
 3. Mixxx (GPL-2.0+, reusable) uses 4th-order Bessel filters at 600 Hz / 4 kHz, linear peak per stride at 441 Hz per
    channel, overview = average of peaks, and protobuf + zlib storage. Its `VisualPlayPosition` is the reference design
    for playhead sync (§6).
-4. FFmpeg's demuxers make four distinct tail reads when the input is seekable (§5.3, verified in source). With
-   `seekable = 0`, `avio_seek` still supports forward reads and backward seeks through the callback. Non-EOF read
-   errors are sticky.
+4. Five FFmpeg demuxer paths read past the downloaded prefix when the input is seekable: MP3, WAV, AIFF, FLAC seek and
+   MP4 (§5.3, verified in source). With `seekable = 0`, `avio_seek` still supports forward reads and backward seeks
+   through the callback. Non-EOF read errors are sticky.
 5. M4A with `moov` at the end cannot be previewed progressively. FFmpeg's default output is exactly that (verified).
 6. Measured on an M2 Pro: MP3 320 decode ≈ 330 ms, FLAC ≈ 180 ms, AAC ≈ 245 ms per 6 min (one stream); 8-way parallel
    ≈ 130 ms (MP3) / 80 ms (FLAC); LR4 3-band split + peak/RMS ≈ 150 ms scalar (§7.4).
@@ -374,8 +374,8 @@ The FFmpeg CLI figures include CLI overhead, so library decode is slightly faste
 Conclusions:
 - A naive sequential decode + analyse of a 6-minute MP3 takes **~450 ms** and **misses the 300 ms target** (NFR-2).
 - Meet it with **chunked parallelism**: split the file into N byte ranges at frame boundaries (MP3: from our frame
-  index; FLAC: frame sync), decode each with ~2 frames of preroll (MP3 bit reservoir), and analyse each chunk with
-  ~50 ms of filter warm-up overlap. Then concatenate the columns. Expect **~80–120 ms** on 6–8 cores.
+  index; FLAC: frame sync), decode each with preroll (9 MP3 frames for the bit reservoir, §5.2), and analyse each chunk
+  with ~50 ms of filter warm-up overlap. Then concatenate the columns. Expect **~80–120 ms** on 6–8 cores.
 - Further gains if needed: process the 4 biquad chains as one NEON `float32x4` lane set, or run the band analysis at
   half rate for the low band.
 - For **previews** the budget hardly matters: analysis runs *during* the download, which is far slower than decoding,
@@ -533,6 +533,9 @@ shows either).
 4. **Progressive order:** M5 ships "play when complete" first. Then progressive for WAV/AIFF → MP3 → FLAC → M4A
    fast-start, each behind a flag with a fuzzed index builder. M4A with `moov` at the end: preview only after the
    download.
+   - Product note: DJs often audition from the middle (breakdown or drop), but bytes arrive in order. So `→` / `⇧→`
+     beyond the prefix must show the waiting state clearly. An optional "start at ⅓" can begin playback once that
+     offset has arrived.
 5. **Analysis:** mono, LR4 crossovers (default 200 Hz / 2.5 kHz, named constants), peak + RMS per band at
    **150 columns/s**, √-companded `uint8`, display curve and per-track gain at draw time. Overview derived from detail
    (max of peaks). Chunked parallel decode + analysis to meet < 300 ms. Previews analysed progressively during the
