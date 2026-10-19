@@ -15,9 +15,11 @@
 > Manual requests made for this note (all public, unauthenticated, one-off), 2026-10-19/20: Deezer 6 (2 searches that
 > failed, 1 search, 1 track, 1 ISRC lookup, 1 album) + 1 HEAD on a preview; iTunes Search 1 + 1 HEAD; MusicBrainz 3 (one
 > rejected for a bad `inc`); Cover Art Archive 1; Spotify oEmbed 1 (no credentials); coverage check on 4 club tracks
-> (§4.4): Deezer 12 (search + track + album each) and MusicBrainz 4 (ISRC lookups). No Spotify Web API request was made
-> and no Spotify credentials were used. yt-dlp: no query was run; only the locally installed binary's offline
-> `--version` (2025.07.21). Spotify's AppleScript dictionary was read from the installed app bundle, not executed.
+> (§4.4): Deezer 12 (search + track + album each) and MusicBrainz 4 (ISRC lookups); D30 checks (§5.3): MusicBrainz 4
+> (ISRC with `inc=releases`, a barcode search, release-group genres, artist genres — the last answered 503). No Spotify
+> Web API request was made and no Spotify credentials were used. yt-dlp: no query was run; only the locally installed
+> binary's offline `--version` (2025.07.21). Spotify's AppleScript dictionary was read from the installed app bundle,
+> not executed.
 
 ## 1. TL;DR
 
@@ -698,7 +700,7 @@ Spotify album image (JPEG); `USLT` lyrics. FLAC/Opus/Vorbis get the equivalent V
 | Forbidden-word penalty | **Invert it for DJs.** "remix", "extended", "dub", "edit", "VIP", "instrumental" are versions the user may want. | Parse the version descriptor on both sides and require equality (or show "different version") instead of penalising words. Keep penalties for junk only: "slowed", "reverb", "8d", "bass boosted", "sped up", "nightcore". |
 | "Verified" candidates | Partly. | Soulseek analogue: a result inside a release-like folder (track numbers, cover, consistent names) gets a small bonus; a lone file with a junk name gets none. |
 | Popularity tie-break | No (no Spotify popularity in dev mode; peer fairness and quality are Selecta's tie-breakers, BATCH-5). | — |
-| Tag set | Mostly. | Same frames, but label → `TPUB`, provenance URL → `WXXX`/`WOAS` of the *metadata source actually used*, no `POPM`. Values per the tag policies of §14.7 (Spotify first under D29, else Deezer). Mapping details: `conversion-and-metadata.md`. |
+| Tag set | Mostly. | Same frames, but label → `TPUB`, no `POPM`, artists joined with ", ", and a `WOAS` link to the Spotify track. Per D30 the values come from Spotify, with label and genre from MusicBrainz by ISRC (§5.3); the analysis of §5.1 still applies. Mapping details: `conversion-and-metadata.md`. |
 
 ## 9. Official 30-second preview sources
 
