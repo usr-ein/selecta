@@ -27,7 +27,28 @@
 
 ## Key findings
 
-TODO — filled in once the detailed sections are verified.
+1. **No existing tool solves Selecta's problem directly.** beets, Picard and Lidarr identify *local, tagged* files
+   against MusicBrainz; Sockseek/sldl and soularr check *query-guided* candidates ("is this the song I asked for?").
+   Selecta needs *blind* parsing of arbitrary remote paths plus a fast lookup against the whole collection — its own
+   design, assembled from their ideas (§3.6).
+2. **Duration is the only acoustic evidence before download** and is integer, optional and sometimes wrong. Tools use
+   3 s (Sockseek) to 10 s + 30 s ramps (beets/Lidarr) — Selecta needs a tight tolerance because DJ versions differ in
+   length (§7).
+3. **Versions are identity for DJs.** Album taggers discount parentheses (beets 0.3 weight, Lidarr strips them).
+   Selecta must classify Original/Extended/Radio/remix-by-X and never call two different versions "exact" (§5).
+4. **Contradicting evidence should multiply, not average** (Picard's new artist and length discriminators) — a strong
+   title match must not survive a clear artist or duration mismatch (§9).
+5. **Folder context is the best parser input:** validate one filename pattern across all siblings (beets
+   `fromfilename`), take artist/album from parent folders (Picard, Lidarr), merge `CDn`/`Disc n` folders (§4, §8).
+6. **History matching can be exact:** byte-identical files propagate on Soulseek, so (size, basename) — Nicotine+'s
+   own "already downloaded" rule — or (peer, path) identify past downloads without fuzzy logic (§1).
+7. **Speed is a non-issue with precomputed keys** and an in-memory index: O(1) exact lookups plus rarest-token
+   candidate retrieval, est. ≤ 100 µs per result at 200k tracks (to benchmark). rapidfuzz-cpp (MIT, header-only)
+   provides the scorers (§6, §10).
+8. **Sockseek (sldl) is now AGPL-3.0** — borrow ideas, not code.
+9. **Supersede safety comes from guards, not from the matcher alone:** only after a verified, complete album; exact
+   tier with equal version and Δ ≤ 2 s; album copy at least as good; TOCTOU re-check; Trash + Undo + audit log;
+   circuit breaker (§15).
 
 ---
 
@@ -792,16 +813,138 @@ to rekordbox stays a non-goal.
 
 ## Implications for Selecta
 
-TODO.
+### Components (`src/library/`, PLAN M4)
+
+| Component | Responsibility | Notes |
+|---|---|---|
+| `RemotePathParser` | §4.1 → `ParsedRemote` with per-field confidence and the rule ids that fired | Pure function of (path, sibling names, artist dictionary). Table-driven tests. |
+| `Normalizer` | §4.2 keys, `kNormVersion` constant | Shared by parser, scanner and history; bumping the version re-keys in the background. |
+| `VersionClassifier` | §5 classes, remixer extraction, compatibility | Word lists in one data file. |
+| `MatchIndex` | §10 immutable snapshot: hash maps, postings, compact records | Rebuilt off-thread, swapped atomically. |
+| `Matcher` | §9 scoring, tiers, relations (`same`, `other_version`, `upgrade`) | Uses rapidfuzz-cpp. Deterministic; explains its decision (for the inspector). |
+| `AlbumMatcher` | §8 folder ↔ album, Hungarian mapping, coverage | |
+| `Scanner` + `Watcher` | §12 TagLib reads in a worker pool; FSEvents; offline volumes; reconciliation | Read-only on the collection. |
+| `Supersede` | §15 decision table | Calls only `FileOps.trashFromInbox`. |
+
+### Proposed defaults (initial; tune on the labelled corpus)
+
+| Parameter | Value | Basis |
+|---|---|---|
+| Weights title / artist / duration / album | 0.45 / 0.30 / 0.20 / 0.05 | Picard (title ≫ artist), beets (length 2/13 of track weights); album weak for singles. |
+| Exact tier | exact key + version "same" + Δ ≤ `t_exact`, or score ≥ 0.97 with title ≥ 0.97, artist ≥ 0.95 | Conservative: SRCH-11 "exact" drives duplicate warnings. |
+| Likely tier | score ≥ 0.85, title ≥ 0.85, artist ≥ 0.70 | beets medium threshold 0.25 distance ≈ 0.75 similarity; stricter because a wrong "owned" hides a wanted track. |
+| `t_exact` / `t_likely` / `t_far` / veto | `2 + max(1, 1 %)` / `max(6 s, 3 %)` / `max(15 s, 8 %)` / `> max(60 s, 25 %)` | Sockseek 3 s; beets/Lidarr 10 s grace + 30 s; Picard 30 s and 60–600 s discriminator. |
+| Artist-contradiction multiplier | × 0.5 when title ≥ 0.9 and artist < 0.5 | Picard 0.6/0.5 discriminator. |
+| Album "in collection" | distance ≤ 0.20 and ≥ 90 % tracks mapped ≥ likely | Lidarr 0.20/0.40. |
+| Supersede exact | equal title key + artist set, version same, Δ ≤ 2 s, quality(album) ≥ quality(single) | Local-vs-local evidence is strong; DL-7. |
+| Supersede circuit breaker | > 10 files per event or > 30 % of Inbox singles → confirm | Defence against matcher bugs. |
+| Undo window | 30 days (while the item is still in the Trash) | |
+
+### Decisions to make (ADR-005, ADR-008)
+
+1. **"Other version in collection" badge** (§5): recommended yes, informational.
+2. **`UNSPECIFIED` vs `ORIGINAL`** counts as the same track when durations agree: recommended yes.
+3. **Matching engine on an in-memory snapshot** rather than SQL on the hot path: recommended yes; FTS5 for UI search.
+4. **rapidfuzz-cpp** as the string-similarity dependency (MIT, header-only): recommended yes.
+5. **Supersede default**: automatic trash + Undo (DL-7 as written) vs "ask first": recommended automatic, with the
+   circuit breaker and quality/version guards.
+6. **Disc folders at filing**: flatten with `d-tt` prefixes (recommended) vs keep `Disc n` sub-folders.
+7. **Chromaprint**: P2 for LIB-7 as planned; consider P1 for the preview check and the supersede guard.
+8. **Labelled corpus**: record parsed results from local-test-network sessions and the maintainer's manual live
+   sessions (search cache), label ~500 result–library pairs in a debug view, and report precision/recall per tier in
+   CI. Targets: exact precision ≥ 99.5 %, likely precision ≥ 90 %.
 
 ## Edge-case test table (≥ 25)
 
-TODO.
+Library fixtures are synthetic (NFR-7). "Owned" = a collection track with the given tags and duration. Durations in
+seconds; `—` = attribute absent.
+
+| ID | Remote path (attributes) | Library state | Expected |
+|---|---|---|---|
+| T01 | `Music\Daft Punk\Discovery (2001)\03 - Digital Love.flac` (301) | owned Daft Punk – Digital Love, 301 | artist from folder, album Discovery, year 2001, track 3; **exact** |
+| T02 | `DJ\Bicep - Glue (Original Mix).mp3` (270) | owned Bicep – Glue (no version), 269 | UNSPECIFIED vs ORIGINAL, Δ 1 → **exact** |
+| T03 | `DJ\Bicep - Glue (Extended Mix).mp3` (392) | owned Bicep – Glue, 269 | Δ 123 → **none**, relation *other version* |
+| T04 | `X - Track (Radio Edit).mp3` (205) | owned X – Track (Extended Mix), 410 | explicit class conflict → **none**, *other version* |
+| T05 | `X - Track (Y Remix).mp3` (380) | owned X – Track (Z Remix), 378 | remixer conflict → **none**, *other version* |
+| T06 | folder of 4 files `01 - <title> - Artist.mp3` | owned Artist – one of the titles | sibling rule swaps order → **exact** |
+| T07 | `Jay-Z - Song.mp3` (240) | owned Jay-Z – Song, 240 | artist not split on bare hyphen → **exact** |
+| T08 | `mp3\Artist-Album-WEB-2019-GRP\01-artist-title_name.mp3` | — | scene parse: track 1, artist `artist`, title `title name`, album `Album`, year 2019, source WEB |
+| T09 | `Royksopp - Eple.mp3` (222) | owned Röyksopp – Eple, 222 | diacritic folding → **exact** |
+| T10 | `Prince\1999 (1982)\01 1999.flac` with siblings `02 …` | — | track 1, title `1999` (not empty) |
+| T11 | `808 State - Pacific State.mp3`, no siblings | — | artist `808 State` (leading number kept) |
+| T12 | `Artist feat. Guest - Title.mp3` (200) | owned Artist – Title (feat. Guest), 200 | feat. extracted on both sides → **exact** |
+| T13 | `Above & Beyond - Sun & Moon.mp3` (334) | owned Above and Beyond – Sun and Moon, 334 | `&` ≡ `and` → **exact** |
+| T14 | `B & A - Title.mp3` (300) | owned A & B – Title, 300 | artist sets equal → **exact** |
+| T15 | `Cover Band - Hallelujah.mp3` (410) | owned Jeff Buckley – Hallelujah, 413 | artist discriminator → **none** |
+| T16 | `Artist - Title.mp3` (—) | owned Artist – Title, 300 | no duration, versions unspecified → **likely** (not exact) |
+| T17 | `Artist - Title.mp3` (364) | owned Artist – Title, 360 | Δ 4 ≤ t_exact 5.6 → **exact** |
+| T18 | `Artist - Title.mp3` (385) | owned Artist – Title, 360 | Δ 25 (between t_likely and t_far) → **none** + *other version?* (tuning probe) |
+| T19 | `Rips\Track 01.wav` | anything | unparseable title → **none** (history checks only) |
+| T20 | any path, size and basename equal to a past download | history row | **downloaded in a past session** (exact) |
+| T21 | same file from another peer, other folder, same basename + size | history row | **downloaded …** (exact, size+basename) |
+| T22 | `VA - Summer 2020 (2020)\03 - Artist - Title.mp3` | — | is_va, album `Summer 2020`, per-file artist, track 3 |
+| T23 | `Artist - Album (2010)\CD2\05 - Title.flac` | — | album/year from grand-parent, disc 2, track 5 |
+| T24 | `iTunes Media\Music\Compilations\Album\1-05 Title.m4a` | — | disc 1, track 5, title `Title`, VA candidate |
+| T25 | `Artist - Album [LP]\B2 Title.flac` | — | vinyl side B position 2, title `Title` |
+| T26 | `www.site.ru - Artist - Title (Official Video) [HQ].mp3` | owned Artist – Title | junk stripped → **exact** (if duration agrees) |
+| T27 | `[DC123] Artist - Title.mp3` | — | catalogue `DC123` extracted, artist/title clean |
+| T28 | `AC_DC - Back In Black.mp3` (255) | owned AC/DC – Back in Black, 255 | squashed key `acdc` → **exact** |
+| T29 | `Marvin Gaye - Whats Going On.mp3` (233) | owned … What's Going On, 233 | apostrophe rule → **exact** |
+| T30 | `Artist - Title (2011 Remaster).flac` (300) | owned Artist – Title, 299 | remaster is not a version → **exact** |
+| T31 | `Artist - Title (Intro).mp3` (60) | owned Artist – Title, 60 | unknown bracket blocks exact → **likely** |
+| T32 | `Mixes\Artist - Live @ Venue.mp3` (3720) | anything | > 20 min → no track matching |
+| T33 | `Artist - Title.flac` (300, 16/44.1) | owned MP3 192, 300 | **upgrade**; same with declared 320 but size ≈ 128 kbps → no upgrade (quality not established) |
+| T34 | `Artist - Title.mp3` (391) | owned Original Mix 300 **and** Extended Mix 391 | UNSPECIFIED matches the Extended by duration → **likely**, names the Extended |
+| T35 | path with NFD `é` (macOS peer) | owned with NFC `é` | identical keys → **exact** |
+| T36 | album download completes; Inbox single equal, same quality | Inbox single | single **trashed**, notification, Undo restores it to its path |
+| T37 | album track MP3 192; Inbox single FLAC | Inbox single | **flag** "single better quality", no trash |
+| T38 | album completes; matching single already filed | collection single | **flag only**; file bytes and mtime unchanged (assert) |
+| T39 | album download `partial` (1 file failed) | Inbox single | no trash until complete; flag allowed |
+| T40 | Inbox single `(Radio Edit)`, album track `(Original Mix)` | Inbox single | no supersede |
+| T41 | single's inode/size/mtime changed after indexing | Inbox single | trash aborted, rescan, re-evaluate |
+| T42 | VA album would supersede 12 Inbox singles | Inbox singles | circuit breaker asks for confirmation |
+| T43 | `Artist - Album\Artist - Album - 01 Title.flac` | — | Bandcamp pattern: track 1, title `Title` |
+| T44 | `Artist - Song - Extended Mix.mp3` | — | version from trailing segment: EXTENDED, title `Song` |
+| T45 | `The Prodigy - Firestarter` vs `Prodigy, The - Firestarter` vs `Prodigy - Firestarter` | — | same artist key `prodigy` |
+| T46 | `Artist - Title (Artist Remix).mp3` | owned Artist – Title (Original Mix) | REMIX by Artist (self-remix) ≠ ORIGINAL → **none**, *other version* |
+| T47 | `RÃ¶yksopp - Eple.mp3` | owned Röyksopp – Eple | P1 mojibake repair → **exact**; P0 expectation: **likely** or none (documented) |
 
 ## Open questions and experiments
 
-TODO.
+Questions for the maintainer:
+- Q1. Current singles naming and whether titles carry `(Original Mix)` / `(Extended Mix)` (Beatport style) — decides
+  how often `UNSPECIFIED` vs explicit versions occur.
+- Q2. Do album folders use disc sub-folders today? Keep or flatten at filing?
+- Q3. Show "Other version in collection" badges?
+- Q4. Is supersede allowed to run automatically (DL-7 as written), or ask first for the first weeks?
+- Q5. Should a "download folder" of 1–2 tracks (a digital single) be filed as an album?
+- Q6. Do you ever import into rekordbox straight from the Inbox? (Trashing would break those links.)
+
+Experiments (local test network, synthetic library — never the live network from automation):
+- E1. Scan speed: TagLib read throughput on a synthetic 100k-file library on SSD and on an external HDD; tune the
+  worker pool.
+- E2. Matcher throughput: 10 000 synthetic results against a 200k-track `MatchIndex` (target < 1 s total, < 100 µs p95
+  per result).
+- E3. Path-pattern frequencies and parser accuracy on recorded result sets (local scenarios now; the maintainer's
+  manual live sessions later, from the search cache).
+- E4. Duration reporting by clients for VBR MP3 without a Xing header (do SoulseekQt/Nicotine+ shares report wrong
+  lengths?) — use test peers on the local server sharing crafted files.
+- E5. FSEvents replay after quit/relaunch, rename pairs, external drive unmount/mount, Trash + Undo round trip.
+- E6. Chromaprint on 30–60 s of a preview: is it enough to separate Original vs Extended vs Radio Edit of the same
+  track? (Probably not on its own — they share audio; combine with duration.)
 
 ## Sources
 
-TODO (all accessed 2026-10-19).
+All accessed 2026-10-19. Code read from shallow clones under `local/research-clones/library/` (git-ignored).
+
+| Source | Used for |
+|---|---|
+| beets, https://github.com/beetbox/beets @ 18967aa — `beets/autotag/distance.py`, `beets/autotag/match.py`, `beets/config_default.yaml`, `beetsplug/fromfilename.py`, `beets/plugins.py`, `beetsplug/fuzzy.py`, `beetsplug/duplicates.py` | String distance, weights, length grace, thresholds, Hungarian assignment, filename patterns, feat. tokens |
+| MusicBrainz Picard, https://github.com/metabrainz/picard @ 84862c5 — `picard/similarity.py`, `picard/util/astrcmp.py`, `picard/metadata.py`, `picard/matching.py`, `picard/util/__init__.py`, `picard/options.py` | similarity2, compare weights, length score and discriminators, path-based album/artist, thresholds |
+| Sockseek (formerly sldl / slsk-batchdl), https://github.com/fiso64/slsk-batchdl @ ff9a3ac — `Sockseek.Core/Matching/Conditions/FileConditions.cs`, `Settings/SearchSettings.cs`, `Search/Searcher.cs`, `Search/SearchProjection/ResultSorter.cs`, `Files/TrackSkipper.cs`, `README.md`, `LICENSE` | Strict checks, 3 s tolerance, ranking, bracket check, query-guided parsing, skip-existing, AGPL-3.0 |
+| soularr, https://github.com/mrusse/soularr @ 2037399 — `soularr.py`, `config.ini` | difflib album matching, 0.8 ratio |
+| Lidarr, https://github.com/Lidarr/Lidarr @ aec8802 — `src/NzbDrone.Core/Parser/Parser.cs`, `MediaFiles/TrackImport/Identification/{Distance,DistanceCalculator,TrackGroupingService,IdentificationService}.cs`, `MediaFiles/TrackImport/Specifications/Close*MatchSpecification.cs` | Folder regexes, normalisation, weights, thresholds, grouping, multi-disc |
+| Nicotine+, https://github.com/nicotine-plus/nicotine-plus @ f3b9d4d — `pynicotine/slskmessages.py` (`FileAttribute`), `pynicotine/downloads.py` (`get_complete_download_file_path`) | Attribute codes; size+basename "already downloaded" rule |
+| rapidfuzz-cpp, https://github.com/rapidfuzz/rapidfuzz-cpp @ 82662f3 (v3.3.4) — `rapidfuzz/fuzz.hpp`, `rapidfuzz/distance/`, `LICENSE`, `CMakeLists.txt` | Scorer API, cached scorers, MIT licence |
+| Chromaprint, https://github.com/acoustid/chromaprint @ 3b38c10 (v1.6.2) — `LICENSE.md`, `CMakeLists.txt`, `src/fingerprinter_configuration.{h,cpp}`, `src/fingerprint_matcher.{h,cpp}`, `src/chromaprint.h`, `src/cmd/fpcalc.cpp` | Licence, FFT backends, parameters, local comparison |
+| Selecta `docs/PRD.md` v0.2, `docs/PLAN.md` v0.2 | Requirements and module boundaries |
