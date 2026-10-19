@@ -192,7 +192,7 @@ Design ideas worth taking (not code) — all documented in `docs/config.md`:
 | **Retention** | Searches deleted after 1 day by default; transfers by state; files by age (`config.md:1018-1050`). | CACHE-1 TTLs. |
 | Download retry | resume partial downloads by default; example config: 3 attempts, 5 s initial delay, 60 s max delay (`config.md:350-372`). | DL-2 defaults. |
 | One search at a time via API | `SearchesController.cs:67-96` returns HTTP 429 "Only one concurrent operation is permitted". | Governor at the service boundary, not only at the socket. |
-| Text search filters (web UI, client-side) | SoulseekQt syntax + `islossless`/`islossy`/`minbitdepth`/`minlength`, `a|b` (`src/web/src/lib/searches.js`, tests alongside). | Power-user filter syntax (§2). |
+| Text search filters (web UI, client-side) | SoulseekQt syntax + `islossless`/`islossy`/`minbitdepth`/`minlength`, OR-alternatives such as `iscbr\|isvbr` (`src/web/src/lib/searches.js`, tests alongside). | Power-user filter syntax (§2). |
 
 slskd does **not** rate-limit outgoing searches over time (only the API concurrency guard), and it is a daemon + web UI,
 which the PRD rules out for v1. Running it as Selecta's backend was rejected (§6).
@@ -761,4 +761,4 @@ All accessed 2026-10-19. Repository facts via GitHub API; code read from shallow
 | https://www.slsknet.org/news/node/267 ("Fun with Filters", 2011-11-09), /node/303 (2011-12-14), /node/103, https://www.slsknet.org/news/ | SoulseekQt filter syntax, saved filters, release history |
 | https://www.slsknet.org/news/node/681 (Rules) | Third-party client and bot rules, 5 clients per IP |
 | https://en.wikipedia.org/wiki/Soulseek; https://www.filehorse.com/download-soulseekqt/ | SoulseekQt background and latest build (secondary sources) |
-| GitHub search (`gh search repos soulseek|slsk …`, by language) | Landscape survey |
+| GitHub search (`gh search repos` for "soulseek" and "slsk", by language and topic) | Landscape survey |
