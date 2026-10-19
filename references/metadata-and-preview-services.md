@@ -28,25 +28,32 @@
   **Premium**, allows **5 users**, caps search at **10 results**, removed batch lookups, album `label`, `popularity`
   and genres, limits playlist reading to the user's **own or collaborative playlists**, and refresh tokens expire
   after **6 months**. ISRCs (`external_ids`) survived (restored March 2026); `preview_url` is gone since 2024-11.
-  Spotify still gives a new app what D29 needs except the label (§3.6).
+  Spotify still gives a new app everything D30 tags with — title, artists, album, album artist, date, track/disc
+  numbers, ISRC, a ~640-px cover — but no label and no genre (§3.6).
 - **Secret-free access = Authorization Code with PKCE** (§4.2): only a client ID, loopback redirect
   `http://127.0.0.1/callback` (no `localhost`), 1-hour access tokens, 6-month refresh tokens. It works today for the
   maintainer, who has Premium; public users would each need their own app and Premium. **spotDL's "no setup"** was a
   client ID *and secret* hard-coded in `spotdl/utils/config.py`, shared by every user (24-hour "rate/request limit"
   lockouts in Jan 2026); since v4.5.0 its default is an unofficial web-player client instead. Spotify's terms forbid
-  disclosing Security Codes; **Selecta ships no secret, ever** (§4.1). Spotify oEmbed resolves a pasted link
-  without sign-in only to a track title and a 300-px cover — no artist (§4.3).
+  disclosing Security Codes; **Selecta ships no secret, ever** (§4.1); each user brings their own Client ID and
+  re-consents every 6 months (META-1, §14.11). Spotify oEmbed resolves a pasted link without sign-in only to a track
+  title and a 300-px cover — no artist (§4.3).
 - **Spotify's terms conflict with a Soulseek client** (quotes in §5): no Spotify Content in an app that "facilitates
   … the illegal or unauthorized use or sharing of audio"; no product "integrated with streams or content from another
   service"; no storing Spotify Content "indefinitely" and no "permanent copies of Spotify Content" — which is what
-  **D29's Spotify tags and cover in the MP3s** do; logo and link-back wherever Spotify data shows. The realistic
-  consequence is losing the developer app or API access, not a lawsuit. D29 stands; MQ1 asks the maintainer to
-  confirm the risk for personal builds, with "Deezer first" tags as the alternative.
+  **Spotify tags and cover in the MP3s** do; logo and link-back wherever Spotify data shows. The realistic
+  consequence is losing the developer app or API access, not a lawsuit. **The maintainer accepted this risk (D30)**:
+  §5.3 gives the ID3v2.3 mapping (`TPE1` ", "-joined, `TSRC`, `TPUB`, `WOAS` = Spotify track URL), the cover (largest
+  Spotify image, ~640 px, never upscaled), the label/genre gap fill from MusicBrainz by ISRC (3 requests per track at
+  1/s, contact User-Agent, 503 back-off) and fallbacks when MusicBrainz has no match, plus a one-time notice.
 - **Keyless default = Deezer, enriched by MusicBrainz** (§4.4, §9, §10): Deezer search hits carry the ISRC and a
   30-s 128 kbps MP3 clip (signed URL, ~15 min; never store the audio); albums carry label, UPC and 1000-px covers. In a
   4-track club sample Deezer found 3, but DJ-mix "(Mixed)" segments and many versions crowd the results;
-  **MusicBrainz knew only 1 of 4 ISRCs**, so it enriches (catalogue numbers, store links) rather than tags. iTunes is
-  the fallback clip (AAC ~256 kbps, promo-only terms).
+  **MusicBrainz knew only 1 of 4 ISRCs** — so D30's MusicBrainz label/genre fill will often come back empty; Deezer's
+  album label/genre is the proposed fallback (MQ12). iTunes is the fallback clip (AAC ~256 kbps, promo-only terms).
+- **Playlist import (META-3, §14.6)**: own/collaborative playlists, Liked Songs and albums through the API; anyone
+  else's playlist by pasting the copied track links, each resolved with `GET /tracks/{id}` (still among dev mode's 43
+  endpoints; no batch, so ~1 track per second).
 - **Listen in full** (§6): deep links first; then the **Spotify desktop app via AppleScript** (dictionary read from
   the installed app: `play track`, read/write `player position`, `player state`; one macOS Automation prompt; Free
   accounts expected to work, unverified); Connect playback needs a sign-in and Premium; embedded players (YouTube
@@ -1321,7 +1328,7 @@ path (paths can contain peer usernames and private folder names). No telemetry (
 | Service | Selecta use | Relevant clause | Risk | Mitigation |
 |---|---|---|---|---|
 | Spotify | Any use inside a P2P client | Terms §IV "illegal or unauthorized … sharing of audio" (S1); Policy §III.5 "integrated with … content from another service" (S2) | **High** — revocation of the user's developer app and possibly of the linked account's API access | Opt-in, BYO Client ID, warning text before connecting, personal builds by default |
-| Spotify | Writing metadata/artwork into files (D29) | "Do not store Spotify Content indefinitely"; temporary caching only; "permanent copies of Spotify Content" (S3, S4); attribution + link-back (S5) | **High** | Maintainer's decision (MQ1 confirms the risk); personal builds with the user's own Client ID; `WOAS` link-back; "Deezer first" available |
+| Spotify | Writing metadata/artwork into files (D29, D30) | "Do not store Spotify Content indefinitely"; temporary caching only; "permanent copies of Spotify Content" (S3, S4); attribution + link-back (S5) | **High** | **Accepted by the maintainer (D30)**; bring-your-own Client ID; one-time notice; `WOAS` link-back; "Deezer first" when declined |
 | Spotify | Bundling or reusing a client secret | Terms §VI: Security Codes not "accessible by third parties", not disclosed, one per SDA | **Prohibited** | Never (§4.1) |
 | Spotify | Embed / Web Playback SDK in a web view (P2) | Widget Terms: "website or webpage controlled by you", "streams from another service", no local caching; SDK not for commercial projects | Medium–high | Experiment only; visible player with metadata and logo |
 | Spotify | Desktop app via AppleScript | Not a Platform tool; no-overlap rule kept as practice | Low | Pause Selecta's player first |
@@ -1366,7 +1373,7 @@ Setup the user does once (Settings → Integrations shows these steps):
 2. Redirect URI: `http://127.0.0.1/callback` — no port, not `localhost`. API: Web API (add Web Playback SDK only for
    the P2 experiment).
 3. Copy the Client ID into Selecta (no secret needed). The app's owner can sign in; other accounts must be added under
-   User Management, at most 5 (check in X3 whether the owner must also list themselves).
+   User Management, at most 5 (whether the owner must list themselves is checked in X2).
 
 What Selecta does:
 - **Sign-in**: `QOAuth2AuthorizationCodeFlow` with `setPkceMethod(S256)`, `QOAuthHttpServerReplyHandler` on
@@ -1410,7 +1417,7 @@ What Selecta does:
 | # | Experiment | How | Feeds |
 |---|---|---|---|
 | X1 | Spotify dev-mode limits | Log every 429 (`Retry-After`, `reason`) during normal manual use with the maintainer's app; do not try to exhaust the quota. | §14.3 budget |
-| X2 | Spotify fields for the maintainer's app | One `GET /albums/{id}`: is `label` present (app age, MQ7)? Image sizes? | §3.3, §14.7 |
+| X2 | Spotify fields and sign-in for the maintainer's app | One `GET /albums/{id}`: is `label` present (app age, MQ7)? Image sizes and JPEG type (baseline?)? Does the owner need to be on the User Management list? | §3.3, §5.3, §14.11 |
 | X3 | Playlist access | `GET /playlists/{id}/items` on an editorial playlist and on a friend's public playlist → 403? | §14.6 |
 | X4 | Spotify search behaviour | Recall of `limit=10` with and without version words (`track:"Glue" artist:"Bicep"` vs `… extended`), on 20 lines with known versions. | §14.5 query plan |
 | X5 | Coverage and agreement | Run 100–200 lines from the maintainer's real tracklists through Spotify, Deezer, MusicBrainz, iTunes (and Discogs), at the governor's defaults; record hit rate per tier and ISRC agreement; label the correct release by hand. This is the labelled corpus for tuning §14.5. | weights, thresholds, source order |
