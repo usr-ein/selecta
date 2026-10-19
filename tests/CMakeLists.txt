@@ -29,12 +29,18 @@ selecta_add_test_suite(selecta_unit_tests
         base/ClockTest.cpp
         base/LoggingTest.cpp
         base/PathsTest.cpp
+        governor/GovernorTest.cpp
+        governor/PeerLedgerTest.cpp
+        governor/QueryHygieneTest.cpp
+        governor/ReconnectPolicyTest.cpp
         governor/ServerGuardTest.cpp
         governor/TokenBucketTest.cpp
+        library/FileOpsTest.cpp
+        library/InboxStoreTest.cpp
         storage/DatabaseTest.cpp
         storage/MigrationsTest.cpp
         storage/SessionLogTest.cpp
-    LIBRARIES selecta_base selecta_governor selecta_storage)
+    LIBRARIES selecta_base selecta_governor selecta_storage selecta_library)
 
 selecta_add_test_suite(selecta_ui_tests GUI
     SOURCES

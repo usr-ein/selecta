@@ -100,13 +100,40 @@ inline constexpr int kPreviewsPer10MinCeiling = 60;
 inline constexpr int kPreviewFinishPercent = 85; // a skipped preview this far along finishes instead of cancelling
 static_assert(kActivePreviews <= kActivePreviewsCeiling && kPreviewsPer10Min <= kPreviewsPer10MinCeiling);
 
+inline constexpr std::chrono::seconds kPreviewRefill = 20s;   // 30 per 10 min, refilled evenly
+inline constexpr std::chrono::seconds kPeerLookupRefill = 2s; // 30 per minute
+static_assert(std::chrono::minutes(10) / kPreviewRefill <= kPreviewsPer10MinCeiling);
+static_assert(std::chrono::minutes(1) / kPeerLookupRefill <= kPeerLookupsPerMinuteCeiling);
+
 // --- Browse, user info, folder contents ------------------------------------------------------------------------------
 inline constexpr int kBrowseBurst = 3;
-inline constexpr std::chrono::seconds kBrowseRefill = 100s;
+inline constexpr std::chrono::seconds kBrowseRefill = 120s; // the note's 100 s would exceed its own 30/hour ceiling
 inline constexpr int kBrowsePerHourCeiling = 30;
+inline constexpr std::chrono::minutes kBrowseSameUserQuiet = 10min; // a refresh of the same user's shares
 inline constexpr std::chrono::minutes kUserInfoPerUser = 10min;
+inline constexpr int kUserInfoBurst = 5;
+inline constexpr std::chrono::seconds kUserInfoRefill = 120s; // 30 per hour
 inline constexpr int kFolderContentsBurst = 5;
 inline constexpr int kFolderContentsPer10Min = 20;
+inline constexpr std::chrono::seconds kFolderContentsRefill = 30s;
+inline constexpr int kPlaceInQueueBurst = 5;
+inline constexpr std::chrono::seconds kPlaceInQueueRefill = 30s;
+static_assert(std::chrono::hours(1) / kBrowseRefill <= kBrowsePerHourCeiling); // sustained rate
+static_assert(std::chrono::minutes(10) / kFolderContentsRefill <= kFolderContentsPer10Min);
+
+// --- Metadata and preview services (meta/): each service's published or conservative limits ------------------------
+inline constexpr int kSpotifyBurst = 5;
+inline constexpr std::chrono::milliseconds kSpotifyRefill = 250ms; // 4 per second; 429 Retry-After also honoured
+inline constexpr int kMusicBrainzBurst = 1;
+inline constexpr std::chrono::milliseconds kMusicBrainzRefill = 1000ms; // their policy: 1 per second
+inline constexpr int kCoverArtBurst = 4;
+inline constexpr std::chrono::milliseconds kCoverArtRefill = 500ms;
+inline constexpr int kDeezerBurst = 10;
+inline constexpr std::chrono::milliseconds kDeezerRefill = 100ms; // their policy: 50 per 5 seconds
+inline constexpr int kYtDlpBurst = 3;
+inline constexpr std::chrono::seconds kYtDlpRefill = 10s;
+static_assert(kMusicBrainzRefill >= std::chrono::milliseconds(1000));
+static_assert(std::chrono::seconds(5) / kDeezerRefill <= 50);
 
 // --- Private messages and room posts (NET-7, NET-10) ----------------------------------------------------------------
 inline constexpr std::chrono::seconds kMessageSpacing = 2s;
