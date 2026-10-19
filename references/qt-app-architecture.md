@@ -415,15 +415,121 @@ simpler for v1).
 
 ## 7. Architecture patterns
 
-TODO.
+### 7.1 Layering (enforced by CMake target dependencies)
+
+Matches PLAN §2.2, with two additions: a tiny `base/` (clock, result type, logging categories, string/NFC helpers)
+that every module may use, and a rule that **only `app/` links Qt Widgets**. `slsk`, `governor`, `storage`, `core`,
+`library`, `audio`, `convert` link Qt Core/Network/Concurrent (+ Gui only where `QImage` is needed for artwork), so the
+CLI, the tests and the fuzzers never pull in Widgets. A CI grep test fails on `#include <QtWidgets` outside `src/app/`.
+
+### 7.2 Threads and async
+
+| Thread | Owns | Pattern |
+|---|---|---|
+| Main (UI) | widgets, item models, the mac shell | receives value-type batches via queued signals; never blocks |
+| Network (`QThread` + event loop) | every `QTcpSocket`/`QTcpServer`, the governor, transfer state machines, distributed-network state | objects created *in* the thread (`moveToThread` before any socket is created); explicit state machines (`enum class` + switch, or `QStateMachine` only if it pays off) |
+| Storage writer | the single SQLite write connection | a command queue; readers open their own read-only connections (WAL) |
+| Worker pool (`QThreadPool`) | scanning, matching batches, analysis, conversion | `QtConcurrent::run` / `QPromise` returning `QFuture`, `.then(context, …)` continuations back on the UI thread; cancellation via `QFuture::cancel()` / `QPromise::isCanceled()` |
+| Audio | the playback callback (CoreAudio or `QAudioSink` pull) | lock-free ring buffer; no allocation, no locks, no Qt signals in the callback |
+
+Rules of thumb:
+- Cross-thread data are **immutable value types** (structs with Qt implicitly shared members); Qt 6 moc registers
+  argument types used in signals automatically (they must be complete types).
+- Coalesce streaming results (PLAN: ~10×/s) into `QList<SearchResult>` batches; insert into the model with one
+  `beginInsertRows` per batch. For "filter + sort 10 000 results < 50 ms" keep precomputed sort keys in the model
+  (one `qint64`/`QCollatorSortKey` per column) instead of computing them in `lessThan`; Qt 6.12's
+  `QSortFilterProxyModel::dataChangeRelevanceFlags()` lets the proxy ignore `dataChanged` for roles that do not affect
+  filtering/sorting (badge updates).
+- No exceptions across the event loop (Qt does not support throwing through signal/slot dispatch). Return
+  `std::expected`-style results (C++23) or a small `Result<T, Error>` (C++20).
+- Coroutines: Qt 6.12 has no first-party coroutine support. QCoro (MIT, third party) exists — TODO(verify) Qt 6.12
+  support. Not recommended for the protocol core: explicit state machines are easier to test and to fuzz.
+- **Qt TaskTree** (since 6.11, LGPL/GPL; declarative `Group`/`For`/`When` recipes with wrappers for `QTcpSocket`,
+  `QNetworkReply`, `QProcess`, thread functions) could orchestrate batch searches or conversion queues; optional,
+  evaluate in M8 (young public module).
+
+### 7.3 Persistence: own SQLite vs Qt SQL
+
+Facts (high): Qt 6.12 bundles **SQLite 3.53.4** with FTS3/4/5, JSON1, R*Tree and math functions
+(`qtbase@v6.12.0:src/plugins/sqldrivers/sqlite/CMakeLists.txt`), but **Homebrew's `libqsqlite.dylib` links the system
+`/usr/lib/libsqlite3.dylib`** instead (`otool -L`; macOS 27's SQLite is 3.54.0 with FTS5 + trigram). So the SQLite
+under Qt SQL differs between a Homebrew build, an official-Qt build and Linux/Windows.
+
+Recommendation (medium-high): **link Selecta's own pinned SQLite** (amalgamation via FetchContent or the vcpkg
+`sqlite3` port; compile with `SQLITE_ENABLE_FTS5`, `SQLITE_DQS=0`, `SQLITE_DEFAULT_WAL_SYNCHRONOUS=1`,
+`SQLITE_THREADSAFE=2`/multi-thread) behind a ~300-line RAII wrapper (or SQLiteCpp, MIT). Benefits: identical behaviour
+everywhere, FTS5 trigram guaranteed, custom SQL functions (normalisation for matching) and collations, progress handler
+for cancellation, online backup API, no `QVariant` boxing in hot loops. If Qt SQL is kept instead (PLAN default), do
+**not** call `sqlite3_*` APIs on `QSqlDriver::handle()` from a second SQLite copy (two SQLite copies in one process is a
+documented corruption hazard when both open the same file — sqlite.org "How To Corrupt", §2.2), and check
+`sqlite_version()`/`PRAGMA compile_options` at startup. Migrations: numbered `.sql` files compiled into resources,
+`PRAGMA user_version`, one transaction per step.
+
+### 7.4 Settings, secrets, logging
+
+- **Settings:** `QSettings` (native format → `~/Library/Preferences/<bundle-id>.plist` via CFPreferences) for UI state
+  and preferences, behind a typed `Settings` class with defaults and validation; governor-related values are clamped
+  to the compile-time ceilings at read time (SAFE-2: "settings can only make limits stricter"). Domain data (history,
+  caches, peer stats) live in SQLite, not `QSettings`. Do not edit the plist while the app runs (cfprefsd caches).
+- **Secrets:** QtKeychain → macOS Keychain (NET-1); see 10.4 for the signing pitfall (prompts after every rebuild).
+- **Logging:** one `Q_LOGGING_CATEGORY` per module (`selecta.slsk.server`, `selecta.governor`, …). On macOS Qt
+  already routes messages to the **unified log (os_log)** with the bundle id as subsystem
+  (`AppleUnifiedLogger` in `qcore_mac.mm`; `QT_FORCE_STDERR_LOGGING=1` forces stderr) — so
+  `log stream --predicate 'subsystem == "<bundle id>"'` works for free. Add a message handler that also writes a
+  size-capped rotating file in `~/Library/Logs/Selecta/` (attachable to bug reports), never logs passwords, and
+  hashes or trims peer-identifying data at info level. The SAFE-4 network activity log is **domain data** (SQLite +
+  UI), not debug logging.
+
+### 7.5 Testing seams
+
+| Seam | Interface | Test double |
+|---|---|---|
+| Time | `Clock` (`now()`, timers) injected into governor, caches, backoff | `FakeClock` advanced by the test (no sleeps — PLAN §5.2) |
+| Network | `slsk` codec is pure (bytes ↔ messages); sessions take a `Transport` (or a `QIODevice*`) | in-memory duplex pipe; loopback `QTcpServer` for integration |
+| Filesystem roots | `FileOps` takes collection/Inbox/cache roots | `QTemporaryDir` trees; a "collection" made read-only by test assertions |
+| Audio output | `AudioSink` interface | null sink that counts frames |
+| Server address policy | `ServerPolicy` (SAFE-3) | tests assert the live hostname is refused in debug builds |
+| Platform shell | `Toolbar`, `Notifier`, `VsyncSource`, `Keychain` interfaces | fakes on all platforms |
 
 ## 8. Testing
 
-TODO.
+| Need | Tool | Notes |
+|---|---|---|
+| Pure logic (codec, governor, filters, parser, matcher, metadata mapping) | **GoogleTest + gMock** (BSD-3-Clause; 1.18.0) or **Catch2 v3** (BSL-1.0; 3.16) | Pick one. GoogleTest wins if we want gMock for `Transport`/`Clock` fakes; both integrate with CTest (`gtest_discover_tests`, `catch_discover_tests`) |
+| Property tests ("strict mode never shows a non-matching result", "never more than N searches per window") | **RapidCheck** (BSD-2-Clause) with its gtest/Catch2 adapter | Shrinks counterexamples — ideal for the governor |
+| QObject/signal behaviour, item models, widgets | **Qt Test**: `QSignalSpy`, `QTest::keyClick`/`mouseClick`, `QAbstractItemModelTester` (checks model invariants — use it on every model), `QBENCHMARK` (6.12 reports variance/stddev) | Qt Test classes can also be used inside GoogleTest cases |
+| Parsers on hostile input (NFR-4) | **libFuzzer** harnesses per decoder (message frames, compressed share lists, search responses, path parser, tag readers) | Apple clang has no libFuzzer runtime → build fuzzers with Homebrew LLVM locally and with distro clang on Linux CI; ASan+UBSan on; seed corpora from local-test-network captures; short runs on PRs, long runs nightly |
+| Integration (devenv) | CTest label `integration`, Docker Compose with the local server + test peers | Linux CI only (no Docker on macOS runners, see 9); tests may only reach loopback/private addresses |
+| UI smoke | Qt Test with `QT_QPA_PLATFORM=offscreen` on Linux; real Cocoa on macOS runners | open each view, feed fixture data, assert no warnings (`QTest::failOnWarning()`) |
+| Accessibility | traverse `QAccessible::queryAccessibleInterface()` trees in tests: every interactive element has a name/role; waveform exposes a value | plus manual VoiceOver passes against the mock |
+| Golden files | converter/tag mapping: compare tag dumps field by field (TagLib) | synthetic corpus only (PLAN §5.3) |
 
-## 9. CI
+## 9. CI (GitHub Actions)
 
-TODO.
+Facts (high unless noted): `macos-latest` = **macos-26 arm64** since June 2026 (standard runner: 3 × M1 cores, 7 GB
+RAM, 14 GB disk); Xcode 27 is available as a preview on the images; `macos-26-intel` exists; macOS 14 images are
+fully unsupported from 2026-11-02; **nested virtualization is unsupported on macOS runners, so no Docker there**.
+`jurplel/install-qt-action` (v4.4.x) + aqtinstall installs official Qt 6.12 on macOS (arch `clang_64`) and Linux;
+on Windows aqtinstall 3.3.0 cannot find 6.12 and needs an aqtinstall master commit via `aqtsource` (medium — reported
+in third-party PRs, Oct 2026). vcpkg's `x-gha` cache backend was removed (vcpkg 2025.06); use the `files` provider +
+`actions/cache`, or NuGet on GitHub Packages.
+
+| Job | Runner | Steps | When |
+|---|---|---|---|
+| `lint` | ubuntu-24.04 | clang-format check (pinned version), `reuse lint`, Widgets-include grep, live-hostname grep | every push |
+| `macos` | macos-26 | install-qt-action (Qt 6.12.x, `cache: true`), Homebrew or vcpkg deps (cached), ccache, `cmake --workflow --preset ci-macos` (build + unit + UI smoke), upload `.app` artifact | every push |
+| `macos-asan` | macos-26 | `asan` workflow preset | every push |
+| `linux` | ubuntu-24.04 | Qt via aqtinstall, GCC 13/14 + clang, unit tests, clang-tidy on changed files | every push |
+| `linux-integration` | ubuntu-24.04 | `docker compose -f devenv/docker-compose.yml up -d`, CTest label `integration` | every push (once devenv exists) |
+| `fuzz` | ubuntu-24.04 | build fuzzers with clang, run each 60 s (PR) / 1 h (nightly), upload crashes | PR + nightly |
+| `tsan` | macos-26 or ubuntu | `tsan` preset | nightly |
+| `windows` | windows-2025 | MSVC 2022, Qt via aqtinstall (pinned aqtsource), compile + unit tests (NFR-1) | every push |
+| `package` | macos-26 | release preset, deploy script, sign (ad-hoc or Developer ID if secrets exist), DMG, notarise if possible | tags |
+
+Safety in CI (SAFE-3): besides the code-level server allow-list, add belt-and-braces steps that map the live server
+hostname to `0.0.0.0` in `/etc/hosts` on every runner and grep test logs for it. Caching: Qt (install-qt-action),
+ccache (`hendrikmuhs/ccache-action` or `actions/cache` keyed by preset), vcpkg `files` cache; stay under the 10 GB
+per-repo cache limit. Concurrency groups cancel superseded runs.
 
 ## 10. macOS packaging and distribution
 
