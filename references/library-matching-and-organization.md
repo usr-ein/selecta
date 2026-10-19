@@ -195,7 +195,8 @@ Selecta has to combine their ideas. Code read at the commits listed in Sources.
 - **Ranking** is lexicographic over booleans, not a weighted score. Order: peer reliability, required conditions,
   preferred user conditions, has length, bracket check, strict title, fuzzy title, strict album, fuzzy album, strict
   artist, fuzzy artist, length within tolerance, format, bitrate, sample rate, bit depth, all preferred satisfied, free
-  slot; then speed buckets, inferred track count, bitrate, and a deterministic hash tie-breaker. Comment in the code:
+  slot; then a "fast upload speed" bucket, secondary strict-string flags, inferred track count, a "medium speed"
+  bucket, bitrate, and a deterministic hash of (user, filename) as tie-breaker (`SortKey.CompareTo`). Comment in the code:
   "Identity beats quality preferences".
 - **Query-guided parsing** (`InferSongQuery`): strips track numbers (`^(?:(?:[0-9][-\.])?\d{2,3}[. -]|\b\d\.\s|\b\d\s-\s)`,
   plus mid-string forms like ` - 03 `), splits on ` - `, and uses the *wanted* artist/title to decide which part is
