@@ -1115,8 +1115,9 @@ Facts (`references/soulseek-protocol.md` §10, Nicotine+ source): **the server d
 every responding client matches its own shares. Consensus behaviour: **whole words**, case-insensitive, all words
 required, `-word` excludes, a leading `*` is a suffix wildcard, and at least one complete word is required ("Matches
 official clients", Nicotine+ `search.py` `_create_search_result_list`). Nicotine+ responders ignore queries shorter
-than 3 characters; Soulseek.NET drops one-character words. Word boundaries are punctuation — Nicotine+ splits on
-`! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ { | } ~` and Unicode punctuation (`pynicotine/utils.py`
+than 3 characters, and Soulseek.NET-based clients strip one-character words from the queries they send. Word
+boundaries are punctuation — Nicotine+ splits on
+`! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ { | } ~`, the backtick and Unicode punctuation (`pynicotine/utils.py`
 `PUNCTUATION`) — so a shared `Ke$ha` is indexed as `ke` + `ha`, `Don't` as `don` + `t`, `AC/DC` as `ac` + `dc`.
 **No accent folding**: `Beyoncé` and `Beyonce` are different words.
 
