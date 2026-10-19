@@ -413,8 +413,9 @@ conflict analysis above stands; this is the implementation guide.
    (label, catalogue number), `barcode`, date, status and release-group type. Pick: (a) the release whose `barcode`
    equals Spotify's album `external_ids.upc`; else (b) title ≈ Spotify album name and date ≈ `release_date`; else (c)
    the earliest official release whose release-group type matches Spotify's `album_type` — never a compilation or
-   DJ-mix release unless Spotify's album is one. [A barcode *search* for one Spotify/Deezer UPC found nothing: MusicBrainz
-   held a different release (the EP), so barcode equality is a tie-breaker, not a lookup key.]
+   DJ-mix release unless Spotify's album is one. [A barcode *search* for the "Glue" single's UPC (taken from Deezer) found nothing:
+   MusicBrainz lists the "Glue EP" under another barcode but not that single's, so barcode equality is a tie-breaker,
+   not a lookup key.]
 3. `GET /ws/2/release-group/{RGID}?inc=genres&fmt=json` → community genres with vote counts; if empty, try the
    recording, then the artist (`/recording/{MBID}?inc=genres`, `/artist/{MBID}?inc=genres`). Write the highest-voted
    genre, or nothing. [Bicep's "Glue EP": disco 2, electronic 2, house 1, techno 1 — thin, noisy votes.]
