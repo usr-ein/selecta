@@ -217,8 +217,8 @@ Two real failure modes from slskd's tracker, both described by its author:
 
 Repeated identical private messages trigger the same 30-minute ban. A user of an automatic "please share" warning
 was banned several times a day for "sending the same message too often" (Google Groups, 2025-04-12); a 2025-05
-thread (Nicotine+ user) describes trolls exploiting this by repeatedly triggering the warning. Nir Arbel's answer (2025-05-05) is the reference behaviour: SoulseekQt sends
-its empty-share notice **once per user**, only when that user tries to download. Nicotine+'s leech-detector plugin
+thread (Nicotine+ user) describes trolls exploiting this by repeatedly triggering the warning. Nir Arbel's answer
+(2025-05-05) is the reference behaviour: SoulseekQt sends its empty-share notice **once per user**, only when that user tries to download. Nicotine+'s leech-detector plugin
 warns "too many message lines may get you temporarily banned for spam", and its `ResponseThrottle` (plugin chat
 replies) refuses to answer the same request from the same user within 6 min, or any reply in the same room within
 30 s — "some of the throttle logic is guesswork as server code is closed source". Selecta v1 sends no automatic
