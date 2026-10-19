@@ -626,7 +626,7 @@ Purpose: deliver every search to every sharer without the server fanning out to 
 |---|---|
 | Branch root | Client at level 0; receives searches from the server as `EmbeddedMessage` (93) and forwards them |
 | Parent | The peer that forwards searches to us over a `D` connection |
-| Children | Peers we forward searches to; max = our upload speed ÷ `ParentSpeedRatio` (server 84); eligibility needs ≥ `ParentMinSpeed` (server 83) |
+| Children | Peers we forward searches to; how many is computed from our server-side `avgspeed`, `ParentSpeedRatio` (server 84) and `ParentMinSpeed` (server 83) — formulas differ, see below |
 | Branch level | Parent's level + 1 (0 for a root); reported to the server (126) and to children (distrib 4) |
 | Branch root name | Reported to the server (127) and children (distrib 5) |
 
@@ -901,7 +901,7 @@ Outgoing query hygiene seen in clients: Nicotine+ replaces special characters by
 keeps quoted phrases as one unit, drops lone `-` (`search.py:117-122, 394-464`; `slskmessages.py:1194-1195`);
 Soulseek.NET removes single-character terms by default (`SearchOptions.cs:52-64`). Responders ignore very short
 queries: Nicotine+ drops the whole request if the query string is shorter than `min_search_chars = 3`
-(`search.py:868-870`, `config.py`). No source documents an official minimum term length or diacritic folding:
+(`search.py:862`, `config.py:326`). No source documents an official minimum term length or diacritic folding:
 Nicotine+ and aioslsk do **no** accent folding, so `Beyoncé` and `Beyonce` are different words to most responders.
 
 ### 10.2 Routing
@@ -984,8 +984,8 @@ Selecta proposal (governor-owned, compile-time ceilings, SAFE-1/2):
 - Before a public release, ask the maintainers of the Nicotine+ protocol document (they curate the registry, and
   ask that the protocol not be extended without the Soulseek administrators' approval) for a reserved major.
   Record it in ADR-002/NET-9.
-- Do not add messages or attributes. Answer the `\x01VERSION\x01` private-message probe with "Selecta <version>"
-  like Nicotine+ (rate-limited, `privatechat.py:305-324`) — P1.
+- Do not add messages or attributes. Answer the CTCP-style `\x01VERSION\x01` private-message probe with `VERSION: Selecta <version>`,
+  as Nicotine+ does (at most once per second per user, `privatechat.py:304-324`) — P1.
 - Watch for PMs from `server` after login ("connection is restricted…") and show them; they are the only feedback
   if the server dislikes our version.
 
