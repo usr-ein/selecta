@@ -1528,6 +1528,9 @@ All accessed 2026-10-19 or 2026-10-20.
 | https://gist.github.com/9re/5939575, https://www.billboard.com/pro/beatport-embeddable-streaming-music-player-pays-artists/ | Beatport embed player (2015) |
 | https://parse.bot/marketplace/0123da1a-5d2d-4970-bf6f-398f792855a1/traxsource-com-api | No official Traxsource API (third-party statement) |
 | Deezer `/search`, `/track/{id}`, `/album/{id}` and MusicBrainz `/ws/2/isrc/{isrc}` for four club tracks (manual, 2026-10-20) | Keyless coverage check (§4.4) |
+| MusicBrainz `/ws/2/isrc/{isrc}?inc=releases`, `/ws/2/release?query=barcode:…`, `/ws/2/release-group/{id}?inc=genres`, `/ws/2/artist/{id}?inc=genres` (manual, 2026-10-20; the last answered 503) | D30 gap-fill behaviour (§5.3) |
+| https://musicbrainz.org/doc/MusicBrainz_API | `inc` rules (ISRC lookups "identical to a lookup request for a recording"), genres via `inc=genres`, release browse by recording with `inc=labels` |
+| `docs/PRD.md` @ `e7cec6d` (D30, META-1, META-3, META-4) | The decisions this note implements |
 
 **Apple, YouTube and Google**
 
