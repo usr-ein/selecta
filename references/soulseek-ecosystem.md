@@ -1,9 +1,10 @@
 # Soulseek ecosystem: libraries, clients, servers and tools
 
-> Research note for Selecta (GPLv3 C++/Qt 6 Soulseek client). Status: **DRAFT — in progress** (2026-10-19).
-> Items marked **TODO(verify)** are from prior knowledge and not yet checked against a primary source.
+> Research note for Selecta (GPLv3 C++/Qt 6 Soulseek client). Status: **complete, v1** (2026-10-19). Research only:
+> nothing was built or run, and nothing connected to the Soulseek network.
 > Repo facts (licence, last push, latest release, stars) come from the GitHub API on 2026-10-19; source citations are
-> `owner/repo@<short-commit>:path:line` against shallow clones taken the same day.
+> `owner/repo@<short-commit>:path:line` against shallow clones taken the same day. Confidence is high unless stated;
+> user reports in issue trackers are labelled hearsay.
 
 ## TL;DR
 
@@ -16,29 +17,43 @@
   Soulseek.NET and slskd are GPL-3.0-only / AGPL-3.0-only **with Section 7 "Additional Terms"** that attach to any
   software incorporating any portion of them (mandatory notices, file-header format, rebranding rules). Read them for
   behaviour, implement from the protocol doc.
-- **Soulfind** (GPL-3.0-or-later, D, maintained by the Nicotine+ maintainers) **is a proven local test server**: the
-  Rust client soulseek-rs runs its whole e2e/CI suite against a freshly spawned `soulfind -p <port> -d <tmp.db>` per
-  test. Selecta should copy that harness pattern. (Details and gaps in §5.)
-- **slsk-batchdl (sldl) was renamed `fiso64/sockseek` and relicensed AGPL-3.0**; it is the closest prior art for batch
-  search; its search limiter defaults are documented in §4.1. TODO(verify origin).
+- **Soulfind** (GPL-3.0-or-later, D; main developer is the Nicotine+ maintainer) **is the local test server** — its
+  README says it "exists for local testing". macOS arm64 binary + multi-arch container; users auto-register; the
+  Rust client soulseek-rs runs its whole e2e/CI suite against a fresh `soulfind -p <port> -d <tmp.db>` per test, and the
+  slskd author load-tests against it. Gaps: **no distributed network** (searches are pushed directly to every user,
+  including the searcher), **no rate limits**, IPv4/ASCII-only. Use aioslsk's mock server for distributed-network tests
+  (§5, recipe in §9). Soulfind **forbids AI-generated contributions**.
+- **sldl's "34 searches / 220 s" is folklore**: one developer's trial and error in Nov 2023 (commit `20d8310d`, "may be
+  incorrect"), implemented as a fixed window that can burst 68 searches; users report ~30-minute bans, one even at the
+  default rate. slsk-batchdl/sldl is now **`fiso64/sockseek`, AGPL-3.0 since 2026-05** (§4.1).
+- **Official rules expect alternative clients to "implement the full range of features" (incl. chat, wishlist, upload,
+  privileges)** — Selecta v1 drops chat rooms (PRD D4); a decision for the maintainer (§10, E4).
 - **Direct prior art for Selecta's concept exists and is very recent**: *Seek* (IvaKap/seek, GPL-3.0, Mac "client for
-  people who dig", on a Nicotine+ core: ownership awareness, spectrogram "proof", ratio, peer comparison) and
-  *seeleseek* (bretth18, MIT, native SwiftUI macOS client). Study both for UX; neither is C++/Qt.
+  people who dig", Tauri + a Python sidecar running Nicotine+: ownership awareness, spectrogram "proof", ratio, peer
+  history) and *seeleseek* (bretth18, MIT, native SwiftUI macOS client with "MP3 320 / FLAC / Lossless / Hi-Res"
+  presets). Neither offers progressive audition, a waveform or paced batch search; neither is C++/Qt.
 
 ## Key findings
 
 1. **Licences are the deciding factor for reuse, not code quality.** See §1.1 — Soulseek.NET/slskd Additional Terms
    make code-level reuse impractical for Selecta; Nicotine+/aioslsk/soulseek-rs/seeleseek are clean to learn from and
    port (keep their notices for any ported fragment).
-2. **Soulseek.NET's Additional Terms §5 require every "Covered Software" that connects to the network to send a
-   unique client version identifier** — matches Selecta's NET-9 (honest identification). Selecta should pick a unique
-   login minor version regardless of reuse (coordinate with `soulseek-protocol.md`).
-3. **Soulfind is the de-facto open test server** and is used for e2e testing by at least one active client
-   (soulseek-rs). It does **not** send `EmbeddedMessage` (server code 93) — i.e. it does not emulate the real server's
-   distributed-search injection — but it does hand out `PossibleParents` (102) so distributed-network adoption can be
-   exercised. TODO: confirm search routing (§5.1).
-4. **Seeker's `MockSoulseekClient`** (C#, in-process mock network driven by magic search keywords such as `n:N`,
-   `speed:N`, `failat:N`, `stall`) is a good model for a Selecta UI-development fake that needs no server at all.
+2. **Client identity has a registry.** Nicotine+'s protocol doc reserves login major versions per client (157
+   SoulseekQt, 160 Nicotine+, 169 seeleseek, 170 Soulseek.NET, 175 aioslsk, 176 soulseek-rs) and **177 for
+   experimental development**. Selecta should use 177 + a distinctive minor in development and ask for its own number
+   before going live (NET-9). Soulfind rejects version 0; Soulseek.NET's licence terms even mandate unique identifiers.
+3. **Soulfind is the de-facto open test server** (Nicotine+'s doc: "handles the protocol well enough for development
+   and testing of client implementations"). It never sends EmbeddedMessage (93) or PossibleParents (102); soulseek-rs
+   tests its distributed code against Soulfind by pointing a leaf at a raw-socket **mock parent** directly
+   (`soulseek-rs-lib/tests/e2e.rs:3752-3760`) — a technique Selecta can copy alongside aioslsk's mock server.
+4. **No ecosystem project rate-limits searches over time except automation tools** (sldl fixed window, soularr 5 s
+   spacing); Soulseek.NET only caps concurrency (2). Selecta's governor will be stricter than anything out there.
+5. **Zero results can mean "server-excluded phrase"**, not "not found" (sockseek #128); the server's own
+   ExcludedSearchPhrases list lets Selecta explain this honestly instead of evading it as sldl does.
+6. **Seeker's `MockSoulseekClient`** (in-process fake network driven by magic tokens such as `n:N`, `speed:N`,
+   `failat:N`, `stall`) is a good model for a UI-development fake that needs no server at all.
+7. **Progressive preview has prior art only in PowerVLC** (a GPL-2.0+ Lua download-only client that streams into VLC
+   while downloading); every GUI client previews only completed files, if at all.
 
 ## 1. Comparison table
 
@@ -47,26 +62,27 @@ uploads; **Client** = searching/downloading/browsing but partial or no sharing/d
 
 | Project | Kind | Language | Licence (SPDX, verified) | Activity | Protocol coverage | Reuse for Selecta |
 |---|---|---|---|---|---|---|
-| **SoulseekQt** | Official client | C++/Qt (closed) | Proprietary freeware | TODO(verify) | Reference behaviour | UX baseline only |
+| **SoulseekQt** | Official client | C++/Qt (closed) | Proprietary freeware | builds 2024-2-01 and 2026-4-30 (login 157/101) | Reference behaviour | UX baseline only |
 | **Nicotine+** | Desktop client (GTK 3/4) | Python 3 | GPL-3.0-or-later (SPDX headers) | 2026-10-18 / 3.3.11 (2026-09-16), 3.4.0.dev2 on main; ~3.2k★ | Full; maintains the protocol doc | **Primary protocol reference; port logic** |
 | **Soulseek.NET** | Library | C# (.NET) | GPL-3.0-only **+ §7 Additional Terms** | 2026-10-13 / 10.0.2 (2026-06-10) | Client side incl. uploads, distributed child/parent | Behavioural reference only |
 | **slskd** | Daemon + web UI | C# + React | AGPL-3.0-only **+ §7 Additional Terms** | 2026-10-19 / 0.26.1 (2026-10-10); ~4.1k★ | via Soulseek.NET | Design ideas (limits, groups, API) |
-| **aioslsk** | Library | Python asyncio | GPL-3.0-or-later (pyproject) | 2026-10-14 / v1.7.1 (2026-10-11) | Full (TODO details) | Port logic; good docs |
+| **aioslsk** | Library | Python asyncio | GPL-3.0-or-later (pyproject) | 2026-10-14 / v1.7.1 (2026-10-11) | Full (distributed network, rooms, uploads, UPnP) | Port logic; best docs; mock server |
 | **Seeker** | Android client | C# (.NET Android) | GPL-3.0-only (uses modified Soulseek.NET) | 2026-10-19 / v3.11.2 | via Soulseek.NET fork | UX ideas; mock-network idea |
 | **museek+** (`eLvErDe/museek-plus`) | Daemon + Qt/GTK/curses clients | C++ (+Python) | GPL-2.0-or-later | 2022-03-08, README says "No longer maintained!" | Old subset | Historical only |
 | **newsoul** | museek+ daemon fork | C++11 | GPL-3.0-or-later | 2014-09-13 | Old subset | Historical only |
 | **soulseekcpp** | Library (port of Soulseek.NET) | C++20 + asio | GPL-3.0 + Soulseek.NET §7 Additional Terms | single commit 2026-09-17; 0★ | Claims full (untested by others) | Read only; do not depend on |
 | **soulseek-rs** (`michel/soulseek-rs`) | Lib + TUI/CLI/daemon | Rust | MIT | 2026-10-14 / v19.1.0 | Claims full live message set; e2e vs Soulfind | **Port logic + test-harness pattern** |
 | **seeleseek** | Native macOS client (SwiftUI) | Swift 6 | MIT | 2026-10-13 / v1.9.0; macOS 15+ | Client + sharing, distributed, obfuscation (heuristic) | macOS UX + Swift protocol code |
-| **Seek** (`IvaKap/seek`) | Mac client on Nicotine+ core (Tauri + Python sidecar, TODO verify) | TypeScript + Python | GPL-3.0 | 2026-10-13 / v0.3.0 | via Nicotine+ | **Closest product prior art** |
-| **slsk-batchdl / sldl** → `fiso64/sockseek` | Batch download CLI | C# | AGPL-3.0 (TODO: when relicensed) | 2026-10-15 / v3.0.6 | via Soulseek.NET | Batch/matching/rate-limit prior art |
+| **Seek** (`IvaKap/seek`) | Mac client: Tauri UI + frozen Python sidecar running Nicotine+ headless | TypeScript + Python | GPL-3.0 | 2026-10-13 / v0.3.0 | via Nicotine+ | **Closest product prior art** |
+| **slsk-batchdl / sldl** → `fiso64/sockseek` | Batch download CLI | C# | AGPL-3.0 since 2026-05-11 (GPL-3.0 up to v2.6.0) | 2026-10-15 / v3.0.6 | via Soulseek.NET | Batch/matching/rate-limit prior art (ideas only) |
 | **soularr** | Lidarr ↔ slskd bridge | Python | GPL-3.0 | 2026-10-06 / v1.2.2 | via slskd API | Selection/matching ideas |
 | **Soulfind** | Server | D | GPL-3.0-or-later | 2026-10-14 / rolling "latest" | Server side (subset, §5.1) | **Local test server** |
 | nafsi / souls / soulsex | Servers | Rust / Rust / Elixir | GPL-3.0 / GPL-3.0 / BSD-3-Clause | 2026 (young, 0–4★) | Incomplete | Not needed |
 | slsk-client | Library | TypeScript (Node) | MIT | 2026-10-05 / v2.0.2 | Client (search/download) | Low |
 | bh90210/soul | Library | Go | Unlicense | 2025-04-20 / v1.1.0 | Client + some distributed | Low |
 | others (crabseek MIT, slsk-rs GPL-3.0, slskr AGPL-3.0, zslsk GPL-3.0, goose/spotseek/vessel/soulseek-ts unlicensed, livelook AGPL-3.0, py-soulseek-lib GPL-3.0) | various | Rust/Zig/Go/TS/JS/Py | as listed | mixed | partial | None (§3.7) |
-| Wireshark `packet-slsk.c` | Dissector | C | GPL-2.0-or-later TODO(verify) | TODO | old message set TODO | Debug local captures |
+| PowerVLC `soulseek.lua` | Download-only client inside a VLC fork | Lua | GPL-2.0-or-later | 2026-09 | Search, browse, download (no sharing) | Progressive-preview prior art |
+| Wireshark `packet-slsk.c` | Dissector | C | GPL-2.0-or-later | maintenance commits to 2026-07 | ~60 codes, old names, heuristic parsing | Eyeball local captures |
 
 ### 1.1 Licence consequences for a GPLv3 Selecta
 
@@ -616,7 +632,7 @@ Topology B images. Inject the governor's fake clock so pacing tests never sleep.
 
 | Gap | Mitigation |
 |---|---|
-| Distributed network (parents/children, EmbeddedMessage 93, BranchLevel/Root) | aioslsk mock server with `--distributed-strategy realistic_parents`; unit tests from Nicotine+/aioslsk message fixtures. Run slskd peers with `SLSKD_SLSK_NO_DNET=true` to reduce noise. |
+| Distributed network (parents/children, EmbeddedMessage 93, BranchLevel/Root) | (a) soulseek-rs's trick: keep Soulfind for login/addresses and point the client at a raw-socket **mock parent** through a test hook (`soulseek-rs-lib/tests/e2e.rs:3752-3760`, "soulfind never hands out parents, so the parent here is a mock"); (b) aioslsk mock server with `--distributed-strategy realistic_parents` for server-driven parent assignment and EmbeddedMessage; (c) unit tests from message fixtures. Run slskd peers with `SLSKD_SLSK_NO_DNET=true` to reduce noise. |
 | Server-side rate limits and bans | None in Soulfind (#62). Governor proven by unit/property tests with a fake clock; live behaviour only in the maintainer's M9 sessions. |
 | Login MD5 validation | Not checked by Soulfind; unit-test it (the official server reportedly excludes users with a bad hash from the distributed network — Soulfind #6, hearsay). |
 | Unicode usernames, IPv6 | Soulfind rejects non-ASCII usernames and is IPv4-only; behaviour of the official server may differ. |
