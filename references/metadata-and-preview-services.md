@@ -327,19 +327,152 @@ Spotify album image (JPEG); `USLT` lyrics. FLAC/Opus/Vorbis get the equivalent V
 
 ## 8. Official 30-second preview sources
 
-TODO — Deezer, iTunes Search API, Spotify preview_url, Apple Music API, Beatport, Traxsource, Bandcamp.
+### 8.1 Deezer (keyless "Simple API")
+
+Verified by manual requests on 2026-10-19 (Bicep — "Glue", ISRC `GBCFB1700229`):
+
+| Item | Observed / documented |
+|---|---|
+| Access | No key, no login for catalogue endpoints (`api.deezer.com/search`, `/track/{id}`, `/track/isrc:{ISRC}`, `/album/{id}`). OAuth app creation has been closed since at least mid-2026 ("We're not accepting new application creation at this time", per developers' reports) — irrelevant for keyless endpoints. |
+| Search | `GET /search?q=bicep glue` → `{data[], total, next}`; each track already carries **`isrc`**, `duration` (s), `title`, `title_short`, `title_version` (e.g. `(Mixed)`), `rank`, `explicit_lyrics`, `preview`, `artist`, `album` (with `cover_small…cover_xl`). The documented advanced syntax (`artist:"…" track:"…"`) returned **0 results in two attempts** that day while the plain query worked — treat it as unreliable (TODO(verify)). |
+| ISRC lookup | `GET /track/isrc:GBCFB1700229` → one track. It returned the **album** version (id 373789461), not the single (389034231) that shares the ISRC: Deezer picks one release; Selecta must choose the release itself. |
+| Track | `bpm` (130.01 — Deezer's own analysis; often 0 for less common tracks, TODO(verify) rate), `gain`, `release_date`, `track_position`, `disk_number`, `contributors[]` with roles, `available_countries`, `link`. |
+| Album | **`label`** ("Ninja Tune"), **`upc`**, `genres` (coarse: "Electro"), `record_type` (`single`/`ep`/`album`/`compile`), `release_date`, `nb_tracks`, `cover_xl` **1000×1000 JPEG**. |
+| Preview | `preview` = **MP3, 30 s, 128 kbps** (HEAD: `audio/mpeg`, 479,827 bytes ≈ 128 kbit/s × 30 s), served by a CDN with `Accept-Ranges: bytes`. The URL is **signed and expires ~15 minutes** after the API response (`hdnea=exp=…`; observed exp − now ≈ 900 s). Store the track ID, re-resolve the URL at play time. |
+| Rate limit | "50 requests / 5 seconds" per IP (quoted second-hand from the old docs page, which now requires login; medium confidence). Errors come back as HTTP 200 with `{"error": {"type", "message", "code"}}`; code 4 = quota (third-party clients; TODO(verify)). |
+| Terms | Developer Terms (BLOGMUSIK/Deezer, French law): **D-T1** "Will not use the Services in any way or on any website that is associated or promotes in whatever manner the illegal or unauthorized use, streaming, download, or sharing of music and associated elements content" (§III.6); strictly non-commercial, "limited to a strictly private use within a family scope" (§IV); "Local Storage/Offline Storage of audio data is strictly forbidden" (Guidelines); "Each application using Deezer API/SDKs must have to include a clearly visible Deezer Logo" (Logo guidelines). |
+
+### 8.2 iTunes Search API (keyless)
+
+Verified by one request (`/search?term=bicep+glue&media=music&entity=song&country=FR`):
+
+| Item | Observed / documented |
+|---|---|
+| Fields | `trackName`, `artistName`, `collectionName`, `trackTimeMillis`, `releaseDate`, `primaryGenreName`, `trackNumber`/`trackCount`, `discNumber`, `trackExplicitness`, `previewUrl`, `artworkUrl30/60/100`, `trackViewUrl` (music.apple.com), `country`. **No ISRC, no label.** Lookup by iTunes ID, UPC/EAN (`upc=`), AMG IDs; not by ISRC. |
+| Preview | `…/mzaf_….plus.aac.p.m4a`: **AAC ≈ 256 kbps, 30 s** (HEAD: 1,004,701 bytes; `Content-Type: audio/x-m4p`, plain AAC in MP4), unsigned stable URL, `Cache-Control: max-age=31536000`, `Accept-Ranges: bytes`. Whether `moov` precedes `mdat` (progressive start) is TODO(verify). |
+| Artwork | `artworkUrl100` (100×100). Replacing `100x100bb` with a larger size works in practice but is undocumented. |
+| Rate limit | "approximately 20 calls per minute (subject to change)". |
+| Terms | Promo content may be used "only to promote store content and not for entertainment purposes"; must be "proximate to a store badge" linking to the purchase page; song previews must carry "provided courtesy of iTunes" and be "streamed only, and not downloaded, saved, cached, or synchronized with video"; Apple may demand removal. The page is written for websites; nothing addresses desktop apps. |
+
+### 8.3 Other preview sources
+
+| Source | Status for Selecta |
+|---|---|
+| **Spotify** `preview_url` | Deprecated/null for new apps (§3.5). The Spotify iFrame embed still plays previews, but needs a web view (Qt WebEngine ≈ Chromium) and falls under the Widgets terms. Not recommended. |
+| **Apple Music API** | Catalogue songs carry `isrc` and `previews[]`, with ISRC filtering (`/v1/catalog/{storefront}/songs?filter[isrc]=…`, up to 25 per request per third-party docs — TODO(verify)). Needs a developer token signed with a private key from a paid Apple Developer Program membership ($99/yr). A key cannot ship in an open-source app; every user would need their own membership. Not practical. |
+| **Beatport** | The best electronic catalogue (BPM, key, genre, label, catalogue number, mix names) and DJ-friendly **2-minute previews taken from the middle of the track** (third-party sources: Proton Radio, Label Engine; Beatport support confirms 2-minute previews but not the position). API v4 (`api.beatport.com/v4`, OAuth 2.0) is **partner-only**: apply through the Beatport partner portal, which issues a client ID/secret for a given callback (Music Assistant discussion, Nov 2025). Community plugins (beets-beatport4) borrow the docs front-end's client ID — not acceptable. A 2015 embeddable player (`embed.beatport.com/player/?id=…&type=track`) existed; its current status is unknown. → **Deep link only**, unless the maintainer applies for partner access (open question). |
+| **Traxsource** | No public API (third-party listings agree). Track pages offer an embeddable player (iframe). → **Deep link only.** |
+| **Bandcamp** | The official API serves labels and merch partners only (Account, Sales Report, Merch Orders APIs; "Labels and merchandise fulfillment partners … contact us"). No catalogue or search API. The Acceptable Use policy (incorporated in the Terms, 2026-06-10) forbids scraping and data mining. Embedded player (iframe) and oEmbed exist; tracks stream in full when the artist allows it. spotDL's Bandcamp provider uses undocumented mobile-app endpoints — not acceptable. → **Deep link only.** |
+
+### 8.4 Suitability for electronic music (estimates — verify with experiment X5)
+
+| Source | Coverage of DJ electronic catalogue | Clip | Quality | Latency to first audio | Use inside a third-party desktop app |
+|---|---|---|---|---|---|
+| Deezer | High for distributed digital releases (most Beatport labels also distribute to DSPs); low for Bandcamp-only, white labels, vinyl-only | 30 s; position not documented (some distributors let labels pick the clip start; TODO(verify) X6) | MP3 128 kbps | 1 API call + ~480 KB | Allowed for "Personal Applications", non-commercial, logo required; **P2P association clause D-T1** |
+| iTunes | High (same distribution) | 30 s; position not documented (X6) | AAC ~256 kbps | 1 call + ~1 MB | Only to promote purchase, badge + attribution; written for websites |
+| Spotify | High | none (deprecated) | — | — | — |
+| Beatport | Highest | 2 min, middle of track | (site previews; not via API) | — | Partner agreement needed |
+| Traxsource / Bandcamp | Medium / long tail | site/embed | — | — | Embeds only (web view) |
 
 ## 9. Alternative and complementary metadata sources
 
-TODO — MusicBrainz + Cover Art Archive, Discogs, Deezer.
+### 9.1 MusicBrainz + Cover Art Archive
+
+Verified by manual requests:
+
+| Item | Observed / documented |
+|---|---|
+| ISRC lookup | `GET /ws/2/isrc/GBCFB1700229?inc=artist-credits&fmt=json` → **2 recordings**: "Glue" (269,066 ms; ISRCs `ES8741707116`, `GBCFB1700229`, `GBCFB1700271`) and a soundtrack edit "Glue – 'There Are 80,000 Native Irish Speakers'" (265,000 ms). ISRC ↔ recording is many-to-many in practice. |
+| Releases + labels | `GET /ws/2/release?recording={mbid}&inc=labels+release-groups+media+url-rels` (note: `labels` is not a valid `inc` on `/recording`) → 20 releases (single, EP, album, compilations, a bootleg), each with **label + catalogue number** (e.g. Ninja Tune `ZENDNLS466X`), barcode, status, release-group type, and **URL relationships** to Spotify, Deezer, Apple Music, Tidal, **Bandcamp, Beatport, Traxsource, Discogs** pages. |
+| Search | Lucene query on `/ws/2/recording?query=…` with fields such as `recording`, `artist`, `isrc`, `dur` (ms) — TODO(verify) exact field list against the search docs. |
+| Rate limit | "on average 1 request per second" per source IP; global 300/s; anonymous/generic User-Agents capped together at 50/s; over the limit → **503**. Required User-Agent "`Application name/<version> ( contact-url )`" or with a contact e-mail. Responses carry `X-RateLimit-Limit/Remaining/Reset` headers (observed; not explained on the policy page). |
+| Licence | **Core data CC0** ("effectively placing the data into the Public Domain"); supplementary data CC BY-NC-SA 3.0. Purpose-built for tagging (Picard). No clause about P2P use. |
+| Cover Art Archive | `/release/{mbid}/` → JSON index (via 307 to archive.org); `/release/{mbid}/front[-250|-500|-1200]` and `/release-group/{mbid}/front[-…]` redirect to the image; thumbnails 250/500/1200 px plus the original. "There are currently no rate limiting rules in place" (yet 503 is documented). Images remain the rights holders' property; the API carries no licence field (same position as every tagger that uses CAA). |
+| C++ client | **libmusicbrainz5**: LGPL-2.1-or-later (source headers), XML only, depends on neon + libxml2, last release 5.1.0 (2014-11-13), occasional commits (last push 2025-07-12). Not worth it: a JSON client on `QNetworkAccessManager` is ~300 lines. |
+| Electronic coverage | Good for artist albums and well-known labels; patchy for Beatport-only singles, small digital labels, white labels (community-maintained; medium confidence — measure in X5). |
+
+### 9.2 Discogs API
+
+| Item | Documented |
+|---|---|
+| Auth | None (25 req/min, no image URLs); consumer key/secret or **personal access token** (60 req/min); OAuth 1.0a for user data. Database search needs authentication (TODO(verify)). Unique User-Agent required; generic agents get harsher limits. |
+| Rate limit | Moving 60-s window per source IP; `X-Discogs-Ratelimit`, `-Used`, `-Remaining` headers; 429 over the limit. "Circumventing the rate-limit may result in a temporary or permanent ban." |
+| Data DJs value | Labels and **catalogue numbers**, **styles** (e.g. "Deep House", finer than Deezer's genres), formats (vinyl/digital), credits (remixers), master/release versions, year. Strongest for vinyl/physical electronic releases. |
+| Terms (API Terms of Use, last updated 2025-05-27; read via the Wayback copy of 2026-05-30 because the live page blocks automated reads) | **CC0 Data**: "Release titles, notes, dates, format, track listings, barcodes and other identifiers, credits, versions, URL links …", artist names, label names. **Restricted Data**: user data, marketplace data, images (user-contributed under public domain/CC0/fair-use bases). "You may not display in any format or to any audience the Content if it is more than six (6) hours older than the information on Our online properties … You may not cache or store the Content longer than is necessary to provide a service to Your application's users." Required notices: "This application uses Discogs' API but is not affiliated with, sponsored or endorsed by Discogs. 'Discogs' is a trademark of Zink Media, LLC." (prominent, may be in the docs/terms) and "Data provided by Discogs." next to Discogs data, hyperlinked, no `nofollow`. Prohibited: "Use Our API or the Content for illegal purposes"; commercial uses such as "Using Our API or the Content with the intent to drive traffic to other non-Discogs websites or services". No P2P-specific clause. |
+
+### 9.3 Deezer as a metadata source
+
+Deezer is the best **keyless** match for Spotify's catalogue: same distributors, ISRC in every search hit, label and
+UPC on albums, 1000-px covers, BPM, and the preview in the same response. Its terms carry the same P2P-association
+clause as Spotify's (D-T1) but no clause on storing metadata (only audio).
+
+### 9.4 Comparison of metadata sources for Selecta
+
+| | Spotify (dev mode) | Deezer | MusicBrainz + CAA | Discogs | iTunes Search |
+|---|---|---|---|---|---|
+| Key / account | BYO Client ID + **Premium** (owner) | none | none (UA with contact) | token (free account) for full use | none |
+| Title / artists / version | excellent | excellent (`title_version`) | good (community) | good | good |
+| ISRC | yes (`external_ids`) | yes (search hits) | yes (lookup by ISRC) | sometimes (identifiers) | no |
+| Label / cat. no. | **no / no** | yes / no | yes / yes | yes / yes | no / no |
+| Genre / style | no (empty) | coarse genre | community genres/tags | **styles** | primary genre |
+| Release date, track/disc numbers | yes | yes | yes | yes (year mostly) | yes |
+| Artwork | ≤ 640 px (TODO(verify)) | 1000 px | 250/500/1200 + original | auth only; restricted | 100 px (larger undocumented) |
+| BPM | no (audio-features removed) | yes (often 0) | no | no | no |
+| Preview | no | 30 s MP3 128 | no | no (YouTube video links only) | 30 s AAC 256 |
+| Playlist import | own/collab playlists, Liked Songs | user playlists via OAuth (app creation closed) | — | — | — |
+| Rate limit | unpublished, per account quota | 50 / 5 s (2nd-hand) | 1 / s | 60 / min | ~20 / min |
+| Storage terms | temporary cache only; never indefinitely | audio never stored | CC0 — none | ≤ 6 h; no longer than needed | previews stream only |
+| P2P-context clause | **yes (S1, S2)** | **yes (D-T1)** | no | "illegal purposes" only | promo-only use |
+| DJ relevance | matching, playlists, deep link to full track | matching, label, cover, preview | identifiers, label/catno, links to stores | catno, styles, vinyl | preview |
 
 ## 10. Deep links and purchases into the Inbox
 
-TODO
+Deep links need no API, carry no terms beyond linking, and give the maintainer full-length listening (in the
+store's or service's own player) and a path to buying. Use `QDesktopServices::openUrl`; build query strings with
+`QUrlQuery` (percent-encoding). Formats below are the sites' current public URL shapes (TODO(verify) each once in a
+browser; Selecta does not fetch them):
 
-## 11. Comparison table
+| Action | URL | Needs |
+|---|---|---|
+| Open track in Spotify | `spotify:track:<id>` (app) / `https://open.spotify.com/track/<id>` | Spotify ID (from match or MusicBrainz url-rel) |
+| Search in Spotify | `https://open.spotify.com/search/<query>` | — |
+| Search in YouTube Music | `https://music.youtube.com/search?q=<query>` | — |
+| Search on Beatport | `https://www.beatport.com/search?q=<query>` | — |
+| Search on Bandcamp | `https://bandcamp.com/search?q=<query>&item_type=t` | — |
+| Search on Traxsource | `https://www.traxsource.com/search?term=<query>` | — |
+| Search on Discogs | `https://www.discogs.com/search/?q=<query>&type=all` | — |
+| Open in Apple Music / Deezer | `trackViewUrl` from iTunes / `link` from Deezer | match |
+| Direct store page | MusicBrainz release url-rels: "purchase for download" (Bandcamp, Beatport, Traxsource, iTunes), "free streaming" (Spotify, Deezer) | MB release |
 
-TODO
+Prefer a **direct page** when MusicBrainz has one (exact release), else a search with "artist title version".
+
+**Purchases into the Inbox (OQ-12, D20).** Bandcamp and Beatport deliver purchases as browser downloads (Bandcamp:
+a ZIP for albums, single files for tracks, in the format chosen at download time; Beatport: individual files or a
+download manager — TODO(verify) current Beatport flow). Proposed flow:
+
+1. "Buy on Bandcamp/Beatport" opens the store page and remembers a **pending purchase** (release, time, store).
+2. Selecta watches the user's Downloads folder (FSEvents, read-only) for new `.zip`/audio files for 2 hours after
+   such a click, and offers "Import into Inbox?" for files whose names match the pending release. It never moves
+   anything without that confirmation; it also offers a plain "Import files…" and drag-and-drop onto the Inbox.
+3. ZIPs are extracted into `Inbox/Albums/<Artist> - <Album> (<Year>)/` (album) or `Inbox/Singles/` (single track),
+   then the normal on-arrival pipeline runs (convert to the Inbox format, tag from the matched release, embed the
+   cover; DL-3, META-4). Lossless purchases follow D11 at filing.
+4. The History records the source as "Purchase (Bandcamp)" rather than a peer, so per-peer counters and the ratio
+   are unaffected; the item can still be matched against the pending purchase's release for tags.
+
+## 11. Comparison table (all services)
+
+| Service | Metadata | Preview | Auth | Rate limit | Electronic coverage | Terms risk in a Soulseek client | Role in Selecta |
+|---|---|---|---|---|---|---|---|
+| Spotify Web API | Strong, but no label/genre in dev mode | None | PKCE, BYO Client ID, owner Premium, 5 users | Unpublished; per-account quota | High | **High** (S1–S5) | Optional matcher, playlist import, deep links/playback |
+| Deezer Simple API | Strong; label, UPC, ISRC, BPM, 1000-px art | 30 s MP3 128k | None | 50/5 s (2nd-hand) | High | **Medium–high** (D-T1; audio never stored) | Default keyless matcher + preview |
+| iTunes Search API | Good; no ISRC/label | 30 s AAC 256k | None | ~20/min | High | Medium (promo-only, badge, stream-only) | Preview fallback + store link |
+| Apple Music API | Strong; ISRC | 30 s | Paid membership + private key | Unpublished | High | Medium | Not used |
+| MusicBrainz + CAA | Good; label/catno/barcodes, store links | None | None (UA) | 1/s | Medium | **Low** (CC0) | Tag source of record, identifiers, store links, artwork |
+| Discogs | Good for vinyl; catno, styles | None | Token | 60/min | Medium–high (vinyl) | Low–medium (6-h freshness, notices) | P2 enrichment (catno, style) |
+| Beatport | Best for DJs | 2 min (site) | Partner only | — | Highest | Needs partner agreement | Deep link, purchase |
+| Traxsource | Good for house | Site/embed | None (no API) | — | High (house) | — | Deep link |
+| Bandcamp | Long tail | Embed | Labels only | — | Long tail | Scraping forbidden | Deep link, purchase |
 
 ## 12. Implications for Selecta
 
