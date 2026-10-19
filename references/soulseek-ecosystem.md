@@ -607,7 +607,7 @@ services:
   peer-nicotine:
     build: ./nicotine          # python:3.12-slim + pinned `pip install nicotine-plus==<ver>` at build time
     command: ["nicotine", "--headless", "--config", "/cfg/config", "--user-data", "/data"]
-    volumes: ["./nicotine/config:/cfg/config:ro", "./data/shares/np:/shares:ro"]
+    volumes: ["./data/np/config:/cfg/config", "./data/shares/np:/shares:ro"]   # writable: Nicotine+ rewrites its config
     networks: [slsk]
   selecta-cli:
     build: { context: .., dockerfile: devenv/Dockerfile.selecta-linux }   # headless selecta-cli + tests
@@ -619,7 +619,10 @@ volumes: { soulfind-data: {} }
 - Server address = container DNS name (`soulfind`); containers get distinct IPs, so direct *and* indirect
   (ConnectToPeer/PierceFirewall) connections can both be exercised (block a peer's inbound port with a second network or
   `iptables` in the container to force the indirect path).
-- Pull/build all images **before** starting (no registry access from an internal network); pin by digest/version.
+- `internal: true` cuts the *containers'* internet access; image pulls and builds are done by the Docker daemon
+  outside that network, so bake every dependency (e.g. `pip install nicotine-plus==<ver>`) into images at build time and
+  pin by digest/version. Nicotine+ runs headless without GTK (`IvaKap/seek@1317c84:RECON.md`: "The core runs headless
+  with GTK entirely absent").
 - To watch slskd's UI from the Mac, attach only `peer-slskd` to a second, non-internal network and publish
   `127.0.0.1:5030` (that container then has an internet route — acceptable only because its server is pinned).
 
