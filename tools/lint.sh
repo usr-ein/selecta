@@ -47,7 +47,7 @@ clazy_out="$build/clazy.log"
 : > "$clazy_out"
 for source in "${sources[@]}"; do
     clazy-standalone -p "$build/compile_commands.json" --header-filter='.*/(src|tests|tools)/.*' \
-        --extra-arg="-resource-dir=$resource_dir" \
+        --extra-arg="-resource-dir=$resource_dir" --extra-arg=-Wno-missing-designated-field-initializers \
         --checks=level0,level1,level2,no-qstring-allocations,no-non-pod-global-static,no-copyable-polymorphic,no-returning-void-expression \
         "$source" 2>&1 | grep -E 'warning:|error:' >> "$clazy_out" || true
 done

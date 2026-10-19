@@ -29,6 +29,10 @@ selecta_add_test_suite(selecta_unit_tests
         base/ClockTest.cpp
         base/LoggingTest.cpp
         base/PathsTest.cpp
+        governor/GovernorTest.cpp
+        governor/PeerLedgerTest.cpp
+        governor/QueryHygieneTest.cpp
+        governor/ReconnectPolicyTest.cpp
         governor/ServerGuardTest.cpp
         governor/TokenBucketTest.cpp
         storage/DatabaseTest.cpp
