@@ -364,12 +364,117 @@ slskd adds **daily and weekly** limits per group (files, megabytes, *failures*),
 
 ## 6. macOS share indexing
 
-TODO — being written (initial scan, FSEvents vs QFileSystemWatcher, offline volumes, iCloud dataless files,
-exclusions, TCC, symlinks, NFD/NFC).
+### 6.1 Initial scan
+
+- How the others do it: Nicotine+ walks with `os.scandir` in a **separate process**, reuses metadata when
+  `mtime` is unchanged, writes all databases, then hands them over; aioslsk walks with `os.walk` and extracts attributes
+  in a process pool; slskd scans with `Environment.ProcessorCount` workers into SQLite. All three keep a
+  `(path → mtime/size)` cache so rescans only re-read changed files.
+- Selecta: two phases on a worker thread pool, never on the GUI thread:
+  1. **Enumerate** (cheap): `fts(3)`/`readdir`+`fstatat`, or `getattrlistbulk(2)` (bulk names + attributes per
+     directory, the fastest option on APFS — inference, measure), with `lstat` semantics. Record native name bytes,
+     size, mtime, inode/device, `st_flags`. Expect seconds for 100k files on an SSD (estimate).
+  2. **Attributes** (expensive): only for new/changed audio files, reading headers with TagLib's fast audio
+     properties, parallel across cores, low I/O priority (`setiopolicy_np(IOPOL_TYPE_DISK, …, IOPOL_UTILITY)`) so
+     playback and previews stay smooth.
+- When a share root is (inside) the collection, **reuse the library scanner's rows** (LIB already reads TagLib
+  properties) instead of a second scan; NFR-2 asks for < 5 min for a 100k-track initial scan.
+- Publish atomically: build the new `ShareIndex` snapshot, swap the pointer, then send `SharedFoldersFiles`.
+
+### 6.2 Change tracking: FSEvents vs `QFileSystemWatcher`
+
+| | `QFileSystemWatcher` on macOS | FSEvents used directly |
+|---|---|---|
+| Backend | Qt's `QFseventsFileSystemWatcherEngine` (`qfilesystemwatcher_fsevents.mm`; selected in `createNativeEngine` for `Q_OS_MACOS`) | `FSEventStreamCreate`/`…RelativeToDevice` |
+| Recursion | API is per path: every directory must be added; the engine stats and keeps a listing of each (`scanForDirEntries`) and restarts the stream when paths are added | One stream per share root watches the whole tree |
+| History across restarts | Starts at `FSEventsGetCurrentEventId()`; no persistence → changes made while Selecta was closed are missed | Store the last event ID **and** `FSEventsCopyUUIDForDevice()` per volume; on start, replay since that ID ("the FSEvents service stores events in a persistent, per-volume database", `FSEvents.h`); UUID changed → full rescan |
+| Overflow | Handles `MustScanSubDirs` by rescanning watched dirs | Same flag (plus `UserDropped`/`KernelDropped`, `RootChanged`) → rescan the subtree |
+| Latency | 0.5 s, directory-level events | Configurable; directory-level events are enough |
+
+Recommendation: a small Objective-C++ `FsEventsWatcher` (one stream per root, directory-level events, latency
+≈ 2 s, `kFSEventStreamCreateFlagWatchRoot` to notice the root being moved/unmounted) that feeds **directory paths to
+re-list**; the scanner diffs each listing against the index. Keep `QFileSystemWatcher` + periodic rescans as the
+Linux/Windows fallback. Also do a slow full verification pass daily or at startup when idle (Nicotine+ rescans at
+startup and daily at 00:00 by default).
+
+### 6.3 Offline volumes and iCloud "dataless" files
+
+- **Unmounted roots**: Nicotine+ **aborts a rescan if any share root is unreadable** ("Rescan aborted due to
+  unavailable shares") so a missing external disk doesn't wipe the index. Selecta: track availability per root
+  (path exists, same volume UUID as recorded); an offline root keeps its rows but is **excluded from browse, search,
+  uploads and the counts sent to the server**; rescan when it reappears (DiskArbitration /
+  `NSWorkspaceDidMountNotification`), then resend `SharedFoldersFiles`.
+- **Dataless files** (iCloud Drive, "Optimise Mac Storage", third-party File Provider clouds): `st_flags &
+  SF_DATALESS` (`0x40000000`, `<sys/stat.h>`). `stat` still returns the real size. In a normal GUI app a `read()`
+  materialises the file (network download, reported ~1.8 s for a small file; can hang); with
+  `setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD|PROCESS,
+  IOPOL_MATERIALIZE_DATALESS_FILES_OFF)` reads fail immediately with `EDEADLK` (errno 11 on macOS). launchd jobs start
+  with materialisation off (Qiita, Apple's iCloud Drive release note as quoted by MacRumors). Selecta: set the policy
+  **off on scanner threads**, skip `SF_DATALESS` files (don't index them; show "N files are in iCloud only and are not
+  shared"), and at upload time treat `EDEADLK` as `File read error.`. Never trigger iCloud downloads to serve a peer.
+
+### 6.4 Exclusions
+
+| Category | Rule |
+|---|---|
+| Selecta's own data | Inbox, preview cache, `Originals/` (OQ-2), incomplete downloads, app-support/DB folders — **excluded by canonical path and by (device, inode) of the folder**, even if the user shares a parent such as `~/Music` (PRD SHARE-1). |
+| Hidden | Names starting with `.` (covers `.DS_Store`, `._*` AppleDouble, `.Spotlight-V100`, `.fseventsd`, `.Trashes`, `.TemporaryItems`, `.DocumentRevisions-V100`, `.localized`), and files with `UF_HIDDEN` in `st_flags`. Nicotine+'s default share filters are `.*`, `.*\`, `@eaDir\`, `#recycle\`, `#snapshot\`, `desktop.ini`, `Thumbs.db`. |
+| Other system junk | `Icon\r`, `$RECYCLE.BIN`, `System Volume Information`, `Network Trash Folder`, `Temporary Items`, `.AppleDB`, `.AppleDesktop`, `.AppleDouble`. |
+| Bundles / libraries | Packages (`*.app`, `*.photoslibrary`, `*.musiclibrary`, …) and DJ software databases (`PIONEER/`, `rekordbox` exports, Serato `_Serato_`, Traktor `NI` folders) — suggested, decision for the maintainer. |
+| Partial files | Selecta's own temp suffixes (e.g. `*.selecta-part`) and anything modified in the last few seconds (still being written). |
+| File types | Decision (§9): share audio + cover images + text companions (`.cue`, `.log`, `.nfo`, `.txt`, `.pdf` booklets) only, or everything not hidden like Nicotine+. |
+
+### 6.5 TCC (privacy prompts)
+
+- TCC applies to non-sandboxed apps too. Protected (macOS 26): `~/Desktop`, `~/Documents`, `~/Downloads`, iCloud
+  Drive, third-party cloud storage, **removable volumes**, **network volumes**, Time Machine backups (Eclectic Light,
+  2026-04-20; Apple Platform Security guide). `~/Music` is not in that list (`TODO(verify)` on macOS 26: no prompt when
+  reading `~/Music/...` files directly; the "Media & Apple Music" permission covers the Music library *APIs*).
+- **User intent wins**: a folder the user picks in an open panel can be read without a prompt, and the grant persists
+  (stored as a MACL extended attribute). Qt's native `QFileDialog` is an `NSOpenPanel`, so **adding a share via the
+  folder picker is the right flow**. Shares restored at startup in protected locations may prompt once, from the
+  scanner; add `NSDocumentsFolderUsageDescription`, `NSDesktopFolderUsageDescription`,
+  `NSDownloadsFolderUsageDescription`, `NSRemovableVolumesUsageDescription`, `NSNetworkVolumesUsageDescription` to
+  `Info.plist`.
+- Volumes mounted at boot don't seem to count as "removable"; volumes mounted later do (Eclectic Light testing).
+- Ad-hoc/unsigned builds: TCC keys grants to the code signature, so every rebuild can look like a new app; one report
+  says such builds sometimes get `EPERM` with no prompt at all. Treat `EPERM` on a share root as "permission needed",
+  show a fix-it ("re-select the folder" / Full Disk Access) rather than "folder empty". Never interpret a TCC denial as
+  "all files deleted".
+
+### 6.6 Symlinks, aliases, hard links
+
+- Nicotine+ follows symlinked directories (`DirEntry.is_dir()` follows links) and only dedups by virtual path, so a
+  loop recurses until the OS returns `ELOOP`. aioslsk uses `os.walk` (doesn't follow directory links by default).
+- Selecta: **don't follow symlinks by default** (`lstat`); optional "follow links that stay inside a share root";
+  dedupe directories by `(dev, ino)` to break cycles. Finder aliases are regular files (bookmark data) — skip them.
+  Hard links: share each path (they are legitimately separate entries).
+
+### 6.7 Unicode normalisation (NFD vs NFC) and odd characters
+
+- Qt on Darwin: `QFile::encodeName()` → **NFD** UTF-8; `QFile::decodeName()` and directory iteration
+  (`qfilesystemiterator_unix.cpp`) → **NFC** (`qfile.h`, `#ifdef Q_OS_DARWIN`). APFS preserves the stored form and
+  looks names up normalisation-insensitively; HFS+ stores NFD.
+- Peers (mostly Windows) send NFC; search terms arrive NFC. So: **wire names and index tokens = NFC**; keep the
+  **native byte path** from `readdir` in the index and open files with those exact bytes (POSIX `open`), so files on
+  exFAT/SMB/NFS volumes whose names aren't NFD still open (`TODO(verify)`: Qt NFD re-encoding vs NFC names on an SMB
+  or exFAT volume).
+- Backslash in a macOS file name conflicts with the wire separator: replace it in the virtual name (Nicotine+ uses
+  a sentinel) and map back through the index, not by string replacement.
+- Names that aren't valid UTF-8 (rare on macOS): skip and log.
 
 ## 7. Security
 
-TODO — being written.
+| Threat | Mitigation |
+|---|---|
+| **Path traversal** via `QueueUpload`, legacy `TransferRequest`, `FolderContentsRequest`, `PlaceInQueueRequest` | Never build a filesystem path from peer input. Look the (NFC, `\`-separated) virtual path up in the index; unknown → `File not shared.`. Reject NUL/control characters and over-long strings early; log `..`/absolute-path attempts as hostile. |
+| **Serving something not shared** (index stale, file replaced by a symlink, excluded folder) | At open time: index row → stored native path → `open(O_RDONLY | O_NOFOLLOW | O_CLOEXEC)` → `fstat`: regular file, same `(dev, ino)` as indexed, not `SF_DATALESS`, inside an online root. Size changed → use the new size in `TransferRequest` and schedule a rescan (slskd does the same). |
+| **Permission changes between queue and start** (ban, buddy removed, share level changed) | Re-check permission when dequeuing (Nicotine+ re-runs `file_is_shared` in `_check_upload_queue`) and at F-connection time. |
+| **Spoofed peers** | Initiate F connections ourselves to the server-provided address after `TransferResponse(allowed)`; don't accept legacy download requests directly; accept incoming F/`PierceFireWall` only for tokens we issued to that user; don't grant buddy rights to our own username. |
+| **Resource exhaustion** | Per-user token buckets for browse, folder contents, user info, place-in-queue and queue requests; per-user queue limits; a global queue cap (e.g. 10 000 entries); bounded concurrent browse transmissions (e.g. 2) and search responses; drop incoming searches when the bounded work queue is full (slskd circuit breaker 500 / concurrency 10). |
+| **Bad offsets / protocol abuse** | Validate `FileOffset ≤ size`; idle timeout on F connections (Nicotine+ 60 s); 45 s for a requested upload to start. |
+| **Information leaks** | Only aliases on the wire; error strings are fixed constants (no `strerror`, no paths); logs stay local (NFR-5). |
+| **Hostile parent flooding searches** | Searches only read the immutable index; bounded queue + per-request cap; log rates in the activity log (SAFE-4). |
 
 ## 8. Design sketch: ShareIndex + UploadManager
 
