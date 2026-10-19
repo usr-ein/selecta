@@ -357,9 +357,9 @@ Other notes:
 ### 5.2 Reading for Selecta (inference, not legal advice)
 
 1. **Tagging downloaded files (on arrival, D29) with Spotify metadata or artwork is the clearest conflict** (S3 + S4 +
-   S5, on top of S1), and the tagged files are later shared on Soulseek from the collection (D12). D29 decides to do it
-   anyway; the exposure is the user's own developer app and Spotify API access. Keep it to personal builds with the
-   user's own Client ID, add a `WOAS` link-back, and offer "Deezer first" tags as the alternative (§14.7, MQ1).
+   S5, on top of S1), and the tagged files are later shared on Soulseek from the collection (D12). **The maintainer
+   accepted this risk with D30** (PRD `e7cec6d`): the exposure is the user's own developer app (bring-your-own Client
+   ID) and its Spotify API access, explained once in a notice. §5.3 describes how to do it well.
 2. **Spotify as a lookup aid** (resolve a line to a canonical title/version/duration/ISRC for matching, show it in the
    UI with attribution and a link back, keep it in a short-TTL cache) is less exposed but still within S1/S2.
 3. **Playlist import** is the use the Policy itself half-allows (S7 exception), limited by dev mode to the user's own
@@ -367,6 +367,68 @@ Other notes:
 4. Make every Spotify feature **opt-in, behind the user's own Client ID** (§4.2), with a plain-language note on these
    terms in Settings. The non-API routes stay available: "Open in Spotify" deep links (§11), oEmbed for pasted links
    (§4.3) and importing an exported CSV (§14.6).
+
+### 5.3 D30: tagging from Spotify, done well
+
+D30 (PRD `e7cec6d`, decided after reading §5.1): files arriving in the Inbox get **title, artists, album, album
+artist, release date, track and disc numbers, ISRC and the cover from Spotify**; **label and genre**, which dev mode no
+longer returns, **from MusicBrainz by ISRC**; a one-time notice explains the risk to the user's own developer app. The
+conflict analysis above stands; this is the implementation guide.
+
+**Field mapping into ID3v2.3** (UTF-16 text, one APIC, conventions of `conversion-and-metadata.md`):
+
+| Field | Spotify source (§3.6) | Frame | Notes |
+|---|---|---|---|
+| Title | track `name` | `TIT2` | Proposed: rewrite a trailing recognised version " - Extended Mix" as " (Extended Mix)" (library note §5 classes), so `{artist} - {title}` file names (D22) stay parseable; otherwise keep Spotify's text unchanged (MQ13). |
+| Artists | track `artists[].name`, in order | `TPE1` | Join with ", " — never "/" in v2.3 (names like "AC/DC"; conversion note D-6). |
+| Album | album `name` | `TALB` | — |
+| Album artist | album `artists[].name` | `TPE2` | ", "-joined; Spotify's "Various Artists" kept as is. |
+| Release date | album `release_date` + `release_date_precision` | `TYER` (YYYY) + `TDAT` (DDMM, only when the precision is `day`) | TagLib converts `TDRC` to `TYER`/`TDAT` when saving v2.3. |
+| Track n/N | track `track_number` / album `total_tracks` | `TRCK` "n/N" | — |
+| Disc n/N | track `disc_number` / highest `disc_number` among the album's tracks | `TPOS` "n/N" | The album's `tracks` page (≤ 50 items) or `GET /albums/{id}/tracks` gives the highest disc number. |
+| ISRC | track `external_ids.isrc` | `TSRC` | — |
+| Cover | album `images[0]` ("widest first"; typically 640 × 640 JPEG) | `APIC` type 3, `image/jpeg`, empty Latin-1 description | Already ≤ 800 px, so **no resize and never upscale**. Embed the bytes unchanged if they are a baseline RGB JPEG ≤ 500 KB; otherwise re-encode as baseline sRGB JPEG, quality 90, ≤ 800 × 800 (conversion note rule). If the download fails, fall back to Deezer `cover_xl` (1000 px) scaled to 800. |
+| Link back | track `external_urls.spotify` | `WOAS` | The standard "official audio source webpage" frame; the closest a file gets to Policy §II.4's link-back. (A `WXXX` frame with description "Spotify" is an alternative for players that show `WXXX`.) |
+| Label | MusicBrainz `label-info` (below) | `TPUB` | Not `TENC` (spotDL's mistake, §8.4). |
+| Genre | MusicBrainz genres (below) | `TCON` | One plain-text value (no `(nn)` numeric reference). |
+| Catalogue number (bonus) | MusicBrainz `label-info.catalog-number` | `TXXX:CATALOGNUMBER` | Comes free with the label request. |
+| Not written | popularity, explicit, copyright lines, BPM/key | — | No `POPM`; rekordbox analyses BPM/key itself. |
+
+**Label and genre from MusicBrainz, by ISRC** (2026-10-20 checks in brackets):
+1. `GET /ws/2/isrc/{ISRC}?inc=artist-credits&fmt=json` → recordings. [The ISRC lookup returns **no releases** even with
+   `inc=releases`.] Keep recordings whose length is within ±3 s of Spotify's `duration_ms` and whose artist matches.
+2. `GET /ws/2/release?recording={MBID}&inc=labels+release-groups&fmt=json&limit=100` → releases with `label-info`
+   (label, catalogue number), `barcode`, date, status and release-group type. Pick: (a) the release whose `barcode`
+   equals Spotify's album `external_ids.upc`; else (b) title ≈ Spotify album name and date ≈ `release_date`; else (c)
+   the earliest official release whose release-group type matches Spotify's `album_type` — never a compilation or
+   DJ-mix release unless Spotify's album is one. [A barcode *search* for one Spotify/Deezer UPC found nothing: MusicBrainz
+   held a different release (the EP), so barcode equality is a tie-breaker, not a lookup key.]
+3. `GET /ws/2/release-group/{RGID}?inc=genres&fmt=json` → community genres with vote counts; if empty, try the
+   recording, then the artist (`/recording/{MBID}?inc=genres`, `/artist/{MBID}?inc=genres`). Write the highest-voted
+   genre, or nothing. [Bicep's "Glue EP": disco 2, electronic 2, house 1, techno 1 — thin, noisy votes.]
+
+Cost and rules: about 3 requests per track (cache 30 days by ISRC and by release group); at **1 request per second**
+(average per IP; 503 above it) that is ~3 s per track, done after the download, so it never delays Get tracks. Every
+request carries `User-Agent: Selecta/<version> ( https://github.com/usr-ein/selecta )` — application name, version and
+a contact URL; generic agents are throttled together. Treat **503 as routine**: back off 2 s, doubling up to 60 s, at
+most 3 tries [one 503 arrived during these checks at well under 1 request per second]. No authentication.
+
+**When MusicBrainz has no match** (404 on the ISRC — 3 of 4 club tracks in §4.4):
+1. One MusicBrainz recording search, `recording:"<title>" AND artist:"<artist>" AND dur:[<ms−3000> TO <ms+3000>]`;
+   accept only a score ≥ 90 with a matching artist, then continue at step 2 above.
+2. Deezer by ISRC (keyless): `/track/isrc:{ISRC}` → `/album/{id}` → `label` and `genres` (coarse: "Dance", "Electro",
+   "Techno/House"). Every album checked in §4.4 had a label. D30 names MusicBrainz only, so this fallback needs the
+   maintainer's yes (MQ12).
+3. Spotify's own ℗ line (album `copyrights`, type `P`, e.g. "℗ 2017 Ninja Tune") as a *suggested* label in the
+   inspector — never written automatically, because it may name a distributor.
+4. Otherwise leave `TPUB`/`TCON` empty, mark the Inbox item "label unknown" for the user to fill (DL-4), and remember
+   the miss for 24 h. Only Inbox items are ever re-checked; filed files are never re-tagged (principle 2).
+
+**One-time notice** (proposed text, shown before the first Spotify-tagged file): "Selecta writes track details and
+cover art from Spotify into your files. Spotify's developer terms don't allow apps to keep its metadata or artwork
+permanently. If Spotify objects, it can revoke the developer app (Client ID) you created for Selecta. [Use Spotify
+tags] [Use Deezer/MusicBrainz tags instead]". Inside Selecta, Spotify data still carries the Spotify logo and a link
+back (Policy §II.4).
 
 ## 6. Listen in full: official players
 
