@@ -38,6 +38,7 @@ selecta_add_test_suite(selecta_unit_tests
         governor/ServerGuardTest.cpp
         governor/TokenBucketTest.cpp
         library/FileOpsTest.cpp
+        library/HistoryStoreTest.cpp
         library/InboxStoreTest.cpp
         storage/DatabaseTest.cpp
         storage/MigrationsTest.cpp

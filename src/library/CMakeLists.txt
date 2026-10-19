@@ -2,6 +2,7 @@
 # library/: the Inbox, filing, the collection index and supersede (head implementer; ADR-009).
 qt_add_library(selecta_library STATIC
     FileOps.h FileOps.cpp
+    HistoryStore.h HistoryStore.cpp
     InboxStore.h InboxStore.cpp)
 add_library(Selecta::Library ALIAS selecta_library)
 target_link_libraries(selecta_library PUBLIC selecta_base selecta_storage Qt6::Core)
