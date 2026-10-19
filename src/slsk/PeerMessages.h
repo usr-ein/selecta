@@ -42,8 +42,7 @@ struct PeerInit
 
 } // namespace peerinit
 
-// --- Peer messages
-// -----------------------------------------------------------------------------------------------------
+// --- Peer messages ---------------------------------------------------------------------------------------------------
 enum class TransferDirection : quint32 {
     Download = 0, // legacy: the downloader asks for a file (slskd, Seeker)
     Upload = 1,   // the uploader is ready to send a file
@@ -179,7 +178,7 @@ struct PlaceInQueueRequest
 
 } // namespace peer
 
-// --- File connections: raw, unframed -------------------------------------------------------------------------------
+// --- File connections: raw, unframed ---------------------------------------------------------------------------------
 namespace file {
 
 inline constexpr qsizetype kTransferInitBytes = 4; // uploader → downloader: the transfer token

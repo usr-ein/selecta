@@ -110,7 +110,7 @@ public:
     bool isListening() const;
     quint16 listenPort() const;
 
-    // --- our requests: each consumes its permit (a connection, if one is needed, asks the PermitSource) -------------
+    // --- our requests: each consumes its permit (a connection, if one is needed, asks the PermitSource) --------------
 
     // Browse a user's shares: sharedFileListReceived() or requestFailed(). False (permit dropped) when the permit is
     // for another operation or `username` is empty.
@@ -130,8 +130,7 @@ public:
     // SearchResponse). The connection is closed once the answer is written, unless something else uses it.
     void sendSearchResponse(const QString &username, const peer::FileSearchResponse &response, SendCallback done = {});
 
-    // --- generic `P` sends (TransferManager)
-    // --------------------------------------------------------------------------
+    // --- generic `P` sends (TransferManager) -------------------------------------------------------------------------
 
     // Sends a framed peer message, opening a connection if needed.
     void sendPeerMessage(const QString &username, const QByteArray &frame, ConnectPurpose purpose,
@@ -139,8 +138,7 @@ public:
     // True while a `P` connection to `username` is established or being set up.
     bool hasPeerConnection(const QString &username) const;
 
-    // --- `F` connections (TransferManager)
-    // ----------------------------------------------------------------------------
+    // --- `F` connections (TransferManager) ---------------------------------------------------------------------------
 
     // Opens a file connection to `username` (uploads; purpose Transfer). Returns an id; fileConnectionReady() or
     // fileConnectionFailed() follows with it.
@@ -150,8 +148,7 @@ public:
     // expect). Without a filter, such requests are refused.
     void setFileConnectionFilter(std::function<bool(const QString &username)> filter);
 
-    // --- `D` connections (DistributedNode)
-    // ----------------------------------------------------------------------------
+    // --- `D` connections (DistributedNode) ---------------------------------------------------------------------------
 
     // Connects to a parent candidate at a known address: direct dial raced against ConnectToPeer (purpose
     // Distributed). distributedConnected() or distributedConnectFailed() follows.

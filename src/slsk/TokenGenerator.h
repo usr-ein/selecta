@@ -24,7 +24,7 @@ public:
     // with about a million tokens in use at once).
     quint32 next(const std::function<bool(quint32)> &inUse);
 
-    static constexpr int kMaxProbes = 1 << 20;
+    static constexpr int kMaxProbes = 1'048'576;
 
     static quint32 randomStart();
 

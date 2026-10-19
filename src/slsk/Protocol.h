@@ -3,6 +3,7 @@
 
 #include "governor/Limits.h"
 
+#include <QStringView>
 #include <QtTypes>
 
 #include <chrono>
@@ -169,7 +170,7 @@ namespace protocol {
 
 using namespace std::chrono_literals;
 
-// --- Identity (NET-9, protocol §12.2) ------------------------------------------------------------------------------
+// --- Identity (NET-9, protocol §12.2) --------------------------------------------------------------------------------
 // Major 177 is the community registry's number for experimental clients. Never 157 (official), 160 (Nicotine+),
 // 169 (seeleseek), 170 (Soulseek.NET), 175 (aioslsk) or 176 (soulseek-rs). A reserved number is requested before
 // the first live session (M9). The minor version is bumped when Selecta gains a network capability.
@@ -180,7 +181,7 @@ static_assert(kMinorVersion != 0, "the server rejects minor version 0");
 
 inline constexpr quint16 kDefaultListenPort = 2234;
 // The pseudo-user that sends server notices as private messages. Peers may never claim this name.
-inline constexpr char16_t kServerUsername[] = u"server";
+inline constexpr QStringView kServerUsername = u"server";
 // Identifier carried by every DistribSearch (ASCII '1'); messages with another value are rejected.
 inline constexpr quint32 kDistribSearchIdentifier = 49;
 

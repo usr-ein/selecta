@@ -88,6 +88,7 @@ public:
     void boolean(bool value);
     // `uint32` length and the raw bytes.
     void string(QByteArrayView raw);
+    void string(const QByteArray &raw) { string(QByteArrayView(raw)); }
     // `uint32` length and the UTF-8 bytes.
     void string(const QString &text);
     // Raw bytes, no length.

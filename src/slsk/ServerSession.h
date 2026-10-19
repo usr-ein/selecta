@@ -157,12 +157,13 @@ public:
     QString username() const { return m_username; }
     LoginInfo loginInfo() const { return m_loginInfo; }
 
-    // --- values for the post-login burst; changing them while logged in sends the update ----------------------------
+    // --- values for the post-login burst; changing them while logged in sends the update -----------------------------
     void setListenPort(quint16 port);
     void setSharedCounts(quint32 folders, quint32 files);
     void setStatus(UserStatus status); // Online or Away; other values are ignored
 
-    // --- budgeted sends: each consumes its permit. False (permit dropped) when not logged in or the input is invalid.
+    // --- budgeted sends ----------------------------------------------------------------------------------------------
+    // Each consumes its permit. False (permit dropped) when not logged in or the input is invalid.
     bool fileSearch(quint32 token, const QString &query, governor::Permit search);
     bool userSearch(const QString &username, quint32 token, const QString &query, governor::Permit search);
     bool wishlistSearch(quint32 token, const QString &query, governor::Permit search);
@@ -179,8 +180,8 @@ public:
     bool requestIndirectConnection(quint32 token, const QString &username, ConnectionType type,
                                    governor::Permit peerLookup);
 
-    // --- unbudgeted sends (core/ paces the ones the etiquette note limits: joins, room lists). False when not logged
-    // in.
+    // --- unbudgeted sends --------------------------------------------------------------------------------------------
+    // core/ paces the ones the etiquette note limits (joins, room lists). False when not logged in.
     bool watchUser(const QString &username);
     bool unwatchUser(const QString &username);
     bool requestUserStatus(const QString &username);

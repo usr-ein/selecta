@@ -51,7 +51,7 @@ struct ParentCandidate
     friend bool operator==(const ParentCandidate &, const ParentCandidate &) = default;
 };
 
-// --- Client → server -----------------------------------------------------------------------------------------------
+// --- Client → server -------------------------------------------------------------------------------------------------
 namespace toserver {
 
 struct Login
@@ -242,7 +242,7 @@ struct CantConnectToPeer
 
 } // namespace toserver
 
-// --- Server → client -----------------------------------------------------------------------------------------------
+// --- Server → client -------------------------------------------------------------------------------------------------
 namespace fromserver {
 
 // The reply to Login. On success the server greets us; on failure it names a reason.

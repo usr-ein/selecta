@@ -47,7 +47,7 @@ QByteArray frame(const Message &message)
 // the owner closes the connection.
 //
 // Not thread-safe: one reader per connection, used on that connection's thread. Holds at most one incomplete frame
-// plus the bytes appended in one call.
+// plus the bytes appended in one call; memory follows the bytes that actually arrive, never the length field alone.
 class FrameReader
 {
 public:
@@ -55,10 +55,10 @@ public:
         None,
         Oversize,    // the length field exceeds the cap for the frame's code
         TooShort,    // the length field can't even hold the code
-        Unsolicited, // the cap function refused the code outright (cap 0)
+        Unsolicited, // the cap function refused the code outright (negative cap)
     };
 
-    // Maximum payload bytes (without length and code) for a frame with this code; 0 refuses the frame outright.
+    // Maximum payload bytes (without length and code) for a frame with this code; negative refuses the frame outright.
     using CapFunction = std::function<qsizetype(quint32 code)>;
 
     FrameReader(CodeWidth width, qsizetype maxPayload);
@@ -87,6 +87,7 @@ private:
     QByteArray m_buffer;
     qsizetype m_offset = 0; // start of the unconsumed bytes in m_buffer
     qsizetype m_pendingPayload = 0;
+    quint32 m_pendingCode = 0;
     bool m_headerChecked = false;
     Error m_error = Error::None;
 };

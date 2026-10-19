@@ -29,8 +29,10 @@ const char *connectPurposeName(ConnectPurpose purpose);
 // slsk asks only when it must open a connection: requests to a user it is already connected to don't ask. Answering
 // another user's indirect connection request (dialling back with PierceFireWall) sends no lookup and isn't budgeted.
 //
-// Threading: called on the engine thread. The callback must also run on the engine thread, exactly once, now or later.
-// slsk keeps the request pending until it does, and drops a permit that arrives after the request was given up.
+// Threading: called on the engine thread. core/ runs the callback on the engine thread exactly once, on a later
+// event-loop turn (never re-entrantly from requestPeerLookup()). slsk keeps the request pending until then, tolerates
+// a callback that arrives after the requester is gone (the callback holds no raw pointer), and drops a permit that
+// arrives after the request was given up. Tests may also call back synchronously; slsk copes with that too.
 class PermitSource
 {
 public:

@@ -76,19 +76,20 @@ struct UserStats
     friend bool operator==(const UserStats &, const UserStats &) = default;
 };
 
+// File attribute codes (protocol §6.2).
+enum class AttributeCode : quint32 {
+    Bitrate = 0,
+    Duration = 1,
+    Vbr = 2,
+    Encoder = 3, // obsolete
+    SampleRate = 4,
+    BitDepth = 5,
+};
+
 // Audio attributes of a shared file (protocol §6.2). Every attribute may be missing; a missing VBR flag means
 // "unknown", never CBR: SoulseekQt sends no VBR flag at all.
 struct FileAttributes
 {
-    enum Code : quint32 {
-        kBitrate = 0,
-        kDuration = 1,
-        kVbr = 2,
-        kEncoder = 3, // obsolete
-        kSampleRate = 4,
-        kBitDepth = 5,
-    };
-
     std::optional<quint32> bitrate;    // kbps
     std::optional<quint32> duration;   // seconds
     std::optional<bool> vbr;           // any non-zero value is true
