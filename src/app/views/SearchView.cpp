@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SearchView.h"
 
+#include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
 #include "app/Presets.h"
@@ -51,10 +52,12 @@ const std::array kSampleRates{44'100, 48'000, 88'200, 96'000, 176'400, 192'000};
 const std::array kQueues{0, 5, 10, 20, 50};
 const std::array kSpeeds{0, 50, 100, 250, 500, 1000}; // KB/s
 
-QLabel *fieldLabel(const QString &text, QWidget *parent)
+// A field's label; with `buddy`, the field VoiceOver reads it for.
+QLabel *fieldLabel(const QString &text, QWidget *parent, QWidget *buddy = nullptr)
 {
     auto *label = new QLabel(text, parent);
     label->setForegroundRole(QPalette::PlaceholderText);
+    label->setBuddy(buddy);
     return label;
 }
 
@@ -146,7 +149,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     m_releaseRow->setObjectName(u"search.releaseRow"_s);
     auto *releaseLayout = new QHBoxLayout(m_releaseRow);
     releaseLayout->setContentsMargins(16, 4, 16, 4);
-    releaseLayout->addWidget(fieldLabel(tr("Release"), m_releaseRow));
+    releaseLayout->addWidget(fieldLabel(tr("Release"), m_releaseRow, m_release));
     m_release->setObjectName(u"search.release"_s);
     m_release->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     m_release->setToolTip(tr("Files are ranked and checked against this release: length first, then names"));
@@ -173,6 +176,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     m_summary->setTextFormat(Qt::RichText);
     m_status->setObjectName(u"search.status"_s);
     m_status->setTextFormat(Qt::RichText);
+    m_status->setTextInteractionFlags(Qt::LinksAccessibleByMouse | Qt::LinksAccessibleByKeyboard); // Tab, then Return
     m_status->setForegroundRole(QPalette::PlaceholderText);
     connect(m_status, &QLabel::linkActivated, this, [this](const QString &link) {
         if (link == u"refresh"_s) {
@@ -210,6 +214,8 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     m_table->setColumnWidth(SearchResultsModel::AvailabilityColumn, 125);
     m_table->setSortingEnabled(true);
     m_table->installEventFilter(this); // Return downloads
+    m_table->setAccessibleName(tr("Search results"));
+    a11y::addMenuKey(m_table);
     layout->addWidget(m_table, 1);
     m_pages->addWidget(page);
 
@@ -323,7 +329,7 @@ QWidget *SearchView::createFilterBar()
     auto *bar = new QWidget(this);
     auto *layout = new QHBoxLayout(bar);
     layout->setContentsMargins(16, 10, 16, 6);
-    layout->addWidget(fieldLabel(tr("Want"), bar));
+    layout->addWidget(fieldLabel(tr("Want"), bar, m_preset));
     m_preset->setObjectName(u"search.preset"_s);
     m_preset->setToolTip(tr("The quality you want: a preset. Get tracks and the Wishlist pick from the same ones."));
     layout->addWidget(m_preset);
@@ -388,6 +394,7 @@ QWidget *SearchView::createFilterBar()
     m_download->setToolTip(tr("Download the selected files to the Inbox, converted and tagged (Return)"));
     connect(m_download, &QPushButton::clicked, this, &SearchView::downloadSelected);
     layout->addWidget(m_download);
+    QWidget::setTabOrder(m_watch, m_download); // Tab follows the bar, left to right
     return bar;
 }
 
@@ -399,8 +406,8 @@ QWidget *SearchView::createFiltersPanel()
     grid->setContentsMargins(16, 0, 16, 8);
     grid->setHorizontalSpacing(10);
     grid->setVerticalSpacing(6);
-    const auto row = [grid, panel](int at, const QString &label) {
-        grid->addWidget(fieldLabel(label, panel), at, 0, Qt::AlignRight | Qt::AlignVCenter);
+    const auto row = [grid, panel](int at, const QString &label, QWidget *buddy = nullptr) {
+        grid->addWidget(fieldLabel(label, panel, buddy), at, 0, Qt::AlignRight | Qt::AlignVCenter);
         auto *line = new QHBoxLayout;
         line->setSpacing(8);
         grid->addLayout(line, at, 1);
@@ -419,7 +426,7 @@ QWidget *SearchView::createFiltersPanel()
     formats->addStretch(1);
 
     // The lossy rule (SRCH-3).
-    QHBoxLayout *lossy = row(1, tr("Lossy"));
+    QHBoxLayout *lossy = row(1, tr("Lossy"), m_bitrateRule);
     m_bitrateRule->setObjectName(u"search.bitrateRule"_s);
     m_bitrateRule->addItem(tr("Any bitrate"), static_cast<int>(core::SearchFilter::BitrateRule::Any));
     m_bitrateRule->addItem(tr("Exactly"), static_cast<int>(core::SearchFilter::BitrateRule::Equal));
@@ -427,6 +434,7 @@ QWidget *SearchView::createFiltersPanel()
     m_bitrateRule->addItem(tr("At most"), static_cast<int>(core::SearchFilter::BitrateRule::AtMost));
     m_bitrateRule->setSizeAdjustPolicy(QComboBox::AdjustToContents);
     m_bitrate->setObjectName(u"search.bitrate"_s);
+    m_bitrate->setAccessibleName(tr("Bitrate"));
     for (const int kbps : kBitrates) {
         m_bitrate->addItem(tr("%1 kbps").arg(kbps), kbps);
     }
@@ -442,7 +450,7 @@ QWidget *SearchView::createFiltersPanel()
     lossy->addStretch(1);
 
     // The lossless rule (SRCH-4): a minimum bit depth and the sample rates allowed.
-    QHBoxLayout *lossless = row(2, tr("Lossless"));
+    QHBoxLayout *lossless = row(2, tr("Lossless"), m_bitDepth);
     m_bitDepth->setObjectName(u"search.bitDepth"_s);
     m_bitDepth->addItem(tr("Any bit depth"), 0);
     m_bitDepth->addItem(tr("16-bit or more"), 16);
@@ -463,6 +471,8 @@ QWidget *SearchView::createFiltersPanel()
 
     // Length and the peer (SRCH-5).
     QHBoxLayout *length = row(3, tr("Length"));
+    m_minLength->setAccessibleName(tr("Shortest length"));
+    m_maxLength->setAccessibleName(tr("Longest length"));
     for (QTimeEdit *edit : {m_minLength, m_maxLength}) {
         edit->setDisplayFormat(u"m:ss"_s);
         edit->setTimeRange(QTime(0, 0), QTime(0, 59, 59));
@@ -479,7 +489,7 @@ QWidget *SearchView::createFiltersPanel()
     connect(m_freeSlot, &QCheckBox::toggled, this, &SearchView::filtersEdited);
     length->addWidget(m_freeSlot);
     length->addSpacing(8);
-    length->addWidget(fieldLabel(tr("Queue up to"), panel));
+    length->addWidget(fieldLabel(tr("Queue up to"), panel, m_maxQueue));
     m_maxQueue->setObjectName(u"search.maxQueue"_s);
     for (const int queue : kQueues) {
         m_maxQueue->addItem(queue == 0 ? tr("Any") : QString::number(queue), queue);
@@ -487,7 +497,7 @@ QWidget *SearchView::createFiltersPanel()
     connect(m_maxQueue, &QComboBox::activated, this, &SearchView::filtersEdited);
     length->addWidget(m_maxQueue);
     length->addSpacing(8);
-    length->addWidget(fieldLabel(tr("Speed at least"), panel));
+    length->addWidget(fieldLabel(tr("Speed at least"), panel, m_minSpeed));
     m_minSpeed->setObjectName(u"search.minSpeed"_s);
     m_minSpeed->setToolTip(tr("Hide files from peers whose upload speed, as the server reports it, is lower"));
     for (const int speed : kSpeeds) {
@@ -505,7 +515,7 @@ QWidget *SearchView::createFiltersPanel()
     connect(m_strict, &QCheckBox::toggled, this, &SearchView::filtersEdited);
     other->addWidget(m_strict);
     other->addSpacing(16);
-    other->addWidget(fieldLabel(tr("Already have"), panel));
+    other->addWidget(fieldLabel(tr("Already have"), panel, m_owned));
     m_owned->setObjectName(u"search.owned"_s);
     m_owned->addItem(tr("Show"), static_cast<int>(core::SearchFilter::OwnedResults::Show));
     m_owned->addItem(tr("Dim"), static_cast<int>(core::SearchFilter::OwnedResults::Dim));
@@ -515,7 +525,8 @@ QWidget *SearchView::createFiltersPanel()
     other->addSpacing(16);
     m_excluded->setObjectName(u"search.excluded"_s);
     m_excluded->setPlaceholderText(tr("Leave out words"));
-    m_excluded->setClearButtonEnabled(true);
+    m_excluded->setAccessibleName(tr("Leave out words"));
+    a11y::addClearButton(m_excluded);
     m_excluded->setToolTip(tr("Hide files whose path contains any of these words"));
     m_excluded->setMaximumWidth(260);
     connect(m_excluded, &QLineEdit::editingFinished, this, &SearchView::filtersEdited);

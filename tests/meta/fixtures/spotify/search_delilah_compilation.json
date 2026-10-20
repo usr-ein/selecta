@@ -1,0 +1,46 @@
+{
+  "tracks": {
+    "items": [
+      {
+        "album": {
+          "album_type": "compilation",
+          "artists": [
+            {
+              "id": "0LyfQWJT6nXafLPZqxe9Of",
+              "name": "Various Artists",
+              "type": "artist"
+            }
+          ],
+          "id": "PoPViRaLCoMPiLaTioN001",
+          "images": [],
+          "name": "Pop Viral",
+          "release_date": "2023-06-15",
+          "release_date_precision": "day",
+          "total_tracks": 50,
+          "type": "album"
+        },
+        "artists": [
+          {
+            "id": "FReDAGaiNArTiST0000001",
+            "name": "Fred again..",
+            "type": "artist"
+          }
+        ],
+        "disc_number": 1,
+        "duration_ms": 250702,
+        "explicit": false,
+        "external_ids": {
+          "isrc": "GBAHS2201028"
+        },
+        "id": "DeLiLaHPoPViRaL0000001",
+        "is_local": false,
+        "name": "Delilah (Pull Me Out of This)",
+        "track_number": 26,
+        "type": "track"
+      }
+    ],
+    "limit": 10,
+    "offset": 0,
+    "total": 1
+  }
+}

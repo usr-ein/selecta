@@ -457,7 +457,7 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
         store(*line);
         return;
     }
-    const RankedChoices choices = FileRanking::rank(*line, outcome, m_filter);
+    const RankedChoices choices = FileRanking::rank(*line, outcome, m_filter, m_peerLoad);
     line->message.clear();
     if (choices.files.isEmpty()) {
         line->best.reset();
@@ -522,15 +522,29 @@ void GetTracksService::download(const QList<qint64> &ids)
         }
         return chosen;
     }();
+    using DownloadState = GetLine::DownloadState;
+    // Spread the batch over the peers that have the same file (BATCH-7), counting what's already on its way.
+    QHash<QString, int> load;
+    for (const GetLine &line : std::as_const(m_lines)) {
+        if (line.best &&
+            (line.downloadState == DownloadState::Queued || line.downloadState == DownloadState::Transferring)) {
+            ++load[line.best->peer];
+        }
+    }
     for (const qint64 id : order) {
         GetLine *line = lineWithId(id);
         if (line == nullptr || !line->best) {
             continue;
         }
-        using DownloadState = GetLine::DownloadState;
         if (line->downloadState != DownloadState::None && line->downloadState != DownloadState::Failed) {
             continue; // on its way, or already in the Inbox
         }
+        if (const qsizetype pick = spreadChoice(*line->best, line->alternatives, load); pick >= 0) {
+            const FileChoice previous = *line->best;
+            line->best = line->alternatives.takeAt(pick);
+            line->alternatives.prepend(previous); // still the first to try if this one fails
+        }
+        ++load[line->best->peer];
         startDownload(*line);
     }
 }

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/EditTagsDialog.h"
 
+#include "app/Accessibility.h"
+
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -49,7 +51,7 @@ EditTagsDialog::EditTagsDialog(const QString &fileName, const convert::MetadataM
     for (const auto &[key, label] : fields) {
         auto *edit = new QLineEdit(tags.values(key).join(u", "_s), this);
         edit->setObjectName(u"dialog.editTags."_s + key.toString().toLower());
-        edit->setClearButtonEnabled(true);
+        a11y::addClearButton(edit);
         edit->setMinimumWidth(320);
         form->addRow(label, edit);
         m_fields.insert(key.toString(), edit);

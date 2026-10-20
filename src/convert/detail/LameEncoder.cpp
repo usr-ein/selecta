@@ -101,16 +101,11 @@ private:
     std::vector<unsigned char> m_buffer;
 };
 
-bool isMpeg1Rate(int rate)
-{
-    return rate == 32000 || rate == 44100 || rate == 48000;
-}
-
 } // namespace
 
 Result<std::unique_ptr<Encoder>> createMp3Encoder(Mp3Settings settings, EncoderFormat format, Sink &sink)
 {
-    if (!isMpeg1Rate(format.sampleRate)) {
+    if (!isMp3SampleRate(format.sampleRate)) {
         return makeError(ErrorCode::InvalidArgument,
                          u"MP3 output needs 32, 44.1 or 48 kHz, not %1 Hz"_s.arg(format.sampleRate));
     }

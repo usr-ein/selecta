@@ -85,6 +85,7 @@ audio::StreamInfo asStreamInfo(const SourceQuality &source)
     return info;
 }
 
+// A measured frequency (a cut-off, a bandwidth), to a tenth of a kilohertz; sample rates use describeRate().
 QString kiloHertz(int hz)
 {
     return hz % 1000 == 0 ? u"%1 kHz"_s.arg(hz / 1000) : u"%1 kHz"_s.arg(hz / 1000.0, 0, 'f', 1);
@@ -191,14 +192,18 @@ Decision losslessSource(const SourceQuality &source, SourceClass sourceClass, Ta
     const bool suspect = sourceClass == SourceClass::LosslessSuspect;
     const bool other = sourceClass == SourceClass::OtherLossless;
     if (target == Target::Mp3Top || target == Target::Mp3Other) {
-        decision.action = suspect ? Action::Ask : Action::Convert; // a second-generation lossy file, if suspect
+        // Asks before a second-generation lossy file (suspect) and before a raised rate (a source below what MP3
+        // stores, or a higher rate chosen), neither of which gains anything.
+        decision.action = suspect || resolved.upsample ? Action::Ask : Action::Convert;
         if (suspect) {
             decision.notices.append(Notice::Suspect);
         }
         if (other) {
             decision.notices.append(Notice::NotPlayable); // why it's converted
         }
-        if (resolved.resample) {
+        if (resolved.upsample) {
+            decision.notices.append(Notice::Upsample);
+        } else if (resolved.resample) {
             decision.notices.append(Notice::Resample);
         }
         return decision;
@@ -251,6 +256,8 @@ Decision lossySource(const SourceQuality &source, SourceClass sourceClass, Targe
 {
     Decision decision;
     const bool toMp3 = target == Target::Mp3Top || target == Target::Mp3Other;
+    // An MP3 320 or V0-class file meets an MP3 320 target (CONV-2).
+    const bool atTarget = sourceClass == SourceClass::Mp3High && target == Target::Mp3Top;
     const bool higher = resolved.upsample || resolved.bitDepth > 16;
     if (!toMp3 && higher) {
         decision.action = Action::Refuse; // ⛔: a lossy file can't fill a higher rate or depth
@@ -260,15 +267,18 @@ Decision lossySource(const SourceQuality &source, SourceClass sourceClass, Targe
         // rekordbox can't play it: converting is the only way in, with confirmation either way (D-5).
         decision.action = Action::Ask;
         decision.notices = {Notice::NotPlayable, toMp3 ? Notice::Generation : Notice::LossyToLossless};
-    } else if (sourceClass == SourceClass::Mp3High && target == Target::Mp3Top) {
+    } else if (atTarget && !resolved.resample) {
         decision.action = Action::KeepAsIs; // CONV-2: an MP3 at the target isn't re-encoded
     } else if (context == AdviceContext::Filing) {
         // The arrival pipeline doesn't re-encode lossy audio it can't improve: kept with fresh tags, and marked.
         decision.action = Action::KeepAsIs;
         if (sourceClass == SourceClass::Aac) {
             decision.badge = Badge::FormatDiffers;
+        } else if (toMp3 && !atTarget && effectiveKbps(source) < mp3Kbps(settings.mp3)) {
+            decision.badge = Badge::BelowTarget;
         } else if (toMp3) {
-            decision.badge = effectiveKbps(source) < mp3Kbps(settings.mp3) ? Badge::BelowTarget : Badge::None;
+            // At the target's quality but not at the rate it asks for (e.g. 44.1 kHz kept when the target is 48 kHz).
+            decision.badge = resolved.resample ? Badge::FormatDiffers : Badge::None;
         } else {
             decision.badge = sourceClass == SourceClass::Mp3High ? Badge::FormatDiffers : Badge::BelowTarget;
         }
@@ -282,11 +292,16 @@ Decision lossySource(const SourceQuality &source, SourceClass sourceClass, Targe
         decision.action = Action::Ask;
         decision.notices = {Notice::Generation};
     }
-    if (decision.action != Action::KeepAsIs && resolved.resample) {
-        addUnique(decision.notices, Notice::Resample);
-    }
-    if (decision.action != Action::KeepAsIs && settings.format == OutputFormat::Wav) {
-        addUnique(decision.notices, Notice::WavTags);
+    if (decision.action != Action::KeepAsIs) {
+        // Every action here asks already; a raised rate (MP3 only: lossless ones are refused above) says so.
+        if (resolved.upsample) {
+            addUnique(decision.notices, Notice::Upsample);
+        } else if (resolved.resample) {
+            addUnique(decision.notices, Notice::Resample);
+        }
+        if (settings.format == OutputFormat::Wav) {
+            addUnique(decision.notices, Notice::WavTags);
+        }
     }
     return decision;
 }
@@ -352,7 +367,7 @@ QString suspectDetail(const SourceQuality &source)
     }
     if (report.hasFinding(QualityFinding::LikelyUpsampled)) {
         parts.append(u"This %1 file has no content above %2; it was probably upsampled."_s.arg(
-            kiloHertz(report.sampleRate), kiloHertz(report.contentBandwidthHz)));
+            describeRate(report.sampleRate), kiloHertz(report.contentBandwidthHz)));
     }
     return parts.join(u' ');
 }
@@ -436,6 +451,15 @@ Advice advise(const SourceQuality &source, const EncodeSettings &target, AdviceC
     }
     advice.action = decision.action;
     advice.badge = decision.badge;
+    if (advice.action == Action::KeepAsIs) {
+        // The original audio is filed: the output is the source, not what the target would have made of it.
+        EncodeSettings original = target;
+        original.format = OutputFormat::KeepAudio;
+        const ResolvedOutput kept = resolveOutput(asStreamInfo(source), original);
+        advice.outputSampleRate = kept.sampleRate;
+        advice.outputBitDepth = kept.bitDepth;
+        advice.sizeFactor = 1.0;
+    }
     // Warnings first, then information, each group in the order it was added.
     std::ranges::stable_partition(decision.notices, isWarning);
     advice.notices = decision.notices;
@@ -463,9 +487,23 @@ NoticeText describeNotice(Notice notice, const SourceQuality &source, const Enco
         return {u"Generation loss"_s, u"Re-encoding a lossy file to another lossy format loses quality each time. Keep "
                                       "the original if you can."_s};
     case Notice::Upsample:
-        return {u"No quality gain — larger file"_s,
-                u"Raising %1 to %2 adds no information; the file becomes %3 larger."_s.arg(
-                    kiloHertz(source.sampleRate), kiloHertz(advice.outputSampleRate), factorText(advice.sizeFactor))};
+        if (target.format == OutputFormat::Mp3) {
+            // An MP3's size follows its bitrate, not its rate: what the user should know is that nothing is gained.
+            if (isMp3SampleRate(source.sampleRate)) {
+                return {u"No quality gain — upsampled"_s,
+                        u"Raising %1 to %2 adds no information; MP3 can store %1 as it is."_s.arg(
+                            describeRate(source.sampleRate), describeRate(advice.outputSampleRate))};
+            }
+            return {u"No quality gain — upsampled"_s,
+                    u"Selecta writes MP3 at 32, 44.1 or 48 kHz, so %1 is raised to %2. That adds no information: the "
+                    "MP3 holds nothing above %3."_s.arg(describeRate(source.sampleRate),
+                                                        describeRate(advice.outputSampleRate),
+                                                        describeRate(source.sampleRate / 2))};
+        }
+        return {
+            u"No quality gain — larger file"_s,
+            u"Raising %1 to %2 adds no information; the file becomes %3 larger."_s.arg(
+                describeRate(source.sampleRate), describeRate(advice.outputSampleRate), factorText(advice.sizeFactor))};
     case Notice::UpDepth:
         return {u"No quality gain"_s,
                 u"Converting %1-bit to %2-bit only pads with zeros."_s.arg(source.bitDepth).arg(advice.outputBitDepth)};
@@ -477,21 +515,25 @@ NoticeText describeNotice(Notice notice, const SourceQuality &source, const Enco
                 "generation) or AIFF (no further loss, large)."_s};
     case Notice::HardwareRate:
         return {u"May not play on your players"_s,
-                u"%1 / %2-bit exceeds %3 (max %4 / %5-bit)."_s.arg(kiloHertz(advice.outputSampleRate))
+                u"%1 / %2-bit exceeds %3 (max %4 / %5-bit)."_s.arg(describeRate(advice.outputSampleRate))
                     .arg(advice.outputBitDepth)
-                    .arg(hardware.name, kiloHertz(hardware.maxSampleRate))
+                    .arg(hardware.name, describeRate(hardware.maxSampleRate))
                     .arg(hardware.maxBitDepth)};
     case Notice::WavTags:
         return {u"Tags limited in WAV"_s,
                 u"rekordbox reads only basic RIFF INFO from WAV: no artwork, label or key. Use "
                 "AIFF to keep them."_s};
-    case Notice::Resample:
-        return {
-            u"Resampled to %1"_s.arg(kiloHertz(advice.outputSampleRate)),
-            target.format == OutputFormat::Mp3
-                ? u"MP3 cannot store %1; Selecta uses a high-quality SoX resampler."_s.arg(kiloHertz(source.sampleRate))
-                : u"%1 becomes %2 (your players' limit or your choice); Selecta uses a high-quality SoX resampler."_s
-                      .arg(kiloHertz(source.sampleRate), kiloHertz(advice.outputSampleRate))};
+    case Notice::Resample: {
+        const QString shortText = u"Resampled to %1"_s.arg(describeRate(advice.outputSampleRate));
+        if (target.format == OutputFormat::Mp3 && !isMp3SampleRate(source.sampleRate)) {
+            return {shortText, u"MP3 cannot store %1; Selecta uses a high-quality SoX resampler."_s.arg(
+                                   describeRate(source.sampleRate))};
+        }
+        // Otherwise the rate was chosen, or (lossless, automatic) capped at the players' limit (D-3).
+        const QString why = target.sampleRate != 0 ? u"as you chose"_s : u"your players' limit"_s;
+        return {shortText, u"%1 becomes %2, %3; Selecta uses a high-quality SoX resampler."_s.arg(
+                               describeRate(source.sampleRate), describeRate(advice.outputSampleRate), why)};
+    }
     case Notice::Dither:
         return {u"Reduced to 16-bit with dither"_s,
                 u"TPDF dither avoids quantisation distortion when reducing bit depth."_s};
@@ -508,8 +550,8 @@ QString describeSource(const SourceQuality &source)
     const QString name = formatName(source);
     if (source.lossless) {
         return source.bitDepth > 0
-                   ? u"%1 %2-bit / %3"_s.arg(name).arg(source.bitDepth).arg(kiloHertz(source.sampleRate))
-                   : u"%1 / %2"_s.arg(name, kiloHertz(source.sampleRate));
+                   ? u"%1 %2-bit / %3"_s.arg(name).arg(source.bitDepth).arg(describeRate(source.sampleRate))
+                   : u"%1 / %2"_s.arg(name, describeRate(source.sampleRate));
     }
     if (source.codec == Codec::Mp3 && source.constantBitrate) {
         return u"MP3 %1 kbps CBR"_s.arg(source.bitrateKbps);

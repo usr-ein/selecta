@@ -325,6 +325,64 @@ TEST_F(MusicBrainzClientTest, RequestsStartAtLeastElevenHundredMillisecondsApart
     ASSERT_TRUE(spinUntil([&] { return future.isFinished(); }));
 }
 
+TEST(MusicBrainzJson, GenreTiesAreBrokenByTheNextLevelsVotes)
+{
+    // Seen live (2026-10-20): "Glue" had one vote each for disco, electronic, house and techno, which MusicBrainz lists
+    // alphabetically: "disco" was tagged.
+    const QList<mb::Genre> group = {{u"disco"_s, 1}, {u"electronic"_s, 1}, {u"house"_s, 1}, {u"techno"_s, 1}};
+    EXPECT_TRUE(mbjson::leadingGenresTied({group}));
+    EXPECT_EQ(mbjson::rankedGenres({group}).constFirst(), u"disco"_s); // nothing to tell them apart yet
+    const QList<mb::Genre> recording = {{u"house"_s, 1}, {u"techno"_s, 1}};
+    EXPECT_TRUE(mbjson::leadingGenresTied({group, recording}));
+    const QList<mb::Genre> artist = {{u"electronic"_s, 9}, {u"house"_s, 4}, {u"techno"_s, 6}, {u"ambient"_s, 12}};
+    // Lexicographic: the recording's votes first, then the artist's; genres the first level lacks never enter.
+    EXPECT_EQ(mbjson::rankedGenres({group, recording, artist}),
+              (QStringList{u"techno"_s, u"house"_s, u"electronic"_s, u"disco"_s}));
+    EXPECT_FALSE(mbjson::leadingGenresTied({group, recording, artist}));
+    EXPECT_EQ(mbjson::rankedGenres({group, artist}).constFirst(), u"electronic"_s);
+    // The first level's own votes always come first.
+    const QList<mb::Genre> voted = {{u"house"_s, 3}, {u"disco"_s, 1}};
+    EXPECT_FALSE(mbjson::leadingGenresTied({voted}));
+    EXPECT_EQ(mbjson::rankedGenres({voted, {{u"disco"_s, 50}}}), (QStringList{u"house"_s, u"disco"_s}));
+    EXPECT_TRUE(mbjson::rankedGenres({}).isEmpty());
+    EXPECT_FALSE(mbjson::leadingGenresTied({}));
+}
+
+TEST_F(MusicBrainzClientTest, ATieAtTheTopAsksTheNextLevelsUntilOneBreaksIt)
+{
+    network.enqueue("GET", mbUrl(u"/isrc/"_s), FakeResponse::json(fixture(u"musicbrainz/isrc_lookup.json"_s)));
+    network.enqueue("GET", mbUrl(u"/release\\?"_s), FakeResponse::json(fixture(u"musicbrainz/releases.json"_s)));
+    network.enqueue("GET", mbUrl(u"/release-group/"_s + kSingleGroup),
+                    FakeResponse::json(R"({"genres":[{"name":"disco","count":1},{"name":"electronic","count":1},)"
+                                       R"({"name":"house","count":1},{"name":"techno","count":1}]})"));
+    network.enqueue("GET", mbUrl(u"/recording/"_s + kRecording), FakeResponse::json(R"({"genres":[]})"));
+    network.enqueue("GET", mbUrl(u"/artist/"_s),
+                    FakeResponse::json(R"({"genres":[{"name":"electronic","count":7},{"name":"house","count":3}]})"));
+    const auto result = wait(client->enrich(glassHarbour()));
+    ASSERT_TRUE(result.has_value() && result->ok());
+    EXPECT_EQ(result->value().genres, (QStringList{u"electronic"_s, u"house"_s, u"disco"_s, u"techno"_s}));
+    EXPECT_TRUE(result->value().reasons.join(u" "_s).contains(u"tie broken by the artist"_s));
+    EXPECT_EQ(network.requestCount(), 5);
+}
+
+TEST_F(MusicBrainzClientTest, NoTieNoExtraRequestAndAFailedTieBreakKeepsTheGenres)
+{
+    scriptHappyPath(); // house 3, electronic 1
+    ASSERT_TRUE(wait(client->enrich(glassHarbour()))->ok());
+    EXPECT_EQ(network.requestCount(), 3);
+
+    cache.removePrefix({});
+    network.enqueue("GET", mbUrl(u"/isrc/"_s), FakeResponse::json(fixture(u"musicbrainz/isrc_lookup.json"_s)));
+    network.enqueue("GET", mbUrl(u"/release\\?"_s), FakeResponse::json(fixture(u"musicbrainz/releases.json"_s)));
+    network.enqueue("GET", mbUrl(u"/release-group/"_s + kSingleGroup),
+                    FakeResponse::json(R"({"genres":[{"name":"disco","count":2},{"name":"house","count":2}]})"));
+    network.setDefault("GET", mbUrl(u"/recording/"_s), FakeResponse::json("{}", 500));
+    const auto result = wait(client->enrich(glassHarbour()));
+    ASSERT_TRUE(result.has_value() && result->ok());
+    EXPECT_EQ(result->value().genres, (QStringList{u"disco"_s, u"house"_s}));
+    EXPECT_TRUE(result->value().reasons.join(u" "_s).contains(u"genres unavailable"_s));
+}
+
 TEST_F(MusicBrainzClientTest, GenresFallBackToTheRecordingThenTheArtist)
 {
     network.enqueue("GET", mbUrl(u"/isrc/"_s), FakeResponse::json(fixture(u"musicbrainz/isrc_lookup.json"_s)));

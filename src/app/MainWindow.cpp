@@ -5,11 +5,13 @@
 #include "app/Icons.h"
 #include "app/Inspector.h"
 #include "app/NavModel.h"
+#include "app/Notifications.h"
 #include "app/PlayerBar.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/Sidebar.h"
 #include "app/Toasts.h"
+#include "app/WaveformView.h"
 #include "app/views/ActivityView.h"
 #include "app/views/BrowseView.h"
 #include "app/views/CollectionView.h"
@@ -53,6 +55,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <utility>
+
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
 
@@ -87,6 +91,12 @@ Appearance nextAppearance(Appearance appearance)
     return Appearance::System;
 }
 
+// Audio the preview cache holds: a peer's file or YouTube's (a Deezer clip lives in memory; a file is the user's).
+bool isCachedPreview(const QString &identity)
+{
+    return identity.startsWith(u"peer|"_s) || identity.startsWith(u"youtube|"_s);
+}
+
 } // namespace
 
 MainWindow::MainWindow(AppServices services, QWidget *parent)
@@ -100,12 +110,31 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     setMinimumSize(kMinimumWidth, kMinimumHeight);
     setUnifiedTitleAndToolBarOnMac(true);
 
+    // System notifications and the Dock badge (UI-6). The user is away while this window isn't the active one: Selecta
+    // is in the background or its window in the Dock. (With one of Selecta's dialogs in front, macOS keeps a
+    // notification quiet anyway, Selecta being the active app.)
+    m_notifier = new Notifier(m_services.notifications, [this] { return !isActiveWindow(); }, this);
+    m_notifier->setEnabled(m_services.settings.showNotifications());
+    connect(m_notifier, &Notifier::badgeChanged, this, [](int count) { qGuiApp->setBadgeNumber(count); });
+    connect(m_notifier, &Notifier::activated, this, &MainWindow::showNotificationTarget);
+
     createCentralArea();
     createViews();
     createNotifications();
     createActions();
     createMenus();
     createToolBar();
+    // Tab goes from the sidebar to the view and its inspector, then to the waveform under them (UI-5); the player was
+    // built first, for the views to connect to it.
+    QWidget *lastOfContent = nullptr;
+    for (QWidget *next = m_contentSplitter->nextInFocusChain(); next != this; next = next->nextInFocusChain()) {
+        if (m_contentSplitter->isAncestorOf(next) && next->focusPolicy() != Qt::NoFocus) {
+            lastOfContent = next;
+        }
+    }
+    if (auto *waveform = m_player->findChild<WaveformView *>(); waveform != nullptr && lastOfContent != nullptr) {
+        QWidget::setTabOrder(lastOfContent, waveform);
+    }
     restoreSavedState();
 
     connect(&m_services.engine, &core::EngineHost::pausedChanged, this, [this](bool paused) {
@@ -210,6 +239,23 @@ void MainWindow::createNotifications()
             });
     connect(&m_services.engine, &core::EngineHost::albumChanged, this, &MainWindow::albumChanged);
     connect(&m_services.engine, &core::EngineHost::albumReported, this, &MainWindow::albumReported);
+
+    // What also reaches the system while the user is away (UI-6, NET-7); the Notifier decides.
+    const core::EngineHost &engine = m_services.engine;
+    connect(&engine, &core::EngineHost::messageAdded, m_notifier, &Notifier::messageAdded);
+    connect(&engine, &core::EngineHost::roomLineAdded, m_notifier, &Notifier::roomLineAdded);
+    connect(&engine, &core::EngineHost::albumReported, m_notifier, &Notifier::albumReported);
+    connect(&engine, &core::EngineHost::albumChanged, m_notifier, &Notifier::albumChanged);
+    connect(&engine, &core::EngineHost::wishlistFound, m_notifier, &Notifier::wishlistFound);
+    connect(&engine, &core::EngineHost::getLinesReset, m_notifier, &Notifier::getLinesReset);
+    connect(&engine, &core::EngineHost::getLineChanged, m_notifier, &Notifier::getLineChanged);
+    m_notifier->getLinesReset(engine.getLines()); // downloads that resume join the first batch
+    // A Get tracks batch that finished: what arrived, and what didn't.
+    connect(m_notifier, &Notifier::getTracksFinished, this, [this](const FinishedBatch &batch) {
+        const SystemNotification words = Notifier::batchNotification(batch);
+        m_toasts->show(words.title, words.body, batch.failed > 0 ? Toasts::Kind::Warning : Toasts::Kind::Good,
+                       {{tr("Show"), [this, view = words.target.view] { navigateTo(view); }}});
+    });
 
     // Items the user moves to the Trash go in one notification per gesture, with Undo.
     m_trashedTimer = new QTimer(this);
@@ -328,6 +374,7 @@ void MainWindow::createViews()
     });
     m_inboxView = new InboxView(m_services.engine, m_stack);
     m_inboxView->setLibraryConfig(m_services.settings.libraryConfig());
+    m_inboxView->setAnalysisCache(m_services.preview.sharedAnalysisCache());
     addView(u"inbox"_s, m_inboxView, [this] { return m_inboxView->summary(); });
     m_inspector->addPanel(u"inbox"_s, m_inboxView->inspectorPanel());
     connect(m_inboxView, &InboxView::summaryChanged, this, [this] {
@@ -356,6 +403,7 @@ void MainWindow::createViews()
                 m_playingKey = key;
                 m_playingIdentity = identity;
                 m_services.preview.preview({source, {title, artist, label}, identity});
+                refreshPreviewActions();
             });
     connect(&m_services.engine, &core::EngineHost::previewRefused, this,
             [this](const QString &key, const QString &why) {
@@ -581,7 +629,27 @@ void MainWindow::refreshUnread()
 {
     const int unread = m_messagesView->unread();
     m_navModel->setCount(u"messages"_s, unread);
-    qGuiApp->setBadgeNumber(unread); // the Dock icon (UI-6)
+    m_notifier->setUnreadMessages(unread); // the Dock icon counts them, with what arrived while away (UI-6)
+}
+
+void MainWindow::showNotificationTarget(const NotificationTarget &target)
+{
+    // Selecta came forward (the sink made it the active app); its window follows, even from the Dock. A window kept off
+    // the screen (headless runs) stays where it is: coming forward would take the keyboard from whatever the user is
+    // doing, for a window nobody can see.
+    if (!testAttribute(Qt::WA_DontShowOnScreen)) {
+        setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+        raise();
+        activateWindow();
+    }
+    if (target.view == u"messages"_s && !target.argument.isEmpty()) {
+        messagePeer(target.argument);
+    } else if (target.view == u"rooms"_s && !target.argument.isEmpty()) {
+        navigateTo(u"rooms"_s);
+        m_roomsView->openRoom(target.argument);
+    } else if (!navigateTo(target.view)) {
+        qCWarning(lcUi) << "a notification asked for an unknown view" << target.view;
+    }
 }
 
 void MainWindow::messagePeer(const QString &peer)
@@ -619,7 +687,8 @@ void MainWindow::createSettingsView()
     // Caches (CACHE-2): sizes when Settings opens, and after each is emptied.
     const auto showCaches = [this](const core::CacheStatus &status) {
         audio::AnalysisCache *waveforms = m_services.preview.analysisCache();
-        m_settingsView->setCacheSizes(status, waveforms ? waveforms->totalBytes() : 0);
+        m_settingsView->setCacheSizes(status, waveforms ? waveforms->totalBytes() : 0,
+                                      waveforms ? waveforms->budgetBytes() : 0);
     };
     connect(&m_services.engine, &core::EngineHost::cachesChanged, this, showCaches);
     connect(this, &MainWindow::viewChanged, this, [this](const QString &id) {
@@ -679,6 +748,11 @@ void MainWindow::createSettingsView()
     connect(m_settingsView, &SettingsView::networkPasswordSubmitted, &m_services.engine,
             &core::EngineHost::setNetworkPassword);
     connect(m_settingsView, &SettingsView::connectRequested, &m_services.engine, &core::EngineHost::connectNetwork);
+    m_settingsView->setShowNotifications(m_services.settings.showNotifications());
+    connect(m_settingsView, &SettingsView::showNotificationsChanged, this, [this](bool show) {
+        m_services.settings.setShowNotifications(show);
+        m_notifier->setEnabled(show);
+    });
     m_settingsView->setPreviewSettings(m_services.settings.previewSource(), m_services.settings.ytDlpPath());
     connect(m_settingsView, &SettingsView::previewSourceChanged, this,
             [this](core::PreviewSource source) { m_services.settings.setPreviewSource(source); });
@@ -757,6 +831,11 @@ void MainWindow::createActions()
     keep->setObjectName(u"shortcut.keepPreview"_s);
     keep->setContext(Qt::WindowShortcut);
     connect(keep, &QShortcut::activated, this, &MainWindow::keepPreview);
+    // D, beside K: ⌫ (the mock's key) already removes the selected rows in Get tracks and the Wishlist.
+    auto *discard = new QShortcut(QKeySequence(Qt::Key_D), this);
+    discard->setObjectName(u"shortcut.discardPreview"_s);
+    discard->setContext(Qt::WindowShortcut);
+    connect(discard, &QShortcut::activated, this, &MainWindow::discardPreview);
 
     playback::Player &player = m_services.preview.player();
     const std::array skips{
@@ -789,6 +868,12 @@ void MainWindow::createActions()
     keepAction->setToolTip(tr("Put the peer's file you're hearing into your Inbox, without downloading it again (K)"));
     connect(keepAction, &QAction::triggered, this, &MainWindow::keepPreview);
     m_playbackActions.append(keepAction);
+    m_discardPreview = new QAction(icons::symbol(u"trash"_s, u"edit-delete"_s), tr("Discard Preview"), this);
+    m_discardPreview->setObjectName(u"action.discardPreview"_s);
+    m_discardPreview->setToolTip(tr("Delete the preview you're hearing from the preview cache (D)"));
+    connect(m_discardPreview, &QAction::triggered, this, &MainWindow::discardPreview);
+    m_playbackActions.append(m_discardPreview);
+    m_player->addPreviewAction(m_discardPreview, u"player.discard"_s);
     m_followSelection = new QAction(tr("Preview as You Move"), this);
     m_followSelection->setObjectName(u"action.followSelection"_s);
     m_followSelection->setCheckable(true);
@@ -814,8 +899,10 @@ void MainWindow::createActions()
             m_services.engine.stopPreview(); // a nearly complete preview still finishes, for a Get to reuse
             m_previewId = 0;
         }
+        refreshPreviewActions();
     });
     m_playbackActions.append(stop);
+    refreshPreviewActions();
 
     const std::array go{std::pair{u"get"_s, Qt::Key_1},        std::pair{u"inbox"_s, Qt::Key_2},
                         std::pair{u"collection"_s, Qt::Key_3}, std::pair{u"history"_s, Qt::Key_4},
@@ -1082,6 +1169,33 @@ void MainWindow::keepPreview()
     m_player->showMessage(tr("Kept: it goes to your Inbox once it has arrived."));
 }
 
+void MainWindow::discardPreview()
+{
+    if (m_previewId == 0 || !isCachedPreview(m_playingIdentity)) {
+        if (m_playingIdentity.startsWith(u"file|"_s)) {
+            m_player->showMessage(tr("Only previews can be discarded: this file of yours stays where it is."));
+        } else if (m_playingIdentity.startsWith(u"clip|"_s)) {
+            m_player->showMessage(tr("Deezer's 30-second clips aren't kept, so there's nothing to discard."));
+        } else {
+            m_player->showMessage(tr("Nothing to discard: preview a file first."));
+        }
+        return;
+    }
+    const qint64 previewId = std::exchange(m_previewId, 0);
+    m_services.preview.stop();
+    m_askedPreviewKey.clear();
+    m_playingKey.clear();
+    m_playingIdentity.clear();
+    m_services.engine.discardPreview(previewId); // a transfer still under way stops (PREV-6)
+    m_player->showMessage(tr("Discarded: it's gone from the preview cache."));
+    refreshPreviewActions();
+}
+
+void MainWindow::refreshPreviewActions()
+{
+    m_discardPreview->setEnabled(m_previewId != 0 && isCachedPreview(m_playingIdentity));
+}
+
 void MainWindow::selectionMoved()
 {
     if (m_followSelection && m_followSelection->isChecked()) {
@@ -1153,12 +1267,21 @@ void MainWindow::previewInboxSelection(bool toggleIfLoaded)
         m_previewId = 0;
     }
     preview.preview(*local.request);
+    refreshPreviewActions();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     saveState();
     event->accept();
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
+        m_notifier->userReturned(); // what arrived while the user was away has been seen
+    }
 }
 
 void MainWindow::showSearchInSidebar(const core::ManualSearch &search)

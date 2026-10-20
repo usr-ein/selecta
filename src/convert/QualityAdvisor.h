@@ -92,7 +92,12 @@ enum class Notice {
     LosslessReduction, // info: reducing padded 24-bit to 16-bit loses nothing
 };
 
-enum class Badge { None, BelowTarget, FormatDiffers };
+// Why a file kept as it is (KeepAsIs) isn't what the target asks for.
+enum class Badge {
+    None,
+    BelowTarget,   // a lossy file below the target's bitrate
+    FormatDiffers, // another format (AAC, or MP3 for a lossless target), or an MP3 at another rate than the target's
+};
 
 enum class AdviceContext {
     Filing, // the arrival pipeline (D29): lossy sources it can't improve are kept as they are
@@ -113,17 +118,19 @@ struct Advice
     SourceClass sourceClass = SourceClass::LosslessGenuine;
     QList<Notice> notices; // warnings first, then information
     Badge badge = Badge::None;
+    // The file Selecta writes: what the target makes of the source, or, for KeepAsIs, the source itself.
     int outputSampleRate = 0;
-    int outputBitDepth = 0;  // 0 for MP3
-    double sizeFactor = 0.0; // estimated output size ÷ source size; 0 when unknown
+    int outputBitDepth = 0;  // 0 for MP3 (and a kept lossy file)
+    double sizeFactor = 0.0; // estimated output size ÷ source size; 0 when unknown; 1 for KeepAsIs
 
     bool needsConfirmation() const { return action == Action::Ask; }
     bool hasNotice(Notice notice) const { return notices.contains(notice); }
 };
 
-// The quality advisor (CONV-2, CONV-6): the warning matrix of conversion §6.2. Never upsamples automatically; lossy →
-// lossy and lossy → lossless only with explicit confirmation; a lossy source below the target is kept with a "below
-// target" badge. Pure function.
+// The quality advisor (CONV-2, CONV-6): the warning matrix of conversion §6.2. Never upsamples automatically: a rate
+// above the source's, chosen or forced (MP3 from below 44.1 kHz, other than 32 kHz), needs confirmation; lossy → lossy
+// and lossy → lossless only with explicit confirmation; a lossy source below the target is kept with a "below target"
+// badge, an MP3 is kept as it is only at the target's rate. Pure function.
 Advice advise(const SourceQuality &source, const EncodeSettings &target, AdviceContext context,
               const HardwareProfile &hardware = {});
 

@@ -115,3 +115,24 @@ TEST(NavModel, BrowsedPeersSitWithTheSearches)
     EXPECT_EQ(model.rowOf(id), -1);
     EXPECT_GE(model.rowOf(u"search:1"_s), 0);
 }
+
+TEST(NavModel, VoiceOverReadsTheCountsAndTheWorkInProgress)
+{
+    NavModel model;
+    const auto text = [&model](const QString &id) {
+        return model.index(model.rowOf(id)).data(Qt::AccessibleTextRole).toString();
+    };
+    EXPECT_EQ(text(u"messages"_s), u"Messages"_s);
+    model.setCount(u"messages"_s, 3);
+    EXPECT_EQ(text(u"messages"_s), u"Messages, 3 unread"_s);
+    model.setCount(u"wishlist"_s, 1);
+    EXPECT_EQ(text(u"wishlist"_s), u"Wishlist, 1 new file"_s);
+
+    model.setSearch(7, u"neon rain"_s, 214, true);
+    const QString search = NavModel::searchItemId(7);
+    EXPECT_EQ(text(search), u"neon rain, 214 files, searching"_s);
+    EXPECT_FALSE(model.index(model.rowOf(search)).data(Qt::AccessibleDescriptionRole).toString().isEmpty());
+    model.setBrowse(u"vinyl_ghost"_s, 0, true);
+    EXPECT_EQ(text(NavModel::browseItemId(u"vinyl_ghost"_s)), u"vinyl_ghost, loading"_s);
+    EXPECT_TRUE(model.index(model.rowOf(u"inbox"_s)).data(Qt::AccessibleDescriptionRole).toString().isEmpty());
+}

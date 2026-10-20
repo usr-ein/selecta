@@ -39,6 +39,9 @@ class MessagesView;
 class RoomsView;
 class Inspector;
 class NavModel;
+class NotificationSink;
+class Notifier;
+struct NotificationTarget;
 class PlayerBar;
 class Presets;
 class PreviewController;
@@ -61,6 +64,9 @@ struct AppServices
     PreviewController &preview;
     BuildInfo build;
     qint64 sessionStartedAtMs = 0;
+    // Where system notifications go (UI-6): macOS's Notification Center, a list in headless runs, a fake in tests;
+    // null when there are none. Outlives the window like the rest.
+    NotificationSink *notifications = nullptr;
 };
 
 // The single main window (PRD 8.2): toolbar, sidebar, content views, inspector and player. Main thread only.
@@ -96,17 +102,23 @@ public:
     void previewPeerFile();
     // K: keeps the preview playing (PREV-5): a peer's file goes to the Inbox without downloading it again.
     void keepPreview();
+    // D: discards the preview loaded (PREV-5): it stops and leaves the preview cache; one still arriving is cancelled
+    // (PREV-6). Only previews from peers and YouTube: a file of the user's is never touched.
+    void discardPreview();
     PreviewController &preview() { return m_services.preview; }
     // Browses a peer's shares (BRWS-1): a sidebar item under Digging, and the Browse view.
     void browsePeer(const QString &peer);
     // Opens the conversation with a peer (NET-7) in the Messages view.
     void messagePeer(const QString &peer);
+    // System notifications and the Dock badge (UI-6).
+    Notifier *notifier() const { return m_notifier; }
 
 Q_SIGNALS:
     void viewChanged(const QString &id);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private:
     struct View
@@ -139,6 +151,8 @@ private:
     // The selection moved: with "Preview as You Move", its preview follows after a short rest (PREV-4).
     void selectionMoved();
     static QString askingMessage(core::PreviewSource source, const QString &peer);
+    // Discard is offered while a preview the cache holds is loaded.
+    void refreshPreviewActions();
     // Keeps the sidebar's search items in step with the engine's open searches.
     void showSearchInSidebar(const core::ManualSearch &search);
     void createBrowseView();
@@ -147,6 +161,8 @@ private:
     void createRoomsView();
     // The unread count in the sidebar and on the Dock icon (UI-6).
     void refreshUnread();
+    // A click on a system notification: the window comes forward and shows what it was about.
+    void showNotificationTarget(const NotificationTarget &target);
 
     AppServices m_services;
     Appearance m_appearance;
@@ -184,12 +200,14 @@ private:
     QString m_playingKey;              // what the loaded preview belongs to
     QString m_playingIdentity;         // the loaded preview's identity ("peer|…", "youtube|…", "clip|…", "file|…")
     QAction *m_followSelection = nullptr;
+    QAction *m_discardPreview = nullptr;
     QTimer *m_followTimer = nullptr;
     qint64 m_previewId = 0; // the engine's preview playing, if any
     QList<View> m_views;
     QHash<QString, qsizetype> m_viewIndex;
     QString m_currentId;
     Toasts *m_toasts = nullptr;
+    Notifier *m_notifier = nullptr;
     QList<core::TrashedItem> m_trashedBatch; // items the user just trashed, for one notification
     QTimer *m_trashedTimer = nullptr;
 };

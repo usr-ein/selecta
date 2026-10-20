@@ -152,6 +152,29 @@ GroupRole groupRole(QStringView content, const QStringList &tokens)
     return GroupRole::Keep;
 }
 
+// A round-bracket group that opens a title and is followed by more of it ("Peggy Gou - (It Goes Like) Nanana"): the
+// title's own words, not a version, a feat. or an extra. `before` is the name up to the group.
+bool opensTitle(QStringView before, QStringView text, qsizetype open, qsizetype close, const QStringList &tokens)
+{
+    if (text.at(open) != u'(' || tokens.isEmpty() || lexicon::isFeatWord(tokens.front())) {
+        return false;
+    }
+    const QStringView after = text.sliced(close + 1).trimmed();
+    if (after.isEmpty() || after.startsWith(u'-') || isOpenBracket(after.front())) {
+        return false; // nothing of the title follows it
+    }
+    const QStringView ahead = before.trimmed();
+    if (ahead.isEmpty()) {
+        // Opening the whole name: only when no " - " follows ("(Label) Artist - Title" keeps its leading group out).
+        if (splitTopLevel(after, u" - ").size() > 1) {
+            return false;
+        }
+    } else if (!ahead.endsWith(u'-')) {
+        return false; // within a title: "Title (Extra) More"
+    }
+    return !VersionClassifier::classify(text.sliced(open + 1, close - open - 1).trimmed());
+}
+
 QString stripWebsites(QStringView text, QList<ParseRule> &rules)
 {
     QString out = text.toString();
@@ -360,7 +383,10 @@ CleanName cleanName(QStringView raw)
         const QStringList tokens = Normalizer::tokens(content);
         const GroupRole role = groupRole(content, tokens);
         const bool leading = QStringView(kept).trimmed().isEmpty();
-        if (role == GroupRole::Keep) {
+        if (role == GroupRole::Keep && opensTitle(kept, text, i, close, tokens)) {
+            kept.append(text.sliced(i, close - i + 1));
+            plain.append(u' ' + content + u' '); // zone F: the title's words
+        } else if (role == GroupRole::Keep) {
             name.brackets.append(content);
             if (!leading) {
                 kept.append(text.sliced(i, close - i + 1)); // a leading group ("[Label] …") leaves the name

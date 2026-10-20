@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksView.h"
 
+#include "app/Accessibility.h"
+#include "app/Format.h"
 #include "app/Icons.h"
 #include "app/Presets.h"
 #include "app/TickDelegate.h"
@@ -134,6 +136,8 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &GetTracksView::selectionMoved);
     connect(m_table, &QTreeView::customContextMenuRequested, this, &GetTracksView::contextMenu);
     m_table->installEventFilter(this); // ⌫ and ⌦ remove the selected lines
+    m_table->setAccessibleName(tr("Tracks to get"));
+    a11y::addMenuKey(m_table);
     connect(m_table, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
         if (index.isValid() && index.column() != GetTracksModel::TickColumn) {
             Q_EMIT previewRequested();
@@ -150,6 +154,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     m_note->hide();
     // The quality wanted: a preset, as in Search and the Wishlist (BATCH-2, SRCH-8).
     m_preset->setObjectName(u"get.preset"_s);
+    m_preset->setAccessibleName(tr("Quality wanted"));
     m_preset->setToolTip(tr("The quality wanted. Changing it ranks the tracks already found again."));
     connect(m_preset, &QComboBox::activated, this, [this](int row) {
         const QString id = m_preset->itemData(row).toString();
@@ -202,6 +207,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     bar->addWidget(m_preset);
     bar->addWidget(m_find);
     bar->addWidget(m_get);
+    QWidget::setTabOrder({m_add, m_export, m_preset, m_find, m_get, m_table}); // the bar, left to right, then the list
     auto *noteBox = new QHBoxLayout;
     noteBox->setContentsMargins(16, 0, 16, 8);
     noteBox->addWidget(m_note);
@@ -423,9 +429,17 @@ void GetTracksView::refreshProgress()
         text += u" · "_s + tr("waiting for the network");
     } else if (m_engine.isPaused()) {
         text += u" · "_s + tr("network paused");
-    } else if (m_collecting == 0 && m_nextAtMs > 0) {
-        const qint64 seconds = std::max<qint64>(0, (m_nextAtMs - QDateTime::currentMSecsSinceEpoch() + 999) / 1000);
-        text += u" · "_s + tr("next search in %1 s").arg(seconds);
+    } else {
+        // The whole list's time left at the governor's pace (BATCH-4), and when the next search goes.
+        const qint64 nextIn =
+            m_nextAtMs > 0 ? std::max<qint64>(0, m_nextAtMs - QDateTime::currentMSecsSinceEpoch()) : 0;
+        if (m_collecting == 0 && nextIn > 0) {
+            text += u" · "_s + tr("next search in %1 s").arg((nextIn + 999) / 1000);
+        }
+        const std::chrono::milliseconds left =
+            core::findingTimeLeft(std::max(0, finding - m_collecting), m_collecting, m_engine.searchesAvailable(),
+                                  std::chrono::milliseconds(nextIn));
+        text += u" · "_s + format::about(left.count());
     }
     m_progress->setText(text);
     if (!m_countdown->isActive()) {
@@ -442,6 +456,8 @@ void GetTracksView::contextMenu(QPoint position)
     QMenu menu(this);
     bool canGet = false;
     bool downloading = false;
+    bool tickable = false;
+    bool allTicked = true;
     for (const qint64 id : ids) {
         const int row = m_model->rowOf(id);
         if (row < 0) {
@@ -449,6 +465,8 @@ void GetTracksView::contextMenu(QPoint position)
         }
         const core::GetLine &line = m_model->lines().at(row);
         using DownloadState = core::GetLine::DownloadState;
+        tickable = tickable || line.best.has_value();
+        allTicked = allTicked && (!line.best || line.ticked);
         canGet = canGet || (line.best &&
                             (line.downloadState == DownloadState::None || line.downloadState == DownloadState::Failed));
         downloading = downloading || line.downloadState == DownloadState::Queued ||
@@ -457,6 +475,10 @@ void GetTracksView::contextMenu(QPoint position)
     }
     if (canGet) {
         menu.addAction(tr("Get"), this, [this, ids] { m_engine.downloadTracks(ids); });
+    }
+    if (tickable) { // the tick boxes, from the keyboard too (⌃Return opens this menu)
+        menu.addAction(allTicked ? tr("Untick") : tr("Tick"), this,
+                       [this, ids, allTicked] { m_engine.tickTracks(ids, !allTicked); });
     }
     if (downloading) {
         menu.addAction(tr("Cancel Download"), this, [this, ids] { m_engine.cancelTrackDownloads(ids); });

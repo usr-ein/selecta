@@ -27,6 +27,7 @@ qt_add_library(selecta_core STATIC
     NetworkService.h NetworkService.cpp
     OwnRelease.h OwnRelease.cpp
     PeerStats.h PeerStats.cpp
+    PreviewCache.h PreviewCache.cpp
     ReleaseJson.h ReleaseJson.cpp
     ResultAnnotator.h ResultAnnotator.cpp
     RoomService.h RoomService.cpp
@@ -35,6 +36,7 @@ qt_add_library(selecta_core STATIC
     SearchResults.h SearchResults.cpp
     SearchService.h SearchService.cpp
     SocialService.h SocialService.cpp
+    SpectrumCheck.h SpectrumCheck.cpp
     ShareService.h ShareService.cpp
     TransferService.h TransferService.cpp
     WishlistService.h WishlistService.cpp

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/WaveformView.h"
 
+#include <QAccessible>
 #include <QImage>
 #include <QSignalSpy>
 #include <QTest>
@@ -156,4 +157,116 @@ TEST_F(WaveformViewTest, ClicksDoNothingWithoutATrack)
     const QSignalSpy seeks(&view, &WaveformView::seekRequested);
     QTest::mouseClick(&view, Qt::LeftButton, {}, QPoint(100, view.height() - 10));
     EXPECT_TRUE(seeks.isEmpty());
+}
+
+TEST_F(WaveformViewTest, VoiceOverSeesASliderWithThePositionTheLengthAndTheSource)
+{
+    view.setDuration(372.0);
+    view.setPosition(83.4);
+    view.setSource(u"Preview from vinyl_ghost"_s);
+    view.setBuffered(186.0);
+    QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(&view);
+    ASSERT_NE(iface, nullptr);
+    EXPECT_EQ(iface->role(), QAccessible::Slider);
+    EXPECT_EQ(iface->text(QAccessible::Name), u"Waveform"_s);
+    EXPECT_EQ(iface->text(QAccessible::Value), u"1:23 of 6:12"_s);
+    EXPECT_EQ(iface->text(QAccessible::Description),
+              u"Preview from vinyl_ghost. 50 % downloaded. Left and Right arrows move 5 seconds."_s);
+    EXPECT_TRUE(iface->state().focusable);
+
+    QAccessibleValueInterface *value = iface->valueInterface();
+    ASSERT_NE(value, nullptr);
+    EXPECT_DOUBLE_EQ(value->minimumValue().toDouble(), 0.0);
+    EXPECT_DOUBLE_EQ(value->maximumValue().toDouble(), 372.0);
+    EXPECT_DOUBLE_EQ(value->minimumStepSize().toDouble(), 5.0);
+#ifdef Q_OS_MACOS
+    EXPECT_EQ(value->currentValue().toString(), u"1:23 of 6:12"_s); // what the macOS bridge reads out
+#else
+    EXPECT_DOUBLE_EQ(value->currentValue().toDouble(), 83.4);
+#endif
+
+    view.setBuffered(-1.0); // all of it
+    EXPECT_EQ(iface->text(QAccessible::Description),
+              u"Preview from vinyl_ghost. Left and Right arrows move 5 seconds."_s);
+}
+
+TEST_F(WaveformViewTest, VoiceOverStepsFiveSecondsAsTheArrowKeysDo)
+{
+    view.setDuration(372.0);
+    view.setPosition(83.0);
+    const QSignalSpy seeks(&view, &WaveformView::seekRequested);
+    QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(&view);
+    ASSERT_NE(iface, nullptr);
+    QAccessibleActionInterface *actions = iface->actionInterface();
+    ASSERT_NE(actions, nullptr);
+    EXPECT_TRUE(actions->actionNames().contains(QAccessibleActionInterface::increaseAction()));
+    EXPECT_TRUE(actions->actionNames().contains(QAccessibleActionInterface::decreaseAction()));
+
+    actions->doAction(QAccessibleActionInterface::increaseAction());
+    ASSERT_EQ(seeks.size(), 1);
+    EXPECT_DOUBLE_EQ(seeks.at(0).at(0).toDouble(), 88.0);
+    EXPECT_EQ(iface->text(QAccessible::Value), u"1:28 of 6:12"_s);
+    actions->doAction(QAccessibleActionInterface::decreaseAction());
+    actions->doAction(QAccessibleActionInterface::decreaseAction());
+    ASSERT_EQ(seeks.size(), 3);
+    EXPECT_DOUBLE_EQ(seeks.at(2).at(0).toDouble(), 78.0);
+
+    iface->valueInterface()->setCurrentValue(120.0);
+    ASSERT_EQ(seeks.size(), 4);
+    EXPECT_DOUBLE_EQ(seeks.at(3).at(0).toDouble(), 120.0);
+}
+
+TEST_F(WaveformViewTest, ArrowKeysStepWithinTheTrack)
+{
+    view.setDuration(372.0);
+    view.setPosition(370.0);
+    const QSignalSpy seeks(&view, &WaveformView::seekRequested);
+    QTest::keyClick(&view, Qt::Key_Right);
+    ASSERT_EQ(seeks.size(), 1);
+    EXPECT_DOUBLE_EQ(seeks.at(0).at(0).toDouble(), 372.0); // the end, not past it
+
+    view.setPosition(2.0);
+    QTest::keyClick(&view, Qt::Key_Left);
+    ASSERT_EQ(seeks.size(), 2);
+    EXPECT_DOUBLE_EQ(seeks.at(1).at(0).toDouble(), 0.0);
+
+    QTest::keyClick(&view, Qt::Key_Right, Qt::AltModifier); // the window's 30-second shortcut, not the waveform's
+    EXPECT_EQ(seeks.size(), 2);
+}
+
+TEST_F(WaveformViewTest, SeeksAreToldToVoiceOverButPlayingIsNot)
+{
+    static QList<QAccessible::Event> events;
+    events.clear();
+    QAccessible::installUpdateHandler([](QAccessibleEvent *event) {
+        if (event->object() != nullptr && event->object()->objectName() == u"player.waveform"_s) {
+            events.append(event->type());
+        }
+    });
+    view.setDuration(372.0);
+    events.clear();
+    view.setPosition(10.0);
+    view.setPosition(11.0);
+    EXPECT_TRUE(events.isEmpty());
+    view.step(5.0);
+    QAccessible::installUpdateHandler(nullptr);
+    EXPECT_EQ(events, QList<QAccessible::Event>{QAccessible::ValueChanged});
+}
+
+TEST_F(WaveformViewTest, WithoutATrackVoiceOverReadsTheMessageAndCantStep)
+{
+    view.setMessage(u"Select a track and press Space to preview it"_s);
+    const QSignalSpy seeks(&view, &WaveformView::seekRequested);
+    QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(&view);
+    ASSERT_NE(iface, nullptr);
+    EXPECT_EQ(iface->text(QAccessible::Value), u"Select a track and press Space to preview it"_s);
+    EXPECT_TRUE(iface->text(QAccessible::Description).isEmpty());
+    iface->actionInterface()->doAction(QAccessibleActionInterface::increaseAction());
+    QTest::keyClick(&view, Qt::Key_Right);
+    EXPECT_TRUE(seeks.isEmpty());
+
+    view.setDuration(200.0);
+    view.setSource(u"Your Inbox"_s);
+    view.clear(); // the track is gone, and its source with it
+    EXPECT_EQ(iface->text(QAccessible::Value), u"Select a track and press Space to preview it"_s);
 }

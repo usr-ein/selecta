@@ -1,7 +1,7 @@
 # `audio/` — design
 
-Decoding (including files still downloading), 3-band waveform analysis and its cache, quality checks. Contract:
-`docs/contracts/media.md` (A1–A3). Spec: `references/audio-preview-and-waveform.md` (§3–5, §7, §9, §11), ADR-003,
+Decoding (including files still downloading), 3-band waveform analysis and its cache, quality checks and spectrograms.
+Contract: `docs/contracts/media.md` (A1–A3; A7, the spectrogram, came later from the head implementer). Spec: `references/audio-preview-and-waveform.md` (§3–5, §7, §9, §11), ADR-003,
 ADR-007. Playback output and the waveform widget belong to `app/`; this library provides PCM and data, no UI.
 
 ## Classes
@@ -15,8 +15,9 @@ ADR-007. Playback output and the waveform widget belong to `app/`; this library 
 | `Waveform.h` | `Waveform`, `WaveformColumn`, `OverviewColumn`, constants | The analysis result: 150 columns/s detail + 1 200-column overview. |
 | `BandAnalyzer.h` | `BandAnalyzer` | Streaming LR4 3-band split + peak/RMS per column. Pure DSP. |
 | `WaveformAnalyzer.h` | `analyzeWaveform()`, `ProgressiveAnalyzer`, `WaveformJob` | Chunked parallel analysis of complete files; progressive analysis of previews; async Qt job. |
-| `AnalysisCache.h` | `AnalysisCache`, `CacheKey` | Two-tier on-disk cache (overview long-term, detail LRU), versioned, checksummed blobs. |
-| `QualityCheck.h` | `analyzeQuality()`, `QualityReport` | Spectral cut-off with LAME lowpass cross-check; exact fake-24-bit and upsampling checks (A3). |
+| `AnalysisCache.h` | `AnalysisCache`, `CacheKey` | Three-tier on-disk cache (overview long-term, detail LRU, quality reports with their spectrograms), versioned, checksummed blobs. |
+| `QualityCheck.h` | `analyzeQuality()`, `QualityReport`, `QualityOptions` | Spectral cut-off with LAME lowpass cross-check; exact fake-24-bit and upsampling checks (A3); one chunked, parallel decoding pass that also builds the spectrogram (A7). |
+| `Spectrogram.h` | `Spectrogram`, `SpectrogramOptions` | Time × frequency grid of level bytes for the inspector (A7). Data only: the app paints it. |
 
 Internal code lives in `detail/` (`namespace selecta::audio::detail`): the MPEG, FLAC, WAV/AIFF and MP4 parsers and
 frame indexes, the demuxers, the FFmpeg glue (custom `AVIOContext`, RAII wrappers, log routing), the output stage
@@ -100,10 +101,10 @@ positions stay true.
   event queue would show up as races. Pool hand-offs go through `detail::startTask`, which tells ThreadSanitizer about
   the hand-over (`__tsan_release`/`__tsan_acquire`); every lock in the library is a `std::` one for the same reason.
 
-## Cache format (A2)
+## Cache format (A2, A7)
 
-Files under the directory the caller gives: `overview/<key>.swo` (3.6 KB payload) and `detail/<key>.swd`.
-All integers little-endian:
+Files under the directory the caller gives: `overview/<key>.swo` (3.6 KB payload), `detail/<key>.swd` and
+`quality/<key>.sqr`. All integers little-endian. Waveforms:
 
 | Offset | Size | Field |
 |---|---|---|
@@ -126,16 +127,47 @@ against a bound (24 h of audio), the payload size against the column count, the 
 Any mismatch is a miss; the file is deleted and the waveform recomputed. Keys: BLAKE2b-256 of size + first/last
 256 KiB + 32 spread 4 KiB blocks (`CacheKey::forContent`), or of a name for provisional preview keys.
 
+Quality reports (`kQualityVersion`, a 60-byte header; 64 bytes in all without a spectrogram):
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 4 | magic `SLQR` |
+| 4 | 2 | blob format version (1) |
+| 6 | 2 | `kQualityVersion` |
+| 8 | 4 | sample rate |
+| 12 | 4 | flags (bit 0: spectrogram; bit 1: likely source kbps; bit 2: LAME lowpass; bit 3: payload zlib-compressed) |
+| 16 | 4 | cut-off, Hz (signed: -1 when not measured) |
+| 20 | 4 | likely source kbps (0 when flag 1 is off) |
+| 24 | 4 | LAME lowpass, Hz (0 when flag 2 is off) |
+| 28 | 2 | declared bit depth |
+| 30 | 2 | effective bit depth |
+| 32 | 4 | content bandwidth, Hz (signed) |
+| 36 | 1 | finding count (≤ 5) |
+| 37 | 5 | findings, one byte each in report order, unused slots 0 |
+| 42 | 2 | spectrogram columns |
+| 44 | 2 | spectrogram bins |
+| 46 | 2 | reserved (0) |
+| 48 | 8 | spectrogram frame count |
+| 56 | 4 | payload size in bytes |
+| 60 | n | payload: the levels, column-major, zlib (empty without a spectrogram) |
+| 60+n | 4 | CRC-32 of bytes 0…59+n |
+
+Decoding checks magic, both versions and the CRC first, then every field behind it: known flags only, absent optional
+fields zero, findings distinct and known, depths, rates and frequencies within bounds, the grid within 4 096 × 1 024
+and no wider than its frame count (itself bounded by 24 h at the blob's rate) before anything is allocated, and the
+inflated size exactly (a zlib bomb stops at the declared grid). The default 64 MiB budget holds at least 550 reports
+with the default 800 × 256 spectrogram (≤ ~120 KB compressed for noise-like audio, far less for tonal music).
+
 ## Threading summary
 
 | Class | Thread safety |
 |---|---|
 | `ByteSource` and subclasses | Thread-safe |
 | `Decoder`, `BandAnalyzer`, `ProgressiveAnalyzer` | One thread at a time |
-| `analyzeWaveform()`, `analyzeQuality()` | Reentrant, blocking (workers only) |
+| `analyzeWaveform()`, `analyzeQuality()` | Reentrant, blocking (workers only); the calling thread takes chunks too |
 | `WaveformJob` | Lives in its creating thread (event loop); work on a `QThreadPool` |
 | `AnalysisCache` | Thread-safe |
-| `Waveform` | Immutable, implicitly shared |
+| `Waveform`, `Spectrogram`, `QualityReport` | Immutable (plain values), implicitly shared data; registered metatypes for queued signals |
 
 ## Integration points
 
@@ -165,6 +197,15 @@ outlive a destroyed job) — `columnsAdded` while downloading, `waitingForComple
 For previews use a provisional `CacheKey::forName("peer|path|size")`; store the finished waveform under
 `CacheKey::forContent(source)` as well when the file is kept. For the library: `cache.load(key)` gives the overview even
 after the detail was evicted.
+
+### Quality verdict and spectrogram (app, core)
+
+On a worker: `analyzeQuality(source, options)` with `options.spectrogram = true` (one decode of the complete file; see
+Benchmarks), then `cache.storeQuality(CacheKey::forContent(*source).value(), report)`; next time
+`cache.loadQuality(key)` and check `report.spectrogram` (it may be absent, or have other dimensions than asked).
+`convert::judgeQuality()` turns the report into the inspector's verdict. Paint the grid from `Spectrogram::column()`
+(column-major bytes, 0 Hz first); `binForFrequency()` and `columnStartFrame()` place axes and the playhead, and
+`dbForLevel()` labels a colour scale.
 
 ### Arrival pipeline and converter (`convert/`)
 
@@ -200,6 +241,14 @@ with `ResamplerQuality::VeryHigh`.
 | Analysis, FLAC 16-bit, parallel | 99 ms |
 | Analysis, FLAC 16-bit, one thread | 723 ms |
 | Analysis, WAV 16-bit, parallel | 24 ms |
+| **Quality checks + 800 × 256 spectrogram, FLAC 16-bit, parallel** | **60–63 ms** |
+| Quality checks alone, FLAC 16-bit, parallel | 53–56 ms |
+| Quality checks + spectrogram, FLAC 16-bit, one thread | 424–437 ms |
+| Quality checks alone, FLAC 16-bit, one thread | 365–378 ms (decoding is most of it) |
+| Quality checks + spectrogram, MP3 320, parallel | 54–60 ms |
+
+The quality rows (A7) were measured later the same day (load average ≈ 10), three repetitions each. The spectrogram
+costs about 15 % of a one-thread pass (6 400 extra FFTs) and a few milliseconds in parallel.
 
 Reproduce: configure a Release tree with tests on, build `selecta_audio_bench`, run it with `--benchmark_min_time=1s`.
 The CLI gives a quick check on any file: `selecta-cli media-analyze <file>`.
@@ -256,6 +305,30 @@ lowpass and aren't compared); a file above 48 kHz with no content above 24.5 kHz
 V0 and good AAC leave no cut-off, so a FLAC made from them passes; dark masters and old recordings can look band-
 limited, which is why the wording says "likely" and the UI offers the spectrum for a human to judge.
 
+## Spectrogram and the parallel quality pass (A7)
+
+- **One pass.** `QualityOptions::spectrogram` makes `analyzeQuality()` build `QualityReport::spectrogram` while it
+  decodes for the checks; nothing else in the report changes (tested: same report with and without it).
+- **The grid.** 800 columns × 256 rows by default (bounds 4 096 × 1 024), mono mix, linear frequency from 0 Hz to
+  Nyquist, level bytes linear in dB from -120 dBFS (0) to 0 dBFS (255). A column is the mean power of up to 8
+  Hann-windowed 4 096-point FFTs spread evenly over its span (a six-minute track takes 6 400 FFTs, so a long file is
+  sampled, not covered); a row is the maximum of the FFT bins in it, so a lowpass edge stays sharp at any row count
+  (tested: a 16 kHz brickwall lands within two rows, and a 128 kbps MP3 stored as FLAC shows its cut-off).
+- **Slots.** Over an announced length the columns are planned as slots, slot g starting at ⌊g·length/columns⌋, so
+  every chunk knows which slots it owns without talking to the others. With no announced length, slots of 64 frames
+  merge in pairs whenever there are twice as many as columns: memory stays bounded whatever the true length. A
+  stream that ends early keeps its planned slots (fewer columns); one that runs long gets extra slots at the same pace.
+  The assembly reduces the slots to at most `columns` columns (the window-weighted mean of the slots whose middle falls
+  in a column).
+- **Chunks.** A complete file whose decoder seeks exactly (MP3, FLAC, WAV, AIFF, M4A, most FFmpeg formats) is cut into
+  up to `maxThreads` chunks of at least 20 s, each decoded by its own clone of the decoder from one FFT window before
+  its first frame; windows and slots belong to the chunk they start in. The cuts depend only on the length and the
+  thread count, never on the spectrogram, and the chunked grid is byte-identical to a sequential one (tested, also on
+  truncated FLAC, MP3 and WAV files). Only the frames some window needs are mixed down and kept: a few windows of
+  history per chunk. The first error stops the other chunks; cancellation is checked every 8 192 frames.
+- **Caching.** `AnalysisCache::storeQuality()`/`loadQuality()`, the quality tier (format above), separate from the
+  waveform tiers with its own budget (64 MiB by default).
+
 ## Progress
 
 - **Done:** A1 (decoder, merged into main), A2 (band analyzer, chunked parallel and progressive analysis,
@@ -267,5 +340,7 @@ limited, which is why the wording says "likely" and the UI offers the spectrum f
 - **Done (A3):** `analyzeQuality()` (exact word length, spectral cut-off and content bandwidth, five findings,
   `describeFinding()`), calibrated against LAME and covered by 8 tests.
 - **Done (for the collection scanner):** `probeStreamInfo()`, header-only stream facts with the read bound tested.
+- **Done (A7):** `Spectrogram`, the spectrogram in `analyzeQuality()`'s chunked, parallel pass, the quality tier of
+  `AnalysisCache`, the quality benchmark. 146 audio tests; dev, asan, tsan and lint clean.
 - **Next:** nothing planned; see the open questions in `src/convert/DESIGN.md` for rekordbox checks.
 - **Open questions:** none.

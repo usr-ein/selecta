@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 
@@ -44,6 +45,14 @@ struct InboxItem
     std::optional<int> session;
     qint64 createdAt = 0; // Unix time, ms
     QString warning;      // what the arrival noticed: kept below the Inbox format, not the length expected (DL-10)
+    // The spectrum check of the file as downloaded (PRD PREV-9), when it ran: what it found (audio::findingName()
+    // names, worded "likely …" in the UI), the spectral cut-off and the bitrate it suggests, and the analysis-cache
+    // key (64 hex digits) of the full report with its spectrogram, empty when it wasn't cached.
+    bool qualityChecked = false;
+    QStringList qualityFindings;
+    std::optional<int> qualityCutoffHz;
+    std::optional<int> qualitySourceKbps;
+    QString qualityKey;
 
     friend bool operator==(const InboxItem &, const InboxItem &) = default;
 };

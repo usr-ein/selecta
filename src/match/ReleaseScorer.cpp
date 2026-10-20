@@ -186,6 +186,9 @@ QList<qsizetype> ReleaseScorer::rank(const QList<RankedFile> &files)
         if (a.queueLength != b.queueLength) {
             return a.queueLength < b.queueLength;
         }
+        if (a.peerLoad != b.peerLoad) {
+            return a.peerLoad < b.peerLoad; // spread what we take over peers (FAIR-5)
+        }
         return std::tie(a.peer, a.path) < std::tie(b.peer, b.path);
     });
     return order;

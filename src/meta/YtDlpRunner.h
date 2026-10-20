@@ -48,8 +48,14 @@ struct YouTubeCandidate
 
 struct YouTubePick
 {
+    // Whose upload it is, best first: the artist's (their "<artist> - Topic" channel, a channel named like them, with
+    // or without "VEVO" or "Official", or the label's), YouTube Music's official audio (another "… - Topic" channel),
+    // or anybody's.
+    enum class Channel { Other, Music, Artist };
+
     YouTubeCandidate candidate;
     QStringList reasons; // "length Δ 1 s", "official Topic channel"…
+    Channel channel = Channel::Other;
 };
 
 struct FetchedAudio
@@ -127,11 +133,15 @@ public:
 
     // The search text for a release: main artist, base title, and the version words (remixer + "remix" for a remix).
     static QString searchText(const Release &release);
+    // The same aimed at the artist's Topic channel ("Kestrel Moon - Topic Glass Harbour"), for a second search when
+    // the first found nothing official. Empty without an artist.
+    static QString topicSearchText(const Release &release);
 
     // The candidate to fetch for a release (§12.3): length within ±3 s of the release, not live or upcoming, no DJ-mix
-    // or derivative junk the release doesn't have, the release's title words present; then the "<main artist> -
-    // Topic" channel, a channel named like the artist, most views. Nullopt when none fits (or the release has no
-    // length: ±3 s can't be checked). Thread-safe (pure).
+    // or derivative junk the release doesn't have, the release's title words present; then, among those, the artist's
+    // channels (their Topic channel first), then YouTube Music's official audio, then anybody's (live test
+    // 2026-10-20: fan uploads were picked); within each, the version, a verified channel, the closest length, most
+    // views. Nullopt when none fits (or the release has no length: ±3 s can't be checked). Thread-safe (pure).
     static std::optional<YouTubePick> pick(const QList<YouTubeCandidate> &candidates, const Release &release);
 
     // Starts fetching the audio of one video into `previewCacheDir` (which must exist): the job waits for yt-dlp's

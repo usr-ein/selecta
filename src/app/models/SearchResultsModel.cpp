@@ -491,6 +491,10 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         default:
             return {};
         }
+    case Qt::AccessibleTextRole:
+        return accessibleText(result, column);
+    case Qt::AccessibleDescriptionRole:
+        return resultData(result, column, Qt::ToolTipRole);
     case Qt::DisplayRole:
         break;
     default:
@@ -526,6 +530,39 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         return availabilityText(result.hit);
     default:
         return {};
+    }
+}
+
+QString SearchResultsModel::accessibleText(const core::SearchResult &result, int column) const
+{
+    switch (column) {
+    case QualityColumn: {
+        QString text = format::quality(core::fileChoiceOf(result));
+        const match::RemoteQuality &quality = result.quality;
+        if (quality.quality.bitrateKbps <= 0 && quality.quality.bitDepth <= 0 && quality.estimatedBitrateKbps > 0) {
+            text += tr(", about %1 kbps").arg(quality.estimatedBitrateKbps);
+        }
+        return quality.plausible ? text : tr("%1, doubtful").arg(text);
+    }
+    case LengthColumn: {
+        QString length = format::length(qint64{result.durationSec()} * 1000);
+        if (!m_releaseChosen || m_releaseDurationMs <= 0 || result.durationSec() <= 0) {
+            return length;
+        }
+        const qint64 delta = result.durationSec() - ((m_releaseDurationMs + 500) / 1000);
+        return std::abs(delta) <= kSameRecordingSeconds
+                   ? tr("%1, same length as the release").arg(length)
+                   : tr("%1, %2 against the release").arg(length, format::lengthDelta(delta));
+    }
+    case PeerColumn:
+        if (result.peerFilesToday > 0) {
+            return result.peerFilesToday == 1
+                       ? tr("%1, 1 download today").arg(result.hit.peer)
+                       : tr("%1, %2 downloads today").arg(result.hit.peer).arg(result.peerFilesToday);
+        }
+        return result.hit.peer;
+    default:
+        return resultData(result, column, Qt::DisplayRole).toString();
     }
 }
 
