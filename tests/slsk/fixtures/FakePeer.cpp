@@ -180,6 +180,9 @@ void FakePeer::onClosed(quint64 id)
     const RemotePath path = c.path;
     const quint64 sent = c.sent - std::min<quint64>(c.sent, static_cast<quint64>(c.socket->bytesToWrite()));
     const bool complete = uploading && c.source && !cutShort && !c.killAfter;
+    if (c.mode == Mode::FileUpload && c.transferToken != 0) {
+        m_uploads.remove(c.transferToken); // done, whatever the outcome: a retry comes with a new TransferRequest
+    }
     QTcpSocket *socket = c.socket;
     m_connections.erase(it);
     socket->disconnect(this);
@@ -258,9 +261,9 @@ quint64 FakePeer::connectAsDownloader(const QString &user, const QHostAddress &a
                 Mode::FileDownload);
 }
 
-bool FakePeer::requestIndirect(const QString &user, ConnectionType type, quint32 token)
+bool FakePeer::requestIndirect(const QString &user, ConnectionType type, quint32 token, quint32 uploadToken)
 {
-    m_indirectTokens.insert(token, {user, type});
+    m_indirectTokens.insert(token, IndirectRequest{user, type, uploadToken});
     return m_server != nullptr && m_server->relayConnectToPeer(m_username, user, type, token);
 }
 
@@ -348,29 +351,27 @@ void FakePeer::handleInit(quint64 id, const Frame &f)
     }
     const quint32 token = std::get<peerinit::PierceFireWall>(*decoded.message).token;
     pierceTokens.append(token);
-    const auto it = m_indirectTokens.constFind(token);
-    if (it == m_indirectTokens.constEnd()) {
+    if (!m_indirectTokens.contains(token)) {
         close(id);
         return;
     }
-    const auto [user, type] = it.value();
-    m_indirectTokens.erase(it);
-    if (type == ConnectionType::File) {
-        // We asked them to dial back for our upload: we're the uploader, so we send the transfer token.
-        for (auto upload = m_uploads.constBegin(); upload != m_uploads.constEnd(); ++upload) {
-            if (upload->user == user) {
-                identify(id, Mode::FileUpload, user);
-                Connection &c = m_connections.at(id);
-                c.transferToken = upload.key();
-                c.path = upload->path;
-                c.socket->write(file::encodeTransferInit(upload.key()));
-                return;
-            }
+    const IndirectRequest request = m_indirectTokens.take(token);
+    if (request.type == ConnectionType::File) {
+        // We asked them to dial back for one upload: we're the uploader, so we send that upload's transfer token.
+        const auto upload = m_uploads.constFind(request.uploadToken);
+        if (request.uploadToken == 0 || upload == m_uploads.constEnd()) {
+            close(id);
+            return;
         }
-        close(id);
+        identify(id, Mode::FileUpload, request.user);
+        if (Connection *c = find(id)) {
+            c->transferToken = upload.key();
+            c->path = upload->path;
+            c->socket->write(file::encodeTransferInit(upload.key()));
+        }
         return;
     }
-    identify(id, type == ConnectionType::Peer ? Mode::Peer : Mode::Distributed, user);
+    identify(id, request.type == ConnectionType::Peer ? Mode::Peer : Mode::Distributed, request.user);
 }
 
 // Built-in answers, one per message type.
@@ -541,14 +542,15 @@ void FakePeer::openFileConnection(const QString &user, quint32 token)
     if (client != nullptr && client->listenPort != 0) {
         const quint64 id =
             connectTo(user, QHostAddress::LocalHost, static_cast<quint16>(client->listenPort), ConnectionType::File);
-        Connection &c = m_connections.at(id);
-        c.transferToken = token;
-        c.path = upload.path;
-        c.socket->write(file::encodeTransferInit(token));
+        if (Connection *c = find(id)) { // gone already if the connection failed at once
+            c->transferToken = token;
+            c->path = upload.path;
+            c->socket->write(file::encodeTransferInit(token));
+        }
         return;
     }
-    // They don't listen: ask them to dial back.
-    requestIndirect(user, ConnectionType::File, m_nextToken++);
+    // They don't listen: ask them to dial back, for this upload.
+    requestIndirect(user, ConnectionType::File, m_nextToken++, token);
 }
 
 void FakePeer::handleFileUpload(quint64 id)

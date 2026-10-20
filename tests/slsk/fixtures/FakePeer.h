@@ -108,8 +108,9 @@ public:
     // Opens an F connection as the downloader of an upload `user` wants to send us (Soulseek.NET opens it itself when
     // the uploader's connection doesn't arrive): we wait for their token, then send our offset.
     quint64 connectAsDownloader(const QString &user, const QHostAddress &address, quint16 port);
-    // Asks the server to have `user` connect to us (they answer with PierceFireWall `token`).
-    bool requestIndirect(const QString &user, ConnectionType type, quint32 token);
+    // Asks the server to have `user` connect to us (they answer with PierceFireWall `token`). For an F connection,
+    // `uploadToken` is the upload (our TransferRequest token) the dial-back carries; 0 for none.
+    bool requestIndirect(const QString &user, ConnectionType type, quint32 token, quint32 uploadToken = 0);
     bool send(quint64 connection, const QByteArray &bytes);
     // Sends on the newest identified P connection with `user`.
     bool sendTo(const QString &user, const QByteArray &bytes);
@@ -231,11 +232,17 @@ private:
     QTcpServer *m_listener = nullptr;
     QTimer *m_rateTimer = nullptr;
     std::map<quint64, Connection> m_connections;
-    QHash<quint32, std::pair<QString, ConnectionType>> m_indirectTokens; // our requestIndirect() tokens
-    QHash<quint32, PendingUpload> m_uploads;                             // TransferRequest tokens we sent
-    QHash<quint32, std::pair<QString, quint64>> m_downloads;             // tokens we allowed → (user, size)
-    QList<PendingUpload> m_held;                                         // queue entries held for startUpload()
-    QHash<QString, QHostAddress> m_addresses;                            // where peers connect from
+    struct IndirectRequest
+    {
+        QString user;
+        ConnectionType type = ConnectionType::Peer;
+        quint32 uploadToken = 0; // F: the upload the dial-back serves
+    };
+    QHash<quint32, IndirectRequest> m_indirectTokens;        // our requestIndirect() tokens
+    QHash<quint32, PendingUpload> m_uploads;                 // TransferRequest tokens we sent, until the transfer ends
+    QHash<quint32, std::pair<QString, quint64>> m_downloads; // tokens we allowed → (user, size)
+    QList<PendingUpload> m_held;                             // queue entries held for startUpload()
+    QHash<QString, QHostAddress> m_addresses;                // where peers connect from
     quint64 m_nextId = 1;
     quint32 m_nextToken = 5000;
 };
