@@ -46,8 +46,10 @@ class IndexedBackend final : public Backend
 public:
     enum class Kind { Mpeg, Flac, Pcm };
 
+    // `headerOnly`: open() reads the format header (and the Xing/LAME frame) only, never indexes the whole file, and
+    // the backend is for stream facts, not decoding (probeStreamInfo()).
     IndexedBackend(Kind kind, std::shared_ptr<ByteSource> source, const ProbeResult &probe,
-                   const DecoderOptions &options);
+                   const DecoderOptions &options, bool headerOnly = false);
     ~IndexedBackend() override;
     IndexedBackend(const IndexedBackend &) = delete;
     IndexedBackend &operator=(const IndexedBackend &) = delete;
@@ -77,6 +79,7 @@ private:
         const quint8 *peek(SourceReader &reader, qint64 position, qint64 count);
         void clear() { m_start = m_end = 0; }
         bool failed = false;
+        qint64 blockBytes = 0; // the smallest read; set by the backend
 
     private:
         std::vector<quint8> m_data;
@@ -97,6 +100,7 @@ private:
 
     Status unavailable(const SourceReader &reader, Error &error, const QString &cutShort) const;
     Status openMpeg(SourceReader &reader, Error &error);
+    Status checkMpegRun(SourceReader &reader, Error &error);
     Status openFlac(SourceReader &reader, Error &error);
     Status readFlacMetadata(SourceReader &reader, qint64 &audioStart, Error &error);
     Status findFirstFlacFrame(SourceReader &reader, qint64 from, Error &error);
@@ -124,6 +128,7 @@ private:
     CodecDecoder m_codec;
     std::shared_ptr<FrameIndex> m_index;
     bool m_indexShared = false; // m_index is shared with clones: never modify it
+    bool m_headerOnly = false;
     BlockCache m_cache;
     std::vector<quint8> m_packet;
     std::size_t m_nextFrame = 0;

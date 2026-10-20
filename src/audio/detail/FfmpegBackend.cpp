@@ -82,10 +82,11 @@ Codec codecFromId(AVCodecID id)
 } // namespace
 
 FfmpegBackend::FfmpegBackend(std::shared_ptr<ByteSource> source, const ProbeResult &probe,
-                             const DecoderOptions &options)
+                             const DecoderOptions &options, bool headerOnly)
     : m_source(std::move(source))
     , m_probe(probe)
     , m_options(options)
+    , m_headerOnly(headerOnly)
 {}
 
 FfmpegBackend::~FfmpegBackend()
@@ -164,7 +165,24 @@ Backend::Status FfmpegBackend::open(Error &error)
         return Status::Error;
     }
     m_format.reset(context);
-    if (!m_growing) {
+    // Without decoding a first frame nothing would catch a weak guess on data that isn't audio: a header-only probe
+    // takes only formats FFmpeg recognised with confidence (MP4 and Ogg are named, not guessed).
+    if (m_headerOnly && input == nullptr && context->probe_score <= AVPROBE_SCORE_RETRY) {
+        error = makeError(ErrorCode::Unsupported, u"not an audio file FFmpeg recognises with confidence"_s);
+        return Status::Error;
+    }
+    // A header-only probe skips FFmpeg's stream analysis (which decodes) when the header already gave the audio
+    // parameters, as it does for MP4, Ogg, ASF, APE and WavPack.
+    const bool parametersKnown = [context] {
+        for (unsigned i = 0; i < context->nb_streams; ++i) {
+            const AVCodecParameters *p = context->streams[i]->codecpar;
+            if (p->codec_type == AVMEDIA_TYPE_AUDIO && p->sample_rate > 0 && p->ch_layout.nb_channels > 0) {
+                return true;
+            }
+        }
+        return false;
+    }();
+    if (!m_growing && !(m_headerOnly && parametersKnown)) {
         ret = avformat_find_stream_info(context, nullptr);
         if (ret < 0) {
             error =
@@ -199,6 +217,9 @@ Backend::Status FfmpegBackend::open(Error &error)
         return Status::Error;
     }
     fillInfo();
+    if (m_headerOnly) {
+        return Status::Ok; // stream facts only: nothing is decoded
+    }
 
     // Decode the first frame: its timestamp is the origin of the raw timeline.
     m_findingOrigin = true;
