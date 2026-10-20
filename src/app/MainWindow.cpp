@@ -11,6 +11,7 @@
 #include "app/Preview.h"
 #include "app/Sidebar.h"
 #include "app/Toasts.h"
+#include "app/WaveformView.h"
 #include "app/views/ActivityView.h"
 #include "app/views/BrowseView.h"
 #include "app/views/CollectionView.h"
@@ -123,6 +124,17 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     createActions();
     createMenus();
     createToolBar();
+    // Tab goes from the sidebar to the view and its inspector, then to the waveform under them (UI-5); the player was
+    // built first, for the views to connect to it.
+    QWidget *lastOfContent = nullptr;
+    for (QWidget *next = m_contentSplitter->nextInFocusChain(); next != this; next = next->nextInFocusChain()) {
+        if (m_contentSplitter->isAncestorOf(next) && next->focusPolicy() != Qt::NoFocus) {
+            lastOfContent = next;
+        }
+    }
+    if (auto *waveform = m_player->findChild<WaveformView *>(); waveform != nullptr && lastOfContent != nullptr) {
+        QWidget::setTabOrder(lastOfContent, waveform);
+    }
     restoreSavedState();
 
     connect(&m_services.engine, &core::EngineHost::pausedChanged, this, [this](bool paused) {

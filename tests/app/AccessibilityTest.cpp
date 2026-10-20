@@ -260,3 +260,38 @@ TEST(Accessibility, ToastsAreReadOutAndWaitForTheKeyboard)
     QApplication::sendEvent(undo, &focusOut);
     QTRY_COMPARE_WITH_TIMEOUT(toasts.count(), 0, 2000);
 }
+
+TEST_F(AccessibilityTest, TabGoesFromTheSidebarToTheViewThenThePlayer)
+{
+    auto window = makeWindow();
+    for (const QString &id : {u"get"_s, u"wishlist"_s, u"rooms"_s}) {
+        window->navigateTo(id);
+        QApplication::processEvents();
+        QStringList chain;
+        QWidget *next = window.get();
+        for (int step = 0; step < 5000; ++step) {
+            next = next->nextInFocusChain();
+            if (next == window.get()) {
+                break;
+            }
+            if (next->isVisibleTo(window.get()) && next->isEnabled() && (next->focusPolicy() & Qt::TabFocus)) {
+                chain.append(next->objectName());
+            }
+        }
+        const auto at = [&chain](const QString &name) { return chain.indexOf(name); };
+        ASSERT_GE(at(u"sidebar.search"_s), 0) << chain.join(u' ').toStdString();
+        EXPECT_LT(at(u"sidebar.search"_s), at(u"sidebar.list"_s));
+        const QWidget *view = window->findChild<QWidget *>(u"view."_s + id);
+        ASSERT_NE(view, nullptr);
+        int inView = 0;
+        for (const QString &name : std::as_const(chain)) {
+            const auto *widget = window->findChild<QWidget *>(name);
+            if (widget != nullptr && view->isAncestorOf(widget)) {
+                ++inView;
+                EXPECT_GT(at(name), at(u"sidebar.list"_s)) << name.toStdString();
+                EXPECT_LT(at(name), at(u"player.waveform"_s)) << name.toStdString();
+            }
+        }
+        EXPECT_GT(inView, 0) << id.toStdString();
+    }
+}

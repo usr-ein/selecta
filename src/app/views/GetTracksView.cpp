@@ -207,6 +207,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     bar->addWidget(m_preset);
     bar->addWidget(m_find);
     bar->addWidget(m_get);
+    QWidget::setTabOrder({m_add, m_export, m_preset, m_find, m_get, m_table}); // the bar, left to right, then the list
     auto *noteBox = new QHBoxLayout;
     noteBox->setContentsMargins(16, 0, 16, 8);
     noteBox->addWidget(m_note);

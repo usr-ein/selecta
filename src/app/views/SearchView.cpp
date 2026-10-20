@@ -394,6 +394,7 @@ QWidget *SearchView::createFilterBar()
     m_download->setToolTip(tr("Download the selected files to the Inbox, converted and tagged (Return)"));
     connect(m_download, &QPushButton::clicked, this, &SearchView::downloadSelected);
     layout->addWidget(m_download);
+    QWidget::setTabOrder(m_watch, m_download); // Tab follows the bar, left to right
     return bar;
 }
 
