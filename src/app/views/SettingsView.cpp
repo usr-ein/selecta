@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SettingsView.h"
 
+#include "app/Format.h"
 #include "library/Naming.h"
 
 #include <QCheckBox>
@@ -126,6 +127,7 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     columnLayout->addWidget(createNetworkBox(column));
     columnLayout->addWidget(createSpotifyBox(column));
     columnLayout->addWidget(createPreviewBox(column));
+    columnLayout->addWidget(createCacheBox(column));
     columnLayout->addWidget(dataBox);
     columnLayout->addWidget(aboutBox);
     columnLayout->addStretch(1);
@@ -312,6 +314,47 @@ QWidget *SettingsView::createSpotifyBox(QWidget *parent)
     form->addRow(QString(), buttons);
     setSpotifyStatus(m_spotify);
     return box;
+}
+
+QWidget *SettingsView::createCacheBox(QWidget *parent)
+{
+    auto *box = new QGroupBox(tr("Caches"), parent);
+    auto *form = new QFormLayout(box);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto *note = new QLabel(tr("What Selecta keeps to save the network and your time. Emptying one only means it is "
+                               "fetched or worked out again when needed."),
+                            box);
+    note->setWordWrap(true);
+    note->setForegroundRole(QPalette::PlaceholderText);
+    form->addRow(note);
+    const auto row = [this, box, form](const QString &label, const QString &name, QLabel *&size,
+                                       void (SettingsView::*clear)()) {
+        auto *line = new QWidget(box);
+        auto *layout = new QHBoxLayout(line);
+        layout->setContentsMargins(0, 0, 0, 0);
+        size = new QLabel(tr("…"), line);
+        size->setObjectName(u"settings.cache."_s + name);
+        auto *button = new QPushButton(tr("Empty"), line);
+        button->setObjectName(u"settings.cache."_s + name + u".clear"_s);
+        connect(button, &QPushButton::clicked, this, clear);
+        layout->addWidget(size, 1);
+        layout->addWidget(button);
+        form->addRow(label, line);
+    };
+    row(tr("Search results:"), u"searches"_s, m_searchCache, &SettingsView::clearSearchCacheRequested);
+    row(tr("Previews:"), u"previews"_s, m_previewCache, &SettingsView::clearPreviewCacheRequested);
+    row(tr("Waveforms:"), u"waveforms"_s, m_waveformCache, &SettingsView::clearWaveformCacheRequested);
+    return box;
+}
+
+void SettingsView::setCacheSizes(const core::CacheStatus &engine, qint64 waveformBytes)
+{
+    m_searchCache->setText(
+        engine.searches == 1
+            ? tr("1 search · %1, kept a day").arg(format::size(engine.searchBytes))
+            : tr("%1 searches · %2, kept a day").arg(engine.searches).arg(format::size(engine.searchBytes)));
+    m_previewCache->setText(tr("%1 of audio, at most 2 GB").arg(format::size(engine.previewBytes)));
+    m_waveformCache->setText(tr("%1, at most 320 MB").arg(format::size(waveformBytes)));
 }
 
 QWidget *SettingsView::createPreviewBox(QWidget *parent)

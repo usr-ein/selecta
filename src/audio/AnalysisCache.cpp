@@ -553,6 +553,27 @@ void AnalysisCache::remove(const CacheKey &key)
     }
 }
 
+qint64 AnalysisCache::totalBytes()
+{
+    const std::scoped_lock lock(m_mutex);
+    ensureScannedLocked();
+    return m_detail.bytes + m_overview.bytes;
+}
+
+void AnalysisCache::clear()
+{
+    const std::scoped_lock lock(m_mutex);
+    ensureScannedLocked();
+    for (const Tier tier : {Tier::Overview, Tier::Detail}) {
+        TierState &state = tierState(tier);
+        for (auto it = state.entries.cbegin(); it != state.entries.cend(); ++it) {
+            QFile::remove(pathFor(tier, it.key()));
+        }
+        state.entries.clear();
+        state.bytes = 0;
+    }
+}
+
 qint64 AnalysisCache::detailBytes() const
 {
     const std::scoped_lock lock(m_mutex);

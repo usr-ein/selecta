@@ -185,3 +185,18 @@ TEST_F(HistoryStoreTest, TotalsPerPeerWithTheSessionsShare)
     EXPECT_EQ(totals[1].bytes, 100);
     EXPECT_EQ(store.peerTotals(std::nullopt).constFirst().sessionFiles, 0);
 }
+
+TEST_F(HistoryStoreTest, RecentlyFiledListsOnlyFiledDownloads)
+{
+    const auto filed = store.add(download("a", 1000));
+    const auto stays = store.add(download("b", 2000));
+    const auto later = store.add(download("c", 3000));
+    ASSERT_TRUE(filed && stays && later);
+    ASSERT_TRUE(store.setWhereabouts(*filed, Whereabouts::Filed, u"/Music/Singles/a.mp3"_s));
+    ASSERT_TRUE(store.setWhereabouts(*later, Whereabouts::Filed, u"/Music/Singles/c.mp3"_s));
+    const QList<HistoryEntry> recent = store.recentlyFiled(5);
+    ASSERT_EQ(recent.size(), 2);
+    EXPECT_EQ(recent.at(0).filedPath, u"/Music/Singles/c.mp3"_s); // newest first
+    EXPECT_EQ(recent.at(1).filedPath, u"/Music/Singles/a.mp3"_s);
+    EXPECT_EQ(store.recentlyFiled(1).size(), 1);
+}

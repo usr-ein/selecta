@@ -546,3 +546,17 @@ TEST_F(TransferServiceTest, AKeptPreviewThatFailsDownloadsTheUsualWay)
     // The preview breaks off (once); the download then asks the peer itself.
     EXPECT_TRUE(reaches(*id, State::Converting, 20s));
 }
+
+TEST_F(TransferServiceTest, ThePreviewCacheSaysItsSizeAndEmpties)
+{
+    const QString previews = dir.filePath(u"previews"_s);
+    ASSERT_TRUE(QDir().mkpath(previews + u"/YouTube"_s));
+    for (const QString &name : {u"1-a.flac"_s, u"YouTube/b.m4a"_s}) {
+        QFile file(previews + u'/' + name);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        file.write(content(1000, 9));
+    }
+    EXPECT_EQ(service->previewCacheBytes(), 2000);
+    service->clearPreviewCache();
+    EXPECT_EQ(service->previewCacheBytes(), 0);
+}

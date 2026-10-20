@@ -444,6 +444,34 @@ void Engine::dismissSupersedeFlag(qint64 id)
     }
 }
 
+void Engine::refreshCaches()
+{
+    if (!m_searchCache || !m_transfers) {
+        return;
+    }
+    CacheStatus status;
+    status.searches = m_searchCache->count();
+    status.searchBytes = m_searchCache->sizeBytes();
+    status.previewBytes = m_transfers->previewCacheBytes();
+    Q_EMIT cachesChanged(status);
+}
+
+void Engine::clearSearchCache()
+{
+    if (m_searchCache && !m_searchCache->clear()) {
+        qCWarning(lcEngine) << "couldn't clear the search cache:" << m_db->lastError();
+    }
+    refreshCaches();
+}
+
+void Engine::clearPreviewCache()
+{
+    if (m_transfers) {
+        m_transfers->clearPreviewCache();
+    }
+    refreshCaches();
+}
+
 void Engine::setLibraryConfig(const LibraryConfig &config)
 {
     if (!m_inbox || !m_collection || !m_shares) {

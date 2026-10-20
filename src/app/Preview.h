@@ -60,6 +60,8 @@ public:
     const audio::Waveform &waveform() const { return m_waveform; }
     // The identity of what is loaded; empty when nothing is.
     QString identity() const { return m_identity; }
+    // The waveform cache (Settings shows its size and can empty it); null when there is none.
+    audio::AnalysisCache *analysisCache() const { return m_cache.get(); }
 
     // Plays `request` from the start, replacing the current preview.
     void preview(const PreviewRequest &request);

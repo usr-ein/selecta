@@ -56,6 +56,8 @@ public:
     void setPreviewSettings(core::PreviewSource source, const QString &ytDlpPath);
     void setYtDlpStatus(bool ok, const QString &description);
     core::NetworkConfig networkConfig() const { return m_network; }
+    // Caches (CACHE-2): what each holds.
+    void setCacheSizes(const core::CacheStatus &engine, qint64 waveformBytes);
 
 Q_SIGNALS:
     void appearanceRequested(selecta::app::Appearance appearance);
@@ -72,6 +74,9 @@ Q_SIGNALS:
     // An empty path: look in the usual places. The view asks for a check right after.
     void ytDlpPathChanged(const QString &path);
     void ytDlpCheckRequested();
+    void clearSearchCacheRequested();
+    void clearPreviewCacheRequested();
+    void clearWaveformCacheRequested();
 
 private:
     QWidget *createLibraryBox(QWidget *parent);
@@ -79,6 +84,7 @@ private:
     QWidget *createSpotifyBox(QWidget *parent);
     QWidget *createNetworkBox(QWidget *parent);
     QWidget *createPreviewBox(QWidget *parent);
+    QWidget *createCacheBox(QWidget *parent);
     void submitNetwork();
     void submitSpotify();
     void showLibrary();
@@ -122,6 +128,9 @@ private:
     QComboBox *m_previewSource = nullptr;
     QLineEdit *m_ytDlpPath = nullptr;
     QLabel *m_ytDlpState = nullptr;
+    QLabel *m_searchCache = nullptr;
+    QLabel *m_previewCache = nullptr;
+    QLabel *m_waveformCache = nullptr;
 };
 
 } // namespace selecta::app

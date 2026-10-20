@@ -234,6 +234,18 @@ QList<HistoryEntry> HistoryStore::recent(int limit)
     return readAll(query);
 }
 
+QList<HistoryEntry> HistoryStore::recentlyFiled(int limit)
+{
+    Statement query = m_db.prepare(
+        u"SELECT %1 FROM history WHERE whereabouts = 'filed' ORDER BY completed_at DESC, id DESC LIMIT ?1;"_s.arg(
+            kColumns));
+    if (!query.isValid()) {
+        return {};
+    }
+    query.bind(1, std::max(0, limit));
+    return readAll(query);
+}
+
 QList<HistoryEntry> HistoryStore::downloads()
 {
     Statement query =

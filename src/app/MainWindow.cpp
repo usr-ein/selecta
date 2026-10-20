@@ -355,7 +355,7 @@ void MainWindow::createViews()
                        tr("Searches saved here run again on their own and tell you when something new turns up."),
                        tr("Not built yet (milestone M8).")),
             fixed(tr("No saved searches")));
-    auto *collectionView = new CollectionView(m_services.engine, m_stack);
+    auto *collectionView = new CollectionView(m_services.engine, m_services.database, m_stack);
     addView(u"collection"_s, collectionView, [collectionView] { return collectionView->summary(); });
     connect(collectionView, &CollectionView::summaryChanged, this, [this] {
         if (m_currentId == u"collection"_s) {
@@ -363,6 +363,7 @@ void MainWindow::createViews()
         }
     });
     connect(collectionView, &CollectionView::settingsRequested, this, [this] { navigateTo(u"settings"_s); });
+    connect(collectionView, &CollectionView::inboxRequested, this, [this] { navigateTo(u"inbox"_s); });
 
     auto *history = new HistoryView(m_services.database, m_services.build.session, m_stack);
     // Filing and trashing change where downloads are; arrivals add new ones.
@@ -457,6 +458,27 @@ void MainWindow::createSettingsView()
 {
     m_settingsView = new SettingsView(m_services.build, m_appearance, m_services.settings.libraryConfig(),
                                       m_services.settings.networkConfig(), m_stack);
+    // Caches (CACHE-2): sizes when Settings opens, and after each is emptied.
+    const auto showCaches = [this](const core::CacheStatus &status) {
+        audio::AnalysisCache *waveforms = m_services.preview.analysisCache();
+        m_settingsView->setCacheSizes(status, waveforms ? waveforms->totalBytes() : 0);
+    };
+    connect(&m_services.engine, &core::EngineHost::cachesChanged, this, showCaches);
+    connect(this, &MainWindow::viewChanged, this, [this](const QString &id) {
+        if (id == u"settings"_s) {
+            m_services.engine.refreshCaches();
+        }
+    });
+    connect(m_settingsView, &SettingsView::clearSearchCacheRequested, &m_services.engine,
+            &core::EngineHost::clearSearchCache);
+    connect(m_settingsView, &SettingsView::clearPreviewCacheRequested, &m_services.engine,
+            &core::EngineHost::clearPreviewCache);
+    connect(m_settingsView, &SettingsView::clearWaveformCacheRequested, this, [this, showCaches] {
+        if (audio::AnalysisCache *waveforms = m_services.preview.analysisCache()) {
+            waveforms->clear();
+        }
+        showCaches(m_services.engine.cacheStatus());
+    });
     connect(m_settingsView, &SettingsView::appearanceRequested, this, &MainWindow::setAppearance);
     connect(m_settingsView, &SettingsView::libraryConfigChanged, this, [this](const core::LibraryConfig &config) {
         if (!base::paths::ensureDir(config.inboxRoot)) {

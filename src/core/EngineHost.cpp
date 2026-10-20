@@ -43,6 +43,7 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<PeerStats>();
     qRegisterMetaType<ConverterItem>();
     qRegisterMetaType<SupersedeFlag>();
+    qRegisterMetaType<CacheStatus>();
     qRegisterMetaType<QList<SupersedeFlag>>();
     qRegisterMetaType<QList<ConverterItem>>();
     qRegisterMetaType<QList<PeerStats>>();
@@ -164,6 +165,10 @@ void EngineHost::start()
         Q_EMIT converterChanged(items);
     });
     connect(engine, &Engine::conversionsFinished, this, &EngineHost::conversionsFinished);
+    connect(engine, &Engine::cachesChanged, this, [this](const CacheStatus &status) {
+        m_cacheStatus = status;
+        Q_EMIT cachesChanged(status);
+    });
     connect(engine, &Engine::supersedeFlagsChanged, this, [this](const QList<SupersedeFlag> &flags) {
         m_supersedeFlags = flags;
         Q_EMIT supersedeFlagsChanged(flags);
@@ -472,6 +477,33 @@ void EngineHost::refreshPeerStats()
     post([](Engine &engine) {
         if (engine.isStarted()) {
             engine.refreshPeerStats();
+        }
+    });
+}
+
+void EngineHost::refreshCaches()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.refreshCaches();
+        }
+    });
+}
+
+void EngineHost::clearSearchCache()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.clearSearchCache();
+        }
+    });
+}
+
+void EngineHost::clearPreviewCache()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.clearPreviewCache();
         }
     });
 }

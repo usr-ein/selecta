@@ -221,3 +221,26 @@ TEST(AnalysisCache, RealAnalysisRoundTrip)
     ASSERT_TRUE(cache.store(key, waveform.value()).ok());
     EXPECT_EQ(cache.load(key), waveform.value());
 }
+
+TEST(AnalysisCache, SaysItsSizeAndEmpties)
+{
+    const QTemporaryDir dir;
+    {
+        AnalysisCache cache(dir.path());
+        ASSERT_TRUE(cache.store(keyFor(1), syntheticWaveform(60, 1)).ok());
+        ASSERT_TRUE(cache.store(keyFor(2), syntheticWaveform(60, 2)).ok());
+    }
+    // A new process: the size comes from the folder.
+    AnalysisCache cache(dir.path());
+    const qint64 total = cache.totalBytes();
+    EXPECT_GT(total, 0);
+    EXPECT_EQ(total, cache.detailBytes() + cache.overviewBytes());
+    cache.clear();
+    EXPECT_EQ(cache.totalBytes(), 0);
+    EXPECT_FALSE(cache.load(keyFor(1)));
+    EXPECT_TRUE(QDir(dir.path() + u"/detail"_s).entryList(QDir::Files).isEmpty());
+    EXPECT_TRUE(QDir(dir.path() + u"/overview"_s).entryList(QDir::Files).isEmpty());
+    // And fills again as before.
+    ASSERT_TRUE(cache.store(keyFor(3), syntheticWaveform(60, 3)).ok());
+    EXPECT_TRUE(cache.load(keyFor(3)));
+}

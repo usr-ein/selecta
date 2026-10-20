@@ -15,6 +15,9 @@ class QStackedWidget;
 namespace selecta::core {
 class EngineHost;
 }
+namespace selecta::storage {
+class Database;
+}
 
 namespace selecta::app {
 
@@ -26,13 +29,14 @@ class CollectionView : public QWidget
     Q_OBJECT
 
 public:
-    explicit CollectionView(core::EngineHost &engine, QWidget *parent = nullptr);
+    CollectionView(core::EngineHost &engine, storage::Database &db, QWidget *parent = nullptr);
 
     // One line for the window subtitle.
     QString summary() const;
 
 Q_SIGNALS:
     void summaryChanged();
+    void inboxRequested();    // "Open Inbox"
     void settingsRequested(); // "Choose folders…": the folders are chosen in Settings → Library
 
 private:
@@ -40,7 +44,10 @@ private:
     // DL-8: filed singles that are also on an album.
     void showFlags(const QList<core::SupersedeFlag> &flags);
 
+    void showInboxAndFiled();
+
     core::EngineHost &m_engine;
+    storage::Database &m_db;
     core::CollectionStatus m_status;
     QStackedWidget *m_pages;
     QLabel *m_headline;
@@ -52,6 +59,11 @@ private:
     QListWidget *m_unreadable;
     QLabel *m_flagsTitle;
     QListWidget *m_flags;
+    QLabel *m_formats;
+    QLabel *m_inbox;
+    QPushButton *m_openInbox;
+    QLabel *m_filedTitle;
+    QListWidget *m_filed;
 };
 
 } // namespace selecta::app

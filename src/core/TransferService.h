@@ -140,6 +140,10 @@ public:
     void stopPreview(qint64 id);
     std::optional<Preview> preview(qint64 id) const;
 
+    // The preview cache (CACHE-2): its size on disk, and emptying it (a preview playing now stays).
+    qint64 previewCacheBytes() const;
+    void clearPreviewCache();
+
     // Stops listening to the transfer manager before the network goes; unfinished downloads stay saved for the next
     // launch, and open files are closed by the manager as it is destroyed. Nothing else may be called afterwards.
     void shutdown();

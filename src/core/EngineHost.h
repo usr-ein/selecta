@@ -113,6 +113,12 @@ public:
     QList<PeerStats> peerStats() const { return m_peerStats; }
     void refreshPeerStats();
 
+    // --- caches (CACHE-2) ---
+    void refreshCaches();
+    void clearSearchCache();
+    void clearPreviewCache();
+    CacheStatus cacheStatus() const { return m_cacheStatus; }
+
     // --- supersede flags (DL-8): singles also on an album ---
     QList<SupersedeFlag> supersedeFlags() const { return m_supersedeFlags; }
     void dismissSupersedeFlag(qint64 id);
@@ -199,6 +205,7 @@ Q_SIGNALS:
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     void converterChanged(const QList<selecta::core::ConverterItem> &items);
     void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
+    void cachesChanged(const selecta::core::CacheStatus &status);
     void conversionsFinished(int done, int failed);
     void albumReported(const selecta::core::AlbumReport &report);
 
@@ -221,6 +228,7 @@ private:
     QList<PeerStats> m_peerStats;
     QList<ConverterItem> m_converterItems;
     QList<SupersedeFlag> m_supersedeFlags;
+    CacheStatus m_cacheStatus;
     QList<ManualSearch> m_searches; // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;

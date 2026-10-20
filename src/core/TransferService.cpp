@@ -1146,6 +1146,41 @@ void TransferService::trimPreviewCache()
     }
 }
 
+qint64 TransferService::previewCacheBytes() const
+{
+    if (m_options.previewDir.isEmpty()) {
+        return 0;
+    }
+    qint64 total = 0;
+    QDirIterator it(m_options.previewDir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        total += QFileInfo(it.next()).size();
+    }
+    return total;
+}
+
+void TransferService::clearPreviewCache()
+{
+    if (m_options.previewDir.isEmpty()) {
+        return;
+    }
+    QSet<QString> inUse;
+    for (const std::shared_ptr<PreviewSlot> &slot : std::as_const(m_previews)) {
+        inUse.insert(QFileInfo(slot->path).absoluteFilePath());
+    }
+    QDirIterator it(m_options.previewDir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = QFileInfo(it.next()).absoluteFilePath();
+        if (!inUse.contains(path)) {
+            QFile::remove(path);
+        }
+    }
+    // Files kept for a Get that reuses them are gone too.
+    for (auto kept = m_completedPreviews.begin(); kept != m_completedPreviews.end();) {
+        kept = QFileInfo::exists(kept.value()) ? std::next(kept) : m_completedPreviews.erase(kept);
+    }
+}
+
 void TransferService::keptPreviewEnded(qint64 downloadId, const QString &completePath)
 {
     m_awaitingPreview.remove(downloadId);

@@ -93,6 +93,17 @@ TEST_F(CollectionServiceTest, ScansTheFoldersIntoTheIndex)
     ASSERT_TRUE(found.has_value());
     EXPECT_EQ(found->source, selecta::match::Source::Collection);
     EXPECT_FALSE(lookUp(u"Kassia Moreau"_s, u"Night Transit"_s).has_value());
+
+    // LIB-5: what the collection is made of.
+    const selecta::core::CollectionStatus status = service->status();
+    EXPECT_EQ(status.bytes, QFileInfo(root + u"/Singles/Okuma Drift - Neon Rain.mp3"_s).size() +
+                                QFileInfo(root + u"/Singles/Halden Rue - Tidewater.flac"_s).size());
+    ASSERT_EQ(status.formats.size(), 2);
+    EXPECT_EQ(status.formats.at(0).second + status.formats.at(1).second, 2);
+    QStringList names{status.formats.at(0).first, status.formats.at(1).first};
+    names.sort();
+    EXPECT_EQ(names.constLast(), u"MP3 320"_s) << names.join(u", "_s).toStdString(); // the synthetic MP3s are 320
+    EXPECT_EQ(names.constFirst(), u"FLAC"_s);
 }
 
 TEST_F(CollectionServiceTest, ARescanFollowsChangesAndDeletions)

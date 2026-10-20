@@ -22,6 +22,27 @@ namespace {
 
 Q_LOGGING_CATEGORY(lcCollection, "selecta.core.collection")
 
+// "MP3 320", "MP3 below 320", "FLAC"…: how the Library view counts formats (LIB-5).
+QString formatLabel(const match::AudioQuality &quality)
+{
+    switch (quality.codec) {
+    case match::Codec::Mp3:
+        return quality.bitrateKbps >= 315 ? u"MP3 320"_s : u"MP3 below 320"_s;
+    case match::Codec::Flac:
+        return u"FLAC"_s;
+    case match::Codec::Aiff:
+        return u"AIFF"_s;
+    case match::Codec::Wav:
+        return u"WAV"_s;
+    case match::Codec::Aac:
+        return u"AAC"_s;
+    case match::Codec::Alac:
+        return u"ALAC"_s;
+    default:
+        return u"Other"_s;
+    }
+}
+
 match::Codec codecOf(const QString &format)
 {
     const QString name = format.toLower();
@@ -272,10 +293,23 @@ void CollectionService::rebuild()
     const QList<CollectionFile> stored = CollectionStore(m_db).all();
     files.reserve(stored.size());
     ids.reserve(stored.size());
+    QHash<QString, int> formats;
+    qint64 bytes = 0;
     for (const CollectionFile &file : stored) {
         files.append(file.file);
         ids.append(file.id);
+        ++formats[formatLabel(file.file.quality)];
+        bytes += file.file.file.size;
     }
+    // LIB-5: what the collection is made of.
+    m_status.bytes = bytes;
+    m_status.formats.clear();
+    for (auto it = formats.cbegin(); it != formats.cend(); ++it) {
+        m_status.formats.append({it.key(), it.value()});
+    }
+    std::ranges::sort(m_status.formats, [](const QPair<QString, int> &a, const QPair<QString, int> &b) {
+        return a.second != b.second ? a.second > b.second : a.first < b.first;
+    });
     QList<match::LibraryTrack> inbox;
     for (const library::InboxItem &item : std::as_const(m_inboxItems)) {
         match::LibraryTrack track;

@@ -75,6 +75,8 @@ public:
     QList<HistoryEntry> forSession(qint64 session);
     // The newest `limit` downloads, newest first.
     QList<HistoryEntry> recent(int limit);
+    // The newest `limit` downloads filed into the collection, newest first (LIB-5).
+    QList<HistoryEntry> recentlyFiled(int limit);
     // Every download except previews, oldest first (the matcher's "downloaded before" input).
     QList<HistoryEntry> downloads();
     // Whether this exact file was downloaded from this peer before.

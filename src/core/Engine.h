@@ -40,6 +40,14 @@ namespace selecta::core {
 
 class GovernorStore;
 
+// What the caches hold (PRD CACHE-1, CACHE-2), for Settings.
+struct CacheStatus
+{
+    int searches = 0; // searches kept for a day
+    qint64 searchBytes = 0;
+    qint64 previewBytes = 0; // preview audio from peers and YouTube
+};
+
 struct EngineOptions
 {
     QString databasePath;               // the engine opens its own connection; ":memory:" in tests
@@ -151,6 +159,10 @@ public:
     // DL-8: the singles flagged as also on an album (supersedeFlagsChanged()); a dismissed flag goes.
     void refreshSupersedeFlags();
     void dismissSupersedeFlag(qint64 id);
+    // CACHE-2: the caches' sizes (cachesChanged()), and emptying them.
+    void refreshCaches();
+    void clearSearchCache();
+    void clearPreviewCache();
 
     // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
     void setLibraryConfig(const LibraryConfig &config);
@@ -220,6 +232,7 @@ Q_SIGNALS:
     void downloadProgress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
+    void cachesChanged(const selecta::core::CacheStatus &status);
     // The converter (ConverterService's signals, forwarded).
     void converterChanged(const QList<selecta::core::ConverterItem> &items);
     void conversionsFinished(int done, int failed);
@@ -282,3 +295,5 @@ private:
 };
 
 } // namespace selecta::core
+
+Q_DECLARE_METATYPE(selecta::core::CacheStatus)

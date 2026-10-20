@@ -39,6 +39,8 @@ struct CollectionStatus
     int total = 0; // files this scan reads (new or changed ones)
     int tracks = 0;
     int albums = 0;
+    qint64 bytes = 0;                   // the files' total size
+    QList<QPair<QString, int>> formats; // "MP3 320", "FLAC"… with how many tracks, the most first (LIB-5)
     int unreadable = 0;
     QList<QPair<QString, QString>> unreadableSample; // (path, reason), at most kUnreadableSample
     qint64 lastScanMs = 0;                           // Unix time, ms; 0 before the first

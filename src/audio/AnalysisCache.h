@@ -89,6 +89,10 @@ public:
     // Current sizes of the tiers in bytes (after the first scan; before it, what this process has written).
     qint64 detailBytes() const;
     qint64 overviewBytes() const;
+    // Both tiers on disk, in bytes; scans the folder the first time (CACHE-2).
+    qint64 totalBytes();
+    // Removes every entry (CACHE-2): what is needed again is analysed again.
+    void clear();
 
     // Blob codecs, public for tests and fuzzing. Decoding validates everything (magic, versions, sizes against
     // bounds, CRC-32) and never allocates more than the bound for the declared column count.

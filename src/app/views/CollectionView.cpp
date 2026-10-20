@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/CollectionView.h"
 
+#include "app/Format.h"
 #include "app/Icons.h"
 #include "app/views/EmptyStateView.h"
 #include "core/EngineHost.h"
+#include "library/HistoryStore.h"
 
 #include <QDateTime>
 #include <QDir>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QListWidget>
@@ -22,9 +25,10 @@ using namespace Qt::StringLiterals;
 
 namespace selecta::app {
 
-CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
+CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, QWidget *parent)
     : QWidget(parent)
     , m_engine(engine)
+    , m_db(db)
     , m_pages(new QStackedWidget(this))
     , m_headline(new QLabel(this))
     , m_details(new QLabel(this))
@@ -35,6 +39,11 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     , m_unreadable(new QListWidget(this))
     , m_flagsTitle(new QLabel(this))
     , m_flags(new QListWidget(this))
+    , m_formats(new QLabel(this))
+    , m_inbox(new QLabel(this))
+    , m_openInbox(new QPushButton(tr("Open Inbox"), this))
+    , m_filedTitle(new QLabel(tr("Recently filed"), this))
+    , m_filed(new QListWidget(this))
 {
     setObjectName(u"view.collection"_s);
 
@@ -89,6 +98,19 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     m_unreadable->setObjectName(u"collection.unreadable"_s);
     m_unreadable->setSelectionMode(QAbstractItemView::NoSelection);
     m_unreadable->setFrameShape(QFrame::NoFrame);
+    m_formats->setObjectName(u"collection.formats"_s);
+    m_formats->setWordWrap(true);
+    m_inbox->setObjectName(u"collection.inbox"_s);
+    m_openInbox->setObjectName(u"collection.openInbox"_s);
+    connect(m_openInbox, &QPushButton::clicked, this, &CollectionView::inboxRequested);
+    m_filedTitle->setObjectName(u"collection.filedTitle"_s);
+    QFont sectionFont = m_filedTitle->font();
+    sectionFont.setWeight(QFont::DemiBold);
+    m_filedTitle->setFont(sectionFont);
+    m_filed->setObjectName(u"collection.filed"_s);
+    m_filed->setFrameShape(QFrame::NoFrame);
+    m_filed->setSelectionMode(QAbstractItemView::NoSelection);
+    m_filed->setMaximumHeight(200);
     m_flagsTitle->setObjectName(u"collection.flagsTitle"_s);
     m_flags->setObjectName(u"collection.flags"_s);
     m_flags->setFrameShape(QFrame::NoFrame);
@@ -117,8 +139,17 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     layout->setSpacing(8);
     layout->addLayout(buttons);
     layout->addWidget(m_details);
+    layout->addWidget(m_formats);
     layout->addWidget(m_progress);
     layout->addWidget(m_message);
+    layout->addSpacing(8);
+    auto *inboxRow = new QHBoxLayout;
+    inboxRow->addWidget(m_inbox, 1);
+    inboxRow->addWidget(m_openInbox);
+    layout->addLayout(inboxRow);
+    layout->addSpacing(8);
+    layout->addWidget(m_filedTitle);
+    layout->addWidget(m_filed);
     layout->addSpacing(8);
     layout->addWidget(m_flagsTitle);
     layout->addWidget(m_flags);
@@ -133,8 +164,32 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
 
     connect(&m_engine, &core::EngineHost::collectionStatusChanged, this, &CollectionView::show);
     connect(&m_engine, &core::EngineHost::supersedeFlagsChanged, this, &CollectionView::showFlags);
+    // Filing moves Inbox items into the collection: both lists change together.
+    connect(&m_engine, &core::EngineHost::inboxChanged, this, &CollectionView::showInboxAndFiled);
     show(m_engine.collectionStatus());
     showFlags(m_engine.supersedeFlags());
+    showInboxAndFiled();
+}
+
+void CollectionView::showInboxAndFiled()
+{
+    const QList<core::InboxEntry> entries = m_engine.inboxEntries();
+    if (entries.isEmpty()) {
+        m_inbox->setText(tr("Nothing waiting in the Inbox."));
+    } else {
+        m_inbox->setText(entries.size() == 1 ? tr("1 item waiting in the Inbox to be filed.")
+                                             : tr("%1 items waiting in the Inbox to be filed.").arg(entries.size()));
+    }
+    m_openInbox->setVisible(!entries.isEmpty());
+    m_filed->clear();
+    const QList<library::HistoryEntry> filed = library::HistoryStore(m_db).recentlyFiled(8);
+    for (const library::HistoryEntry &entry : filed) {
+        const QString name = entry.artist.isEmpty() ? entry.title : entry.artist + u" – "_s + entry.title;
+        auto *item = new QListWidgetItem(name.isEmpty() ? QFileInfo(entry.filedPath).fileName() : name, m_filed);
+        item->setToolTip(QDir::toNativeSeparators(entry.filedPath));
+    }
+    m_filedTitle->setVisible(!filed.isEmpty());
+    m_filed->setVisible(!filed.isEmpty());
 }
 
 void CollectionView::showFlags(const QList<core::SupersedeFlag> &flags)
@@ -174,6 +229,12 @@ QString CollectionView::summary() const
 void CollectionView::show(const core::CollectionStatus &status)
 {
     m_status = status;
+    QStringList formats;
+    for (const auto &[format, count] : status.formats) {
+        formats.append(tr("%1: %2").arg(format, QLocale().toString(count)));
+    }
+    m_formats->setText(formats.join(u" · "_s));
+    m_formats->setVisible(!formats.isEmpty());
     m_pages->setCurrentIndex(status.roots.isEmpty() ? 0 : 1);
     const QLocale locale;
     m_headline->setText(status.tracks == 1 ? tr("1 track") : tr("%1 tracks").arg(locale.toString(status.tracks)));
@@ -181,6 +242,9 @@ void CollectionView::show(const core::CollectionStatus &status)
     QStringList details;
     if (status.albums > 0) {
         details.append(status.albums == 1 ? tr("1 album") : tr("%1 albums").arg(locale.toString(status.albums)));
+    }
+    if (status.bytes > 0) {
+        details.append(format::size(status.bytes));
     }
     QStringList folders;
     for (const QString &root : status.roots) {
