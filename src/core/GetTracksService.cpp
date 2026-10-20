@@ -812,6 +812,9 @@ void GetTracksService::switchPeer(qint64 id, const QString &peer, const QByteArr
 
 void GetTracksService::moveTo(GetLine &line, const FileChoice &choice)
 {
+    if (!line.best) {
+        return; // nothing waits at a peer: nothing to move
+    }
     const GetLine before = line; // where it waits: what it falls back on
     const QString left = line.best->peer;
     const qint64 waitedWith = line.downloadId;
@@ -857,7 +860,7 @@ void GetTracksService::lookForOtherPeers(GetLine &line)
     QString why;
     const QString query = FileRanking::query(line, m_excludedPhrases ? m_excludedPhrases() : QStringList(), &why);
     if (query.isEmpty()) {
-        line.peersNote = why;
+        line.peersNote = std::move(why);
         store(line);
         return;
     }

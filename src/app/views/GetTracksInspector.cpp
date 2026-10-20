@@ -235,7 +235,7 @@ void GetTracksInspector::setChoices(Choices &choices, const QList<core::FileChoi
         return; // the same files: the one picked stays picked
     }
     const std::optional<core::FileChoice> before = picked(choices);
-    while (QLayoutItem *item = choices.rows->takeAt(0)) {
+    while (const QLayoutItem *item = choices.rows->takeAt(0)) {
         delete item->widget(); // its radio button leaves the group with it
         delete item;
     }

@@ -44,6 +44,7 @@ using selecta::slsk::peer::PlaceInQueueRequest;
 namespace {
 
 constexpr qint64 kNow = 1'800'000'000'000;
+constexpr qint64 kMinuteMs = 60'000;
 
 QByteArray content(qsizetype size, quint32 seed)
 {
@@ -381,21 +382,21 @@ TEST_F(TransferServiceTest, AQueuedDownloadSaysItsPlaceAndIsStuckWithoutProgress
     EXPECT_FALSE(service->download(*id)->queue.isStuck());
 
     // Two minutes on, no better place and no start: stuck, and the message says so plainly.
-    now += 2 * 60'000;
+    now += 2 * kMinuteMs;
     ASSERT_TRUE(waitFor([&] { return service->download(*id)->queue.isStuck(); }));
     EXPECT_EQ(service->download(*id)->queue.kind, Verdict::NoProgress);
     EXPECT_TRUE(service->download(*id)->message.contains(u"No progress in slow_lane's queue"_s))
         << service->download(*id)->message.toStdString();
 
     // One question per peer per 10 minutes (the governor's limit): none more before that.
-    now += 5 * 60'000;
+    now += 5 * kMinuteMs;
     clock.advance(7min);
     QTest::qWait(300);
     EXPECT_EQ(holder->receivedOf<PlaceInQueueRequest>().size(), 1);
 
     // Then asked again. Place 1 after place 7, twelve minutes on: it starts in about two minutes, so it isn't stuck.
     holder->placeInQueue = 1;
-    now += 5 * 60'000;
+    now += 5 * kMinuteMs;
     clock.advance(5min);
     ASSERT_TRUE(waitFor([&] { return holder->receivedOf<PlaceInQueueRequest>().size() == 2; }));
     ASSERT_TRUE(waitFor([&] { return service->download(*id)->placeInQueue == 1; }));
@@ -421,7 +422,7 @@ TEST_F(TransferServiceTest, APeerThatNeverSaysItsQueueIsStuckAfterTwoMinutes)
     const std::optional<qint64> id = service->enqueue(spec(*silent, "held.flac", 1000));
     ASSERT_TRUE(reaches(*id, State::Queued));
     ASSERT_TRUE(waitFor([&] { return silent->receivedOf<PlaceInQueueRequest>().size() == 1; }));
-    now += (2 * 60'000) - 1000;
+    now += 2 * kMinuteMs - 1000;
     QTest::qWait(200);
     EXPECT_FALSE(service->download(*id)->queue.isStuck());
     now += 1000;
@@ -446,16 +447,16 @@ TEST_F(TransferServiceTest, FilesBehindOurOwnTransferJustWaitTheirTurn)
     ASSERT_TRUE(reaches(*first, State::Transferring));
 
     // The peer sends us one file at a time: the second waits behind the first, however long that takes.
-    now += 5 * 60'000;
+    now += 5 * kMinuteMs;
     QTest::qWait(300);
     EXPECT_FALSE(service->download(*second)->queue.isStuck());
 
     // The first ends: from then on, the second has two minutes.
     service->cancel(*first);
-    now += 60'000;
+    now += kMinuteMs;
     QTest::qWait(200);
     EXPECT_FALSE(service->download(*second)->queue.isStuck());
-    now += 60'000;
+    now += kMinuteMs;
     ASSERT_TRUE(waitFor([&] { return service->download(*second)->queue.isStuck(); }));
 }
 
@@ -618,7 +619,7 @@ TEST_F(TransferServiceTest, TryingAnotherPeerLeavesTheOldQueueAndGetsTheOtherCop
     const qint64 queuedAtHolder = rig.line().downloadId;
     EXPECT_FALSE(rig.line().stuck);
     // Stuck two minutes on: the line says so.
-    now += 2 * 60'000;
+    now += 2 * kMinuteMs;
     ASSERT_TRUE(waitFor([&] { return rig.line().stuck; }));
 
     // Try another peer: the other copy is asked for, and the queue place at the holder given back.
@@ -674,7 +675,7 @@ TEST_F(TransferServiceTest, TryingAnotherPeerAfterARestartFindsTheOtherCopiesAga
     QObject::connect(service.get(), &TransferService::changed, &restarted,
                      &selecta::core::GetTracksService::downloadChanged);
     ASSERT_TRUE(restarted.lines().constFirst().alternatives.isEmpty());
-    now += 2 * 60'000;
+    now += 2 * kMinuteMs;
     ASSERT_TRUE(waitFor([&] { return restarted.lines().constFirst().stuck; }));
 
     // Try another peer: found again (the cache answers, no search goes out), then the other copy is got.
@@ -727,7 +728,7 @@ TEST_F(TransferServiceTest, AnOtherCopyThatCantBeAskedForLeavesTheLineAsItWas)
     const qint64 id = rig.line().id;
     rig.getTracks.download({id});
     ASSERT_TRUE(waitFor([&] { return holder->heldCount() == 1; }));
-    now += 2 * 60'000;
+    now += 2 * kMinuteMs;
     ASSERT_TRUE(waitFor([&] { return rig.line().stuck; }));
     const selecta::core::GetLine stuck = rig.line();
 
@@ -757,7 +758,7 @@ TEST_F(TransferServiceTest, GettingANearMissAnywayDownloadsItBelowTheQualityWant
     auto lower = peer(u"lower_bitrate"_s);
     const QString lowPath = u"@@l\\Okuma Drift - Neon Rain.mp3"_s;
     const QString lowerPath = u"@@m\\Okuma Drift - Neon Rain.mp3"_s;
-    constexpr qint64 kSize = 192 * 1000 / 8 * 372;
+    constexpr qint64 kSize = qint64{192} * 1000 / 8 * 372;
     lower->files.insert(selecta::slsk::RemotePath::fromText(lowerPath).raw,
                         FakePeer::Upload{.content = content(kSize / 2, 24)});
 

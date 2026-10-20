@@ -84,14 +84,14 @@ TEST(GetTracksInspector, NotFoundListsTheNearMissesToGetAnyway)
     EXPECT_TRUE(shown(inspector, u"inspector.get.nearMisses"_s));
     EXPECT_FALSE(shown(inspector, u"inspector.get.otherFiles"_s));
     EXPECT_FALSE(shown(inspector, u"inspector.get.wayOut"_s));
-    auto *first = child<QRadioButton>(inspector, u"inspector.get.nearMiss.0"_s);
+    const auto *first = child<QRadioButton>(inspector, u"inspector.get.nearMiss.0"_s);
     auto *second = child<QRadioButton>(inspector, u"inspector.get.nearMiss.1"_s);
     ASSERT_TRUE(first && second);
     EXPECT_TRUE(first->isChecked()); // the best is picked to begin with
     EXPECT_TRUE(second->accessibleName().contains(u"lower_peer"_s));
     EXPECT_TRUE(second->accessibleName().contains(u"under 320 kbps"_s));
 
-    QSignalSpy getAnyway(&inspector, &GetTracksInspector::getAnywayRequested);
+    const QSignalSpy getAnyway(&inspector, &GetTracksInspector::getAnywayRequested);
     second->click();
     // An update of the same line keeps the pick.
     inspector.showLine(notFound(7));
@@ -115,7 +115,7 @@ TEST(GetTracksInspector, AQueuedLineOffersTheOtherPeersFiles)
     EXPECT_TRUE(shown(inspector, u"inspector.get.otherFiles.button"_s));
     EXPECT_FALSE(shown(inspector, u"inspector.get.tryAnotherPeer"_s)); // not stuck: no alarm
     EXPECT_FALSE(shown(inspector, u"inspector.get.nearMisses"_s));
-    QSignalSpy switching(&inspector, &GetTracksInspector::switchRequested);
+    const QSignalSpy switching(&inspector, &GetTracksInspector::switchRequested);
     child<QRadioButton>(inspector, u"inspector.get.other.1"_s)->click();
     child<QPushButton>(inspector, u"inspector.get.otherFiles.button"_s)->click();
     ASSERT_EQ(switching.size(), 1);
@@ -139,7 +139,7 @@ TEST(GetTracksInspector, AStuckQueueIsSaidPlainlyWithOneButton)
     EXPECT_TRUE(shown(inspector, u"inspector.get.tryAnotherPeer"_s));
     EXPECT_FALSE(shown(inspector, u"inspector.get.otherFiles.button"_s)); // one button
     EXPECT_TRUE(shown(inspector, u"inspector.get.otherFiles"_s));         // its choice: the file picked
-    QSignalSpy switching(&inspector, &GetTracksInspector::switchRequested);
+    const QSignalSpy switching(&inspector, &GetTracksInspector::switchRequested);
     child<QPushButton>(inspector, u"inspector.get.tryAnotherPeer"_s)->click();
     ASSERT_EQ(switching.size(), 1);
     EXPECT_EQ(switching.at(0).at(1).toString(), u"free_slot"_s); // the best, unless another is picked
@@ -173,7 +173,7 @@ TEST(GetTracksInspector, ALineSearchedBeforeARestartOffersToFindItAgain)
     inspector.showLine(before);
     EXPECT_FALSE(shown(inspector, u"inspector.get.nearMisses"_s));
     ASSERT_TRUE(shown(inspector, u"inspector.get.findAgain"_s));
-    QSignalSpy findAgain(&inspector, &GetTracksInspector::findAgainRequested);
+    const QSignalSpy findAgain(&inspector, &GetTracksInspector::findAgainRequested);
     child<QPushButton>(inspector, u"inspector.get.findAgain"_s)->click();
     ASSERT_EQ(findAgain.size(), 1);
     EXPECT_EQ(findAgain.at(0).at(0).toLongLong(), 5);
