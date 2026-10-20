@@ -6,6 +6,7 @@
 #include "meta/detail/HttpChannel.h"
 #include "meta/detail/Identifiers.h"
 #include "meta/detail/ImageHeader.h"
+#include "meta/detail/Worker.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
@@ -17,7 +18,6 @@
 #include <QLoggingCategory>
 #include <QMetaObject>
 #include <QSaveFile>
-#include <QThreadPool>
 
 #include <algorithm>
 #include <array>
@@ -136,7 +136,7 @@ struct CoverFetcher::Private
     Config config;
     std::unique_ptr<detail::HttpChannel> images;
     std::unique_ptr<detail::HttpChannel> archive;
-    QThreadPool cacheThread;
+    std::unique_ptr<detail::Worker> cacheWorker; // every cache file operation, in order, off the caller's thread
     bool cacheUsable = false;
 
     Private(CoverFetcher *owner, Config c, QNetworkAccessManager *network, RequestPacer &pacer,
@@ -146,25 +146,14 @@ struct CoverFetcher::Private
         , images(std::make_unique<detail::HttpChannel>(Service::CoverImages, network, pacer, nullptr, clock))
         , archive(std::make_unique<detail::HttpChannel>(Service::CoverArtArchive, network, pacer, nullptr, clock))
     {
-        cacheThread.setMaxThreadCount(1); // every cache file operation in order, off the caller's thread
-        cacheThread.setObjectName(u"selecta-cover-cache"_s);
         if (!config.cacheDir.isEmpty()) {
+            cacheWorker = std::make_unique<detail::Worker>(u"selecta-cover-cache"_s);
             cacheUsable = QDir().mkpath(config.cacheDir);
             if (!cacheUsable) {
                 qCWarning(lcMetaCovers) << "cover cache disabled: can't create" << config.cacheDir;
             }
         }
     }
-
-    ~Private()
-    {
-        cacheThread.clear();
-        cacheThread.waitForDone();
-    }
-    Private(const Private &) = delete;
-    Private &operator=(const Private &) = delete;
-    Private(Private &&) = delete;
-    Private &operator=(Private &&) = delete;
 
     QList<CoverSource> sourcesFor(const Release &release) const
     {
@@ -222,22 +211,22 @@ public:
         }
         const QString dir = m_d->config.cacheDir;
         const std::chrono::hours ttl = m_d->config.ttl;
-        const detail::SharedPromise<std::optional<CachedCover>> read;
-        m_d->cacheThread.start([read, dir, url = source.url, ttl] { read.finish(readCached(dir, url, ttl)); });
         const auto self = shared_from_this();
-        detail::whenReady(read.future(), m_d->q, [self, source](const std::optional<CachedCover> &cached) {
-            if (self->m_slot.isCancelled()) {
-                return;
-            }
-            if (cached.has_value()) {
-                Result<CoverImage> image = inspect(cached->bytes, cached->url, cached->source);
-                if (image.ok()) {
-                    self->m_promise.finish(std::move(image));
+        m_d->cacheWorker->run<std::optional<CachedCover>>(
+            [dir, url = source.url, ttl] { return readCached(dir, url, ttl); },
+            [self, source](const std::optional<CachedCover> &cached) {
+                if (self->m_slot.isCancelled()) {
                     return;
                 }
-            }
-            self->download(source);
-        });
+                if (cached.has_value()) {
+                    Result<CoverImage> image = inspect(cached->bytes, cached->url, cached->source);
+                    if (image.ok()) {
+                        self->m_promise.finish(std::move(image));
+                        return;
+                    }
+                }
+                self->download(source);
+            });
     }
 
 private:
@@ -282,7 +271,7 @@ private:
         if (m_d->cacheUsable) {
             const QString dir = m_d->config.cacheDir;
             const qint64 maxBytes = m_d->config.maxCacheBytes;
-            m_d->cacheThread.start([dir, cover = image.value(), maxBytes] { writeCached(dir, cover, maxBytes); });
+            m_d->cacheWorker->post([dir, cover = image.value(), maxBytes] { writeCached(dir, cover, maxBytes); });
         }
         m_promise.finish(std::move(image));
     }

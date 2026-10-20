@@ -24,6 +24,7 @@ selecta_add_test_suite(selecta_meta_tests
         SpotifyLinksTest.cpp
         TextFoldTest.cpp
         TokenStoreTest.cpp
+        WorkerTest.cpp
     LIBRARIES selecta_meta Qt6::Network)
 target_compile_definitions(selecta_meta_tests PRIVATE
     SELECTA_META_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")

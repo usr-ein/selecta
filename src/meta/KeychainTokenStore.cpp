@@ -2,6 +2,7 @@
 #include "meta/KeychainTokenStore.h"
 
 #include "meta/detail/Async.h"
+#include "meta/detail/Worker.h"
 
 #include <QtGlobal>
 
@@ -151,12 +152,12 @@ Result<void> removeItem(const QString &, const QString &)
 
 #endif
 
-// Runs `work` on `pool` and finishes the future with its result (on the pool's thread).
+// Runs `work` on the worker thread and finishes the future with its result on the store's thread.
 template <typename T, typename Work>
-QFuture<T> runOn(QThreadPool &pool, Work work)
+QFuture<T> runOn(detail::Worker &worker, Work work)
 {
     const detail::SharedPromise<T> promise;
-    pool.start([promise, work = std::move(work)]() mutable { promise.finish(work()); });
+    worker.run<T>(std::move(work), [promise](T result) { promise.finish(std::move(result)); });
     return promise.future();
 }
 
@@ -164,32 +165,26 @@ QFuture<T> runOn(QThreadPool &pool, Work work)
 
 KeychainTokenStore::KeychainTokenStore(QString keychainService)
     : m_service(std::move(keychainService))
-{
-    m_pool.setMaxThreadCount(1); // calls run one at a time, in order
-    m_pool.setObjectName(u"selecta-keychain"_s);
-}
+    , m_worker(std::make_unique<detail::Worker>(u"selecta-keychain"_s))
+{}
 
-KeychainTokenStore::~KeychainTokenStore()
-{
-    m_pool.clear();       // calls not started yet: their futures end canceled
-    m_pool.waitForDone(); // the one running (if any) finishes
-}
+KeychainTokenStore::~KeychainTokenStore() = default; // the worker drops queued calls and finishes the running one
 
 QFuture<Result<std::optional<QByteArray>>> KeychainTokenStore::read(const QString &account)
 {
     return runOn<Result<std::optional<QByteArray>>>(
-        m_pool, [service = m_service, account] { return readItem(service, account); });
+        *m_worker, [service = m_service, account] { return readItem(service, account); });
 }
 
 QFuture<Result<void>> KeychainTokenStore::write(const QString &account, const QByteArray &secret)
 {
-    return runOn<Result<void>>(m_pool,
+    return runOn<Result<void>>(*m_worker,
                                [service = m_service, account, secret] { return writeItem(service, account, secret); });
 }
 
 QFuture<Result<void>> KeychainTokenStore::remove(const QString &account)
 {
-    return runOn<Result<void>>(m_pool, [service = m_service, account] { return removeItem(service, account); });
+    return runOn<Result<void>>(*m_worker, [service = m_service, account] { return removeItem(service, account); });
 }
 
 } // namespace selecta::meta

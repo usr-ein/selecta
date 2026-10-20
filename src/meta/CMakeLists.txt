@@ -25,7 +25,8 @@ qt_add_library(selecta_meta STATIC
     detail/MusicBrainzJson.h detail/MusicBrainzJson.cpp
     detail/ServiceGate.h detail/ServiceGate.cpp
     detail/SpotifyJson.h detail/SpotifyJson.cpp
-    detail/TextFold.h detail/TextFold.cpp)
+    detail/TextFold.h detail/TextFold.cpp
+    detail/Worker.h detail/Worker.cpp)
 add_library(Selecta::Meta ALIAS selecta_meta)
 target_link_libraries(selecta_meta PUBLIC selecta_base selecta_governor Qt6::Core Qt6::Network)
 if(APPLE)
