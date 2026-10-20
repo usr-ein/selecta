@@ -25,5 +25,10 @@ compile_commands.json
 /devenv/data/
 /local/
 
-# Agent worktrees and local tool state
-/.claude/
+# Agent worktrees and local tool state; the crew's agents, skills and shared settings are versioned (docs/CREW.md)
+/.claude/*
+!/.claude/agents/
+!/.claude/skills/
+!/.claude/settings.json
+# The crew's board, pitches and decisions (docs/CREW.md)
+/.crew/
