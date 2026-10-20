@@ -15,6 +15,8 @@ checkout (git-ignored).
 | **minion** (`.claude/agents/minion.md`) | One pitch (or one part of one) in its own worktree and branch: code, tests, lint, a PR labelled `review:needed`; fixes what review asks; cleans its worktree up once merged | Works outside its pitch's scope, pushes to main, merges, force-pushes |
 | **bitch** (`.claude/agents/bitch.md`) | Reviews one PR against its pitch and the project rules; leaves one review on GitHub; labels it `review:approved` or `review:changes` | Edits code, pushes, merges |
 
+Effort: the nightman always runs at `max`, bitches at `high`. A minion runs at `medium`, `high` (the default), `xhigh` or `max`: the nightman picks per pitch, and asks the maintainer when in doubt.
+
 ## A pitch's life
 
 1. **Filed.** The maintainer writes `.crew/pitches/P-NNN-slug.md` from `.crew/pitches/TEMPLATE.md`, or tells the
