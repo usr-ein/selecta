@@ -97,27 +97,39 @@ double bestPossible(std::span<const AlignToken> own, qsizetype i, std::span<cons
     return best;
 }
 
-struct SideBound
+// The tokens align() looks at.
+std::span<const AlignToken> aligned(std::span<const AlignToken> tokens)
+{
+    return tokens.first(std::min<std::size_t>(tokens.size(), kMaxFieldTokens));
+}
+
+double totalWeight(std::span<const AlignToken> tokens)
 {
     double weight = 0.0;
-    double matched = 0.0;
-};
-
-SideBound sideBound(std::span<const AlignToken> own, std::span<const AlignToken> other)
-{
-    own = own.first(std::min<std::size_t>(own.size(), kMaxFieldTokens));
-    other = other.first(std::min<std::size_t>(other.size(), kMaxFieldTokens));
-    SideBound bound;
-    const auto n = static_cast<qsizetype>(own.size());
-    for (qsizetype i = 0; i < n; ++i) {
-        const double w = own[i].weight();
-        bound.weight += w;
-        if (!other.empty()) {
-            bound.matched += w * bestPossible(own, i, other);
-        }
+    for (const AlignToken &token : aligned(tokens)) {
+        weight += token.weight();
     }
-    return bound;
+    return weight;
 }
+
+// Σ weight × (1 − best possible score) over the tokens of `own`: the least weight align() must leave unmatched.
+// Stops as soon as it exceeds `budget`.
+double lostWeight(std::span<const AlignToken> own, std::span<const AlignToken> other, double budget)
+{
+    own = aligned(own);
+    other = aligned(other);
+    double lost = 0.0;
+    const auto n = static_cast<qsizetype>(own.size());
+    for (qsizetype i = 0; i < n && lost <= budget; ++i) {
+        const double best = other.empty() ? 0.0 : bestPossible(own, i, other);
+        lost += own[i].weight() * (1.0 - best);
+    }
+    return lost;
+}
+
+// Rounding slack for the pruning tests, relative to the weights: far above double rounding, far below any real
+// difference (weights are whole code-point counts).
+constexpr double kBoundSlack = 1e-6;
 
 // Candidate pairs stay on the stack: fields are short (at most kMaxFieldTokens tokens a side).
 using Candidates = QVarLengthArray<Candidate, 2 * kMaxFieldTokens>;
@@ -376,34 +388,43 @@ FieldView fieldView(const FieldKey &key)
     return view;
 }
 
-double coverageBound(std::span<const AlignToken> a, std::span<const AlignToken> b)
+bool coverageMayReach(std::span<const AlignToken> a, std::span<const AlignToken> b, double threshold)
 {
-    const SideBound side = sideBound(a, b);
-    return side.weight > 0.0 ? side.matched / side.weight : 0.0;
+    const double weight = totalWeight(a);
+    if (weight <= 0.0) {
+        return threshold <= 0.0; // coverage 0
+    }
+    // coverage ≤ (weight − lost) / weight, so it reaches the threshold only while lost ≤ (1 − threshold) × weight.
+    const double budget = ((1.0 - threshold) * weight) + (kBoundSlack * weight);
+    return lostWeight(a, b, budget) <= budget;
 }
 
-double similarityBound(const FieldView &a, const FieldView &b)
+bool similarityMayReach(const FieldView &a, const FieldView &b, double threshold)
 {
     if (a.isEmpty() || b.isEmpty()) {
-        return 0.0;
+        return threshold <= 0.0;
     }
     const QStringView leetA = a.leet.isEmpty() ? a.squashed : a.leet;
     const QStringView leetB = b.leet.isEmpty() ? b.squashed : b.leet;
     if ((!a.squashed.isEmpty() && a.squashed == b.squashed) || (!leetA.isEmpty() && leetA == leetB)) {
-        return 1.0;
+        return true;
     }
     const std::span<const AlignToken> tokensA(a.tokens.data(), static_cast<std::size_t>(a.tokens.size()));
     const std::span<const AlignToken> tokensB(b.tokens.data(), static_cast<std::size_t>(b.tokens.size()));
-    const SideBound sideA = sideBound(tokensA, tokensB);
-    const SideBound sideB = sideBound(tokensB, tokensA);
-    const double weights = sideA.weight + sideB.weight;
-    const double tokens = weights > 0.0 ? (sideA.matched + sideB.matched) / weights : 0.0;
+    const double weight = totalWeight(tokensA) + totalWeight(tokensB);
+    const double budget = ((1.0 - threshold) * weight) + (kBoundSlack * weight);
+    double lost = lostWeight(tokensA, tokensB, budget);
+    if (lost <= budget) {
+        lost += lostWeight(tokensB, tokensA, budget - lost);
+        if (lost <= budget) {
+            return true;
+        }
+    }
     // The squashed keys as one token: no match is possible beyond 2 units apart (OSA over units is at least the gap,
     // a leet match keeps the length); otherwise TokenRules::compare is cheap when it fails (a bit-parallel OSA).
     const bool close =
         !a.squashed.isEmpty() && !b.squashed.isEmpty() && std::abs(a.squashed.size() - b.squashed.size()) <= 2;
-    const double squashed = close ? TokenRules::compare(a.squashed, b.squashed).score() : 0.0;
-    return std::max(tokens, squashed);
+    return close && TokenRules::compare(a.squashed, b.squashed).score() >= threshold - kBoundSlack;
 }
 
 } // namespace selecta::match::detail

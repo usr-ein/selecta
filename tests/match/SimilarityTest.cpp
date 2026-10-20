@@ -270,8 +270,8 @@ QString typo(const QString &word, selecta::match::test::Random &random)
     return out;
 }
 
-// The matcher prunes candidates on these bounds, so they must never be below the real values (property test).
-TEST(FieldMatcher, BoundsNeverUnderestimate)
+// The matcher prunes candidates on these tests, so "can't reach" must never be wrong (property test).
+TEST(FieldMatcher, PruningNeverRejectsAReachableScore)
 {
     namespace detail = selecta::match::detail;
     const QStringList words{u"leave"_s,      u"the"_s,         u"world"_s,  u"behind"_s,   u"okuma"_s,    u"drift"_s,
@@ -294,12 +294,19 @@ TEST(FieldMatcher, BoundsNeverUnderestimate)
         const detail::FieldView b = detail::fieldView(keyB);
         const FieldMatchOptions options{random.below(2) == 0};
         const double similarity = detail::compareFields(a, b, options, false).similarity;
-        ASSERT_GE(detail::similarityBound(a, b) + 1e-12, similarity)
-            << keyA.key.toStdString() << " / " << keyB.key.toStdString();
         const std::span<const detail::AlignToken> spanA(a.tokens.data(), static_cast<std::size_t>(a.tokens.size()));
         const std::span<const detail::AlignToken> spanB(b.tokens.data(), static_cast<std::size_t>(b.tokens.size()));
-        ASSERT_GE(detail::coverageBound(spanA, spanB) + 1e-12, detail::align(spanA, spanB, options).coverageA())
-            << keyA.key.toStdString() << " / " << keyB.key.toStdString();
+        const double coverage = detail::align(spanA, spanB, options).coverageA();
+        for (const double threshold : {similarity, coverage, 0.5, 0.85, 0.97}) {
+            if (similarity >= threshold) {
+                ASSERT_TRUE(detail::similarityMayReach(a, b, threshold))
+                    << keyA.key.toStdString() << " / " << keyB.key.toStdString() << " at " << threshold;
+            }
+            if (coverage >= threshold) {
+                ASSERT_TRUE(detail::coverageMayReach(spanA, spanB, threshold))
+                    << keyA.key.toStdString() << " / " << keyB.key.toStdString() << " at " << threshold;
+            }
+        }
     }
 }
 

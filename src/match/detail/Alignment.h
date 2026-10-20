@@ -87,14 +87,14 @@ FieldView fieldView(const FieldKey &key);
 // (no allocation on the matcher's hot path).
 FieldMatch compareFields(const FieldView &a, const FieldView &b, FieldMatchOptions options, bool withPairs = true);
 
-// Upper bounds for pruning, computed without any edit distance: each token is credited with the best score it could
-// reach (1 for an equal, leet-equal or joined match, 1 − 0.15 when lengths and first letters leave room for a typo),
-// as if no other token competed for it and no field condition applied.
+// Pruning tests, computed without any edit distance: each token is credited with the best score it could reach (1 for
+// an equal, leet-equal or joined match, 1 − 0.15 when lengths and first letters leave room for a typo), as if no other
+// token competed for it and no field condition applied. They stop at the first token that settles the answer.
 //
-// coverageBound(a, b) ≥ align(a, b, any options).coverageA(); similarityBound(a, b) ≥ compareFields(a, b, any
-// options).similarity, the squashed and leet routes included. Pure; any thread; allocates nothing for tokens without
-// digits.
-double coverageBound(std::span<const AlignToken> a, std::span<const AlignToken> b);
-double similarityBound(const FieldView &a, const FieldView &b);
+// false is certain: then align(a, b, any options).coverageA() < threshold, or compareFields(a, b, any
+// options).similarity < threshold (the squashed and leet routes included). true only means "maybe". Pure; any thread;
+// allocates nothing.
+bool coverageMayReach(std::span<const AlignToken> a, std::span<const AlignToken> b, double threshold);
+bool similarityMayReach(const FieldView &a, const FieldView &b, double threshold);
 
 } // namespace selecta::match::detail

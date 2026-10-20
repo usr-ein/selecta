@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,7 @@ struct TokenIndexData
     {
         std::vector<quint32> hashes;    // sorted
         std::vector<quint32> terms;     // terms[i] belongs to hashes[i]
+        std::vector<quint8> lengths;    // the UTF-16 length of terms[i], at most 255: filters before any lookup
         std::vector<quint32> directory; // bucket b holds entries [directory[b], directory[b + 1])
         int shift = 31;                 // bucket of a hash: hash >> shift
     };
@@ -173,7 +175,14 @@ DeleteHashes deleteHashes(QStringView text, int budget)
     return out;
 }
 
-HashedTerms hashedTerms(std::vector<std::pair<quint32, quint32>> pairs)
+constexpr quint8 kLongTerm = 255;
+
+quint8 storedLength(qsizetype length)
+{
+    return static_cast<quint8>(std::min<qsizetype>(length, kLongTerm));
+}
+
+HashedTerms hashedTerms(std::vector<std::pair<quint32, quint32>> pairs, const TokenIndexData &data)
 {
     std::ranges::sort(pairs);
     const auto [first, last] = std::ranges::unique(pairs);
@@ -181,9 +190,11 @@ HashedTerms hashedTerms(std::vector<std::pair<quint32, quint32>> pairs)
     HashedTerms table;
     table.hashes.reserve(pairs.size());
     table.terms.reserve(pairs.size());
+    table.lengths.reserve(pairs.size());
     for (const auto &[hash, term] : pairs) {
         table.hashes.push_back(hash);
         table.terms.push_back(term);
+        table.lengths.push_back(storedLength(textOf(data, term).size()));
     }
     const int bits = std::clamp(std::bit_width(pairs.size() / kEntriesPerBucket), 1, kMaxDirectoryBits);
     table.shift = 32 - bits;
@@ -197,23 +208,31 @@ HashedTerms hashedTerms(std::vector<std::pair<quint32, quint32>> pairs)
     return table;
 }
 
+// The terms of `hash` whose length allows a match with a token of `length` units: every match of the token rules is
+// within 2 units (a fuzzy or doubled-letter match within its budget of at most 2, a leet match at equal length).
 template <typename Out>
-void collect(const HashedTerms &table, quint32 hash, Out &out)
+void collect(const HashedTerms &table, quint32 hash, qsizetype length, Out &out)
 {
     if (table.hashes.empty()) {
         return;
     }
+    const int wanted = storedLength(length);
     const std::size_t bucket = hash >> static_cast<unsigned>(table.shift);
     const auto begin = table.hashes.begin() + table.directory[bucket];
     const auto end = table.hashes.begin() + table.directory[bucket + 1];
     for (auto it = std::lower_bound(begin, end, hash); it != end && *it == hash; ++it) {
-        out.push_back(table.terms[static_cast<std::size_t>(it - table.hashes.begin())]);
+        const auto i = static_cast<std::size_t>(it - table.hashes.begin());
+        const int stored = table.lengths[i];
+        if (std::abs(stored - wanted) <= 2 || (stored == kLongTerm && wanted >= kLongTerm - 2)) {
+            out.push_back(table.terms[i]);
+        }
     }
 }
 
 std::size_t hashedBytes(const HashedTerms &table)
 {
-    return (table.hashes.capacity() + table.terms.capacity() + table.directory.capacity()) * sizeof(quint32);
+    return ((table.hashes.capacity() + table.terms.capacity() + table.directory.capacity()) * sizeof(quint32)) +
+           table.lengths.capacity();
 }
 
 } // namespace
@@ -295,8 +314,8 @@ TokenIndex TokenIndex::Builder::build()
                 leetPairs.emplace_back(shortHash(folded), term);
             }
         }
-        data->deletes = hashedTerms(std::move(deletePairs));
-        data->leet = hashedTerms(std::move(leetPairs));
+        data->deletes = hashedTerms(std::move(deletePairs), *data);
+        data->leet = hashedTerms(std::move(leetPairs), *data);
     }
     return TokenIndex(std::move(data));
 }
@@ -355,7 +374,7 @@ QList<TokenIndex::FuzzyHit> TokenIndex::fuzzyLookup(QStringView token, qsizetype
     QVarLengthArray<quint32, 64> candidates;
     // Leet forms: "deadmaus" finds "deadmau5" and the other way round.
     bool changed = false;
-    collect(m_data->leet, shortHash(leetHash(token, changed)), candidates);
+    collect(m_data->leet, shortHash(leetHash(token, changed)), token.size(), candidates);
     if (changed) {
         if (const quint32 plain = find(TokenRules::leetFold(token)); plain != kNoTerm) {
             candidates.push_back(plain);
@@ -365,7 +384,7 @@ QList<TokenIndex::FuzzyHit> TokenIndex::fuzzyLookup(QStringView token, qsizetype
     if (const int budget = TokenRules::editBudget(token); budget > 0) {
         const DeleteHashes hashes = deleteHashes(token, budget);
         for (qsizetype k = 0; k < hashes.count; ++k) {
-            collect(m_data->deletes, hashes.values[static_cast<std::size_t>(k)], candidates);
+            collect(m_data->deletes, hashes.values[static_cast<std::size_t>(k)], token.size(), candidates);
         }
     }
     std::ranges::sort(candidates);

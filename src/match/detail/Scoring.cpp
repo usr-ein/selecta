@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <utility>
 #include <vector>
 
@@ -27,7 +28,8 @@ constexpr int kZoneSegmentBrackets = 100;
 constexpr int kZoneSegmentParent = 200;
 constexpr int kZoneSegmentHigher = 300;
 constexpr double kSubsetArtist = 0.95;
-constexpr double kParentTitleFactor = 0.8;     // the title found in the parent folder ("Title\01.flac")
+constexpr double kParentTitleFactor = 0.8; // the title found in the parent folder ("Title\01.flac")
+static_assert(kParentTitleFactor < kLikelyMinTitle, "score() prunes without looking at the parent folder");
 constexpr double kArtistFoundInBrackets = 0.9; // the artist found inside brackets: a remixer (§17.5 B)
 constexpr double kAlbumAgreement = 0.85;       // no remote artist, but the album agrees (§9 likely rule)
 constexpr int kWeightSquashedTitle = 6;
@@ -442,14 +444,15 @@ void addGroup(const TokenIndex &vocabulary, std::span<const quint32> terms, Word
         group.postings = vocabulary.postings(terms.front());
         group.frequency = static_cast<qsizetype>(group.postings.size());
     } else {
+        std::vector<quint32> united; // postings are sorted and unique: linear unions, no sort
         for (const quint32 term : terms) {
             const std::span<const quint32> postings = vocabulary.postings(term);
-            group.merged.insert(group.merged.end(), postings.begin(), postings.end());
+            group.frequency += static_cast<qsizetype>(postings.size());
+            united.clear();
+            united.reserve(group.merged.size() + postings.size());
+            std::ranges::set_union(group.merged, postings, std::back_inserter(united));
+            group.merged.swap(united);
         }
-        group.frequency = static_cast<qsizetype>(group.merged.size());
-        std::ranges::sort(group.merged);
-        const auto [first, last] = std::ranges::unique(group.merged);
-        group.merged.erase(first, last);
     }
     if (group.frequency > 0) {
         groups.append(std::move(group));
@@ -720,14 +723,12 @@ Scored score(const IndexData &data, const Query &query, quint32 recordIndex, boo
     // on both, nothing else can matter. Cheap upper bounds reject most candidates before any alignment.
     RecordFields fields;
     fields.title = recordTitle(data, recordIndex);
-    const double bound =
-        std::max(similarityBound(query.title, fields.title),
-                 query.hasZones ? coverageBound(spanOf(fields.title.tokens), spanOf(query.body)) : 0.0);
-    if (!atLeast(bound, kLikelyMinTitle)) {
-        scored.scores.title = bound;
+    const bool titleMayReach =
+        similarityMayReach(query.title, fields.title, kLikelyMinTitle) ||
+        (query.hasZones && coverageMayReach(spanOf(fields.title.tokens), spanOf(query.body), kLikelyMinTitle));
+    if (!titleMayReach) {
         if (explain) {
-            scored.explanation.append(
-                u"record %1: title at most %2, below the likely threshold"_s.arg(record.id).arg(number(bound)));
+            scored.explanation.append(u"record %1: title below the likely threshold on every route"_s.arg(record.id));
         }
         return scored;
     }

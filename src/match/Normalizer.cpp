@@ -377,8 +377,10 @@ QStringList splitArtists(QStringView text)
     qsizetype i = 0;
     while (i < text.size()) {
         qsizetype matched = 0;
+        const QChar c = text[i];
+        const bool mayStart = c == u' ' || c == u',' || c == u';'; // every separator starts with one of these
         for (const QStringView separator : kSeparators) {
-            if (text.sliced(i).startsWith(separator, Qt::CaseInsensitive)) {
+            if (mayStart && text.sliced(i).startsWith(separator, Qt::CaseInsensitive)) {
                 matched = separator.size();
                 break;
             }
@@ -583,7 +585,14 @@ ArtistKeys Normalizer::artistKeys(QStringView artist)
     const QString primary = moveArticleSuffix(split.primary);
     ArtistKeys keys;
     keys.field = fieldKey(primary, FieldKind::Artist);
-    keys.set = artistSet({primary});
+    const QStringList members = splitArtists(primary);
+    if (members.size() == 1 && members.front() == primary) {
+        if (!keys.field.key.isEmpty()) {
+            keys.set = QStringList{keys.field.key}; // the same normalisation artistSet() would do
+        }
+    } else {
+        keys.set = artistSet({primary});
+    }
     keys.featured = artistSet(split.featured);
     return keys;
 }

@@ -91,18 +91,20 @@ Types ── Normalizer ── VersionClassifier ── Lexicon (all word lists,
     holds; body-only words and the artist's squashed key read as a title (reversed names) only boost. The 200
     heaviest records that aren't mixes are scored. Copy and layout recall on the benchmark: 100 %.
 16. **Lossless pruning.** Every positive tier and the "other version" relation need a title of 0.85 or more. Before
-    any alignment, an upper bound of the title similarity and of the token-bag coverage is computed from token
-    lengths and first letters only (each token credited with the best score it could reach); a candidate whose bound
-    is below 0.85 is dropped. Property-tested: the bounds never underestimate (20 000 random field pairs with typos,
-    joins and leet forms), so results are the same as without pruning.
+    any alignment, the matcher asks whether the title similarity or the token-bag coverage could still reach 0.85,
+    crediting each token with the best score it could get from lengths and first letters alone and stopping at the
+    first token whose loss settles it; candidates that can't are dropped. Property-tested: "can't reach" is never
+    wrong (20 000 random field pairs with typos, joins and leet forms), so results are the same as without pruning.
 17. **Ties.** At equal tier and score the same version wins, so a named version beats an unversioned twin. The §9
     ambiguity cap (two fitting versions, the choice is a guess → likely) applies only when the best isn't the same
     version.
 18. **Index layout for speed.** Term texts sit in one pool behind an open-addressing table (no allocation per lookup);
     the symmetric-delete and leet hashes are 32-bit, sorted, with a bucket directory; delete variants are hashed
     without building strings; per-term facts (length, light word, digits) are precomputed so scoring scans nothing.
-    ASCII names skip NFKD/NFC in the normaliser (property-tested against the general path). The benchmark asks for a
-    performance core (QoS user-interactive) so the numbers measure the code, not the scheduler.
+    ASCII names skip NFKD/NFC in the normaliser (property-tested against the general path); the fuzzy lookup drops
+    terms more than 2 units longer or shorter before verifying them (no rule matches beyond that); single-member
+    artists are normalised once. The benchmark asks for a performance core (QoS user-interactive) so the numbers
+    measure the code, not the scheduler.
 
 ## Integration points
 
@@ -133,36 +135,39 @@ See the constants in `Duration.h`, `Matcher.h`, `AlbumMatcher.h`, `ReleaseScorer
 cases (T52 excepted, see above); property tests (idempotent normalisation, symmetric field similarity, no fuzzy
 3-letter tokens); concurrency test under TSan; Google Benchmark on a synthetic 200 k-track library.
 
-Benchmark (`selecta_match_benchmark`, Release, Apple M-series, performance core, other builds running; 3 runs,
-median; the CPU-clock percentiles agree with the wall clock within 1 %):
+Benchmark (`selecta_match_benchmark`, Release, Apple M-series, performance core; 5 runs, median; load average
+below 3 from other agents' builds):
 
 | Synthetic library | 200 000 tracks, 20 000 artists, 30 000-word Zipf vocabulary, versions, albums |
 |---|---|
-| `MatchIndex::build` | 1.26 s |
-| Index memory | 90.9 MB (`memoryUsage()`); RSS growth of the first build 104 MB |
-| Parse + match per result | p50 52 µs, **p95 115 µs**, p99 166 µs |
-| Match only (`Matcher::match`) | p50 25 µs, **p95 76 µs** |
-| Parse only (`RemotePathParser::parse` with the artist dictionary) | p50 25 µs, p95 46 µs |
+| `MatchIndex::build` | 1.1–1.3 s |
+| Index memory | 91.6 MB (`memoryUsage()`, ≈ 0.46 KB per track); RSS growth of the first build ≈ 104 MB |
+| Parse + match per result | p50 38 µs, **p95 78 µs**, p99 123 µs |
+| Match only (`Matcher::match`) | p50 20 µs, **p95 58 µs** |
+| Parse only (`RemotePathParser::parse` with the artist dictionary) | p50 18 µs, p95 29 µs |
 | `ReleaseScorer::score` | 2.0 µs |
 | Quality (10 000 results) | exact copies found 100 %, other layouts 100 %, a typo in both artist and title 83 %, not-owned names matched 0.1 % |
 
-The contract's p95 < 100 µs holds for matching; parse + match is at 115 µs (see Progress).
+The contract's p95 < 100 µs holds for parse + match together. On a saturated machine (load average 8 on 12 cores)
+the same run measures parse + match p95 at 115–140 µs, even on the CPU clock: shared caches and lower clocks, not the
+code. The 17 % of double-typo results that aren't found are the §17.3 rules at work (a typo in a word of ≤ 3
+letters, two fuzzy fields, an uncorroborated short-word edit), not retrieval: precision comes first.
 
 ## Progress
 
 - Done: public headers and this design (approved); X1 normaliser, version classifier, lexicon (merged to main as
   8d21dcf); token rules, field alignment, token index, artist dictionary; X2 remote path parser; X4 TracklistParser,
   ReleaseScorer (rank(): identity, then quality, availability only as a tie-breaker) and QueryPlanner; X3 MatchIndex
-  and Matcher (merged as cc3e064); the benchmark and the performance work of decisions 15–18 (from match p95 1.5 ms
-  to 76 µs, index 104 → 91 MB); 533 tests.
+  and Matcher (merged as cc3e064); the benchmark and the performance work of decisions 15–18 (match p95 1.5 ms →
+  58 µs, parse + match p95 78 µs, index 104 → 92 MB); 533 tests.
 - Parser notes: hand-written scanners in `detail/RemoteName` (cleaning, numbering) and `RemotePathParser.cpp`
   (folders, sibling facts, artist/title order as log-odds evidence: prior 1.4, sibling constant 3.0, folder artist
   2.0, known artist 2.5 + up to 1.0 by weight, member-only 1.5, fuzzy 1.2, release artist 2.5, title features 1.0;
   ambiguous below 1.0). A number prefix the rules would keep is stripped when the dictionary knows the name only
   without it ("101 Artist - Title"); "(Artist - Title) Remixer Remix" names are unwrapped. Folders literally named
   "Album" or "Albums" are generic containers.
-- Next: parse + match under 100 µs at p95 (the artist dictionary's fuzzy lookups and the normaliser dominate the
-  parse); then AlbumMatcher (X3), DurationConsensus (X4), SupersedeDecider (X5).
+- Next: AlbumMatcher (X3), DurationConsensus (X4), SupersedeDecider (X5). Memory could drop further by interning
+  artist sets and versions apart (records now intern one meta per artist set × version × extra text).
 - Open questions: none (Q-M1 and Q-M2 answered, decisions 11 and 13).
 - Working rules from the head implementer: `tools/lint.sh src/match tests/match` before each commit; a note to
   `main` at each milestone; `Matcher` and everything else safe to call concurrently on one shared index.
