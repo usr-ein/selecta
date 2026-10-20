@@ -370,7 +370,9 @@ TEST_F(AlbumServiceTest, AFileThatNeverComesMakesAPartialAlbum)
     const std::optional<AlbumDownload> album = albums->album(*id);
     EXPECT_EQ(album->state, AlbumDownload::State::Partial) << album->message.toStdString();
     EXPECT_TRUE(album->message.contains(u"1 file"_s)) << album->message.toStdString();
-    EXPECT_EQ(inboxItems(InboxItem::Kind::Album).constFirst().trackCount, 1);
+    const QList<InboxItem> items = inboxItems(InboxItem::Kind::Album);
+    ASSERT_EQ(items.size(), 1);
+    EXPECT_EQ(items.constFirst().trackCount, 1);
 }
 
 TEST_F(AlbumServiceTest, ASingleInTheInboxGoesToTheTrashAndUndoPutsItBack)
