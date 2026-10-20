@@ -16,8 +16,8 @@ struct ArtworkOptions
 {
     int maxDimension = 800; // longest side of the embedded cover (CDJ limit, D-2)
     int jpegQuality = 90;
-    qint64 maxKeepBytes = 500 * 1024; // a compliant JPEG above this is re-encoded anyway
-    bool cropNearSquare = true;       // centre-crop to square when the aspect ratio is within 0.9–1.1
+    qint64 maxKeepBytes = qint64{500} * 1024; // a compliant JPEG above this is re-encoded anyway
+    bool cropNearSquare = true;               // centre-crop to square when the aspect ratio is within 0.9–1.1
     // Bounds for untrusted images, checked before any pixel is decoded: the encoded size first, then the dimensions
     // from the image header (QImageReader::size()). QImageReader's process-wide allocation limit is the app's to set
     // (in main()); this code never changes it.

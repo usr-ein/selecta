@@ -13,6 +13,8 @@ qt_add_library(selecta_convert STATIC
     EncodeSettings.h EncodeSettings.cpp
     OutputVerifier.h OutputVerifier.cpp
     Transcoder.h Transcoder.cpp
+    ArtworkProcessor.h ArtworkProcessor.cpp
+    ArtworkFinder.h ArtworkFinder.cpp
     detail/Encoder.h
     detail/FfmpegEncoder.cpp
     detail/LameEncoder.cpp
