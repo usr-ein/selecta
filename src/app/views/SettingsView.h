@@ -3,6 +3,7 @@
 
 #include "app/Appearance.h"
 #include "core/InboxService.h"
+#include "core/MetaServices.h"
 
 #include <QWidget>
 
@@ -11,6 +12,7 @@ class QComboBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QPushButton;
 
 namespace selecta::app {
 
@@ -42,13 +44,22 @@ public:
     // pickers). Returns the reason it was refused, or an empty string.
     QString applyLibraryConfig(const core::LibraryConfig &config);
 
+    // Shows the engine's view of the Spotify set-up.
+    void setSpotifyStatus(const core::SpotifyStatus &status);
+
 Q_SIGNALS:
     void appearanceRequested(selecta::app::Appearance appearance);
     void libraryConfigChanged(const selecta::core::LibraryConfig &config);
+    // Save pressed: an empty secret with keepSavedSecret leaves the saved one in place.
+    void spotifyCredentialsSubmitted(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
+    void spotifySignInRequested();
+    void spotifySignOutRequested();
 
 private:
     QWidget *createLibraryBox(QWidget *parent);
     QWidget *createFilingBox(QWidget *parent);
+    QWidget *createSpotifyBox(QWidget *parent);
+    void submitSpotify();
     void showLibrary();
     void refreshPreview();
     void chooseInbox();
@@ -69,6 +80,13 @@ private:
     QComboBox *m_separator = nullptr;
     QLabel *m_preview = nullptr;
     QLabel *m_libraryError = nullptr;
+    core::SpotifyStatus m_spotify;
+    QLabel *m_spotifyState = nullptr;
+    QLineEdit *m_spotifyClientId = nullptr;
+    QLineEdit *m_spotifySecret = nullptr;
+    QPushButton *m_spotifySave = nullptr;
+    QPushButton *m_spotifySignIn = nullptr;
+    QPushButton *m_spotifySignOut = nullptr;
 };
 
 } // namespace selecta::app

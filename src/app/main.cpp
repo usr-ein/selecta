@@ -7,6 +7,8 @@
 #include "base/Version.h"
 #include "core/EngineHost.h"
 #include "governor/ServerGuard.h"
+#include "meta/KeychainTokenStore.h"
+#include "meta/TokenStore.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
@@ -18,6 +20,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QImageReader>
 #include <QLockFile>
 #include <QLoggingCategory>
@@ -37,6 +40,7 @@ namespace {
 
 struct Options
 {
+    bool isolated = false; // --data-dir: nothing outside that folder, not even the Keychain
     bool headless = false;
     bool debugServer = false;
     QString debugSocket;
@@ -65,7 +69,7 @@ Options parseOptions(const QApplication &app)
     if (parser.isSet(dataDir)) {
         paths::setRootOverride(parser.value(dataDir));
     }
-    return {parser.isSet(headless), parser.isSet(debugServer), parser.value(debugSocket)};
+    return {parser.isSet(dataDir), parser.isSet(headless), parser.isSet(debugServer), parser.value(debugSocket)};
 }
 
 // Tells the user why Selecta can't start: a dialog normally, stderr when headless.
@@ -183,6 +187,16 @@ int main(int argc, char *argv[])
     engineOptions.databasePath = paths::databaseFile();
     engineOptions.startPaused = settings.networkPaused();
     engineOptions.library = settings.libraryConfig();
+    if (!options.isolated) {
+        engineOptions.tokenStore = [] {
+            return std::make_unique<selecta::meta::KeychainTokenStore>(u"io.github.usr-ein.Selecta"_s);
+        };
+    } // isolated runs keep secrets in memory only
+    engineOptions.openUrl = [](const QUrl &url) {
+        // Called on the engine thread; the browser is opened from the UI thread.
+        QMetaObject::invokeMethod(qApp, [url] { QDesktopServices::openUrl(url); }, Qt::QueuedConnection);
+        return true;
+    };
     if (!paths::ensureDir(engineOptions.library.inboxRoot)) {
         qCWarning(lcApp) << "can't create the Inbox folder" << engineOptions.library.inboxRoot;
     }

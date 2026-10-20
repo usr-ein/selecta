@@ -23,6 +23,7 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<ActivityEntry>();
     qRegisterMetaType<InboxEntry>();
     qRegisterMetaType<QList<InboxEntry>>();
+    qRegisterMetaType<SpotifyStatus>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -62,6 +63,10 @@ void EngineHost::start()
         Q_EMIT inboxChanged(entries);
     });
     connect(engine, &Engine::inboxOperationFinished, this, &EngineHost::inboxOperationFinished);
+    connect(engine, &Engine::spotifyStatusChanged, this, [this](const SpotifyStatus &status) {
+        m_spotifyStatus = status;
+        Q_EMIT spotifyStatusChanged(status);
+    });
 
     m_thread.start();
     QMetaObject::invokeMethod(engine, &Engine::start, Qt::QueuedConnection);
@@ -118,6 +123,33 @@ void EngineHost::trashInboxItems(const QList<qint64> &ids)
     post([ids](Engine &engine) {
         if (engine.isStarted()) {
             engine.inbox().trash(ids);
+        }
+    });
+}
+
+void EngineHost::setSpotifyCredentials(const QString &clientId, const QByteArray &secret, bool keepSavedSecret)
+{
+    post([clientId, secret, keepSavedSecret](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.meta().setSpotifyCredentials(clientId, secret, keepSavedSecret);
+        }
+    });
+}
+
+void EngineHost::signInToSpotify()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.meta().signInToSpotify();
+        }
+    });
+}
+
+void EngineHost::signOutOfSpotify()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.meta().signOutOfSpotify();
         }
     });
 }

@@ -4,6 +4,7 @@
 #include "base/Clock.h"
 #include "core/GovernorStore.h"
 #include "governor/Limits.h"
+#include "meta/TokenStore.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
@@ -86,6 +87,12 @@ bool Engine::start()
         qCWarning(lcEngine) << "couldn't restore the governor's saved state:" << m_db->lastError();
     }
 
+    MetaServices::Options metaOptions;
+    metaOptions.tokens = m_options.tokenStore ? m_options.tokenStore() : std::make_unique<meta::InMemoryTokenStore>();
+    metaOptions.openUrl = m_options.openUrl;
+    m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
+    connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
+
     m_inbox = std::make_unique<InboxService>(*m_db, m_options.library, m_options.trash);
     connect(m_inbox.get(), &InboxService::changed, this, &Engine::inboxChanged);
     connect(m_inbox.get(), &InboxService::finished, this, &Engine::inboxOperationFinished);
@@ -104,6 +111,7 @@ bool Engine::start()
         setPaused(true);
     }
     m_inbox->reconcile();
+    m_meta->restore();
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
     return true;
@@ -116,6 +124,7 @@ void Engine::stop()
     m_pruneTimer = nullptr;
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
+    m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();
     m_activity.reset();

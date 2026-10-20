@@ -238,6 +238,15 @@ void MainWindow::createViews()
         m_services.engine.setLibraryConfig(config);
         m_inboxView->setLibraryConfig(config);
     });
+    connect(m_settingsView, &SettingsView::spotifyCredentialsSubmitted, &m_services.engine,
+            &core::EngineHost::setSpotifyCredentials);
+    connect(m_settingsView, &SettingsView::spotifySignInRequested, &m_services.engine,
+            &core::EngineHost::signInToSpotify);
+    connect(m_settingsView, &SettingsView::spotifySignOutRequested, &m_services.engine,
+            &core::EngineHost::signOutOfSpotify);
+    connect(&m_services.engine, &core::EngineHost::spotifyStatusChanged, m_settingsView,
+            &SettingsView::setSpotifyStatus);
+    m_settingsView->setSpotifyStatus(m_services.engine.spotifyStatus());
     addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));
 
 #ifndef QT_NO_DEBUG

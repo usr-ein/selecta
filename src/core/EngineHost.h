@@ -45,6 +45,12 @@ public:
     void trashInboxItems(const QList<qint64> &ids);
     QList<InboxEntry> inboxEntries() const { return m_inboxEntries; }
 
+    // --- Spotify (Settings → Spotify) ---
+    void setSpotifyCredentials(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
+    void signInToSpotify();
+    void signOutOfSpotify();
+    SpotifyStatus spotifyStatus() const { return m_spotifyStatus; }
+
     // Runs `work(engine)` on the engine thread, if the engine is running. For services that have no dedicated
     // method here yet; `work` must not capture anything owned by the UI thread by reference.
     template <typename Work>
@@ -64,6 +70,7 @@ Q_SIGNALS:
     void activityRecorded(const selecta::core::ActivityEntry &entry);
     void inboxChanged(const QList<selecta::core::InboxEntry> &entries);
     void inboxOperationFinished(qint64 id, bool ok, const QString &message);
+    void spotifyStatusChanged(const selecta::core::SpotifyStatus &status);
 
 private:
     EngineOptions m_options;
@@ -72,6 +79,7 @@ private:
     bool m_paused = false;
     int m_searchesAvailable = 0;
     QList<InboxEntry> m_inboxEntries;
+    SpotifyStatus m_spotifyStatus;
 };
 
 } // namespace selecta::core

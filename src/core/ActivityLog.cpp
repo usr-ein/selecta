@@ -17,6 +17,20 @@ using storage::Statement;
 
 constexpr qint64 kDayMs = qint64{24} * 60 * 60 * 1000;
 
+bool isMetadataOperation(governor::Operation operation)
+{
+    switch (operation) {
+    case governor::Operation::SpotifyRequest:
+    case governor::Operation::MusicBrainzRequest:
+    case governor::Operation::CoverArtRequest:
+    case governor::Operation::DeezerRequest:
+    case governor::Operation::YtDlpRun:
+        return true;
+    default:
+        return false;
+    }
+}
+
 } // namespace
 
 ActivityLog::ActivityLog(storage::Database &db, WallClock now, QObject *parent)
@@ -28,6 +42,11 @@ ActivityLog::ActivityLog(storage::Database &db, WallClock now, QObject *parent)
 void ActivityLog::recordDecision(governor::Operation operation, const QString &subject, governor::Refusal refusal,
                                  const QString &explanation)
 {
+    // A metadata request that goes ahead is logged once it finishes (GovernorPacer::report), with its outcome; only
+    // the refusals are worth a line of their own.
+    if (refusal == governor::Refusal::None && isMetadataOperation(operation)) {
+        return;
+    }
     record(governor::operationName(operation), subject,
            refusal == governor::Refusal::None ? u"allowed"_s : governor::refusalName(refusal), explanation);
 }

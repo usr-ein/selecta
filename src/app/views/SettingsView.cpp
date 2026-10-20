@@ -14,6 +14,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -118,11 +119,13 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     columnLayout->addWidget(appearanceBox);
     columnLayout->addWidget(createLibraryBox(column));
     columnLayout->addWidget(createFilingBox(column));
+    columnLayout->addWidget(createSpotifyBox(column));
     columnLayout->addWidget(dataBox);
     columnLayout->addWidget(aboutBox);
     columnLayout->addStretch(1);
 
     auto *centered = new QWidget;
+    centered->setObjectName(u"settings.page"_s); // the whole page, for full-length screenshots
     auto *centeredLayout = new QHBoxLayout(centered);
     centeredLayout->setContentsMargins(0, 0, 0, 0);
     centeredLayout->addStretch(1);
@@ -250,6 +253,115 @@ QWidget *SettingsView::createFilingBox(QWidget *parent)
     m_preview->setWordWrap(true);
     form->addRow(tr("Example:"), m_preview);
     return box;
+}
+
+QWidget *SettingsView::createSpotifyBox(QWidget *parent)
+{
+    auto *box = new QGroupBox(tr("Spotify"), parent);
+    auto *form = new QFormLayout(box);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    auto *intro = new QLabel(tr("Tags and covers for your downloads come from Spotify. Create an app at "
+                                "developer.spotify.com with the redirect URI http://127.0.0.1/callback and paste its "
+                                "Client ID here. With its Client secret too, no browser sign-in is needed for tags. "
+                                "Without either, Selecta uses Deezer and MusicBrainz."),
+                             box);
+    intro->setWordWrap(true);
+    intro->setForegroundRole(QPalette::PlaceholderText);
+    form->addRow(intro);
+
+    m_spotifyState = new QLabel(box);
+    m_spotifyState->setObjectName(u"settings.spotify.state"_s);
+    m_spotifyState->setWordWrap(true);
+    form->addRow(tr("Status:"), m_spotifyState);
+
+    m_spotifyClientId = new QLineEdit(box);
+    m_spotifyClientId->setObjectName(u"settings.spotify.clientId"_s);
+    m_spotifyClientId->setPlaceholderText(tr("32 letters and digits"));
+    form->addRow(tr("Client ID:"), m_spotifyClientId);
+
+    m_spotifySecret = new QLineEdit(box);
+    m_spotifySecret->setObjectName(u"settings.spotify.secret"_s);
+    m_spotifySecret->setEchoMode(QLineEdit::Password);
+    m_spotifySecret->setPlaceholderText(tr("Optional"));
+    form->addRow(tr("Client secret:"), m_spotifySecret);
+
+    auto *buttons = new QHBoxLayout;
+    m_spotifySave = new QPushButton(tr("Save"), box);
+    m_spotifySave->setObjectName(u"settings.spotify.save"_s);
+    m_spotifySignIn = new QPushButton(tr("Sign In in the Browser…"), box);
+    m_spotifySignIn->setObjectName(u"settings.spotify.signIn"_s);
+    m_spotifySignIn->setToolTip(tr("Needed only to import your playlists and Liked Songs"));
+    m_spotifySignOut = new QPushButton(tr("Sign Out"), box);
+    m_spotifySignOut->setObjectName(u"settings.spotify.signOut"_s);
+    connect(m_spotifySave, &QPushButton::clicked, this, &SettingsView::submitSpotify);
+    connect(m_spotifyClientId, &QLineEdit::returnPressed, this, &SettingsView::submitSpotify);
+    connect(m_spotifySecret, &QLineEdit::returnPressed, this, &SettingsView::submitSpotify);
+    connect(m_spotifySignIn, &QPushButton::clicked, this, &SettingsView::spotifySignInRequested);
+    connect(m_spotifySignOut, &QPushButton::clicked, this, &SettingsView::spotifySignOutRequested);
+    buttons->addWidget(m_spotifySave);
+    buttons->addWidget(m_spotifySignIn);
+    buttons->addWidget(m_spotifySignOut);
+    buttons->addStretch(1);
+    form->addRow(QString(), buttons);
+    setSpotifyStatus(m_spotify);
+    return box;
+}
+
+void SettingsView::submitSpotify()
+{
+    const QString clientId = m_spotifyClientId->text().trimmed();
+    const QByteArray secret = m_spotifySecret->text().toUtf8();
+    m_spotifySecret->clear(); // the secret doesn't stay in the window
+    Q_EMIT spotifyCredentialsSubmitted(clientId, secret, secret.isEmpty() && clientId == m_spotify.clientId);
+}
+
+void SettingsView::setSpotifyStatus(const core::SpotifyStatus &status)
+{
+    using State = meta::SpotifyAuth::State;
+    using Mode = meta::SpotifyAuth::Mode;
+    m_spotify = status;
+    if (!m_spotifyClientId->hasFocus()) {
+        m_spotifyClientId->setText(status.clientId);
+    }
+    m_spotifySecret->setPlaceholderText(status.hasSecret ? tr("Saved in the Keychain") : tr("Optional"));
+
+    QString text;
+    switch (status.state) {
+    case State::NotConfigured:
+        text = tr("Not set up: tags come from Deezer and MusicBrainz.");
+        break;
+    case State::SignedOut:
+        text = tr("Not signed in.");
+        break;
+    case State::Restoring:
+    case State::Exchanging:
+        text = tr("Signing in…");
+        break;
+    case State::Authorizing:
+        text = tr("Waiting for you in the browser…");
+        break;
+    case State::SignedIn:
+        if (status.mode == Mode::ClientCredentials) {
+            text = tr("Ready for tags and covers (Client ID and secret).");
+        } else if (status.expiresAt) {
+            text = tr("Signed in until %1.").arg(QLocale().toString(status.expiresAt->date(), QLocale::LongFormat));
+        } else {
+            text = tr("Signed in.");
+        }
+        break;
+    case State::Expired:
+        text = tr("The sign-in expired: sign in again.");
+        break;
+    }
+    if (!status.error.isEmpty()) {
+        text += u' ' + tr("Last problem: %1").arg(status.error);
+    }
+    m_spotifyState->setText(text);
+    const bool configured = status.state != State::NotConfigured;
+    const bool userSignedIn = status.state == State::SignedIn && status.mode == Mode::User;
+    m_spotifySignIn->setEnabled(configured && !userSignedIn && status.state != State::Authorizing);
+    m_spotifySignOut->setVisible(userSignedIn);
 }
 
 void SettingsView::showLibrary()

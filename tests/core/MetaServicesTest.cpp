@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "core/MetaServices.h"
+
+#include "base/Clock.h"
+#include "core/ActivityLog.h"
+#include "governor/Governor.h"
+#include "meta/TokenStore.h"
+#include "storage/Database.h"
+#include "storage/Migrations.h"
+
+#include <QSignalSpy>
+#include <QTest>
+
+#include <gtest/gtest.h>
+
+using namespace Qt::StringLiterals;
+using selecta::core::MetaServices;
+using selecta::core::SpotifyStatus;
+using State = selecta::meta::SpotifyAuth::State;
+
+namespace {
+
+const QString kClientId = u"0123456789abcdef0123456789abcdef"_s; // shaped like a Spotify Client ID; not a real one
+
+class MetaServicesTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        ASSERT_TRUE(db.open(u":memory:"_s));
+        ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
+        start(std::make_unique<selecta::meta::InMemoryTokenStore>());
+    }
+
+    void start(std::unique_ptr<selecta::meta::InMemoryTokenStore> store)
+    {
+        MetaServices::Options options;
+        options.tokens = std::move(store);
+        options.openUrl = [this](const QUrl &url) {
+            opened = url;
+            return true;
+        };
+        // Nothing listens on port 1: any request fails at once, and nothing ever reaches Spotify.
+        options.spotifyAccountsUrl = QUrl(u"http://127.0.0.1:1"_s);
+        services = std::make_unique<MetaServices>(governor, log, clock, std::move(options));
+        tokens = dynamic_cast<selecta::meta::InMemoryTokenStore *>(&services->tokens()); // the store given above
+        ASSERT_NE(tokens, nullptr);
+    }
+
+    // Lets futures and queued calls run until `done` holds or a second has passed.
+    template <typename Condition>
+    bool settle(Condition done)
+    {
+        return QTest::qWaitFor(done, 1000);
+    }
+
+    selecta::base::ManualClock clock;
+    selecta::governor::Governor governor{clock};
+    selecta::storage::Database db;
+    selecta::core::ActivityLog log{db};
+    selecta::meta::InMemoryTokenStore *tokens = nullptr;
+    std::unique_ptr<MetaServices> services;
+    QUrl opened;
+};
+
+} // namespace
+
+TEST_F(MetaServicesTest, NothingSavedMeansNotConfigured)
+{
+    services->restore();
+    QTest::qWait(20);
+    EXPECT_EQ(services->spotifyStatus().state, State::NotConfigured);
+    EXPECT_FALSE(services->spotifyStatus().hasSecret);
+}
+
+TEST_F(MetaServicesTest, AClientIdIsSavedAndLeavesUsSignedOut)
+{
+    services->setSpotifyCredentials(kClientId, {}, false);
+    ASSERT_TRUE(settle([this] { return services->spotifyStatus().state == State::SignedOut; }));
+    EXPECT_EQ(services->spotifyStatus().clientId, kClientId);
+    ASSERT_TRUE(settle([this] { return tokens->peek(QString(MetaServices::kClientIdAccount)).has_value(); }));
+    EXPECT_EQ(*tokens->peek(QString(MetaServices::kClientIdAccount)), kClientId.toUtf8());
+}
+
+TEST_F(MetaServicesTest, ASecretIsKeptInTheStoreAndNeverShown)
+{
+    QSignalSpy statuses(services.get(), &MetaServices::spotifyStatusChanged);
+    services->setSpotifyCredentials(kClientId, "not-a-real-secret", false);
+    ASSERT_TRUE(settle([this] { return tokens->peek(QString(MetaServices::kClientSecretAccount)).has_value(); }));
+    EXPECT_TRUE(services->spotifyStatus().hasSecret);
+    // The client-credentials request can't reach anything here, so it fails and says so.
+    ASSERT_TRUE(settle([this] { return !services->spotifyStatus().error.isEmpty(); }));
+    for (const auto &emitted : std::as_const(statuses)) {
+        const auto status = emitted.at(0).value<SpotifyStatus>();
+        EXPECT_FALSE(status.error.contains(u"not-a-real-secret"_s));
+    }
+}
+
+TEST_F(MetaServicesTest, KeepingTheSavedSecret)
+{
+    services->setSpotifyCredentials(kClientId, "first-secret", false);
+    services->setSpotifyCredentials(kClientId, {}, true);
+    ASSERT_TRUE(settle([this] { return tokens->peek(QString(MetaServices::kClientSecretAccount)).has_value(); }));
+    EXPECT_TRUE(services->spotifyStatus().hasSecret);
+    services->setSpotifyCredentials(kClientId, {}, false); // now delete it
+    ASSERT_TRUE(settle([this] { return !tokens->peek(QString(MetaServices::kClientSecretAccount)).has_value(); }));
+    EXPECT_FALSE(services->spotifyStatus().hasSecret);
+}
+
+TEST_F(MetaServicesTest, AnEmptyClientIdForgetsEverything)
+{
+    services->setSpotifyCredentials(kClientId, "secret", false);
+    ASSERT_TRUE(settle([this] { return tokens->peek(QString(MetaServices::kClientSecretAccount)).has_value(); }));
+    services->setSpotifyCredentials(QString(), {}, false);
+    ASSERT_TRUE(settle([this] {
+        return !tokens->peek(QString(MetaServices::kClientIdAccount)) &&
+               !tokens->peek(QString(MetaServices::kClientSecretAccount));
+    }));
+    EXPECT_EQ(services->spotifyStatus().state, State::NotConfigured);
+    EXPECT_FALSE(services->spotifyStatus().hasSecret);
+}
+
+TEST_F(MetaServicesTest, RestoreReadsWhatWasSaved)
+{
+    services->setSpotifyCredentials(kClientId, {}, false);
+    ASSERT_TRUE(settle([this] { return tokens->peek(QString(MetaServices::kClientIdAccount)).has_value(); }));
+
+    // A new session over a store that already holds the Client ID.
+    auto store = std::make_unique<selecta::meta::InMemoryTokenStore>();
+    std::ignore = store->write(QString(MetaServices::kClientIdAccount), kClientId.toUtf8());
+    QTest::qWait(10);
+    services.reset();
+    start(std::move(store));
+    services->restore();
+    ASSERT_TRUE(settle([this] { return services->spotifyStatus().clientId == kClientId; }));
+    ASSERT_TRUE(settle([this] { return services->spotifyStatus().state == State::SignedOut; }));
+}
+
+TEST_F(MetaServicesTest, SignInOpensTheBrowser)
+{
+    services->setSpotifyCredentials(kClientId, {}, false);
+    ASSERT_TRUE(settle([this] { return services->spotifyStatus().state == State::SignedOut; }));
+    services->signInToSpotify();
+    ASSERT_TRUE(settle([this] { return opened.isValid(); }));
+    EXPECT_EQ(opened.host(), u"127.0.0.1"_s); // the fake accounts service, never Spotify
+    EXPECT_EQ(services->spotifyStatus().state, State::Authorizing);
+}
