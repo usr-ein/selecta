@@ -168,8 +168,12 @@ void MainWindow::createCentralArea()
     setCentralWidget(m_mainSplitter);
 
     connect(m_sidebar, &Sidebar::navigationRequested, this, [this](const QString &id) { navigateTo(id); });
-    connect(m_sidebar, &Sidebar::searchRequested, this,
-            [this](const QString &text) { m_searchRequest = m_services.engine.openSearch(text); });
+    m_sidebar->setRecentSearches(m_services.settings.recentSearches());
+    connect(m_sidebar, &Sidebar::searchRequested, this, [this](const QString &text) {
+        m_searchRequest = m_services.engine.openSearch(text);
+        m_services.settings.addRecentSearch(text); // SRCH-15
+        m_sidebar->setRecentSearches(m_services.settings.recentSearches());
+    });
     connect(m_sidebar, &Sidebar::closeRequested, this, [this](const QString &id) {
         if (const qint64 searchId = NavModel::searchOfItem(id); searchId > 0) {
             m_services.engine.closeSearch(searchId);

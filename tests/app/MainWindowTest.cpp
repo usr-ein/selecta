@@ -18,6 +18,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QCompleter>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -734,4 +735,19 @@ TEST_F(MainWindowTest, SinglesAlsoOnAnAlbumAreFlaggedInTheInboxAndTheCollection)
     ASSERT_NE(flags, nullptr);
     ASSERT_EQ(flags->model()->rowCount(), 1);
     EXPECT_EQ(flags->model()->index(0, 0).data().toString(), u"⚑ Okuma Drift – Neon Rain is also on “Night Signals”"_s);
+}
+
+TEST_F(MainWindowTest, SearchesTypedAreOfferedAgain)
+{
+    auto window = makeWindow();
+    auto *field = window->findChild<QLineEdit *>(u"sidebar.search"_s);
+    ASSERT_NE(field, nullptr);
+    for (const QString &text : {u"Okuma Drift - Neon Rain"_s, u"Kassia Moreau"_s, u"okuma drift - neon rain"_s}) {
+        field->setText(text);
+        QTest::keyClick(field, Qt::Key_Return);
+    }
+    // Newest first, the same search once (SRCH-15).
+    EXPECT_EQ(settings->recentSearches(), (QStringList{u"okuma drift - neon rain"_s, u"Kassia Moreau"_s}));
+    ASSERT_NE(field->completer(), nullptr);
+    EXPECT_EQ(field->completer()->model()->rowCount(), 2);
 }

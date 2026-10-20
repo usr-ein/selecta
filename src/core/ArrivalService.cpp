@@ -117,6 +117,40 @@ struct ArrivalService::Job
     bool started = false; // the worker has it (engine thread only)
 };
 
+namespace {
+
+// "6:12" for a length in ms.
+QString minutesAndSeconds(qint64 milliseconds)
+{
+    const qint64 seconds = (milliseconds + 500) / 1000;
+    return u"%1:%2"_s.arg(seconds / 60).arg(seconds % 60, 2, 10, u'0');
+}
+
+// DL-10: "It plays 3:12, not the 6:40 the search showed…" when the file's length is far from what was expected (the
+// search result's, else the release's); empty when it's close enough or nothing was expected.
+QString lengthMismatch(const std::optional<FileChoice> &file, const std::optional<meta::Release> &release,
+                       double seconds)
+{
+    constexpr double kToleranceSeconds = 5.0; // search results truncate to whole seconds; versions differ by more
+    qint64 expectedMs = 0;
+    QString source;
+    if (file && file->durationSec && *file->durationSec > 0) {
+        expectedMs = qint64{*file->durationSec} * 1000;
+        source = ArrivalService::tr("the search showed");
+    } else if (release && release->durationMs && *release->durationMs > 0) {
+        expectedMs = *release->durationMs;
+        source = ArrivalService::tr("the release has");
+    }
+    if (expectedMs <= 0 || seconds <= 0.0 ||
+        std::abs(seconds - (static_cast<double>(expectedMs) / 1000.0)) <= kToleranceSeconds) {
+        return {};
+    }
+    return ArrivalService::tr("It plays %1, not the %2 %3: it may be cut short or another version.")
+        .arg(minutesAndSeconds(static_cast<qint64>(seconds * 1000.0)), minutesAndSeconds(expectedMs), source);
+}
+
+} // namespace
+
 struct ArrivalService::Outcome
 {
     qint64 downloadId = 0;
@@ -298,8 +332,9 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     const convert::SourceQuality quality = probed.takeValue();
     outcome.sourceQuality = sourceQualityText(quality);
     const InboxFormat format = inboxFormatFor(quality, QFileInfo(source).suffix());
+    QStringList warnings;
     if (format.kept) {
-        outcome.warning = tr("Kept as %1: converting it to MP3 320 can't improve it.").arg(outcome.sourceQuality);
+        warnings.append(tr("Kept as %1: converting it to MP3 320 can't improve it.").arg(outcome.sourceQuality));
     }
 
     // Tags: the file's own, overridden by the release; the cover processed for CDJs.
@@ -335,6 +370,12 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
         outcome.error = report ? tr("Cancelled") : tr("Conversion failed: %1").arg(report.error().message);
         return outcome;
     }
+    // DL-10: it decoded whole; its length should be what the search (or the release) said.
+    if (const QString mismatch =
+            lengthMismatch(job.download.file, job.release, report.value().source.durationSeconds());
+        !mismatch.isEmpty()) {
+        warnings.append(mismatch);
+    }
 
     // Into the Inbox.
     const library::FileOps fileOps(job.library.inboxRoot, {}, job.trash);
@@ -350,8 +391,8 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     if (quality.lossless && !format.kept) {
         QString trashed;
         if (!job.trash(source, &trashed)) {
-            outcome.warning = tr("The original FLAC couldn't be moved to the Trash; it is still in %1.")
-                                  .arg(QDir::toNativeSeparators(QFileInfo(source).absolutePath()));
+            warnings.append(tr("The original FLAC couldn't be moved to the Trash; it is still in %1.")
+                                .arg(QDir::toNativeSeparators(QFileInfo(source).absolutePath())));
         }
     } else if (!QFile::remove(source)) {
         qCWarning(lcArrival) << "couldn't delete the downloaded copy" << source;
@@ -384,6 +425,8 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     item.releaseJson = job.release ? QString::fromUtf8(releaseToText(*job.release)) : QString();
     item.peer = job.download.peer;
     item.remotePath = job.download.remotePath;
+    item.warning = warnings.join(u' ');
+    outcome.warning = item.warning;
     outcome.relativePath = item.relativePath;
     outcome.ok = true;
     return outcome;

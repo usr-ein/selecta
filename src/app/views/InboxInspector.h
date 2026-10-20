@@ -32,7 +32,8 @@ public:
     // The item to show (nullopt: the empty page), and the Inbox folder it lives in.
     void showItem(const std::optional<library::InboxItem> &item, const QString &inboxRoot);
     std::optional<qint64> itemId() const;
-    // DL-8: the albums the shown single is also on.
+    // What to say about the shown item beyond its tags: the arrival's warning (DL-10) and the albums a single is also
+    // on (DL-8). Call after showItem().
     void setAlsoOn(const QStringList &albums);
 
     // What a read of the file found: its tags and a cover thumbnail.

@@ -54,6 +54,11 @@ public:
     QString ytDlpPath() const;
     void setYtDlpPath(const QString &path);
 
+    // SRCH-15: the searches typed lately, newest first, at most kRecentSearches.
+    static constexpr int kRecentSearches = 30;
+    QStringList recentSearches() const;
+    void addRecentSearch(const QString &text);
+
     // The Converter (PRD CONV-1, CONV-3): the format chosen ("mp3-320", "mp3-256", "mp3-192", "mp3-v0", "mp3-v2",
     // "aiff", "wav", "flac"), ID3v2.4 rather than 2.3, the cover's longest side (0: as it is), and the folder new files
     // go to (empty: next to each original).

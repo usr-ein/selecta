@@ -461,6 +461,7 @@ AlbumArrivalResult arriveAlbum(const AlbumArrivalJob &job, const audio::Cancella
         warnings.append(disposed);
     }
     result.warning = warnings.join(u' ');
+    result.item.warning = result.warning;
     return result;
 }
 

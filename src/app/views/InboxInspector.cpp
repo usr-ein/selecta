@@ -322,17 +322,21 @@ void InboxInspector::showTags(const FileTags &read)
 
 void InboxInspector::setAlsoOn(const QStringList &albums)
 {
-    if (albums.isEmpty()) {
-        m_alsoOn->hide();
-        return;
+    // The arrival's warning first: it's about the file itself (DL-10, CONV-2).
+    QStringList lines;
+    if (m_item && !m_item->warning.isEmpty()) {
+        lines.append(tr("⚠ %1").arg(m_item->warning));
     }
-    QStringList quoted;
-    for (const QString &album : albums) {
-        quoted.append(u"“"_s + album + u"”"_s);
+    if (!albums.isEmpty()) {
+        QStringList quoted;
+        for (const QString &album : albums) {
+            quoted.append(u"“"_s + album + u"”"_s);
+        }
+        lines.append(tr("⚑ Also on %1. Keep the album and move this single to the Trash, or keep both.")
+                         .arg(quoted.join(u", "_s)));
     }
-    m_alsoOn->setText(
-        tr("⚑ Also on %1. Keep the album and move this single to the Trash, or keep both.").arg(quoted.join(u", "_s)));
-    m_alsoOn->show();
+    m_alsoOn->setText(lines.join(u"\n\n"_s));
+    m_alsoOn->setVisible(!lines.isEmpty());
 }
 
 void InboxInspector::refreshProvenance()

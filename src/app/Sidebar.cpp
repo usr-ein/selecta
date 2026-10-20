@@ -7,12 +7,14 @@
 #include "app/SourceListView.h"
 
 #include <QAction>
+#include <QCompleter>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QPainter>
+#include <QStringListModel>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -55,6 +57,7 @@ Sidebar::Sidebar(NavModel *model, QWidget *parent)
     : QWidget(parent)
     , m_model(model)
     , m_search(new QLineEdit(this))
+    , m_recent(new QStringListModel(this))
     , m_list(new SourceListView(this))
     , m_statusDot(new StatusDot(this))
     , m_statusText(new QLabel(this))
@@ -71,6 +74,11 @@ Sidebar::Sidebar(NavModel *model, QWidget *parent)
     m_search->setAttribute(Qt::WA_MacShowFocusRect, true);
     m_search->addAction(icons::symbol(u"magnifyingglass"_s, u"edit-find"_s), QLineEdit::LeadingPosition);
     m_search->setToolTip(tr("Search the Soulseek network (⌘F). Use -word to leave a word out."));
+    auto *completer = new QCompleter(m_recent, m_search);
+    completer->setCaseSensitivity(Qt::CaseInsensitive);
+    completer->setFilterMode(Qt::MatchContains);
+    completer->setCompletionMode(QCompleter::PopupCompletion);
+    m_search->setCompleter(completer);
     connect(m_search, &QLineEdit::returnPressed, this, [this] {
         const QString text = m_search->text().simplified();
         if (!text.isEmpty()) {
@@ -148,6 +156,11 @@ QString Sidebar::currentId() const
 {
     const QModelIndex current = m_list->currentIndex();
     return current.isValid() ? m_model->idAt(current.row()) : QString();
+}
+
+void Sidebar::setRecentSearches(const QStringList &searches)
+{
+    m_recent->setStringList(searches);
 }
 
 void Sidebar::focusSearch()

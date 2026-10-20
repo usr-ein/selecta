@@ -78,8 +78,10 @@ QString statusText(const core::InboxEntry &entry)
     case InboxItem::State::Failed:
         return InboxView::tr("Failed");
     case InboxItem::State::Ready:
-        return entry.alsoOn.isEmpty() ? InboxView::tr("Ready")
-                                      : InboxView::tr("⚑ Also on “%1”").arg(entry.alsoOn.constFirst());
+        if (!entry.alsoOn.isEmpty()) {
+            return InboxView::tr("⚑ Also on “%1”").arg(entry.alsoOn.constFirst());
+        }
+        return entry.item.warning.isEmpty() ? InboxView::tr("Ready") : InboxView::tr("⚠ Ready, see why");
     }
     return {};
 }
@@ -320,7 +322,7 @@ void InboxView::rebuild(const QList<core::InboxEntry> &entries)
                 item.sourceFormat.isEmpty() ? QString() : tr("Downloaded as %1").arg(item.sourceFormat);
             group->appendRow({cell(itemText, item.id), cell(formatText(item), item.id, source),
                               cell(fileName, item.id, item.relativePath), cell(item.peer, item.id),
-                              cell(statusText(*entry), item.id, item.error)});
+                              cell(statusText(*entry), item.id, item.error.isEmpty() ? item.warning : item.error)});
         }
     };
     addGroup(tr("Albums"), InboxItem::Kind::Album);
@@ -361,13 +363,14 @@ void InboxView::showSelection()
             break;
         }
     }
-    m_inspector->setAlsoOn(alsoOn);
     // The same item, unchanged: keep what the inspector shows (and its read in flight).
     if (item && m_inspector->itemId() == item->id && m_shownItem && *m_shownItem == *item) {
+        m_inspector->setAlsoOn(alsoOn);
         return;
     }
     m_shownItem = item;
     m_inspector->showItem(item, m_config.inboxRoot);
+    m_inspector->setAlsoOn(alsoOn);
 }
 
 void InboxView::refreshActions()

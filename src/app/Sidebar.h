@@ -5,6 +5,7 @@
 
 class QLabel;
 class QLineEdit;
+class QStringListModel;
 
 namespace selecta::app {
 
@@ -27,6 +28,8 @@ public:
     void setConnectionStatus(const QString &text, bool online);
     // Puts the keyboard in the search field (⌘F).
     void focusSearch();
+    // SRCH-15: the searches typed lately, newest first, offered as the user types.
+    void setRecentSearches(const QStringList &searches);
 
 Q_SIGNALS:
     // The user picked an item (click or keyboard).
@@ -39,6 +42,7 @@ Q_SIGNALS:
 private:
     NavModel *m_model;
     QLineEdit *m_search;
+    QStringListModel *m_recent;
     SourceListView *m_list;
     StatusDot *m_statusDot;
     QLabel *m_statusText;

@@ -239,6 +239,11 @@ constexpr std::array kMigrations{
         CREATE INDEX supersede_flags_by_item ON supersede_flags(single_item);
         CREATE INDEX supersede_flags_by_path ON supersede_flags(single_path);
     )sql"},
+    // What the arrival noticed about an Inbox item that arrived anyway (PRD DL-10, CONV-2): kept below the Inbox
+    // format, shorter or longer than the search said.
+    Migration{10, R"sql(
+        ALTER TABLE inbox_items ADD COLUMN warning TEXT NOT NULL DEFAULT '';
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

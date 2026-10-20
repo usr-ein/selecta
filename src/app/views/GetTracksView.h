@@ -67,6 +67,9 @@ private:
     void showSelection();
     void showAdded(int added, int duplicates, int unidentified, const QString &note);
     void refreshProgress();
+    // BATCH-8: saves the lines nothing was found for (or no sure release), one per line, as pasted.
+    void exportUnresolved();
+    QStringList unresolvedLines() const;
 
     core::EngineHost &m_engine;
     GetTracksModel *m_model;
@@ -78,6 +81,7 @@ private:
     QPushButton *m_add;
     QPushButton *m_find;
     QPushButton *m_get;
+    QPushButton *m_export; // BATCH-8: the lines not found, as text
     QLabel *m_progress;
     QTimer *m_countdown;
     int m_waiting = 0;     // searches waiting for the governor

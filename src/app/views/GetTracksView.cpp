@@ -12,6 +12,8 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDir>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
@@ -19,6 +21,7 @@
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QStackedWidget>
 #include <QStringList>
 #include <QTimer>
@@ -41,6 +44,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     , m_add(new QPushButton(tr("Add Tracks…"), this))
     , m_find(new QPushButton(tr("Find Them"), this))
     , m_get(new QPushButton(tr("Get"), this))
+    , m_export(new QPushButton(tr("Export Not Found…"), this))
     , m_progress(new QLabel(this))
     , m_countdown(new QTimer(this))
 {
@@ -201,6 +205,9 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     m_get->setToolTip(tr("Download the ticked tracks. Each one lands in your Inbox as an MP3 320 with its tags and "
                          "cover."));
     connect(m_get, &QPushButton::clicked, this, [this] { m_engine.downloadTracks(); });
+    m_export->setObjectName(u"get.export"_s);
+    m_export->setToolTip(tr("Save the lines nothing was found for as a text file, to look for them elsewhere"));
+    connect(m_export, &QPushButton::clicked, this, &GetTracksView::exportUnresolved);
     m_progress->setObjectName(u"get.progress"_s);
     m_progress->setForegroundRole(QPalette::PlaceholderText);
     m_countdown->setInterval(1000);
@@ -219,6 +226,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     bar->addSpacing(8);
     bar->addWidget(m_summary, 1);
     bar->addWidget(m_progress);
+    bar->addWidget(m_export);
     bar->addWidget(m_find);
     bar->addWidget(m_get);
     auto *noteBox = new QHBoxLayout;
@@ -417,6 +425,7 @@ void GetTracksView::refreshProgress()
     m_get->setEnabled(toGet > 0);
     m_get->setText(toGet > 1 ? tr("Get %1").arg(toGet) : tr("Get"));
     m_get->setDefault(toGet > 0);
+    m_export->setVisible(finding == 0 && !unresolvedLines().isEmpty());
 
     if (finding == 0) {
         m_progress->clear();
@@ -436,6 +445,50 @@ void GetTracksView::refreshProgress()
     if (!m_countdown->isActive()) {
         m_countdown->start();
     }
+}
+
+QStringList GetTracksView::unresolvedLines() const
+{
+    QStringList lines;
+    for (const core::GetLine &line : m_model->lines()) {
+        using ReleaseState = core::GetLine::ReleaseState;
+        const bool notFound = line.findState == core::GetLine::FindState::NotFound;
+        const bool unsure =
+            !line.best && (line.releaseState == ReleaseState::Ambiguous || line.releaseState == ReleaseState::Failed);
+        if (notFound || unsure) {
+            lines.append(line.raw.trimmed().isEmpty() ? line.artist + u" - "_s + line.title : line.raw.trimmed());
+        }
+    }
+    return lines;
+}
+
+void GetTracksView::exportUnresolved()
+{
+    const QStringList lines = unresolvedLines();
+    if (lines.isEmpty()) {
+        return;
+    }
+    auto *dialog = new QFileDialog(this, tr("Export Tracks Not Found"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setAcceptMode(QFileDialog::AcceptSave);
+    dialog->setDefaultSuffix(u"txt"_s);
+    dialog->setNameFilter(tr("Text files (*.txt)"));
+    dialog->selectFile(tr("Not found on Soulseek.txt"));
+    dialog->setWindowModality(Qt::WindowModal);
+    connect(dialog, &QFileDialog::fileSelected, this, [this, lines](const QString &path) {
+        QSaveFile file(path);
+        const QByteArray text = (lines.join(u'\n') + u'\n').toUtf8();
+        if (!file.open(QIODevice::WriteOnly) || file.write(text) != text.size() || !file.commit()) {
+            m_note->setText(tr("Couldn't save %1: %2").arg(QDir::toNativeSeparators(path), file.errorString()));
+            m_note->show();
+            return;
+        }
+        m_note->setText(lines.size() == 1
+                            ? tr("Saved 1 line to %1.").arg(QDir::toNativeSeparators(path))
+                            : tr("Saved %1 lines to %2.").arg(lines.size()).arg(QDir::toNativeSeparators(path)));
+        m_note->show();
+    });
+    dialog->open();
 }
 
 void GetTracksView::showSelection()

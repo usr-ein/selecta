@@ -22,6 +22,7 @@ const QString kPreviewVolume = u"player/volume"_s;
 const QString kPreviewSource = u"player/source"_s;
 const QString kPreviewFollows = u"player/followSelection"_s;
 const QString kYtDlpPath = u"player/ytDlp"_s;
+const QString kRecentSearchesKey = u"search/recent"_s;
 const QString kConverterTarget = u"converter/target"_s;
 const QString kConverterId3v24 = u"converter/id3v24"_s;
 const QString kConverterArtwork = u"converter/artworkMax"_s;
@@ -211,6 +212,23 @@ void AppSettings::setPreviewFollowsSelection(bool follows)
 QString AppSettings::ytDlpPath() const
 {
     return m_settings.value(kYtDlpPath).toString().trimmed();
+}
+
+QStringList AppSettings::recentSearches() const
+{
+    return m_settings.value(kRecentSearchesKey).toStringList().mid(0, kRecentSearches);
+}
+
+void AppSettings::addRecentSearch(const QString &text)
+{
+    const QString cleaned = text.simplified();
+    if (cleaned.isEmpty()) {
+        return;
+    }
+    QStringList searches = recentSearches();
+    searches.removeIf([&cleaned](const QString &search) { return search.compare(cleaned, Qt::CaseInsensitive) == 0; });
+    searches.prepend(cleaned);
+    m_settings.setValue(kRecentSearchesKey, searches.mid(0, kRecentSearches));
 }
 
 AppSettings::ConverterState AppSettings::converterState() const

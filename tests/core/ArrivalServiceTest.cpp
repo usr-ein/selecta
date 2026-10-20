@@ -286,3 +286,27 @@ TEST_F(ArrivalServiceTest, CancellingAnUnknownArrivalDoesNothing)
     EXPECT_TRUE(finished.isEmpty());
     EXPECT_FALSE(arrival->isBusy());
 }
+
+TEST_F(ArrivalServiceTest, AFileFarFromTheLengthTheSearchShowedIsFlagged)
+{
+    Download download = downloaded(7, u"short.flac"_s, synth::makeFlac(synth::quantised(synth::sine(440.0, 6.0), 16)));
+    selecta::core::FileChoice file;
+    file.peer = download.peer;
+    file.remotePath = download.remotePath;
+    file.durationSec = 20; // the search said 0:20; it plays 0:06
+    download.file = file;
+    const ArrivalResult result = arrive(download);
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    EXPECT_TRUE(result.warning.contains(u"It plays 0:06, not the 0:20 the search showed"_s))
+        << result.warning.toStdString();
+    // The Inbox keeps it, with the warning (DL-10).
+    EXPECT_EQ(selecta::library::InboxStore(db).find(result.inboxItem)->warning, result.warning);
+
+    // Close enough: nothing to say.
+    Download close = downloaded(8, u"close.flac"_s, synth::makeFlac(synth::quantised(synth::sine(440.0, 6.0), 16)));
+    file.durationSec = 7;
+    close.file = file;
+    const ArrivalResult fine = arrive(close);
+    ASSERT_TRUE(fine.ok) << fine.message.toStdString();
+    EXPECT_TRUE(fine.warning.isEmpty()) << fine.warning.toStdString();
+}

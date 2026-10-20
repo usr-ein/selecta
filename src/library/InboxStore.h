@@ -43,6 +43,7 @@ struct InboxItem
     QByteArray remotePath;
     std::optional<int> session;
     qint64 createdAt = 0; // Unix time, ms
+    QString warning;      // what the arrival noticed: kept below the Inbox format, not the length expected (DL-10)
 
     friend bool operator==(const InboxItem &, const InboxItem &) = default;
 };
