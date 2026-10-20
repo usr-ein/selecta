@@ -810,6 +810,25 @@ void EngineHost::dismissSupersedeFlag(qint64 id)
     });
 }
 
+void EngineHost::correctSearchMatch(qint64 searchId, int index, bool same)
+{
+    post([searchId, index, same](Engine &engine) { engine.correctSearchMatch(searchId, index, same); });
+}
+
+void EngineHost::notOwnedFindTracks(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) { engine.notOwnedFindTracks(ids); });
+}
+
+void EngineHost::notTheSameTrack(qint64 flagId)
+{
+    post([flagId](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.notTheSameTrack(flagId);
+        }
+    });
+}
+
 void EngineHost::addToConverter(const QStringList &paths)
 {
     post([paths](Engine &engine) {

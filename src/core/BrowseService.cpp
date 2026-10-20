@@ -238,6 +238,17 @@ void BrowseService::accept(const QString &peer, const slsk::SharedFileList &list
     });
 }
 
+void BrowseService::refreshAnnotations()
+{
+    if (!m_annotate) {
+        return;
+    }
+    for (auto it = m_results.begin(); it != m_results.end(); ++it) {
+        m_annotate(it.value());
+        Q_EMIT resultsReset(it.key(), it.value());
+    }
+}
+
 void BrowseService::drain()
 {
     QList<Analysed> analyses;

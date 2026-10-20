@@ -3,6 +3,7 @@
 
 #include "core/ActivityLog.h"
 #include "core/CollectionStore.h"
+#include "core/MatchCorrections.h"
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
 #include "core/TransferService.h"
@@ -574,6 +575,17 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
     const match::AlbumDownloadState state =
         result.complete ? match::AlbumDownloadState::CompleteVerified : match::AlbumDownloadState::Partial;
     const match::SupersedeDecision decision = match::SupersedeDecider::decide(state, tracks, singles, inboxSingles);
+    // LIB-6: both sides as corrections know them; a pair the user said isn't the same track is no match.
+    QHash<quint64, TrackIdentity> albumTracks;
+    for (const match::SupersedeAlbumTrack &track : std::as_const(tracks)) {
+        albumTracks.insert(track.id, trackIdentity(track.track.artist, track.track.title, track.track.durationMs));
+    }
+    QHash<quint64, TrackIdentity> singleTracks;
+    for (const match::SupersedeSingle &single : std::as_const(singles)) {
+        singleTracks.insert(single.id, trackIdentity(single.track.artist, single.track.title, single.track.durationMs));
+    }
+    MatchCorrectionStore corrections(m_db);
+    const bool corrected = !corrections.isEmpty();
     Held held{.album = report.album, .peer = album.peer, .singles = {}, .names = {}};
     QList<qint64> trash;
     SupersedeFlagStore flags(m_db);
@@ -591,6 +603,8 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
         entry.single = names.value(pair.singleId);
         entry.summary = pair.summary;
         entry.createdAt = m_now();
+        entry.singleTrack = singleTracks.value(pair.singleId);
+        entry.albumTrack = albumTracks.value(pair.albumTrackId);
         if (flags.add(entry)) {
             flagged = true;
         } else {
@@ -598,6 +612,13 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
         }
     };
     for (const match::SupersedePair &pair : decision.pairs) {
+        if (corrected && corrections.verdict(CorrectionKind::Supersede, singleTracks.value(pair.singleId),
+                                             albumTracks.value(pair.albumTrackId)) == Verdict::Different) {
+            m_activity.record(
+                u"supersede"_s, album.peer, u"corrected"_s,
+                tr("%1: not the same track as on “%2”, as you said").arg(names.value(pair.singleId), report.album));
+            continue; // neither flagged nor trashed
+        }
         m_activity.record(u"supersede"_s, album.peer, u"decided"_s, pair.summary);
         const auto single = static_cast<qint64>(pair.singleId);
         if (pair.action == match::SupersedeAction::Trash && decision.needsConfirmation) {

@@ -179,6 +179,12 @@ public:
     // DL-8: the singles flagged as also on an album (supersedeFlagsChanged()); a dismissed flag goes.
     void refreshSupersedeFlags();
     void dismissSupersedeFlag(qint64 id);
+    // LIB-6, the user's corrections of matches, remembered (match_corrections) and applied at once: a search result is
+    // not (or is) the owned track Selecta matched it with; Get tracks lines aren't the owned copy they were matched
+    // with and are found normally; a flagged single isn't the album's track (the flag goes, and never comes back).
+    void correctSearchMatch(qint64 searchId, int index, bool same);
+    void notOwnedFindTracks(const QList<qint64> &ids);
+    void notTheSameTrack(qint64 flagId);
     // NET-7: sends a message (messageSent() says if it went); a conversation's messages (conversationLoaded()).
     void sendMessage(const QString &peer, const QString &text);
     void loadConversation(const QString &peer);
@@ -313,6 +319,8 @@ private:
     void reportSearchBudget();
     // What only the engine knows about search results: queued downloads, this session's, owned files, peer counters.
     void annotate(QList<SearchResult> &results);
+    // After a correction (LIB-6): search and browse results are annotated again, Get tracks lines checked again.
+    void refreshCorrections();
 
     EngineOptions m_options;
     std::unique_ptr<base::Clock> m_ownClock;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/MatchCorrections.h"
 #include "meta/Release.h"
 
 #include <QByteArray>
@@ -84,6 +85,9 @@ struct SupersedeFlag
     QString single;                   // "Artist – Title"
     QString summary;                  // the decision and why
     qint64 createdAt = 0;             // Unix time, ms
+    // The pair as corrections know it (LIB-6), for "Not the Same Track"; invalid on flags raised before.
+    TrackIdentity singleTrack;
+    TrackIdentity albumTrack;
 };
 
 // Reads and writes supersede flags (table supersede_flags). A flag on an Inbox single goes with it. Uses the Database
@@ -99,6 +103,9 @@ public:
     std::optional<qint64> add(const SupersedeFlag &flag);
     // Every flag, newest first.
     QList<SupersedeFlag> all();
+    std::optional<SupersedeFlag> find(qint64 id);
+    // The flags on each Inbox single, by Inbox item.
+    QHash<qint64, QList<qint64>> idsByInboxItem();
     // The albums each flagged Inbox single is also on, by Inbox item.
     QHash<qint64, QStringList> albumsByInboxItem();
     [[nodiscard]] bool remove(qint64 id);

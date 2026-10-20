@@ -177,6 +177,14 @@ public:
     QList<SupersedeFlag> supersedeFlags() const { return m_supersedeFlags; }
     void dismissSupersedeFlag(qint64 id);
 
+    // --- corrections of matches (LIB-6), remembered ---
+    // A search result is not (same: is) the owned track it was matched with ("Not What I Have", "Same as What I Have").
+    void correctSearchMatch(qint64 searchId, int index, bool same);
+    // These Get tracks lines aren't the owned copy they were matched with: they are found normally.
+    void notOwnedFindTracks(const QList<qint64> &ids);
+    // A flagged single isn't the album's track: the flag goes, and the pair is never flagged again.
+    void notTheSameTrack(qint64 flagId);
+
     // --- the converter (CONV-1…7) ---
     void addToConverter(const QStringList &paths);
     void removeFromConverter(const QList<qint64> &ids);
