@@ -13,7 +13,8 @@ namespace {
 
 constexpr qint64 kKiB = 1024;
 constexpr qint64 kCacheBlock = 256 * kKiB;
-constexpr qint64 kScanBlock = 64 * kKiB; // scanned at a time; the cache window keeps a margin after it
+constexpr qint64 kHeaderOnlyBlock = 16 * kKiB; // header-only probes read as little as they can
+constexpr qint64 kScanBlock = 64 * kKiB;       // scanned at a time; the cache window keeps a margin after it
 constexpr qint64 kMaxResyncBytes = 1024 * kKiB;
 constexpr qint64 kChunkTargetFrames = 8192;
 constexpr qint64 kPcmChunkFrames = 8192;
@@ -90,7 +91,7 @@ const quint8 *IndexedBackend::BlockCache::peek(SourceReader &reader, qint64 posi
     if (position < 0 || count < 0 || position > reader.available() || count > reader.available() - position) {
         return nullptr;
     }
-    const qint64 length = std::min(std::max(count, kCacheBlock), reader.available() - position);
+    const qint64 length = std::min(std::max(count, blockBytes), reader.available() - position);
     const SourceReader::Status status = reader.read(position, length, m_data);
     if (status != SourceReader::Status::Ok) {
         failed = status == SourceReader::Status::Error;
@@ -103,12 +104,15 @@ const quint8 *IndexedBackend::BlockCache::peek(SourceReader &reader, qint64 posi
 }
 
 IndexedBackend::IndexedBackend(Kind kind, std::shared_ptr<ByteSource> source, const ProbeResult &probe,
-                               const DecoderOptions &options)
+                               const DecoderOptions &options, bool headerOnly)
     : m_kind(kind)
     , m_source(std::move(source))
     , m_probe(probe)
     , m_options(options)
-{}
+    , m_headerOnly(headerOnly)
+{
+    m_cache.blockBytes = headerOnly ? kHeaderOnlyBlock : kCacheBlock;
+}
 
 IndexedBackend::~IndexedBackend() = default;
 
@@ -144,7 +148,7 @@ Backend::Status IndexedBackend::open(Error &error)
     if (status != Status::Ok) {
         return status;
     }
-    if (snapshot.isComplete() && m_kind != Kind::Pcm && !m_indexShared) {
+    if (snapshot.isComplete() && m_kind != Kind::Pcm && !m_indexShared && !m_headerOnly) {
         // Index the whole file now: exact length and statistics, and an index clones can share.
         while (true) {
             const Extend extend = extendIndex(error);
@@ -211,6 +215,11 @@ Backend::Status IndexedBackend::openMpeg(SourceReader &reader, Error &error)
         }
     }
     m_scanPos = m_firstAudioOffset;
+    if (m_headerOnly) {
+        if (const Status checked = checkMpegRun(reader, error); checked != Status::Ok) {
+            return checked;
+        }
+    }
 
     AVCodecID codec = AV_CODEC_ID_MP3;
     m_info.codec = Codec::Mp3;
@@ -231,6 +240,28 @@ Backend::Status IndexedBackend::openMpeg(SourceReader &reader, Error &error)
     m_info.sampleRate = header->sampleRate;
     m_info.channels = header->channels;
     m_info.lameTag = m_lame;
+    return Status::Ok;
+}
+
+Backend::Status IndexedBackend::checkMpegRun(SourceReader &reader, Error &error)
+{
+    // Without an index, the probe's sync (which accepts a frame run cut by the end of the file) is all there is:
+    // a header-only probe also wants a few whole frames of the same stream, so noise isn't taken for MPEG audio.
+    constexpr int kFramesToCheck = 4;
+    qint64 pos = m_firstAudioOffset;
+    for (int i = 0; i < kFramesToCheck; ++i) {
+        const quint8 *bytes = m_cache.peek(reader, pos, 4);
+        if (bytes == nullptr) {
+            return unavailable(reader, error, u"too few MPEG audio frames"_s);
+        }
+        const std::optional<MpegHeader> header = parseMpegHeader(be32(ByteSpan(bytes, 4), 0));
+        if (!header || header->frameBytes == 0 || !sameMpegStream(*header, m_firstHeader) ||
+            pos + header->frameBytes > reader.endOffset()) {
+            error = makeError(ErrorCode::Corrupt, u"too few consistent MPEG audio frames"_s);
+            return Status::Error;
+        }
+        pos += header->frameBytes;
+    }
     return Status::Ok;
 }
 
@@ -331,7 +362,7 @@ Backend::Status IndexedBackend::openFlac(SourceReader &reader, Error &error)
     }
     m_firstAudioOffset = audioStart;
     m_scanPos = audioStart;
-    if (audioStart < reader.endOffset()) {
+    if (audioStart < reader.endOffset() && !m_headerOnly) {
         if (const Status status = findFirstFlacFrame(reader, audioStart, error); status != Status::Ok) {
             return status;
         }
@@ -810,10 +841,13 @@ qint64 IndexedBackend::rawLength() const
     if (m_lame && m_lame->frames > 0) {
         return m_lame->frames * m_firstHeader.samplesPerFrame;
     }
-    // Estimate from the stream size and the average frame size so far (exact for CBR).
+    // Estimate from the stream size and the average frame size so far; before any frame is indexed (a header-only
+    // probe), from the first frame's bitrate, which counts the padding slots and is exact for CBR.
     const auto frames = static_cast<qint64>(m_index->frames.size());
-    const double averageBytes = frames > 0 ? static_cast<double>(m_index->totalBytes) / static_cast<double>(frames)
-                                           : static_cast<double>(m_firstHeader.frameBytes);
+    const double nominalBytes = static_cast<double>(m_firstHeader.samplesPerFrame) / 8.0 * m_firstHeader.bitrateKbps *
+                                1000.0 / m_firstHeader.sampleRate;
+    const double averageBytes =
+        frames > 0 ? static_cast<double>(m_index->totalBytes) / static_cast<double>(frames) : nominalBytes;
     const qint64 streamBytes = m_source->totalSize() - m_firstAudioOffset;
     if (averageBytes <= 0 || streamBytes <= 0) {
         return -1;
@@ -885,9 +919,27 @@ void IndexedBackend::finishInfo()
         if (m_index->finished && m_index->totalSamples > 0) {
             m_info.bitrateKbps = static_cast<int>(static_cast<double>(m_index->totalBytes) * 8.0 * m_flac.sampleRate /
                                                   static_cast<double>(m_index->totalSamples) / 1000.0);
+        } else if (m_headerOnly && m_flac.totalSamples > 0) {
+            // Estimated from the file size: the audio runs from the end of the metadata to the end of the file.
+            const auto audioBytes = static_cast<double>(m_source->totalSize() - m_firstAudioOffset);
+            m_info.bitrateKbps = static_cast<int>(audioBytes * 8.0 * m_flac.sampleRate /
+                                                  static_cast<double>(m_flac.totalSamples) / 1000.0);
         }
         break;
     case Kind::Mpeg: {
+        if (m_headerOnly) {
+            // No frame index: the Xing/LAME frame's byte and frame counts give the average bitrate, else the first
+            // frame's (exact for CBR).
+            m_info.exactLength = m_lame && m_lame->frames > 0;
+            m_info.audioBytes = -1;
+            m_info.bitrateKbps = m_firstHeader.bitrateKbps;
+            if (m_lame && m_lame->frames > 0 && m_lame->bytes > 0) {
+                m_info.bitrateKbps = static_cast<int>(
+                    std::lround(static_cast<double>(m_lame->bytes) * 8.0 * m_firstHeader.sampleRate /
+                                static_cast<double>(m_lame->frames * m_firstHeader.samplesPerFrame) / 1000.0));
+            }
+            break;
+        }
         m_info.exactLength = m_index->finished || (m_lame && m_lame->frames > 0);
         m_info.audioBytes = m_index->finished ? m_index->totalBytes : -1;
         MpegAudioStats mpeg;

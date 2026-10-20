@@ -204,6 +204,27 @@ with `ResamplerQuality::VeryHigh`.
 Reproduce: configure a Release tree with tests on, build `selecta_audio_bench`, run it with `--benchmark_min_time=1s`.
 The CLI gives a quick check on any file: `selecta-cli media-analyze <file>`.
 
+## Header-only probe (`probeStreamInfo`)
+
+For scans of thousands of files (the collection scanner): `Decoder::open()` indexes every frame of a complete MP3 or
+FLAC, which reads the whole file. `probeStreamInfo(path)` runs the same container probe and backends in a header-only
+mode instead:
+
+- MPEG audio: the ID3v2 headers (tags skipped by size), the sync scan (one 64 KiB block), the first frame with its
+  Xing/LAME tag, and four whole frames of the same stream (so noise isn't taken for MP3, which an index would
+  otherwise reveal). Length exact from the LAME/Xing frame count (gapless-trimmed), else estimated from the size and
+  the first frame's bitrate (padding slots included: exact for CBR); bitrate from the tag's byte count.
+- FLAC: metadata block headers and STREAMINFO (pictures skipped by length); bitrate from the file size.
+- WAV/AIFF: the chunk headers.
+- MP4, Ogg and other FFmpeg formats: the demuxer opens the file (an MP4's `moov` wherever it is, an Ogg's last pages
+  for the length); FFmpeg's stream analysis is skipped when the header gave the parameters, nothing is decoded, and a
+  guessed format must be recognised with confidence (probe score above `AVPROBE_SCORE_RETRY`).
+- `mpeg` (frame statistics) is left empty; nothing is cached or indexed.
+
+Measured reads (`tests/audio/StreamProbeTest.cpp`): MP3 82 KB of 9 MB (behind a 2 MB ID3v2 tag), FLAC 33 KB of
+29 MB (behind a 1 MB picture), WAV 74 B of 47 MB, AIFF 76 B of 31 MB, MP4 (index at the end) 69 KB of 2.9 MB, Ogg
+FLAC 196 KB of 1.1 MB.
+
 ## Quality checks (A3)
 
 `analyzeQuality(source)` decodes a complete file once, at its own rate and layout, and runs two checks on the way.
@@ -245,5 +266,6 @@ limited, which is why the wording says "likely" and the UI offers the spectrum f
   cut between frames).
 - **Done (A3):** `analyzeQuality()` (exact word length, spectral cut-off and content bandwidth, five findings,
   `describeFinding()`), calibrated against LAME and covered by 8 tests.
-- **Next:** C3 in `convert/` (the advisor uses these checks).
+- **Done (for the collection scanner):** `probeStreamInfo()`, header-only stream facts with the read bound tested.
+- **Next:** nothing planned; see the open questions in `src/convert/DESIGN.md` for rekordbox checks.
 - **Open questions:** none.
