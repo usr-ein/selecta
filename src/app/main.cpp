@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/AppSettings.h"
+#include "app/Icons.h"
 #include "app/MainWindow.h"
 #include "app/Preview.h"
 #include "audio/AnalysisCache.h"
@@ -135,6 +136,10 @@ int runSelecta(int argc, char **argv)
     QApplication::setApplicationDisplayName(u"Selecta"_s);
     QApplication::setOrganizationDomain(u"usr-ein.github.io"_s);
     QApplication::setApplicationVersion(QString(selecta::base::kVersion));
+#ifndef Q_OS_MACOS
+    // macOS takes the app icon from the bundle: there this would replace the Dock icon with the bare record.
+    QApplication::setWindowIcon(selecta::app::icons::applicationIcon());
+#endif
 
     const Options options = parseOptions(app);
 

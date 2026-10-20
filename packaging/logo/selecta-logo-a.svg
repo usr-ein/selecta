@@ -46,7 +46,7 @@
     </linearGradient>
   </defs>
   <g transform="translate(512 512)">
-    <circle cy="12" r="440" fill-opacity="0.45" filter="url(#blur-shadow)"/>
+    <circle id="shadow" cy="12" r="440" fill-opacity="0.45" filter="url(#blur-shadow)"/>
     <circle r="440" fill="url(#vinyl)"/>
     <path fill="url(#grooves)" fill-rule="evenodd" d="M-428 0a428 428 0 1 0 856 0a428 428 0 1 0 -856 0zM-202 0a202 202 0 1 0 404 0a202 202 0 1 0 -404 0z"/>
     <g fill="none" stroke="#000" stroke-opacity="0.6" stroke-width="3">
