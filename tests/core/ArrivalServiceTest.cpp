@@ -9,8 +9,10 @@
 #include "core/InboxService.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
+#include "library/Quarantine.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
+#include "support/QuarantineSupport.h"
 
 #include <QBuffer>
 #include <QDir>
@@ -216,6 +218,33 @@ TEST_F(ArrivalServiceTest, ALosslessFileArrivesAsATaggedMp3_320)
     EXPECT_EQ(history.constFirst().inboxItem, result.inboxItem);
     EXPECT_EQ(history.constFirst().quality, u"FLAC 16/44.1"_s);
     EXPECT_EQ(inbox->entries().size(), 1);
+}
+
+TEST_F(ArrivalServiceTest, ArrivedFilesAreQuarantinedConvertedOrNot)
+{
+    if (!selecta::library::quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    // A FLAC converted to MP3 320: the MP3 in the Inbox is quarantined by Selecta.
+    const ArrivalResult converted = arrive(
+        downloaded(11, u"a.flac"_s, synth::makeFlac(synth::quantised(synth::sine(440.0, 2.0), 16)), std::nullopt));
+    ASSERT_TRUE(converted.ok) << converted.message.toStdString();
+    ASSERT_TRUE(converted.message.endsWith(u".mp3"_s)) << converted.message.toStdString();
+    EXPECT_EQ(selecta::library::quarantine::agentOf(inboxPath(converted.message)), u"Selecta"_s);
+
+    // A download that already had an attribute: that one survives the conversion, unchanged.
+    const Download marked =
+        downloaded(12, u"b.flac"_s, synth::makeFlac(synth::quantised(synth::sine(330.0, 2.0), 16)), std::nullopt);
+    ASSERT_TRUE(selecta::testing::setQuarantine(marked.localPath, selecta::testing::safariApproved()));
+    const ArrivalResult kept = arrive(marked);
+    ASSERT_TRUE(kept.ok) << kept.message.toStdString();
+    EXPECT_EQ(selecta::library::quarantine::value(inboxPath(kept.message)), selecta::testing::safariApproved());
+
+    // Lossy audio kept as it is, with fresh tags: quarantined too.
+    const ArrivalResult lossy =
+        arrive(downloaded(13, u"c.mp3"_s, synth::makeMp3(synth::sine(220.0, 2.0), {.bitrateKbps = 192})));
+    ASSERT_TRUE(lossy.ok) << lossy.message.toStdString();
+    EXPECT_EQ(selecta::library::quarantine::agentOf(inboxPath(lossy.message)), u"Selecta"_s);
 }
 
 TEST_F(ArrivalServiceTest, LossyAudioBelowTheFormatIsKeptAsIt)

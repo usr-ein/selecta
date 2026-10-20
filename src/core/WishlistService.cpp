@@ -9,6 +9,7 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QHash>
+#include <QJsonDocument>
 #include <QLoggingCategory>
 #include <QSet>
 #include <QTimer>
@@ -53,13 +54,29 @@ QList<quint64> decodeSeen(const QByteArray &blob)
     return stream.status() == QDataStream::Ok ? seen : QList<quint64>();
 }
 
+SearchFilter filterFrom(const QString &json)
+{
+    if (json.isEmpty()) {
+        return {};
+    }
+    const QJsonDocument document = QJsonDocument::fromJson(json.toUtf8());
+    return document.isObject() ? filterFromJson(document.object()) : SearchFilter{};
+}
+
 WishlistItem readItem(const Statement &row)
 {
     return WishlistItem{.id = row.int64(0),
                         .text = row.text(1),
                         .createdAt = row.int64(2),
                         .lastRunMs = row.int64(3),
-                        .found = static_cast<int>(row.int64(4))};
+                        .found = static_cast<int>(row.int64(4)),
+                        .preset = row.text(5),
+                        .filter = filterFrom(row.text(6))};
+}
+
+QString jsonOf(const SearchFilter &filter)
+{
+    return QString::fromUtf8(QJsonDocument(filterToJson(filter)).toJson(QJsonDocument::Compact));
 }
 
 } // namespace
@@ -85,7 +102,7 @@ WishlistService::~WishlistService()
     }
 }
 
-std::optional<qint64> WishlistService::add(const QString &text)
+std::optional<qint64> WishlistService::add(const QString &text, const QString &preset, const SearchFilter &filter)
 {
     const QString cleaned = text.simplified();
     const QString key = governor::queryKey(governor::cleanQuery(cleaned, {}).query);
@@ -94,16 +111,29 @@ std::optional<qint64> WishlistService::add(const QString &text)
     }
     Statement existing = m_db.prepare(u"SELECT id FROM wishlist WHERE query_key = ?1;");
     if (existing.isValid() && existing.bind(1, key).step() == Statement::Step::Row) {
-        return existing.int64(0);
+        const qint64 id = existing.int64(0);
+        setPreset(id, preset, filter);
+        return id;
     }
-    Statement insert = m_db.prepare(u"INSERT INTO wishlist (text, query_key, created_at) VALUES (?1, ?2, ?3);");
-    if (!insert.isValid() || !insert.bind(1, cleaned).bind(2, key).bind(3, m_now()).run()) {
+    Statement insert = m_db.prepare(
+        u"INSERT INTO wishlist (text, query_key, created_at, preset, filter) VALUES (?1, ?2, ?3, ?4, ?5);");
+    if (!insert.isValid() ||
+        !insert.bind(1, cleaned).bind(2, key).bind(3, m_now()).bind(4, preset).bind(5, jsonOf(filter)).run()) {
         qCWarning(lcWishlist) << "couldn't save" << cleaned << ':' << m_db.lastError();
         return std::nullopt;
     }
     const qint64 id = m_db.lastInsertRowId();
     publish();
     return id;
+}
+
+void WishlistService::setPreset(qint64 id, const QString &preset, const SearchFilter &filter)
+{
+    Statement update = m_db.prepare(u"UPDATE wishlist SET preset = ?1, filter = ?2 WHERE id = ?3;");
+    if (!update.isValid() || !update.bind(1, preset).bind(2, jsonOf(filter)).bind(3, id).run()) {
+        qCWarning(lcWishlist) << "couldn't change the preset of" << id << ':' << m_db.lastError();
+    }
+    publish();
 }
 
 void WishlistService::remove(qint64 id)
@@ -155,18 +185,22 @@ void WishlistService::runNext()
 void WishlistService::finished(qint64 id, const SearchOutcome &outcome)
 {
     m_running = 0;
-    Statement read = m_db.prepare(u"SELECT seen, found FROM wishlist WHERE id = ?1;");
+    Statement read = m_db.prepare(u"SELECT seen, found, filter FROM wishlist WHERE id = ?1;");
     if (!read.isValid() || read.bind(1, id).step() != Statement::Step::Row) {
         return; // removed meanwhile
     }
     QList<quint64> seen = decodeSeen(read.blob(0));
     const int foundBefore = static_cast<int>(read.int64(1));
+    const SearchFilter filter = filterFrom(read.text(2));
     QSet<quint64> known(seen.cbegin(), seen.cend());
     int fresh = 0;
     for (const SearchHit &hit : outcome.hits) {
-        const QString extension =
-            hit.extension.isEmpty() ? QFileInfo(QString::fromUtf8(hit.path)).suffix() : hit.extension;
-        if (match::RemotePathParser::fileKind(extension.toLower()) != match::FileKind::Audio) {
+        SearchHit named = hit;
+        if (named.extension.isEmpty()) {
+            named.extension = QFileInfo(QString::fromUtf8(hit.path)).suffix().toLower();
+        }
+        // Only audio files of the quality the search wants count (SRCH-8): not audio is a reason too.
+        if (filter.hiddenReason(filterableResult(named), false) != HiddenReason::None) {
             continue;
         }
         const quint64 key = fileKey(hit);
@@ -200,8 +234,8 @@ void WishlistService::finished(qint64 id, const SearchOutcome &outcome)
 QList<WishlistItem> WishlistService::items()
 {
     QList<WishlistItem> items;
-    Statement query = m_db.prepare(
-        u"SELECT id, text, created_at, last_run_ms, found FROM wishlist ORDER BY created_at DESC, id DESC;");
+    Statement query = m_db.prepare(u"SELECT id, text, created_at, last_run_ms, found, preset, filter FROM wishlist "
+                                   "ORDER BY created_at DESC, id DESC;");
     while (query.isValid() && query.step() == Statement::Step::Row) {
         items.append(readItem(query));
     }

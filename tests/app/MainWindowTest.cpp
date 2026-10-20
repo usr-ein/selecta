@@ -2,6 +2,7 @@
 #include "app/MainWindow.h"
 
 #include "app/AppSettings.h"
+#include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/Toasts.h"
 #include "app/models/ConverterModel.h"
@@ -870,8 +871,9 @@ TEST_F(MainWindowTest, TheWishlistListsSavedSearchesAndSaysWhenOneFindsSomething
     ASSERT_NE(items, nullptr);
     ASSERT_EQ(items->model()->rowCount(), 1);
     EXPECT_EQ(items->model()->index(0, 0).data().toString(), u"Okuma Drift Neon Rain"_s);
-    EXPECT_EQ(items->model()->index(0, 1).data().toString(), u"2 min ago"_s);
-    EXPECT_EQ(items->model()->index(0, 2).data().toString(), u"4 new"_s);
+    EXPECT_EQ(items->model()->index(0, 1).data().toString(), u"Any audio file"_s); // saved before presets
+    EXPECT_EQ(items->model()->index(0, 2).data().toString(), u"2 min ago"_s);
+    EXPECT_EQ(items->model()->index(0, 3).data().toString(), u"4 new"_s);
     // The sidebar shows how many new files wait.
     auto *list = window->findChild<QListView *>(u"sidebar.list"_s);
     ASSERT_NE(list, nullptr);
@@ -1017,4 +1019,37 @@ TEST_F(MainWindowTest, RoomsShowWhatYoureInWhatIsUnreadAndWhoNamesYou)
     ASSERT_NE(confirm, nullptr);
     EXPECT_EQ(confirm->text(), u"Create the room “deep house”?"_s);
     confirm->reject();
+}
+
+TEST_F(MainWindowTest, PresetsAreSharedBySearchGetTracksAndTheWishlist)
+{
+    auto window = makeWindow();
+    auto *presets = window->findChild<selecta::app::Presets *>();
+    ASSERT_NE(presets, nullptr);
+    auto *searchPresets = window->findChild<QComboBox *>(u"search.preset"_s);
+    auto *getPresets = window->findChild<QComboBox *>(u"get.preset"_s);
+    ASSERT_NE(searchPresets, nullptr);
+    ASSERT_NE(getPresets, nullptr);
+    EXPECT_EQ(searchPresets->count(), 4);
+    EXPECT_EQ(getPresets->count(), 4);
+    EXPECT_EQ(getPresets->currentData().toString(), selecta::core::kMp3OrLosslessPreset);
+
+    // A preset saved once shows everywhere (SRCH-8).
+    selecta::core::SearchFilter dj;
+    dj.setAllowed(selecta::core::SearchFormat::Mp3, true);
+    dj.bitrateRule = selecta::core::SearchFilter::BitrateRule::Equal;
+    dj.bitrateKbps = 320;
+    const std::optional<QString> id = presets->save(u"DJ — MP3 320"_s, dj);
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(searchPresets->count(), 5);
+    ASSERT_EQ(getPresets->count(), 5);
+    EXPECT_EQ(getPresets->itemText(4), u"DJ — MP3 320"_s);
+
+    // Get tracks' choice is remembered; deleting the preset falls back to the default.
+    getPresets->setCurrentIndex(4);
+    Q_EMIT getPresets->activated(4);
+    EXPECT_EQ(settings->getTracksPresetId(), *id);
+    presets->remove(*id);
+    EXPECT_EQ(getPresets->count(), 4);
+    EXPECT_EQ(getPresets->currentData().toString(), selecta::core::kMp3OrLosslessPreset);
 }

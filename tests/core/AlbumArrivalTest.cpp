@@ -6,6 +6,8 @@
 #include "convert/TagReader.h"
 #include "convert/TagWriter.h"
 #include "library/Naming.h"
+#include "library/Quarantine.h"
+#include "support/QuarantineSupport.h"
 
 #include <QBuffer>
 #include <QDir>
@@ -178,6 +180,33 @@ TEST_F(AlbumArrivalTest, MakesOneTaggedAlbumFolderFromTheTrackList)
     EXPECT_FALSE(QFileInfo::exists(job.files.at(2).localPath));
     EXPECT_FALSE(QFileInfo::exists(QFileInfo(job.files.at(0).localPath).absolutePath()));
     EXPECT_FALSE(QFileInfo::exists(QDir(job.stagingDir).filePath(u"album-7"_s)));
+}
+
+TEST_F(AlbumArrivalTest, EveryFileOfTheAlbumIsQuarantined)
+{
+    if (!selecta::library::quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    add(1, u"01 - Okuma Drift - Neon Rain.flac"_s, flac(440.0, 2.0));
+    add(2, u"02 - Okuma Drift - Low Tide.flac"_s, flac(330.0, 2.0));
+    add(3, u"cover.jpg"_s, jpeg(600));
+    // A download that already had an attribute keeps it through the conversion to MP3.
+    ASSERT_TRUE(selecta::testing::setQuarantine(job.files.at(1).localPath, selecta::testing::safariApproved()));
+
+    const AlbumArrivalResult result = arriveAlbum(job, nullptr);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    const QDir album(inboxPath(result.item.relativePath));
+    EXPECT_EQ(selecta::library::quarantine::agentOf(album.path()), u"Selecta"_s);
+    const QStringList files = album.entryList(QDir::Files | QDir::Hidden, QDir::Name);
+    ASSERT_EQ(files.size(), 3) << files.join(u", "_s).toStdString(); // two MP3s and cover.jpg
+    for (const QString &name : files) {
+        const QByteArray attribute = selecta::library::quarantine::value(album.filePath(name));
+        if (name.startsWith(u"02"_s)) {
+            EXPECT_EQ(attribute, selecta::testing::safariApproved());
+        } else {
+            EXPECT_EQ(selecta::library::quarantine::agentOf(album.filePath(name)), u"Selecta"_s) << name.toStdString();
+        }
+    }
 }
 
 TEST_F(AlbumArrivalTest, WithoutATrackListFilesKeepTheirOwnTagsAndNames)

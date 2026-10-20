@@ -84,6 +84,8 @@ void EngineHost::start()
     connect(engine, &Engine::startFinished, this, [this](bool ok, const QString &error) {
         if (!ok) {
             qCCritical(lcEngineHost).noquote() << "engine didn't start:" << error;
+        } else if (m_getTracksFilter) {
+            setGetTracksFilter(*m_getTracksFilter); // chosen before the engine was up
         }
         Q_EMIT started(ok, error);
     });
@@ -360,6 +362,15 @@ void EngineHost::signOutOfSpotify()
     post([](Engine &engine) {
         if (engine.isStarted()) {
             engine.meta().signOutOfSpotify();
+        }
+    });
+}
+
+void EngineHost::allowSpotify()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.meta().allowSpotify();
         }
     });
 }
@@ -717,11 +728,30 @@ std::optional<Browse> EngineHost::browseOf(const QString &peer) const
     return found == m_browses.cend() ? std::nullopt : std::optional(found.value());
 }
 
-void EngineHost::addToWishlist(const QString &text)
+void EngineHost::addToWishlist(const QString &text, const QString &preset, const SearchFilter &filter)
 {
-    post([text](Engine &engine) {
+    post([text, preset, filter](Engine &engine) {
         if (engine.isStarted()) {
-            engine.wishlist().add(text);
+            engine.wishlist().add(text, preset, filter);
+        }
+    });
+}
+
+void EngineHost::setWishlistPreset(qint64 id, const QString &preset, const SearchFilter &filter)
+{
+    post([id, preset, filter](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.wishlist().setPreset(id, preset, filter);
+        }
+    });
+}
+
+void EngineHost::setGetTracksFilter(const SearchFilter &filter)
+{
+    m_getTracksFilter = filter;
+    post([filter](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().setFilter(filter);
         }
     });
 }

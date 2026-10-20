@@ -3,7 +3,6 @@
 
 #include "app/Appearance.h"
 #include "core/Engine.h"
-#include "core/FileRanking.h"
 #include "core/InboxService.h"
 #include "core/NetworkService.h"
 #include "core/SearchFilter.h"
@@ -54,6 +53,10 @@ public:
     QString ytDlpPath() const;
     void setYtDlpPath(const QString &path);
 
+    // The user accepted the one-time notice on Spotify's terms (PRD META-4, D30); until then Spotify isn't used.
+    bool spotifyTermsAccepted() const;
+    void setSpotifyTermsAccepted(bool accepted);
+
     // SRCH-15: the searches typed lately, newest first, at most kRecentSearches.
     static constexpr int kRecentSearches = 30;
     QStringList recentSearches() const;
@@ -80,18 +83,30 @@ public:
     core::NetworkConfig networkConfig() const;
     void setNetworkConfig(const core::NetworkConfig &config);
 
-    // The Search view: the quality preset and the filters (PRD SRCH-8), the folder grouping (SRCH-10), and whether the
+    // The Search view: the filter preset and the filters (PRD SRCH-8), the folder grouping (SRCH-10), and whether the
     // filters are shown. `customised`: the filters were changed from the preset's.
     struct SearchViewState
     {
-        core::QualityWanted preset = core::QualityWanted::Mp3_320OrLossless;
-        core::SearchFilter filter = core::presetFilter(core::QualityWanted::Mp3_320OrLossless);
+        QString presetId = core::kMp3OrLosslessPreset.toString();
+        core::SearchFilter filter = core::builtInPresets().constFirst().filter;
         bool customised = false;
         bool grouped = false;
         bool filtersShown = false;
     };
     SearchViewState searchViewState() const;
     void setSearchViewState(const SearchViewState &state);
+
+    // The filter presets (PRD SRCH-8): the user's own (Selecta's are core::builtInPresets()), the default one, and the
+    // one Get tracks uses. Invalid entries are skipped; an unknown id reads as Selecta's default.
+    QList<core::FilterPreset> userPresets() const;
+    void setUserPresets(const QList<core::FilterPreset> &presets);
+    QString defaultPresetId() const;
+    void setDefaultPresetId(const QString &id);
+    QString getTracksPresetId() const;
+    void setGetTracksPresetId(const QString &id);
+    // Selecta's presets, then the user's.
+    QList<core::FilterPreset> presets() const;
+    std::optional<core::FilterPreset> presetById(const QString &id) const;
 
     // Writes pending changes to disk. Returns false if the file can't be written.
     bool sync();

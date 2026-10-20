@@ -11,6 +11,7 @@ qt_add_library(selecta_app STATIC
     NavModel.h NavModel.cpp
     PeerMenu.h PeerMenu.cpp
     PlayerBar.h PlayerBar.cpp
+    Presets.h Presets.cpp
     Preview.h Preview.cpp
     Sidebar.h Sidebar.cpp
     SourceListView.h SourceListView.cpp

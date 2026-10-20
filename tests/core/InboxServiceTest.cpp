@@ -3,6 +3,7 @@
 
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
+#include "library/Quarantine.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
@@ -115,6 +116,28 @@ TEST_F(InboxServiceTest, FilesAnAlbumIntoTheAlbumsFolder)
     EXPECT_TRUE(
         QFileInfo::exists(config.collectionRoots.first() + u"/Albums/Okuma Drift - Nightfall (2024)/02 - Two.mp3"_s));
     EXPECT_EQ(inbox.count(), 0);
+}
+
+TEST_F(InboxServiceTest, QuarantinedItemsAreFiledWithTheirAttribute)
+{
+    if (!selecta::library::quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    // As arrivals leave them: quarantined singles and albums (NFR-4). Filing only moves them (DL-6).
+    const qint64 single = arrive(u"Singles/Okuma_Drift_-_Neon_Rain.mp3"_s);
+    const qint64 album = arrive(u"Albums/Okuma Drift - Nightfall (2024)"_s, InboxItem::Kind::Album);
+    ASSERT_TRUE(selecta::library::quarantine::mark(config.inboxRoot + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s));
+    ASSERT_TRUE(selecta::library::quarantine::markTree(config.inboxRoot + u"/Albums/Okuma Drift - Nightfall (2024)"_s));
+    service->file({single, album});
+    service->waitForIdle();
+    EXPECT_EQ(inbox.count(), 0);
+    const QString music = config.collectionRoots.first();
+    const QStringList filedPaths{music + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s,
+                                 music + u"/Albums/Okuma Drift - Nightfall (2024)"_s,
+                                 music + u"/Albums/Okuma Drift - Nightfall (2024)/01 - One.mp3"_s};
+    for (const QString &filed : filedPaths) {
+        EXPECT_EQ(selecta::library::quarantine::agentOf(filed), u"Selecta"_s) << filed.toStdString();
+    }
 }
 
 TEST_F(InboxServiceTest, ACollisionKeepsTheItemAndSaysWhy)
