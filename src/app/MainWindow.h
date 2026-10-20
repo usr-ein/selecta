@@ -95,6 +95,9 @@ public:
     void previewPeerFile();
     // K: keeps the preview playing (PREV-5): a peer's file goes to the Inbox without downloading it again.
     void keepPreview();
+    // D: discards the preview loaded (PREV-5): it stops and leaves the preview cache; one still arriving is cancelled
+    // (PREV-6). Only previews from peers and YouTube: a file of the user's is never touched.
+    void discardPreview();
     PreviewController &preview() { return m_services.preview; }
     // Browses a peer's shares (BRWS-1): a sidebar item under Digging, and the Browse view.
     void browsePeer(const QString &peer);
@@ -138,6 +141,8 @@ private:
     // The selection moved: with "Preview as You Move", its preview follows after a short rest (PREV-4).
     void selectionMoved();
     static QString askingMessage(core::PreviewSource source, const QString &peer);
+    // Discard is offered while a preview the cache holds is loaded.
+    void refreshPreviewActions();
     // Keeps the sidebar's search items in step with the engine's open searches.
     void showSearchInSidebar(const core::ManualSearch &search);
     void createBrowseView();
@@ -182,6 +187,7 @@ private:
     QString m_playingKey;              // what the loaded preview belongs to
     QString m_playingIdentity;         // the loaded preview's identity ("peer|…", "youtube|…", "clip|…", "file|…")
     QAction *m_followSelection = nullptr;
+    QAction *m_discardPreview = nullptr;
     QTimer *m_followTimer = nullptr;
     qint64 m_previewId = 0; // the engine's preview playing, if any
     QList<View> m_views;

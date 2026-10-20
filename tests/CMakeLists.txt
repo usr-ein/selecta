@@ -109,4 +109,6 @@ if(SELECTA_WITH_MEDIA)
             app/TransfersModelTest.cpp
             app/WaveformViewTest.cpp
         LIBRARIES selecta_app)
+    target_compile_definitions(selecta_ui_tests PRIVATE
+        SELECTA_META_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/meta/fixtures")
 endif()

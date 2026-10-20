@@ -204,7 +204,7 @@ int runSelecta(int argc, char **argv)
     // Downloads arrive in Application Support (not the caches, which macOS may empty under a partial download).
     engineOptions.incomingDir = dataDir + u"/Downloads/Incoming"_s;
     engineOptions.stagingDir = dataDir + u"/Downloads/Converting"_s;
-    engineOptions.previewDir = paths::cacheDir() + u"/Previews"_s; // a session's previews only
+    engineOptions.previewDir = paths::cacheDir() + u"/Previews"_s; // kept across launches, 2 GB at most (PREV-8)
     engineOptions.ytDlpPath = settings.ytDlpPath();
     if (session > 0) {
         engineOptions.session = session;
