@@ -57,12 +57,16 @@ public:
     };
     // Reads an audio file's tags and cover (bounded), for the inspector. Blocking; call from a worker.
     static FileTags readFileTags(const QString &path);
+    // An album folder's cover thumbnail: its cover image (cover.jpg and the like), else its first track's embedded
+    // picture; null when it has neither. Blocking; call from a worker.
+    static QImage readAlbumCover(const QString &folder);
 
 Q_SIGNALS:
     void previewRequested();
 
 private:
     void showTags(const FileTags &read);
+    void showCover(const QImage &image);
     void refreshProvenance();
     // The Spectrum section from what the item keeps, then from its cached report (nullopt: not in the cache).
     void showSpectrum();

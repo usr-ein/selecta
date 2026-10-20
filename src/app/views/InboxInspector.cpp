@@ -6,6 +6,7 @@
 #include "app/views/EditTagsDialog.h"
 #include "app/views/ReleasePickerDialog.h"
 #include "audio/AnalysisCache.h"
+#include "convert/ArtworkFinder.h"
 #include "convert/TagReader.h"
 #include "core/EngineHost.h"
 #include "core/ReleaseJson.h"
@@ -14,6 +15,7 @@
 #include <QBuffer>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFuture>
 #include <QHBoxLayout>
@@ -59,7 +61,7 @@ QLabel *body(const QString &name, QWidget *parent)
     return label;
 }
 
-QString tagSourceText(const QString &source)
+QString tagSourceText(const QString &source, bool album)
 {
     if (source == u"spotify"_s) {
         return InboxInspector::tr("Tags and cover from Spotify; label and genre from MusicBrainz when Spotify has "
@@ -74,7 +76,27 @@ QString tagSourceText(const QString &source)
     if (source == u"user"_s) {
         return InboxInspector::tr("Tags edited by you.");
     }
+    if (album) { // Choose Release is for singles: say nothing that points at it
+        return InboxInspector::tr("No release matched the album: its files keep the tags they arrived with.");
+    }
     return InboxInspector::tr("The file's own tags: no release matched it. Choose Release finds one.");
+}
+
+// A cover image (bounded), decoded at the inspector's size; null when it can't be.
+QImage decodeCover(QByteArray data)
+{
+    if (data.size() > kCoverMaxBytes) {
+        return {};
+    }
+    QBuffer buffer(&data);
+    QImageReader reader(&buffer);
+    reader.setAutoTransform(true);
+    const QSize size = reader.size();
+    if (!size.isValid() || size.width() > 8000 || size.height() > 8000) { // never decode a hostile size
+        return {};
+    }
+    reader.setScaledSize(size.scaled(kCoverPixels, kCoverPixels, Qt::KeepAspectRatio));
+    return reader.read();
 }
 
 // A measured frequency, to a tenth of a kilohertz: "16.7 kHz", "22 kHz".
@@ -97,20 +119,36 @@ InboxInspector::FileTags InboxInspector::readFileTags(const QString &path)
     }
     read.ok = true;
     read.tags = tags.takeValue();
-    if (const std::optional<convert::Picture> cover = read.tags.frontCover();
-        cover && cover->data.size() <= kCoverMaxBytes) {
-        QByteArray data = cover->data;
-        QBuffer buffer(&data);
-        QImageReader reader(&buffer);
-        reader.setAutoTransform(true);
-        const QSize size = reader.size();
-        if (size.isValid() && size.width() <= 8000 && size.height() <= 8000) { // never decode a hostile size
-            reader.setScaledSize(size.scaled(kCoverPixels, kCoverPixels, Qt::KeepAspectRatio));
-            read.cover = reader.read();
-        }
+    if (const std::optional<convert::Picture> cover = read.tags.frontCover()) {
+        read.cover = decodeCover(cover->data);
     }
     read.tags.clearPictures(); // the thumbnail is enough from here on
     return read;
+}
+
+QImage InboxInspector::readAlbumCover(const QString &folder)
+{
+    const QDir dir(folder);
+    // The folder's cover first (the arrival saves cover.jpg), chosen as the converter chooses one (CONV-5).
+    const QFileInfoList images =
+        dir.entryInfoList({u"*.jpg"_s, u"*.jpeg"_s, u"*.png"_s}, QDir::Files | QDir::Readable, QDir::Name);
+    QList<convert::CoverCandidate> candidates;
+    for (const QFileInfo &image : images) {
+        candidates.append({.relativePath = image.fileName(), .size = {}});
+    }
+    if (const std::optional<convert::CoverChoice> choice = convert::chooseFolderCover(candidates)) {
+        QFile file(images.at(choice->index).filePath());
+        if (file.size() <= kCoverMaxBytes && file.open(QIODevice::ReadOnly)) {
+            if (QImage cover = decodeCover(file.readAll()); !cover.isNull()) {
+                return cover;
+            }
+        }
+    }
+    // Else the first track's embedded picture.
+    const QFileInfoList tracks =
+        dir.entryInfoList({u"*.mp3"_s, u"*.flac"_s, u"*.m4a"_s, u"*.aif"_s, u"*.aiff"_s, u"*.wav"_s, u"*.ogg"_s},
+                          QDir::Files | QDir::Readable, QDir::Name);
+    return tracks.isEmpty() ? QImage() : readFileTags(tracks.constFirst().filePath()).cover;
 }
 
 InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
@@ -306,6 +344,19 @@ void InboxInspector::showItem(const std::optional<library::InboxItem> &item, con
     m_tagList->setText(single ? tr("Reading…") : tr("An album folder: its files keep their own tags."));
     m_path = QDir(inboxRoot).filePath(item->relativePath);
     if (!single) {
+        // Off the main thread too: the folder's cover, or its first track's.
+        const auto promise = std::make_shared<QPromise<QImage>>();
+        QFuture<QImage> future = promise->future();
+        promise->start();
+        QThreadPool::globalInstance()->start([promise, path = m_path] {
+            promise->addResult(readAlbumCover(path));
+            promise->finish();
+        });
+        future.then(this, [self = QPointer<InboxInspector>(this), request = m_request](const QImage &cover) {
+            if (self && request == self->m_request) {
+                self->showCover(cover);
+            }
+        });
         return;
     }
     // Off the main thread: a file can be slow to open (a sleeping disk).
@@ -330,13 +381,7 @@ void InboxInspector::showTags(const FileTags &read)
         return;
     }
     m_tags = read.tags;
-    if (!read.cover.isNull()) {
-        QPixmap cover = QPixmap::fromImage(read.cover);
-        cover.setDevicePixelRatio(static_cast<qreal>(kCoverPixels) / kCoverPoints);
-        m_cover->setPixmap(cover);
-        m_cover->setText({});
-        m_cover->setAccessibleName(tr("Cover"));
-    }
+    showCover(read.cover);
     const std::array fields{
         std::pair{keys::Title, tr("Title")},     std::pair{keys::Artist, tr("Artists")},
         std::pair{keys::Album, tr("Album")},     std::pair{keys::AlbumArtist, tr("Album artist")},
@@ -357,6 +402,18 @@ void InboxInspector::showTags(const FileTags &read)
             labelColor, label.toHtmlEscaped(), value.toHtmlEscaped());
     }
     m_tagList->setText(rows.isEmpty() ? tr("The file has no tags.") : u"<table>"_s + rows + u"</table>"_s);
+}
+
+void InboxInspector::showCover(const QImage &image)
+{
+    if (image.isNull()) {
+        return; // "No cover" stays
+    }
+    QPixmap cover = QPixmap::fromImage(image);
+    cover.setDevicePixelRatio(static_cast<qreal>(kCoverPixels) / kCoverPoints);
+    m_cover->setPixmap(cover);
+    m_cover->setText({});
+    m_cover->setAccessibleName(tr("Cover"));
 }
 
 void InboxInspector::setAlsoOn(const QStringList &albums)
@@ -386,7 +443,7 @@ void InboxInspector::refreshProvenance()
     if (!m_item) {
         return;
     }
-    m_provenance->setText(tagSourceText(m_item->tagSource));
+    m_provenance->setText(tagSourceText(m_item->tagSource, m_item->kind == library::InboxItem::Kind::Album));
     const std::optional<meta::Release> release = core::releaseFromText(m_item->releaseJson.toUtf8());
     QUrl link;
     if (release) {
