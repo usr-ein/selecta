@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/GetTracks.h"
 
-#include "governor/Limits.h"
-
 #include "core/ReleaseJson.h"
+#include "governor/Limits.h"
 #include "storage/Database.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
+
+#include <algorithm>
 
 using namespace Qt::StringLiterals;
 
@@ -342,7 +343,8 @@ std::chrono::milliseconds findingTimeLeft(int searchesToStart, int searchesColle
     if (searchesToStart <= 0) {
         return searchesCollecting > 0 ? duration_cast<milliseconds>(governor::limits::kResultsIdle) : 0ms;
     }
-    const int startNow = std::clamp(searchesAvailable - governor::limits::kGetTracksReservedSearches, 0, searchesToStart);
+    const int startNow =
+        std::clamp(searchesAvailable - governor::limits::kGetTracksReservedSearches, 0, searchesToStart);
     const int later = searchesToStart - startNow;
     milliseconds untilLastStarts = 0ms;
     if (later > 0) {
