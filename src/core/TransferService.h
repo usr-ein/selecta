@@ -29,6 +29,7 @@ namespace selecta::core {
 
 class ActivityLog;
 class NetworkService;
+class PreviewCache;
 struct NetworkStatus;
 
 // A file to download, as Get tracks (or a manual download) asks for it.
@@ -44,7 +45,8 @@ struct DownloadSpec
 };
 
 // A preview (PRD PREV-1, PREV-6, PREV-7): a file downloaded like any other, but into the preview cache, readable while
-// it arrives. Previews aren't saved; a complete one is kept for the session, so getting the same file reuses it.
+// it arrives. A complete one stays in the cache (PREV-8), so hearing or getting the same file again, after a restart
+// too, needs no second transfer.
 struct Preview
 {
     enum class State { Queued, Transferring, Complete, Failed, Cancelled };
@@ -71,20 +73,17 @@ struct Preview
 // it, then reports back with arrived() or arrivalFailed().
 //
 // Files: partial and complete originals live in Options::incomingDir, one folder per download, until the arrival
-// pipeline is done with them.
+// pipeline is done with them. Previews are written into the PreviewCache, which keeps the complete ones.
 //
-// Threading: engine thread. Ownership: the Governor, the activity log and the database outlive it. The NetworkService
-// (and its TransferManager, which writes into this service's files) must be destroyed after shutdown() and before this
-// service; Engine::stop() does it in that order.
+// Threading: engine thread. Ownership: the Governor, the activity log, the database and the preview cache outlive it.
+// The NetworkService (and its TransferManager, which writes into this service's files) must be destroyed after
+// shutdown() and before this service; Engine::stop() does it in that order.
 class TransferService : public QObject
 {
     Q_OBJECT
 
 public:
     using WallClock = std::function<qint64()>;
-
-    // The preview cache's bound (PREV-8, CACHE-1): peer previews and YouTube audio together.
-    static constexpr qint64 kPreviewCacheBytes = qint64{2} * 1000 * 1000 * 1000;
 
     struct Options
     {
@@ -93,7 +92,7 @@ public:
         // 3, 10 and 30 minutes (Limits.h kDownloadRetries). Tests shorten them.
         QList<qint64> retryDelaysMs;
         qint64 pacedRetryMs = 60'000; // a download the governor turned away without saying when asks again after this
-        QString previewDir;           // previews; emptied at start (previews don't outlive a session)
+        PreviewCache *previewCache = nullptr; // where previews go and stay (PREV-8); none: previews can't start
     };
 
     // A preview that started: its id and what a player reads while the bytes arrive.
@@ -132,17 +131,18 @@ public:
 
     // --- previews (one at a time) ---
     // Starts a preview of a file, replacing the one playing, and returns the source to play while it arrives. A file
-    // already complete in the preview cache plays from there at once. nullopt, with `why`, when it can't start
-    // (offline, the governor's preview pacing or limits, a file without a known size, or a file already downloading).
+    // heard before (complete in the preview cache, from this launch or an earlier one) plays from there at once,
+    // without asking the peer. nullopt, with `why`, when it can't start (offline, the governor's preview pacing or
+    // limits, a file without a known size, or a file already downloading).
     std::optional<PreviewStart> startPreview(const DownloadSpec &spec, QString *why = nullptr);
     // Stops a preview. One that has nearly arrived (Limits.h kPreviewFinishPercent) completes instead, for a Get to
     // reuse.
     void stopPreview(qint64 id);
+    // Discard (PREV-5): the preview's file leaves the cache. One still arriving is cancelled at once, however near its
+    // end (PREV-6), unless it is being kept (Keep, or a Get while it arrived): then its transfer goes on for the
+    // download, and only the download's copy remains. False for an unknown preview.
+    bool discardPreview(qint64 id);
     std::optional<Preview> preview(qint64 id) const;
-
-    // The preview cache (CACHE-2): its size on disk, and emptying it (a preview playing now stays).
-    qint64 previewCacheBytes() const;
-    void clearPreviewCache();
 
     // Stops listening to the transfer manager before the network goes; unfinished downloads stay saved for the next
     // launch, and open files are closed by the manager as it is destroyed. Nothing else may be called afterwards.
@@ -179,15 +179,25 @@ private:
     void previewTransferChanged(qint64 id, const slsk::DownloadInfo &info);
     void releasePreview(PreviewSlot &slot, qint64 bytes);
     void finishPreview(PreviewSlot &slot, Preview::State state, const QString &message);
+    // Lets go of a preview's file: unpinned, and deleted unless the cache keeps it (it never completed, or was
+    // discarded) and nothing else holds it.
+    void releasePreviewFile(PreviewSlot &slot);
+    // Forgets the finished previews: complete files stay in the cache, the others go.
+    void forgetFinishedPreviews();
+    // The complete copy of this file in the preview cache, if any. A copy of another size (the peer's file changed
+    // since) is deleted.
+    std::optional<QString> cachedPreview(const DownloadSpec &spec);
     std::optional<Download> reusePreview(const DownloadSpec &spec);
     // A preview still arriving becomes the download when it completes, instead of a second transfer (PREV-5).
     std::optional<qint64> keepPreview(const DownloadSpec &spec);
     // Hands a complete preview file to the arrival pipeline as `download`'s file; false when it can't be copied.
     bool deliverFromPreview(Download &download, const QString &previewPath);
-    // A kept preview ended: its download takes the file, or asks the peer itself when the preview failed.
-    void keptPreviewEnded(qint64 downloadId, const QString &completePath);
-    // Deletes the oldest preview files once the cache is over its size (PREV-8); files in use stay.
-    void trimPreviewCache();
+    // A kept preview ended: its download takes the file (`completePath`, empty when the preview failed), or asks the
+    // peer itself. `delivered` is the complete preview's slot: its hold on the file ends, and a preview discarded
+    // meanwhile leaves the cache.
+    void keptPreviewEnded(qint64 downloadId, const QString &completePath,
+                          const std::shared_ptr<PreviewSlot> &delivered);
+    // The preview cache's key for a peer's file.
     static QString previewKey(const QString &peer, const QByteArray &remotePath);
     QString folderOf(qint64 id) const;
     QString partialPathOf(const Download &download) const;
@@ -213,7 +223,6 @@ private:
     QTimer *m_retryTimer = nullptr;
     QHash<qint64, std::shared_ptr<PreviewSlot>> m_previews; // by preview id, until finished and replaced
     QHash<slsk::TransferId, qint64> m_previewOf;            // a preview's transfer → its id
-    QHash<QString, QString> m_completedPreviews;            // previewKey → the complete file in the preview cache
     QSet<qint64> m_awaitingPreview;                         // downloads that a kept preview will hand its file to
     qint64 m_nextPreviewId = 1;
     bool m_shutDown = false;

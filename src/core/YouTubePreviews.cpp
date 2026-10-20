@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/YouTubePreviews.h"
 
+#include "core/PreviewCache.h"
 #include "meta/YtDlpRunner.h"
 
 #include <QDir>
@@ -8,15 +9,43 @@
 #include <QFuture>
 
 #include <algorithm>
+#include <cmath>
 
 using namespace Qt::StringLiterals;
 
 namespace selecta::core {
+namespace {
 
-YouTubePreviews::YouTubePreviews(meta::YtDlpRunner &runner, QString cacheDir, QObject *parent)
+// The cache's note of the video picked for a release: what the search looks for, and the length the pick must match.
+QString pickKeyOf(const meta::Release &release)
+{
+    const QString seconds = release.durationMs && *release.durationMs > 0
+                                ? QString::number(std::llround(static_cast<double>(*release.durationMs) / 1000.0))
+                                : u"-"_s;
+    return u"youtube-pick\n"_s + meta::YtDlpRunner::searchText(release) + u'\n' + seconds;
+}
+
+// The cache's key for a video's audio.
+QString audioKeyOf(const QString &videoId)
+{
+    return u"youtube\n"_s + videoId;
+}
+
+// A YouTube video id, as a note read back from the cache must be: 11 characters of [A-Za-z0-9_-].
+bool isVideoId(const QString &id)
+{
+    return id.size() == 11 && std::ranges::all_of(id, [](QChar c) {
+               return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9') || c == u'_' ||
+                      c == u'-';
+           });
+}
+
+} // namespace
+
+YouTubePreviews::YouTubePreviews(meta::YtDlpRunner &runner, PreviewCache *cache, QObject *parent)
     : QObject(parent)
     , m_runner(runner)
-    , m_cacheDir(std::move(cacheDir))
+    , m_cache(cache)
 {}
 
 YouTubePreviews::~YouTubePreviews()
@@ -33,13 +62,26 @@ qint64 YouTubePreviews::start(const QString &key, const meta::Release &release, 
     m_unavailable = std::move(unavailable);
     m_announced = false;
     report(id, Preview::State::Queued, tr("Looking for it on YouTube…"));
-    if (m_cacheDir.isEmpty() || !QDir().mkpath(m_cacheDir)) {
+    if (m_cache == nullptr || !m_cache->isUsable() || !QDir().mkpath(folder())) {
         // On the next turn, like every other outcome: the caller gets the id first.
         QMetaObject::invokeMethod(
             this,
             [this, id] {
                 if (id == m_current) {
                     fail(id, tr("Previews have nowhere to go."));
+                }
+            },
+            Qt::QueuedConnection);
+        return id;
+    }
+    m_pickKey = pickKeyOf(release);
+    // Heard before: the video picked then, without searching again.
+    if (const std::optional<QString> picked = m_cache->recall(m_pickKey); picked && isVideoId(*picked)) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, id, release, videoId = *picked] {
+                if (id == m_current) {
+                    playOrFetch(id, release, videoId, {});
                 }
             },
             Qt::QueuedConnection);
@@ -60,7 +102,7 @@ qint64 YouTubePreviews::start(const QString &key, const meta::Release &release, 
                                             : tr("Without the track's length, Selecta can't tell which video is it."));
                 return;
             }
-            fetch(id, release, pick->candidate.id, pick->candidate.channel);
+            playOrFetch(id, release, pick->candidate.id, pick->candidate.channel);
         });
     return id;
 }
@@ -69,7 +111,8 @@ void YouTubePreviews::stop()
 {
     m_current = 0;
     if (m_fetch) {
-        m_fetch->deleteLater(); // cancels: yt-dlp is killed and its partial file deleted
+        m_fetch->cancel(); // at once: yt-dlp is killed and its partial file deleted
+        m_fetch->deleteLater();
         m_fetch.clear();
     }
     if (m_growing && !m_growing->snapshot().isComplete()) {
@@ -77,12 +120,53 @@ void YouTubePreviews::stop()
     }
     m_growing.reset();
     m_path.clear();
+    hold({});
+    m_videoId.clear();
+    m_pickKey.clear();
+}
+
+bool YouTubePreviews::discard(qint64 id)
+{
+    if (id == 0 || id != m_current) {
+        return false;
+    }
+    const QString videoId = m_videoId;
+    const QString pickKey = m_pickKey;
+    stop();
+    if (m_cache != nullptr) {
+        if (!videoId.isEmpty()) {
+            m_cache->remove(audioKeyOf(videoId));
+        }
+        if (!pickKey.isEmpty()) {
+            m_cache->forget(pickKey); // a wrong video isn't picked again without a new search
+        }
+    }
+    return true;
+}
+
+void YouTubePreviews::playOrFetch(qint64 id, const meta::Release &release, const QString &videoId,
+                                  const QString &channel)
+{
+    m_videoId = videoId;
+    if (const std::optional<PreviewCache::File> cached = m_cache->find(audioKeyOf(videoId))) {
+        if (audio::Result<std::shared_ptr<audio::FileSource>> file = audio::FileSource::open(cached->path); file) {
+            hold(cached->path);
+            m_cache->remember(m_pickKey, videoId);
+            playable(id, release, file.takeValue(), videoId, channel.isEmpty() ? cached->note : channel);
+            report(id, Preview::State::Complete, tr("From YouTube, heard before"));
+            return;
+        }
+        m_cache->remove(audioKeyOf(videoId)); // unreadable: fetched again
+    }
+    fetch(id, release, videoId, channel);
 }
 
 void YouTubePreviews::fetch(qint64 id, const meta::Release &release, const QString &videoId, const QString &channel)
 {
     report(id, Preview::State::Queued, tr("Fetching it from YouTube…"));
-    meta::YtDlpFetch *job = m_runner.fetch(videoId, m_cacheDir, this);
+    // yt-dlp names the file "<id>.<ext>": held from now on, so emptying the cache meanwhile leaves it alone.
+    hold(folder() + u'/' + videoId + u'.');
+    meta::YtDlpFetch *job = m_runner.fetch(videoId, folder(), this);
     m_fetch = job;
     connect(job, &meta::YtDlpFetch::started, this, [this, id](const QString &path) {
         if (id == m_current) {
@@ -118,9 +202,13 @@ void YouTubePreviews::fetch(qint64 id, const meta::Release &release, const QStri
                     if (m_growing) {
                         m_growing->setFailed();
                     }
+                    m_cache->forget(m_pickKey); // the video picked may be gone: search again next time
                     fail(id, result.error().message);
                     return;
                 }
+                // Kept: the same release plays from the cache next time, without yt-dlp (PREV-8).
+                m_cache->commit(audioKeyOf(videoId), result.value().path, channel);
+                m_cache->remember(m_pickKey, videoId);
                 if (m_growing && m_growing->totalSize() == result.value().bytes) {
                     m_growing->setAvailable(result.value().bytes);
                     m_growing->setComplete();
@@ -129,6 +217,7 @@ void YouTubePreviews::fetch(qint64 id, const meta::Release &release, const QStri
                     audio::Result<std::shared_ptr<audio::FileSource>> file =
                         audio::FileSource::open(result.value().path);
                     if (!file) {
+                        m_cache->remove(audioKeyOf(videoId));
                         fail(id, file.error().message);
                         return;
                     }
@@ -167,6 +256,25 @@ void YouTubePreviews::report(qint64 id, Preview::State state, const QString &mes
     preview.state = state;
     preview.message = message;
     Q_EMIT changed(preview);
+}
+
+void YouTubePreviews::hold(const QString &pathOrPrefix)
+{
+    if (m_held == pathOrPrefix) {
+        return;
+    }
+    if (m_cache != nullptr && !m_held.isEmpty()) {
+        m_cache->unpin(m_held);
+    }
+    m_held = pathOrPrefix;
+    if (m_cache != nullptr && !m_held.isEmpty()) {
+        m_cache->pin(m_held);
+    }
+}
+
+QString YouTubePreviews::folder() const
+{
+    return m_cache != nullptr && m_cache->isUsable() ? m_cache->directory() + u"/YouTube"_s : QString();
 }
 
 } // namespace selecta::core

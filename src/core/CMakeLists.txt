@@ -27,6 +27,7 @@ qt_add_library(selecta_core STATIC
     NetworkService.h NetworkService.cpp
     OwnRelease.h OwnRelease.cpp
     PeerStats.h PeerStats.cpp
+    PreviewCache.h PreviewCache.cpp
     ReleaseJson.h ReleaseJson.cpp
     ResultAnnotator.h ResultAnnotator.cpp
     RoomService.h RoomService.cpp

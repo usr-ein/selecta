@@ -14,6 +14,7 @@
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
 #include "core/PeerStats.h"
+#include "core/PreviewCache.h"
 #include "core/RoomService.h"
 #include "core/SearchCache.h"
 #include "core/SearchService.h"
@@ -71,7 +72,7 @@ struct EngineOptions
     // Empty: downloads can't be stored (tests that don't download).
     QString incomingDir;
     QString stagingDir;
-    QString previewDir;          // previews, emptied at start
+    QString previewDir;          // the preview cache (PREV-8): peer and YouTube previews, kept across launches
     bool watchCollection = true; // follow changes in the collection folders (tests turn it off)
     std::optional<int> session;  // this run's session number, recorded with downloads
     QString ytDlpPath;           // Settings → Previews; empty: the usual places
@@ -139,6 +140,9 @@ public:
     // Previews a file of a browse (BRWS-1), from the source asked for.
     void previewBrowsed(const QString &peer, int index, PreviewSource source = PreviewSource::Automatic);
     void stopPreview();
+    // Discard (PREV-5): the preview stops and its audio leaves the preview cache; a transfer still under way is
+    // cancelled, unless the preview is being kept (then only the download's copy remains). cachesChanged() follows.
+    void discardPreview(qint64 previewId);
 
     // Searches typed by hand (SRCH-1): opens one, or finds the open search for the same text; searchOpened() answers
     // `request` with its id.
@@ -330,6 +334,7 @@ private:
     std::unique_ptr<BrowseService> m_browse;
     std::unique_ptr<SocialService> m_social;
     std::unique_ptr<RoomService> m_rooms;
+    std::unique_ptr<PreviewCache> m_previewCache; // shared by m_transfers and m_youtube, and outlives them
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;             // the preview playing

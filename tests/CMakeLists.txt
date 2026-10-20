@@ -80,6 +80,7 @@ if(SELECTA_WITH_MEDIA)
             core/ManualSearchServiceTest.cpp
             core/MetaServicesTest.cpp
             core/NetworkServiceTest.cpp
+            core/PreviewCacheTest.cpp
             core/ResultAnnotatorTest.cpp
             core/RoomServiceTest.cpp
             core/SearchCacheTest.cpp

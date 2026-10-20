@@ -3,6 +3,7 @@
 
 #include "core/ActivityLog.h"
 #include "core/NetworkService.h"
+#include "core/PreviewCache.h"
 #include "governor/Governor.h"
 #include "governor/Limits.h"
 #include "library/Naming.h"
@@ -11,7 +12,6 @@
 #include <QDateTime>
 #include <QDeadlineTimer>
 #include <QDir>
-#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QLoggingCategory>
@@ -167,10 +167,12 @@ struct TransferService::PreviewSlot
 {
     Preview info;
     std::shared_ptr<audio::GrowingFile> source;
-    QString path;
+    QString path; // in the preview cache, pinned while the slot holds it
     slsk::TransferId transfer = 0;
     bool active = false;       // the governor counts it as started
     bool finishWanted = false; // stopped near the end: it completes, for a Get to reuse
+    bool discarded = false;    // discarded while kept: the download takes the file, the cache doesn't keep it
+    bool delivering = false;   // complete and kept: the download is about to copy the file
     qint64 keptAs = 0;         // the download it becomes once complete (Keep, a Get while it arrives)
 };
 
@@ -190,11 +192,6 @@ TransferService::TransferService(storage::Database &db, governor::Governor &gove
     qRegisterMetaType<Download>();
     if (m_options.retryDelaysMs.isEmpty()) {
         m_options.retryDelaysMs = defaultRetryDelays();
-    }
-    if (!m_options.previewDir.isEmpty()) {
-        // Previews are for this session only: whatever an earlier one left goes.
-        QDir(m_options.previewDir).removeRecursively();
-        QDir().mkpath(m_options.previewDir);
     }
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &TransferService::startWaiting);
@@ -235,6 +232,14 @@ void TransferService::shutdown()
     disconnect(&m_network.transfers(), nullptr, this, nullptr);
     disconnect(&m_network, nullptr, this, nullptr);
     disconnect(&m_governor, nullptr, this, nullptr);
+    // Previews end with the network; unlike downloads, they aren't resumed: the governor counts what they took, and
+    // their half-written files go when the preview cache opens next.
+    for (const std::shared_ptr<PreviewSlot> &slot : std::as_const(m_previews)) {
+        if (slot->transfer != 0) {
+            releasePreview(*slot, slot->info.received);
+            slot->source->setFailed();
+        }
+    }
     // The TransferManager keeps using Storage until it is destroyed, closing the open files then.
 }
 
@@ -336,10 +341,17 @@ void TransferService::cancel(qint64 id)
         return;
     }
     if (m_awaitingPreview.remove(id)) {
+        QList<qint64> unwanted;
         for (const std::shared_ptr<PreviewSlot> &slot : std::as_const(m_previews)) {
             if (slot->keptAs == id) {
-                slot->keptAs = 0; // the preview still completes, for the cache
+                slot->keptAs = 0; // the preview still completes, for the cache…
+                if (slot->discarded) {
+                    unwanted.append(slot->info.id); // …unless it was discarded: then nobody wants it
+                }
             }
+        }
+        for (const qint64 preview : std::as_const(unwanted)) {
+            discardPreview(preview);
         }
     }
     if (const auto transfer = m_transferOf.constFind(id); transfer != m_transferOf.cend()) {
@@ -760,14 +772,25 @@ void TransferService::closeFile(const slsk::DownloadInfo &info, QIODevice *devic
             const bool complete = info.state == slsk::DownloadState::Completed;
             if (complete) {
                 slot->source->setComplete();
-                m_completedPreviews.insert(previewKey(slot->info.peer, slot->info.remotePath), slot->path);
+                if (!slot->discarded && m_options.previewCache) {
+                    // Kept for hearing it again and for a Get, after a restart too (PREV-8).
+                    m_options.previewCache->commit(previewKey(slot->info.peer, slot->info.remotePath), slot->path);
+                }
             } else {
                 slot->source->setFailed(); // what arrived stays playable
             }
             if (const qint64 kept = std::exchange(slot->keptAs, 0); kept != 0) {
+                std::shared_ptr<PreviewSlot> delivered;
+                QString path;
+                if (complete && m_options.previewCache) {
+                    delivered = slot;
+                    path = slot->path;
+                    slot->delivering = true;
+                    m_options.previewCache->pin(path); // until the download has its copy
+                }
                 // On the next turn: the transfer manager is still inside this call.
                 QMetaObject::invokeMethod(
-                    this, [this, kept, path = complete ? slot->path : QString()] { keptPreviewEnded(kept, path); },
+                    this, [this, kept, path, delivered] { keptPreviewEnded(kept, path, delivered); },
                     Qt::QueuedConnection);
             }
         }
@@ -800,7 +823,7 @@ void TransferService::closeFile(const slsk::DownloadInfo &info, QIODevice *devic
 
 QString TransferService::previewKey(const QString &peer, const QByteArray &remotePath)
 {
-    return peer + u'\n' + QString::fromLatin1(remotePath.toBase64());
+    return u"peer\n"_s + peer + u'\n' + QString::fromLatin1(remotePath.toBase64());
 }
 
 std::optional<TransferService::PreviewStart> TransferService::startPreview(const DownloadSpec &spec, QString *why)
@@ -819,6 +842,7 @@ std::optional<TransferService::PreviewStart> TransferService::startPreview(const
         if (slot->info.peer == spec.peer && slot->info.remotePath == spec.remotePath &&
             slot->info.state != Preview::State::Failed && slot->info.state != Preview::State::Cancelled &&
             slot->source) {
+            slot->discarded = false; // heard again: kept again
             return PreviewStart{slot->info.id, slot->source};
         }
     }
@@ -827,7 +851,7 @@ std::optional<TransferService::PreviewStart> TransferService::startPreview(const
     for (const qint64 id : running) {
         stopPreview(id);
     }
-    m_previews.removeIf([](const auto &entry) { return entry.value()->info.isFinished(); });
+    forgetFinishedPreviews();
 
     const qint64 id = m_nextPreviewId++;
     const auto slot = std::make_shared<PreviewSlot>();
@@ -837,18 +861,20 @@ std::optional<TransferService::PreviewStart> TransferService::startPreview(const
     slot->info.size = spec.size;
     slot->info.getLine = spec.getLine;
 
-    const QString cached = m_completedPreviews.value(previewKey(spec.peer, spec.remotePath));
-    if (!cached.isEmpty() && QFileInfo::exists(cached)) {
-        if (audio::Result<std::shared_ptr<audio::FileSource>> file = audio::FileSource::open(cached); file) {
-            slot->path = cached;
+    // Heard before, in this launch or an earlier one: it plays from the cache, and the peer isn't asked again.
+    if (const std::optional<QString> cached = cachedPreview(spec)) {
+        if (audio::Result<std::shared_ptr<audio::FileSource>> file = audio::FileSource::open(*cached); file) {
+            slot->path = *cached;
+            m_options.previewCache->pin(slot->path);
             slot->info.state = Preview::State::Complete;
-            slot->info.received = QFileInfo(cached).size();
+            slot->info.received = QFileInfo(*cached).size();
             slot->info.message = tr("Previewed before");
             const std::shared_ptr<audio::ByteSource> source = file.takeValue();
             m_previews.insert(id, slot);
             Q_EMIT previewChanged(slot->info);
             return PreviewStart{id, source};
         }
+        m_options.previewCache->remove(previewKey(spec.peer, spec.remotePath)); // unreadable: fetched again
     }
     if (spec.size <= 0) {
         return refuse(tr("%1 didn't say how big the file is, so it can't be previewed.").arg(spec.peer));
@@ -861,31 +887,29 @@ std::optional<TransferService::PreviewStart> TransferService::startPreview(const
     if (!m_network.isOnline()) {
         return refuse(tr("Not connected to Soulseek."));
     }
-    if (m_options.previewDir.isEmpty()) {
+    PreviewCache *cache = m_options.previewCache;
+    if (cache == nullptr || !cache->isUsable()) {
         return refuse(tr("Previews have nowhere to go."));
     }
-    trimPreviewCache();
+    // The file first (GrowingFile reads an existing one): a folder that refuses it costs no permit.
+    Download named;
+    named.remotePath = spec.remotePath;
+    slot->path = cache->reserve(named.remoteFileName());
+    if (slot->path.isEmpty()) {
+        return refuse(tr("Selecta can't write the preview into %1.").arg(cache->directory()));
+    }
+    audio::Result<std::shared_ptr<audio::GrowingFile>> growing = audio::GrowingFile::open(slot->path, spec.size);
+    if (!growing) {
+        cache->abandon(slot->path);
+        return refuse(growing.error().message);
+    }
     governor::Request request;
     request.peer = spec.peer;
     request.preview = true;
     governor::Decision decision = m_governor.request(governor::Operation::QueueDownload, request);
     if (!decision.permit) {
+        cache->abandon(slot->path);
         return refuse(decision.explanation);
-    }
-    Download named;
-    named.remotePath = spec.remotePath;
-    const QString name = library::naming::safeComponent(named.remoteFileName());
-    slot->path = QDir(m_options.previewDir).filePath(u"%1-%2"_s.arg(id).arg(name.isEmpty() ? u"preview"_s : name));
-    {
-        QFile create(slot->path); // GrowingFile reads an existing file
-        if (!create.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-            return refuse(tr("Selecta can't write the preview: %1").arg(create.errorString()));
-        }
-    }
-    audio::Result<std::shared_ptr<audio::GrowingFile>> growing = audio::GrowingFile::open(slot->path, spec.size);
-    if (!growing) {
-        QFile::remove(slot->path);
-        return refuse(growing.error().message);
     }
     slot->source = growing.takeValue();
     slsk::DownloadRequest transfer;
@@ -896,7 +920,7 @@ std::optional<TransferService::PreviewStart> TransferService::startPreview(const
     const slsk::TransferId transferId = m_network.transfers().download(transfer, std::move(*decision.permit));
     if (transferId == 0 || m_downloadOf.contains(transferId)) {
         slot->source->setFailed();
-        QFile::remove(slot->path);
+        cache->abandon(slot->path);
         return refuse(tr("Selecta couldn't ask %1 for a preview.").arg(spec.peer));
     }
     slot->transfer = transferId;
@@ -925,6 +949,36 @@ void TransferService::stopPreview(qint64 id)
         m_network.transfers().cancelDownload(transfer); // its late report finds nothing to act on
     }
     finishPreview(*slot, Preview::State::Cancelled, tr("Stopped"));
+}
+
+bool TransferService::discardPreview(qint64 id)
+{
+    const std::shared_ptr<PreviewSlot> slot = m_previews.value(id);
+    if (m_shutDown || !slot) {
+        return false;
+    }
+    const bool kept = slot->keptAs != 0 || slot->delivering;
+    if (kept) {
+        // Its transfer is a download's (Keep, or a Get while it arrived): that goes on, and the file leaves the cache
+        // once the download has its copy (keptPreviewEnded()).
+        slot->discarded = true;
+    } else if (!slot->info.isFinished()) {
+        // Still arriving: it stops now, however near its end (PREV-6), and what arrived goes with it.
+        const slsk::TransferId transfer = slot->transfer;
+        releasePreview(*slot, slot->info.received);
+        if (transfer != 0) {
+            m_network.transfers().cancelDownload(transfer); // its late report finds nothing to act on
+        }
+        finishPreview(*slot, Preview::State::Cancelled, tr("Discarded"));
+    }
+    if (!kept && m_options.previewCache) {
+        m_options.previewCache->remove(previewKey(slot->info.peer, slot->info.remotePath));
+    }
+    if (slot->info.isFinished()) {
+        releasePreviewFile(*slot);
+        m_previews.remove(id);
+    }
+    return true;
 }
 
 std::optional<Preview> TransferService::preview(qint64 id) const
@@ -1004,7 +1058,7 @@ void TransferService::finishPreview(PreviewSlot &slot, Preview::State state, con
 {
     if (state != Preview::State::Complete) {
         if (const qint64 kept = std::exchange(slot.keptAs, 0); kept != 0) {
-            QMetaObject::invokeMethod(this, [this, kept] { keptPreviewEnded(kept, {}); }, Qt::QueuedConnection);
+            QMetaObject::invokeMethod(this, [this, kept] { keptPreviewEnded(kept, {}, {}); }, Qt::QueuedConnection);
         }
     }
     slot.info.state = state;
@@ -1012,16 +1066,57 @@ void TransferService::finishPreview(PreviewSlot &slot, Preview::State state, con
     if (state != Preview::State::Complete && slot.source) {
         slot.source->setFailed();
         if (state == Preview::State::Cancelled) {
-            QFile::remove(slot.path); // a player reading it keeps its open handle until it lets go
+            releasePreviewFile(slot); // a player reading it keeps its open handle until it lets go
         }
     }
     Q_EMIT previewChanged(slot.info);
 }
 
+void TransferService::releasePreviewFile(PreviewSlot &slot)
+{
+    if (!slot.path.isEmpty() && m_options.previewCache) {
+        m_options.previewCache->abandon(slot.path); // unpinned; deleted unless the cache keeps it
+    }
+    slot.path.clear();
+}
+
+void TransferService::forgetFinishedPreviews()
+{
+    for (auto it = m_previews.begin(); it != m_previews.end();) {
+        if (!it.value()->info.isFinished()) {
+            ++it;
+            continue;
+        }
+        releasePreviewFile(*it.value());
+        it = m_previews.erase(it);
+    }
+}
+
+std::optional<QString> TransferService::cachedPreview(const DownloadSpec &spec)
+{
+    PreviewCache *cache = m_options.previewCache;
+    if (cache == nullptr) {
+        return std::nullopt;
+    }
+    const QString key = previewKey(spec.peer, spec.remotePath);
+    const std::optional<PreviewCache::File> file = cache->find(key);
+    if (!file) {
+        return std::nullopt;
+    }
+    if (spec.size > 0 && file->bytes != spec.size) {
+        cache->remove(key); // the peer's file changed since: this copy is of no use
+        return std::nullopt;
+    }
+    return file->path;
+}
+
 std::optional<Download> TransferService::reusePreview(const DownloadSpec &spec)
 {
-    const QString previewed = m_completedPreviews.value(previewKey(spec.peer, spec.remotePath));
-    if (previewed.isEmpty() || !QFileInfo::exists(previewed) || m_options.incomingDir.isEmpty()) {
+    if (m_options.incomingDir.isEmpty()) {
+        return std::nullopt;
+    }
+    const std::optional<QString> previewed = cachedPreview(spec);
+    if (!previewed) {
         return std::nullopt;
     }
     Download download;
@@ -1043,7 +1138,7 @@ std::optional<Download> TransferService::reusePreview(const DownloadSpec &spec)
     download.id = *id;
     m_live.insert(download.id, download);
     Download &live = m_live[download.id];
-    if (!deliverFromPreview(live, previewed)) {
+    if (!deliverFromPreview(live, *previewed)) {
         live.state = State::Waiting;
         live.message.clear();
         save(live);
@@ -1109,91 +1204,32 @@ std::optional<qint64> TransferService::keepPreview(const DownloadSpec &spec)
     return std::nullopt;
 }
 
-void TransferService::trimPreviewCache()
-{
-    if (m_options.previewDir.isEmpty()) {
-        return;
-    }
-    QSet<QString> inUse;
-    for (const std::shared_ptr<PreviewSlot> &slot : std::as_const(m_previews)) {
-        inUse.insert(QFileInfo(slot->path).absoluteFilePath());
-    }
-    QList<QFileInfo> files;
-    qint64 total = 0;
-    QDirIterator it(m_options.previewDir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        const QFileInfo file(it.next());
-        files.append(file);
-        total += file.size();
-    }
-    if (total <= kPreviewCacheBytes) {
-        return;
-    }
-    // The least recently written go first; anything written in the last minutes may still be playing.
-    std::ranges::sort(files,
-                      [](const QFileInfo &a, const QFileInfo &b) { return a.lastModified() < b.lastModified(); });
-    const QDateTime recent = QDateTime::currentDateTime().addSecs(-600);
-    for (const QFileInfo &file : std::as_const(files)) {
-        if (total <= kPreviewCacheBytes) {
-            break;
-        }
-        if (inUse.contains(file.absoluteFilePath()) || file.lastModified() > recent) {
-            continue;
-        }
-        if (QFile::remove(file.absoluteFilePath())) {
-            total -= file.size();
-        }
-    }
-}
-
-qint64 TransferService::previewCacheBytes() const
-{
-    if (m_options.previewDir.isEmpty()) {
-        return 0;
-    }
-    qint64 total = 0;
-    QDirIterator it(m_options.previewDir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        total += QFileInfo(it.next()).size();
-    }
-    return total;
-}
-
-void TransferService::clearPreviewCache()
-{
-    if (m_options.previewDir.isEmpty()) {
-        return;
-    }
-    QSet<QString> inUse;
-    for (const std::shared_ptr<PreviewSlot> &slot : std::as_const(m_previews)) {
-        inUse.insert(QFileInfo(slot->path).absoluteFilePath());
-    }
-    QDirIterator it(m_options.previewDir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        const QString path = QFileInfo(it.next()).absoluteFilePath();
-        if (!inUse.contains(path)) {
-            QFile::remove(path);
-        }
-    }
-    // Files kept for a Get that reuses them are gone too.
-    for (auto kept = m_completedPreviews.begin(); kept != m_completedPreviews.end();) {
-        kept = QFileInfo::exists(kept.value()) ? std::next(kept) : m_completedPreviews.erase(kept);
-    }
-}
-
-void TransferService::keptPreviewEnded(qint64 downloadId, const QString &completePath)
+void TransferService::keptPreviewEnded(qint64 downloadId, const QString &completePath,
+                                       const std::shared_ptr<PreviewSlot> &delivered)
 {
     m_awaitingPreview.remove(downloadId);
     const auto found = m_live.find(downloadId);
-    if (found == m_live.end() || found->state != State::Waiting) {
-        return; // cancelled meanwhile
-    }
-    if (!deliverFromPreview(*found, completePath)) {
-        // The preview didn't complete: the download asks the peer itself, resuming nothing.
+    const bool waiting = found != m_live.end() && found->state == State::Waiting; // else cancelled meanwhile
+    // The preview didn't complete, or its file can't be copied: the download asks the peer itself, resuming nothing.
+    if (waiting && !deliverFromPreview(*found, completePath)) {
         found->message.clear();
         save(*found);
         tryStart(*found);
     }
+    if (!delivered || !m_options.previewCache) {
+        return;
+    }
+    delivered->delivering = false;
+    PreviewCache &cache = *m_options.previewCache;
+    if (delivered->discarded) {
+        // Discarded while kept: the download has its copy, and nothing of the preview stays.
+        cache.remove(previewKey(delivered->info.peer, delivered->info.remotePath));
+        if (m_previews.value(delivered->info.id) == delivered) {
+            m_previews.remove(delivered->info.id);
+        }
+        releasePreviewFile(*delivered);
+    }
+    cache.abandon(completePath); // the hold taken for the copy; a file the cache doesn't keep goes once unheld
 }
 
 } // namespace selecta::core
