@@ -2,8 +2,10 @@
 #pragma once
 
 #include "core/GovernorPacer.h"
+#include "meta/CoverFetcher.h"
 #include "meta/DeezerClient.h"
 #include "meta/MetaCache.h"
+#include "meta/MusicBrainzClient.h"
 #include "meta/ReleaseResolver.h"
 #include "meta/SpotifyAuth.h"
 #include "meta/SpotifyClient.h"
@@ -42,12 +44,22 @@ struct MetaEndpoints
     QUrl spotifyAccounts;
     QUrl spotifyApi;
     QUrl deezerApi;
+    QUrl musicBrainzApi;
+    QUrl coverArtArchive;
+    // Covers also come straight from the CDNs a release links to (Spotify's, Deezer's), which no URL here redirects:
+    // isolated runs turn cover downloads off instead.
+    bool coverDownloads = true;
 
-    // Every service on 127.0.0.1:1, where nothing listens: requests fail at once.
+    // Every service on 127.0.0.1:1, where nothing listens: requests fail at once. No cover downloads.
     static MetaEndpoints unreachable()
     {
         const QUrl closed(QStringLiteral("http://127.0.0.1:1"));
-        return {.spotifyAccounts = closed, .spotifyApi = closed, .deezerApi = closed};
+        return {.spotifyAccounts = closed,
+                .spotifyApi = closed,
+                .deezerApi = closed,
+                .musicBrainzApi = closed,
+                .coverArtArchive = closed,
+                .coverDownloads = false};
     }
 };
 
@@ -110,6 +122,10 @@ public:
     meta::DeezerClient &deezer() { return *m_deezer; }
     // Line → release candidates, from Spotify when signed in and from Deezer (keyless) otherwise.
     meta::ReleaseResolver &resolver() { return *m_resolver; }
+    // Label and genre by ISRC (D30), for the arrival pipeline.
+    meta::MusicBrainzClient &musicBrainz() { return *m_musicBrainz; }
+    // Cover images; null when cover downloads are off (isolated runs).
+    meta::CoverFetcher *covers() { return m_covers.get(); }
     meta::MetaCache &cache() { return m_cache; }
     QNetworkAccessManager &network() { return *m_network; }
     meta::RequestPacer &pacer() { return m_pacer; }
@@ -131,6 +147,8 @@ private:
     std::unique_ptr<meta::SpotifyClient> m_spotifyClient;
     std::unique_ptr<meta::DeezerClient> m_deezer;
     std::unique_ptr<meta::ReleaseResolver> m_resolver;
+    std::unique_ptr<meta::MusicBrainzClient> m_musicBrainz;
+    std::unique_ptr<meta::CoverFetcher> m_covers;
     QByteArray m_secret; // in memory only while set; never logged
     QString m_error;
 };

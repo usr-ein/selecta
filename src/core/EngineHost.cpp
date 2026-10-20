@@ -217,6 +217,24 @@ void EngineHost::retryTracks(const QList<qint64> &ids)
     });
 }
 
+void EngineHost::downloadTracks(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().download(ids);
+        }
+    });
+}
+
+void EngineHost::cancelTrackDownloads(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().cancelDownloads(ids);
+        }
+    });
+}
+
 void EngineHost::findTracks(const QList<qint64> &ids)
 {
     post([ids](Engine &engine) {

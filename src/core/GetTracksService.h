@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/Downloads.h"
 #include "core/FileRanking.h"
 #include "core/GetTracks.h"
 #include "meta/ReleaseResolver.h"
@@ -21,6 +22,7 @@ class Database;
 namespace selecta::core {
 
 class SearchService;
+class TransferService;
 
 // Get tracks (PRD D27, BATCH-1…9) on the engine thread: the list the user pasted, each line matched to a release
 // before any Soulseek search (BATCH-5), then found, previewed and downloaded. The lines live in the database, so the
@@ -80,6 +82,21 @@ public:
     bool isFinding() const { return !m_finding.isEmpty() || !m_findAfterLookup.isEmpty(); }
     int findingCount() const { return static_cast<int>(m_finding.size() + m_findAfterLookup.size()); }
 
+    // --- downloading (D27) ---
+    // Where downloads go. Not owned.
+    void setTransfers(TransferService *transfers) { m_transfers = transfers; }
+    // Downloads the chosen file of these lines (every ticked line when empty). Lines already downloading or arrived
+    // are left alone; a failed line tries again.
+    void download(const QList<qint64> &ids = {});
+    // Stops these lines' downloads.
+    void cancelDownloads(const QList<qint64> &ids);
+    // From the TransferService: a download's state, and its progress while it transfers. A download that fails for
+    // good moves on to the next peer's copy when the search found one.
+    void downloadChanged(const selecta::core::Download &download);
+    void downloadProgress(qint64 downloadId, qint64 bytesDone, qint64 bytesTotal);
+    // After the TransferService restored its queue: lines a quit left downloading without a download are reset.
+    void downloadsRestored(const QList<selecta::core::Download> &unfinished);
+
     QList<GetLine> lines() const { return m_lines; }
     int resolvingCount() const { return static_cast<int>(m_resolving.size()); }
 
@@ -95,6 +112,9 @@ private:
     void resolved(qint64 id, const meta::Result<meta::Resolution> &result);
     void store(const GetLine &line);
     GetLine *lineWithId(qint64 id);
+    void startDownload(GetLine &line);
+    bool tryAlternative(GetLine &line, const QString &reason);
+    void cancelDownloadOf(const GetLine &line);
 
     storage::Database &m_db;
     std::function<qint64()> m_now;
@@ -107,6 +127,7 @@ private:
     QualityWanted m_wanted = QualityWanted::Mp3_320OrLossless;
     QHash<qint64, quint64> m_finding; // line id → its queued or running search
     QSet<qint64> m_findAfterLookup;   // lines to search once their release lookup ends
+    TransferService *m_transfers = nullptr;
 };
 
 } // namespace selecta::core

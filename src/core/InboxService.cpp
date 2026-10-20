@@ -119,6 +119,15 @@ void InboxService::publish()
     Q_EMIT changed(entries());
 }
 
+std::optional<qint64> InboxService::add(const library::InboxItem &item)
+{
+    const std::optional<qint64> id = m_inbox.add(item);
+    if (id) {
+        publish();
+    }
+    return id;
+}
+
 void InboxService::reconcile()
 {
     const QList<InboxItem> items = m_inbox.all();

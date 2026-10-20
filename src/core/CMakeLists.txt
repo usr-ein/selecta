@@ -2,6 +2,8 @@
 # core/: services on the engine thread; wires the governor, storage and the libraries together (head implementer).
 qt_add_library(selecta_core STATIC
     ActivityLog.h ActivityLog.cpp
+    ArrivalService.h ArrivalService.cpp
+    Downloads.h Downloads.cpp
     Engine.h Engine.cpp
     FileRanking.h FileRanking.cpp
     EngineHost.h EngineHost.cpp
@@ -13,8 +15,9 @@ qt_add_library(selecta_core STATIC
     MetaServices.h MetaServices.cpp
     NetworkService.h NetworkService.cpp
     ReleaseJson.h ReleaseJson.cpp
-    SearchService.h SearchService.cpp)
+    SearchService.h SearchService.cpp
+    TransferService.h TransferService.cpp)
 add_library(Selecta::Core ALIAS selecta_core)
-target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match selecta_meta selecta_slsk
-    Qt6::Core Qt6::Network)
+target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match
+    selecta_meta selecta_slsk selecta_audio selecta_convert Qt6::Core Qt6::Network)
 selecta_set_warnings(selecta_core)

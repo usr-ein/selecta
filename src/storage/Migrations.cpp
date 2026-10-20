@@ -123,6 +123,33 @@ constexpr std::array kMigrations{
         ) STRICT;
         CREATE INDEX get_lines_by_position ON get_lines(position);
     )sql"},
+    Migration{4, R"sql(
+        -- Downloads (PRD DL-1, DL-2, D27): the files Selecta wants from peers, kept across launches until they have
+        -- arrived in the Inbox, failed for good or been cancelled.
+        CREATE TABLE downloads (
+            id           INTEGER PRIMARY KEY,
+            peer         TEXT NOT NULL,
+            remote_path  BLOB NOT NULL,                -- raw bytes, as the peer sent them
+            size         INTEGER NOT NULL DEFAULT 0 CHECK (size >= 0),
+            file_json    TEXT,                         -- the chosen file's facts (core::FileChoice)
+            release_json TEXT,                         -- the release to tag it from (meta::Release)
+            get_line     INTEGER REFERENCES get_lines(id) ON DELETE SET NULL,
+            state        TEXT NOT NULL CHECK (state IN ('waiting', 'queued', 'transferring', 'converting',
+                                                        'arrived', 'failed', 'cancelled')),
+            message      TEXT NOT NULL DEFAULT '',     -- what is happening or what went wrong, in words
+            attempts     INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+            retry_at     INTEGER,                      -- Unix time, ms: when a waiting download asks again
+            received     INTEGER NOT NULL DEFAULT 0 CHECK (received >= 0),
+            local_path   TEXT NOT NULL DEFAULT '',     -- the original, while it downloads and converts
+            inbox_item   INTEGER REFERENCES inbox_items(id) ON DELETE SET NULL,
+            created_at   INTEGER NOT NULL,             -- Unix time, ms
+            updated_at   INTEGER NOT NULL
+        ) STRICT;
+        -- One download of a file at a time: another can start once the first has finished.
+        CREATE UNIQUE INDEX downloads_unfinished_file ON downloads(peer, remote_path)
+            WHERE state NOT IN ('arrived', 'failed', 'cancelled');
+        CREATE INDEX downloads_by_line ON downloads(get_line);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

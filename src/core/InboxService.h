@@ -17,6 +17,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 namespace selecta::storage {
 class Database;
@@ -71,6 +72,8 @@ public:
 
     // Forgets items whose files were deleted outside Selecta (recording them as trashed), then publishes the list.
     void reconcile();
+    // Records an item the arrival pipeline just published into the Inbox, and publishes the list. Returns its id.
+    std::optional<qint64> add(const library::InboxItem &item);
     // Files these items into the first collection folder: singles into the Singles folder, albums into the Albums
     // folder, keeping the names they got on arrival. Busy, unknown or still-processing items are skipped.
     void file(const QList<qint64> &ids);

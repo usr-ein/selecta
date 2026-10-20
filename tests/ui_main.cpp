@@ -2,10 +2,13 @@
 #include <QApplication>
 #include <QStandardPaths>
 
+#include "support/CrashReport.h"
+
 #include <gtest/gtest.h>
 
 int main(int argc, char **argv)
 {
+    selecta::testing::installCrashReport();
     ::testing::InitGoogleTest(&argc, argv);
     // Widgets work without a display. CTest sets this too; the default lets the binary run on its own.
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) {

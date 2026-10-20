@@ -1,0 +1,156 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "core/Downloads.h"
+#include "slsk/TransferManager.h"
+
+#include <QDeadlineTimer>
+#include <QHash>
+#include <QObject>
+#include <QSet>
+#include <QString>
+
+#include <functional>
+#include <memory>
+#include <optional>
+
+class QFile;
+class QTimer;
+
+namespace selecta::governor {
+class Governor;
+}
+namespace selecta::storage {
+class Database;
+}
+
+namespace selecta::core {
+
+class ActivityLog;
+class NetworkService;
+struct NetworkStatus;
+
+// A file to download, as Get tracks (or a manual download) asks for it.
+struct DownloadSpec
+{
+    QString peer;
+    QByteArray remotePath;
+    qint64 size = 0;
+    std::optional<FileChoice> file;
+    std::optional<meta::Release> release;
+    std::optional<qint64> getLine;
+};
+
+// Downloads (PRD DL-1, DL-2) on the engine thread: a queue kept in the database, so it survives a restart, driven
+// through slsk's TransferManager within the governor's limits (ADR-006). Every download asks the governor for a
+// QueueDownload permit before it is queued at the peer, and the governor hears about every start, end and denial.
+//
+// A download waits while Selecta is offline or paced; transient failures (unreachable peer, lost connection, stalls,
+// a peer's full queue) wait and try again after 3, 10 and 30 minutes, resuming the partial file; anything else fails
+// for good and says why. A complete file is announced with completed(): the arrival pipeline converts and publishes
+// it, then reports back with arrived() or arrivalFailed().
+//
+// Files: partial and complete originals live in Options::incomingDir, one folder per download, until the arrival
+// pipeline is done with them.
+//
+// Threading: engine thread. Ownership: the Governor, the activity log and the database outlive it. The NetworkService
+// (and its TransferManager, which writes into this service's files) must be destroyed after shutdown() and before this
+// service; Engine::stop() does it in that order.
+class TransferService : public QObject
+{
+    Q_OBJECT
+
+public:
+    using WallClock = std::function<qint64()>;
+
+    struct Options
+    {
+        QString incomingDir;
+        // Waits before each retry of a transient failure; the number of entries is the number of retries. Default:
+        // 3, 10 and 30 minutes (Limits.h kDownloadRetries). Tests shorten them.
+        QList<qint64> retryDelaysMs;
+        qint64 pacedRetryMs = 60'000; // a download the governor turned away without saying when asks again after this
+    };
+
+    TransferService(storage::Database &db, governor::Governor &governor, NetworkService &network, ActivityLog &activity,
+                    Options options, WallClock now = {}, QObject *parent = nullptr);
+    ~TransferService() override;
+    TransferService(const TransferService &) = delete;
+    TransferService &operator=(const TransferService &) = delete;
+    TransferService(TransferService &&) = delete;
+    TransferService &operator=(TransferService &&) = delete;
+
+    // Restores the downloads that hadn't finished at the last quit, and starts what can start. Complete files that
+    // were being converted are announced again with completed().
+    void load();
+
+    // Wants a file. Returns its download id; a file already being downloaded returns that download. nullopt only when
+    // the database refuses (logged).
+    std::optional<qint64> enqueue(const DownloadSpec &spec);
+    // Stops a download at any stage before it has arrived. Its partial file is deleted.
+    void cancel(qint64 id);
+    // A failed download tries again, with its retries renewed.
+    void retry(qint64 id);
+
+    // The arrival pipeline's answers for a completed download.
+    void arrived(qint64 id, qint64 inboxItem);
+    void arrivalFailed(qint64 id, const QString &message);
+
+    std::optional<Download> download(qint64 id);
+    QList<Download> unfinished() const;
+
+    // Stops listening to the transfer manager before the network goes; unfinished downloads stay saved for the next
+    // launch, and open files are closed by the manager as it is destroyed. Nothing else may be called afterwards.
+    void shutdown();
+
+Q_SIGNALS:
+    void changed(const selecta::core::Download &download);
+    // Bytes on disk (a resumed part included) and the file's size; about four times a second while transferring.
+    void progress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
+    // The file is complete on disk (download.localPath): the arrival pipeline takes it from here.
+    void completed(const selecta::core::Download &download);
+
+private:
+    class Storage;
+    friend class Storage;
+
+    void startWaiting();
+    void tryStart(Download &download);
+    void transferChanged(const slsk::DownloadInfo &info);
+    void transferProgress(slsk::TransferId id, quint64 done, quint64 total);
+    void networkChanged(const NetworkStatus &status);
+    void wait(Download &download, qint64 delayMs, const QString &message);
+    void failed(Download &download, const slsk::DownloadInfo &info);
+    void finish(Download &download, Download::State state, const QString &message);
+    // The transfer behind a download ended or is being dropped: tells the governor, then forgets the mapping.
+    void release(Download &download, qint64 bytes);
+    void forget(qint64 id);
+    void save(Download &download);
+    bool isDue(qint64 id) const;
+    void scheduleRetries();
+    void deleteFiles(const Download &download);
+    QString folderOf(qint64 id) const;
+    QString partialPathOf(const Download &download) const;
+    QIODevice *openFile(const slsk::DownloadInfo &info);
+    void closeFile(const slsk::DownloadInfo &info, QIODevice *device);
+
+    storage::Database &m_db;
+    governor::Governor &m_governor;
+    // cppcheck-suppress uninitMemberVarNoCtor ; bound in the constructor's initialiser list
+    NetworkService &m_network;
+    ActivityLog &m_activity;
+    Options m_options;
+    WallClock m_now;
+    DownloadStore m_store;
+    std::unique_ptr<Storage> m_storage;
+    QHash<qint64, Download> m_live;               // unfinished downloads, by id
+    QHash<qint64, slsk::TransferId> m_transferOf; // download → its transfer, while queued or transferring
+    QHash<slsk::TransferId, qint64> m_downloadOf; // and back
+    QSet<qint64> m_active;                        // downloads the governor counts as started
+    QHash<slsk::TransferId, QFile *> m_files;     // open partial files, owned
+    QHash<qint64, QDeadlineTimer> m_retryAt;      // when a waiting download may ask again (monotonic)
+    QTimer *m_retryTimer = nullptr;
+    bool m_shutDown = false;
+};
+
+} // namespace selecta::core

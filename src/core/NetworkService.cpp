@@ -101,6 +101,7 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
     qRegisterMetaType<NetworkStatus>();
     m_permits = std::make_unique<GovernorPermits>(m_governor, this);
     m_peers = std::make_unique<slsk::PeerNetwork>(*m_server, *m_permits);
+    m_transfers = std::make_unique<slsk::TransferManager>(*m_peers, *m_server);
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &NetworkService::attempt);
     connect(m_server.get(), &slsk::ServerSession::loggedIn, this, &NetworkService::loggedIn);
@@ -121,6 +122,7 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
 NetworkService::~NetworkService()
 {
     m_retryTimer->stop();
+    m_transfers.reset(); // closes open download devices through their storage; emits nothing
     m_peers->closeAll();
     m_server->disconnectFromServer();
     m_peers.reset(); // uses the session and the permits
