@@ -53,7 +53,7 @@ TEST_F(PreviewQualityTest, APeersCompleteFileIsCheckedAndTheBadgeSaysWhatItFound
     ASSERT_NE(badge, nullptr);
     EXPECT_TRUE(badge->isHidden());
     controller.preview(request(lowPassedFlac(), kPeer));
-    QTRY_VERIFY_WITH_TIMEOUT(controller.quality().has_value(), 15000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return controller.quality().has_value(); }, 15000));
     EXPECT_TRUE(controller.quality()->hasFinding(audio::QualityFinding::LikelyFromLossy));
     // A symbol and words (UI-4); "likely", never "fake".
     EXPECT_FALSE(badge->isHidden());
@@ -74,7 +74,7 @@ TEST_F(PreviewQualityTest, YouTubeAndLocalPreviewsArentJudged)
 {
     for (const QString &identity : {u"youtube|dQw4w9WgXcQ"_s, u"file|/Music/Neon Rain.flac|1|2"_s, QString()}) {
         controller.preview(request(lowPassedFlac(), identity));
-        QTRY_VERIFY_WITH_TIMEOUT(controller.waveform().isComplete(), 15000);
+        ASSERT_TRUE(QTest::qWaitFor([&] { return controller.waveform().isComplete(); }, 15000));
         QTest::qWait(300); // a check would have had time to run
         EXPECT_FALSE(controller.quality().has_value()) << identity.toStdString();
         EXPECT_TRUE(badge->isHidden());
@@ -85,7 +85,7 @@ TEST_F(PreviewQualityTest, AGenuineFileGetsNoBadge)
 {
     const QByteArray flac = synth::makeFlac(synth::quantised(synth::whiteNoise(6.0, 4, 44100, 2, 0.3), 16));
     controller.preview(request(flac, kPeer));
-    QTRY_VERIFY_WITH_TIMEOUT(controller.quality().has_value(), 15000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return controller.quality().has_value(); }, 15000));
     EXPECT_TRUE(controller.quality()->findings.isEmpty());
     EXPECT_GT(controller.quality()->cutoffHz, 21000);
     EXPECT_TRUE(badge->isHidden());
@@ -94,7 +94,7 @@ TEST_F(PreviewQualityTest, AGenuineFileGetsNoBadge)
 TEST_F(PreviewQualityTest, StopDropsTheCheck)
 {
     controller.preview(request(lowPassedFlac(), kPeer));
-    QTRY_VERIFY_WITH_TIMEOUT(controller.quality().has_value(), 15000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return controller.quality().has_value(); }, 15000));
     controller.stop();
     EXPECT_FALSE(controller.quality().has_value());
     EXPECT_TRUE(badge->isHidden());

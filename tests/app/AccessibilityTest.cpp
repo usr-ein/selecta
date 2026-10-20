@@ -256,7 +256,7 @@ TEST(Accessibility, ToastsAreReadOutAndWaitForTheKeyboard)
     EXPECT_EQ(toasts.count(), 1);
     QFocusEvent focusOut(QEvent::FocusOut, Qt::TabFocusReason);
     QApplication::sendEvent(undo, &focusOut);
-    QTRY_COMPARE_WITH_TIMEOUT(toasts.count(), 0, 2000);
+    EXPECT_TRUE(QTest::qWaitFor([&toasts] { return toasts.count() == 0; }, 2000)); // a QTRY timeout wouldn't fail
 }
 
 TEST_F(AccessibilityTest, TabGoesFromTheSidebarToTheViewThenThePlayer)

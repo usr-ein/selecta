@@ -23,6 +23,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QBuffer>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QCompleter>
@@ -30,6 +31,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
@@ -290,7 +292,7 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
     ASSERT_TRUE(finished.wait(5000));
     EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
     EXPECT_TRUE(QFileInfo::exists(library.collectionRoots.first() + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s));
-    QTRY_COMPARE_WITH_TIMEOUT(window->currentSubtitle(), u"Nothing waiting"_s, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->currentSubtitle() == u"Nothing waiting"_s; }, 5000));
     engine->stop();
 }
 
@@ -523,7 +525,7 @@ TEST_F(MainWindowTest, GetTracksListsPastedLinesAndSaysWhatHappened)
 
     auto *table = window->findChild<QTreeView *>(u"get.lines"_s);
     ASSERT_NE(table, nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 2; }, 5000));
     EXPECT_EQ(table->model()->index(0, 1).data().toString(), u"Okuma Drift - Neon Rain"_s);
     EXPECT_TRUE(window->currentSubtitle().startsWith(u"2 tracks"_s));
     const auto *note = window->findChild<QLabel *>(u"get.note"_s);
@@ -537,7 +539,7 @@ TEST_F(MainWindowTest, GetTracksListsPastedLinesAndSaysWhatHappened)
     QSignalSpy reset(engine.get(), &selecta::core::EngineHost::getLinesReset);
     QTest::keyClick(table, Qt::Key_Backspace);
     ASSERT_TRUE(reset.wait(5000));
-    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 1; }, 5000));
     engine->stop();
 }
 
@@ -628,7 +630,7 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
     ASSERT_TRUE(window->navigateTo(u"inbox"_s));
     auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
     ASSERT_NE(table, nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 1; }, 5000));
     const QModelIndex row = table->model()->index(0, 0, table->model()->index(0, 0));
     table->setCurrentIndex(row);
     table->selectionModel()->select(row, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
@@ -639,7 +641,7 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
     const auto *source = window->findChild<QLabel *>(u"inspector.inbox.source"_s);
     ASSERT_TRUE(title && tagList && provenance && source);
     EXPECT_EQ(title->text(), u"Neon Rain"_s);
-    QTRY_VERIFY_WITH_TIMEOUT(tagList->text().contains(u"Nightfall Records"_s), 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return tagList->text().contains(u"Nightfall Records"_s); }, 5000));
     EXPECT_TRUE(provenance->text().contains(u"Spotify"_s));
     EXPECT_TRUE(source->text().contains(u"vinyl_ghost"_s));
     EXPECT_TRUE(source->text().contains(u"FLAC 16/44.1"_s));
@@ -651,10 +653,99 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
     engine->editInboxTags(id, edit, {selecta::convert::keys::Label.toString()});
     ASSERT_TRUE(finished.wait(5000));
     EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
-    QTRY_COMPARE_WITH_TIMEOUT(title->text(), u"Neon Rain (Dub)"_s, 5000);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !tagList->text().contains(u"Nightfall Records"_s) && tagList->text().contains(u"Neon Rain (Dub)"_s), 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return title->text() == u"Neon Rain (Dub)"_s; }, 5000));
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] {
+            return !tagList->text().contains(u"Nightfall Records"_s) && tagList->text().contains(u"Neon Rain (Dub)"_s);
+        },
+        5000));
     EXPECT_TRUE(provenance->text().contains(u"edited by you"_s));
+    engine->stop();
+}
+
+TEST_F(MainWindowTest, TheInboxInspectorShowsAnAlbumsCoverAndSaysNothingUntrue)
+{
+    // Q10: an album shows its cover.jpg, or else its first track's picture. Q11: no word about Choose Release, which
+    // is for singles.
+    selecta::core::LibraryConfig library;
+    library.inboxRoot = dir.filePath(u"Inbox"_s);
+    const QString withJpg = library.inboxRoot + u"/Albums/Okuma_Drift_-_Night_Signals"_s;
+    const QString embedded = library.inboxRoot + u"/Albums/Kassia_Moreau_-_Harbour_Lights"_s;
+    ASSERT_TRUE(QDir().mkpath(withJpg) && QDir().mkpath(embedded));
+    QImage red(300, 300, QImage::Format_RGB32);
+    red.fill(Qt::red);
+    ASSERT_TRUE(red.save(withJpg + u"/cover.jpg"_s, "JPG"));
+    const QByteArray wav = toneWav(0.5);
+    const QStringList tracks{withJpg + u"/01 Neon Rain.wav"_s, embedded + u"/01 Harbour Lights.wav"_s,
+                             embedded + u"/02 Low Tide.wav"_s};
+    for (const QString &track : tracks) {
+        QFile file(track);
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly) && file.write(wav) == wav.size());
+    }
+    {
+        QByteArray png;
+        QBuffer buffer(&png);
+        ASSERT_TRUE(buffer.open(QIODevice::WriteOnly) && red.save(&buffer, "PNG"));
+        selecta::convert::MetadataModel tags;
+        tags.set(selecta::convert::keys::Title, u"Harbour Lights"_s, selecta::convert::Provenance::Release);
+        selecta::convert::Picture cover;
+        cover.data = png;
+        cover.mimeType = u"image/png"_s;
+        tags.setFrontCover(cover);
+        ASSERT_TRUE(selecta::convert::writeTags(embedded + u"/01 Harbour Lights.wav"_s, tags).ok());
+    }
+    settings->setLibraryConfig(library);
+    const QString engineDb = dir.filePath(u"engine.sqlite3"_s);
+    {
+        selecta::storage::Database setup;
+        ASSERT_TRUE(setup.open(engineDb));
+        ASSERT_TRUE(selecta::storage::migrate(setup, selecta::storage::selectaMigrations()).ok());
+        selecta::library::InboxItem album;
+        album.kind = selecta::library::InboxItem::Kind::Album;
+        album.relativePath = u"Albums/Okuma_Drift_-_Night_Signals"_s;
+        album.state = selecta::library::InboxItem::State::Ready;
+        album.artist = u"Okuma Drift"_s;
+        album.album = u"Night Signals"_s;
+        album.format = u"WAV"_s;
+        album.createdAt = 2000;
+        ASSERT_TRUE(selecta::library::InboxStore(setup).add(album).has_value());
+        album.relativePath = u"Albums/Kassia_Moreau_-_Harbour_Lights"_s;
+        album.artist = u"Kassia Moreau"_s;
+        album.album = u"Harbour Lights"_s;
+        album.createdAt = 1000;
+        ASSERT_TRUE(selecta::library::InboxStore(setup).add(album).has_value());
+    }
+    selecta::core::EngineOptions options;
+    options.databasePath = engineDb;
+    options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy changed(engine.get(), &selecta::core::EngineHost::inboxChanged);
+    engine->start();
+    ASSERT_TRUE(changed.wait(5000));
+
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"inbox"_s));
+    auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
+    ASSERT_NE(table, nullptr);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 1; }, 5000));
+    const QModelIndex albums = table->model()->index(0, 0);
+    ASSERT_EQ(table->model()->rowCount(albums), 2);
+    const auto *cover = window->findChild<QLabel *>(u"inspector.inbox.cover"_s);
+    const auto *title = window->findChild<QLabel *>(u"inspector.inbox.title"_s);
+    const auto *provenance = window->findChild<QLabel *>(u"inspector.inbox.provenance"_s);
+    ASSERT_TRUE(cover && title && provenance);
+    for (int row = 0; row < 2; ++row) {
+        const QModelIndex index = table->model()->index(row, 0, albums);
+        table->setCurrentIndex(index);
+        table->selectionModel()->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+        EXPECT_EQ(title->text(), row == 0 ? u"Night Signals"_s : u"Harbour Lights"_s);
+        // QTest::qWaitFor, not QTRY_…: a QTRY timeout returns from the test without failing it under gtest.
+        EXPECT_TRUE(QTest::qWaitFor([cover] { return !cover->pixmap().isNull(); }, 5000)) << row;
+        EXPECT_EQ(cover->accessibleName(), u"Cover"_s);
+        EXPECT_FALSE(provenance->text().contains(u"Choose Release"_s)) << provenance->text().toStdString();
+        EXPECT_TRUE(provenance->text().contains(u"No release matched the album"_s));
+    }
     engine->stop();
 }
 
@@ -1306,7 +1397,7 @@ TEST_F(MainWindowTest, TheInboxShowsTheSpectrumCheck)
     ASSERT_TRUE(window->navigateTo(u"inbox"_s));
     auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
     ASSERT_NE(table, nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 1; }, 5000));
     const QModelIndex singles = table->model()->index(0, 0);
     ASSERT_EQ(table->model()->rowCount(singles), 2);
     // Newest first: the suspect file, with its badge, a symbol and words (UI-4); the genuine one is just ready.
@@ -1334,7 +1425,7 @@ TEST_F(MainWindowTest, TheInboxShowsTheSpectrumCheck)
     EXPECT_FALSE(spectrum->isHidden());
     EXPECT_FALSE(note->isHidden());
     // The cached report: describeFinding()'s words, the grid and the cut-off.
-    QTRY_VERIFY_WITH_TIMEOUT(!view->spectrogram().isNull(), 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !view->spectrogram().isNull(); }, 5000));
     EXPECT_EQ(view->spectrogram().columns(), 100);
     EXPECT_EQ(view->cutoff(), 16742);
     EXPECT_TRUE(text->text().startsWith(u"⚠ Likely from a lossy source (≈ 128 kbps MP3"_s))
@@ -1345,10 +1436,11 @@ TEST_F(MainWindowTest, TheInboxShowsTheSpectrumCheck)
     const QModelIndex other = table->model()->index(1, 0, singles);
     table->setCurrentIndex(other);
     table->selectionModel()->select(other, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-    QTRY_VERIFY_WITH_TIMEOUT(text->text().startsWith(u"✓ The spectrum reaches 21.9 kHz"_s), 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return text->text().startsWith(u"✓ The spectrum reaches 21.9 kHz"_s); }, 5000));
     EXPECT_TRUE(note->isHidden());
     EXPECT_FALSE(alsoOn->text().contains(u"Likely"_s));
-    QTRY_COMPARE_WITH_TIMEOUT(view->message(), u"The spectrogram is no longer in the cache."_s, 5000);
+    ASSERT_TRUE(
+        QTest::qWaitFor([&] { return view->message() == u"The spectrogram is no longer in the cache."_s; }, 5000));
     EXPECT_TRUE(view->spectrogram().isNull());
     engine->stop();
 }
@@ -1367,7 +1459,7 @@ TEST_F(MainWindowTest, SettingsShowTheAnalysisCacheBudget)
     const auto *line = window->findChild<QLabel *>(u"settings.cache.waveforms"_s);
     ASSERT_NE(line, nullptr);
     EXPECT_EQ(cache->budgetBytes(), qint64{384} * 1024 * 1024);
-    QTRY_COMPARE_WITH_TIMEOUT(line->text(), u"0 B, at most 402.7 MB"_s, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return line->text() == u"0 B, at most 402.7 MB"_s; }, 5000));
     engine->stop();
 }
 
