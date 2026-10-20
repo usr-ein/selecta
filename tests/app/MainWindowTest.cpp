@@ -344,6 +344,7 @@ TEST_F(MainWindowTest, InboxItemsPreviewWithSpaceAndDoubleClick)
     ASSERT_TRUE(window->navigateTo(u"inbox"_s));
     auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
     ASSERT_NE(table, nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
     const QModelIndex row = table->model()->index(0, 0, table->model()->index(0, 0));
     ASSERT_TRUE(row.isValid());
     table->setCurrentIndex(row);
@@ -370,7 +371,10 @@ TEST_F(MainWindowTest, InboxItemsPreviewWithSpaceAndDoubleClick)
     EXPECT_EQ(player.state(), State::Idle);
     EXPECT_EQ(title->text(), u"Nothing playing"_s);
 
-    QTest::mouseDClick(table->viewport(), Qt::LeftButton, {}, table->visualRect(row).center());
+    // The list is rebuilt whenever the Inbox changes: look the row up again rather than keep an old index.
+    const QModelIndex again = table->model()->index(0, 0, table->model()->index(0, 0));
+    ASSERT_TRUE(again.isValid());
+    QTest::mouseDClick(table->viewport(), Qt::LeftButton, {}, table->visualRect(again).center());
     QTRY_COMPARE_WITH_TIMEOUT(player.state(), State::Playing, 5000);
 
     // A file that went missing says so instead of playing.

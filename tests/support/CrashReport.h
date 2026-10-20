@@ -2,11 +2,13 @@
 #pragma once
 
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 #include <exception>
 #include <typeinfo>
 
 #if defined(__APPLE__) || defined(__linux__)
+#include <csignal>
 #include <cxxabi.h>
 #include <execinfo.h>
 #include <unistd.h>
@@ -36,9 +38,30 @@ namespace selecta::testing {
     std::abort();
 }
 
+#if defined(__APPLE__) || defined(__linux__)
+// A crash (segmentation fault, bus error) prints its backtrace too, then dies of the same signal. backtrace() isn't
+// formally async-signal-safe, but this only ever runs in a test binary that is about to die anyway.
+inline void reportCrash(int signal)
+{
+    const char *name = signal == SIGSEGV ? "\n*** SIGSEGV" : signal == SIGBUS ? "\n*** SIGBUS" : "\n*** SIGILL";
+    (void)write(STDERR_FILENO, name, std::strlen(name));
+    (void)write(STDERR_FILENO, ", backtrace:\n", 13);
+    void *frames[64];
+    const int count = backtrace(frames, 64);
+    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    std::signal(signal, SIG_DFL);
+    std::raise(signal);
+}
+#endif
+
 inline void installCrashReport()
 {
     std::set_terminate(&reportTermination);
+#if defined(__APPLE__) || defined(__linux__)
+    for (const int signal : {SIGSEGV, SIGBUS, SIGILL}) {
+        std::signal(signal, &reportCrash);
+    }
+#endif
 }
 
 } // namespace selecta::testing
