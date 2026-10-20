@@ -5,6 +5,7 @@
 #include "app/views/SettingsView.h"
 #include "base/Paths.h"
 
+#include <QDir>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -144,7 +145,15 @@ TEST_F(LibrarySettingsTest, AFileEditedIntoWhatSettingsRefusesReadsAsNotChosen)
 
 TEST_F(LibrarySettingsTest, TheInboxIsTheDataFoldersByDefault)
 {
-    EXPECT_EQ(AppSettings(iniPath()).libraryConfig().inboxRoot, selecta::base::paths::inboxDir());
+    // An isolated run (--data-dir): the Inbox is <root>/data/Inbox, whatever the settings file says.
+    {
+        QSettings old(iniPath(), QSettings::IniFormat);
+        old.setValue(u"library/inbox"_s, u"/Users/me/Music/Selecta/Inbox"_s);
+    }
+    selecta::base::paths::setRootOverride(dir.path());
+    const QString inboxRoot = AppSettings(iniPath()).libraryConfig().inboxRoot;
+    selecta::base::paths::setRootOverride({});
+    EXPECT_EQ(inboxRoot, QDir::cleanPath(dir.path()) + u"/data/Inbox"_s);
 }
 
 // --- SettingsView --------------------------------------------------------------------------------------------------

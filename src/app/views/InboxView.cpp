@@ -448,10 +448,11 @@ void InboxView::refreshActions()
 {
     const QList<qint64> selected = selectedIds();
     // Singles are filed into the tracks folder, albums into the albums folder: each kind needs its own.
+    const QSet<qint64> selectedSet(selected.cbegin(), selected.cend());
     bool singles = false;
     bool albums = false;
     for (const core::InboxEntry &entry : std::as_const(m_entries)) {
-        if (selected.contains(entry.item.id)) {
+        if (selectedSet.contains(entry.item.id)) {
             (entry.item.kind == InboxItem::Kind::Album ? albums : singles) = true;
         }
     }
