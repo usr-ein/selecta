@@ -1315,6 +1315,11 @@ TEST_F(MainWindowTest, TheInboxShowsTheSpectrumCheck)
     EXPECT_TRUE(suspectStatus.data(Qt::ToolTipRole).toString().contains(u"the spectrum stops at 16.7 kHz"_s))
         << suspectStatus.data(Qt::ToolTipRole).toString().toStdString();
     EXPECT_EQ(table->model()->index(1, 4, singles).data().toString(), u"Ready"_s);
+    // VoiceOver hears the symbols in words, and the tooltip as the description (UI-5).
+    EXPECT_EQ(suspectStatus.data(Qt::AccessibleTextRole).toString(), u"Warning: Likely from a roughly 128 kbps MP3"_s);
+    EXPECT_EQ(suspectStatus.data(Qt::AccessibleDescriptionRole), suspectStatus.data(Qt::ToolTipRole));
+    EXPECT_EQ(table->model()->index(1, 4, singles).data(Qt::AccessibleTextRole).toString(), u"Ready"_s);
+    EXPECT_EQ(singles.data(Qt::AccessibleTextRole).toString(), u"Singles, 2"_s);
 
     const QModelIndex row = table->model()->index(0, 0, singles);
     table->setCurrentIndex(row);

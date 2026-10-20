@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/InboxView.h"
 
+#include "app/Accessibility.h"
 #include "app/Icons.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/InboxInspector.h"
@@ -91,6 +92,21 @@ QString statusText(const core::InboxEntry &entry)
     return {};
 }
 
+// The status as VoiceOver reads it: the ⚠ and ⚑ in words, the ≈ as "roughly" (UI-5).
+QString accessibleStatus(const core::InboxEntry &entry)
+{
+    if (entry.busy || entry.item.state != InboxItem::State::Ready) {
+        return statusText(entry);
+    }
+    if (QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
+        return InboxView::tr("Warning: %1").arg(badge.replace(u"≈ "_s, InboxView::tr("roughly ")));
+    }
+    if (!entry.alsoOn.isEmpty()) {
+        return InboxView::tr("Ready, also on “%1”").arg(entry.alsoOn.constFirst());
+    }
+    return entry.item.warning.isEmpty() ? statusText(entry) : InboxView::tr("Ready, with a warning");
+}
+
 // The status's tooltip: why it failed, or everything the arrival noticed.
 QString statusToolTip(const core::InboxEntry &entry)
 {
@@ -121,6 +137,7 @@ QStandardItem *cell(const QString &text, qint64 id, const QString &toolTip = {})
     item->setEditable(false);
     if (!toolTip.isEmpty()) {
         item->setToolTip(toolTip);
+        item->setData(toolTip, Qt::AccessibleDescriptionRole);
     }
     return item;
 }
@@ -154,6 +171,8 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
 
     m_model->setHorizontalHeaderLabels({tr("Item"), tr("Format"), tr("File name"), tr("From"), tr("Status")});
     m_table->setObjectName(u"inbox.items"_s);
+    m_table->setAccessibleName(tr("Inbox"));
+    a11y::addMenuKey(m_table);
     m_table->setModel(m_model);
     m_table->setUniformRowHeights(true);
     m_table->setAlternatingRowColors(true);
@@ -333,6 +352,7 @@ void InboxView::rebuild(const QList<core::InboxEntry> &entries)
             return;
         }
         auto *group = new QStandardItem(u"%1  %2"_s.arg(name).arg(members.size()));
+        group->setData(u"%1, %2"_s.arg(name).arg(members.size()), Qt::AccessibleTextRole);
         group->setEditable(false);
         group->setSelectable(false);
         QFont bold = group->font();
@@ -355,9 +375,10 @@ void InboxView::rebuild(const QList<core::InboxEntry> &entries)
             }
             const QString source =
                 item.sourceFormat.isEmpty() ? QString() : tr("Downloaded as %1").arg(item.sourceFormat);
+            QStandardItem *status = cell(statusText(*entry), item.id, statusToolTip(*entry));
+            status->setData(accessibleStatus(*entry), Qt::AccessibleTextRole);
             group->appendRow({cell(itemText, item.id), cell(formatText(item), item.id, source),
-                              cell(fileName, item.id, item.relativePath), cell(item.peer, item.id),
-                              cell(statusText(*entry), item.id, statusToolTip(*entry))});
+                              cell(fileName, item.id, item.relativePath), cell(item.peer, item.id), status});
         }
     };
     addGroup(tr("Albums"), InboxItem::Kind::Album);
