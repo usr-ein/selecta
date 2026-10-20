@@ -14,6 +14,9 @@ ResultAnnotator::ResultAnnotator(storage::Database &db, const governor::Governor
                                  QSet<std::pair<QString, QByteArray>> queued, std::optional<qint64> session)
     : m_collection(db)
     , m_history(db)
+    , m_inbox(db)
+    , m_corrections(db)
+    , m_corrected(!m_corrections.isEmpty())
     , m_governor(governor)
     , m_queued(std::move(queued))
     , m_session(session)
@@ -25,9 +28,51 @@ void ResultAnnotator::annotate(SearchResult &result)
     const std::optional<base::Clock::Duration> backoff = m_governor.peerBackoff(result.hit.peer);
     result.peerBackoffMs =
         backoff ? std::chrono::duration_cast<std::chrono::milliseconds>(*backoff).count() : qint64{0};
+    correct(result);
     markQueued(result);
     settleUpgrade(result);
     describe(result);
+}
+
+bool ResultAnnotator::recordCorrection(storage::Database &db, const SearchResult &result, Verdict verdict, qint64 atMs)
+{
+    if (result.ownedId == 0) {
+        return false; // nothing owned to say anything about
+    }
+    return MatchCorrectionStore(db).record(CorrectionKind::SearchResult,
+                                           remoteIdentity(result.parsed, result.durationSec()),
+                                           libraryIdentity(db, result.ownedId, result.ownedSource), verdict, atMs);
+}
+
+void ResultAnnotator::correct(SearchResult &result)
+{
+    // Without a verdict anywhere, the matcher's ownership stands. With one, ownership is worked out again from what
+    // the matcher found, every pass, so a verdict given since the last one applies at once.
+    if (!m_corrected || result.candidates.isEmpty()) {
+        return;
+    }
+    const TrackIdentity remote = remoteIdentity(result.parsed, result.durationSec());
+    settleOwnership(result, [this, &remote](quint64 id, match::Source source) {
+        return m_corrections.verdict(CorrectionKind::SearchResult, remote, identityOf(id, source));
+    });
+}
+
+TrackIdentity ResultAnnotator::identityOf(quint64 id, match::Source source)
+{
+    const std::pair<quint64, int> key{id, static_cast<int>(source)};
+    if (const auto found = m_identities.constFind(key); found != m_identities.cend()) {
+        return *found;
+    }
+    TrackIdentity identity;
+    if (source == match::Source::Inbox) {
+        if (const std::optional<library::InboxItem> item = m_inbox.find(static_cast<qint64>(id))) {
+            identity = inboxIdentity(*item);
+        }
+    } else if (const std::optional<CollectionFile> file = fileOf(id)) {
+        identity = collectionIdentity(file->file);
+    }
+    m_identities.insert(key, identity);
+    return identity;
 }
 
 void ResultAnnotator::markQueued(SearchResult &result) const

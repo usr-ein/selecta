@@ -191,40 +191,82 @@ void matchResults(QList<SearchResult> &results, const std::shared_ptr<const matc
 {
     const match::Matcher matcher(index);
     for (SearchResult &result : results) {
-        result.ownership = Ownership::None;
-        result.ownedId = 0;
         result.historyIds.clear();
+        result.candidates.clear();
         result.ownershipDetail.clear();
-        if (!result.isAudio() || !index) {
+        if (result.isAudio() && index) {
+            const match::RemoteFile file{.peer = result.hit.peer,
+                                         .path = result.path,
+                                         .size = result.hit.size,
+                                         .attributes = remoteAttributesOf(result.hit)};
+            const match::MatchResult found = matcher.match(result.parsed, file);
+            result.historyIds = found.history;
+            for (const match::RecordMatch *record : {&found.collection, &found.inbox, &found.otherVersion}) {
+                if (record->isSet()) {
+                    result.candidates.append({record->id, record->source, record->tier, record->relation});
+                }
+            }
+        }
+        settleOwnership(result);
+    }
+}
+
+void settleOwnership(SearchResult &result, const CandidateVerdict &verdictOf)
+{
+    result.ownership = Ownership::None;
+    result.ownedId = 0;
+    result.ownedSource = match::Source::Collection;
+    // The candidates as the user sees them: one set aside is gone, one confirmed is a sure match of the same track.
+    QList<OwnedCandidate> candidates;
+    for (const OwnedCandidate &candidate : std::as_const(result.candidates)) {
+        const std::optional<Verdict> verdict = verdictOf ? verdictOf(candidate.id, candidate.source) : std::nullopt;
+        if (verdict == Verdict::Different) {
             continue;
         }
-        const match::RemoteFile file{.peer = result.hit.peer,
-                                     .path = result.path,
-                                     .size = result.hit.size,
-                                     .attributes = remoteAttributesOf(result.hit)};
-        const match::MatchResult found = matcher.match(result.parsed, file);
-        result.historyIds = found.history;
-        if (found.collection.isSet()) {
-            result.ownedId = found.collection.id;
-            result.ownedSource = match::Source::Collection;
-            // Only a sure match claims more than "likely": an unclear version may be another track to a DJ.
-            if (found.collection.tier != match::Tier::Exact) {
-                result.ownership = Ownership::LikelyInCollection;
-            } else if (found.collection.relation == match::Relation::Upgrade) {
-                result.ownership = Ownership::Upgrade;
-            } else {
-                result.ownership = Ownership::InCollection;
+        OwnedCandidate seen = candidate;
+        if (verdict == Verdict::Same) {
+            seen.tier = match::Tier::Exact;
+            if (seen.relation == match::Relation::OtherVersion) {
+                seen.relation = match::Relation::Same;
             }
-        } else if (found.inbox.isSet()) {
-            result.ownedId = found.inbox.id;
-            result.ownedSource = match::Source::Inbox;
-            result.ownership = Ownership::InInbox;
-        } else if (!found.history.isEmpty()) {
-            result.ownership = Ownership::DownloadedBefore; // the engine tells this session's downloads apart
-        } else if (found.otherVersion.isSet()) {
-            result.ownedId = found.otherVersion.id;
-            result.ownedSource = found.otherVersion.source;
-            result.ownership = Ownership::OtherVersion;
+        }
+        candidates.append(seen);
+    }
+    const auto take = [&result](quint64 id, match::Source source, Ownership ownership) {
+        result.ownership = ownership;
+        result.ownedId = id;
+        result.ownedSource = source;
+    };
+    const auto first = [&candidates](match::Source source) -> const OwnedCandidate * {
+        for (const OwnedCandidate &candidate : std::as_const(candidates)) {
+            if (candidate.source == source && candidate.relation != match::Relation::OtherVersion) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    };
+    if (const OwnedCandidate *collection = first(match::Source::Collection)) {
+        // Only a sure match claims more than "likely": an unclear version may be another track to a DJ.
+        if (collection->tier != match::Tier::Exact) {
+            take(collection->id, collection->source, Ownership::LikelyInCollection);
+        } else {
+            take(collection->id, collection->source,
+                 collection->relation == match::Relation::Upgrade ? Ownership::Upgrade : Ownership::InCollection);
+        }
+        return;
+    }
+    if (const OwnedCandidate *inbox = first(match::Source::Inbox)) {
+        take(inbox->id, inbox->source, Ownership::InInbox);
+        return;
+    }
+    if (!result.historyIds.isEmpty()) {
+        result.ownership = Ownership::DownloadedBefore; // the engine tells this session's downloads apart
+        return;
+    }
+    for (const OwnedCandidate &candidate : std::as_const(candidates)) {
+        if (candidate.relation == match::Relation::OtherVersion) {
+            take(candidate.id, candidate.source, Ownership::OtherVersion);
+            return;
         }
     }
 }

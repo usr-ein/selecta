@@ -63,6 +63,29 @@ AlbumDownload read(const Statement &row)
     return album;
 }
 
+const QString kFlagColumns = u"id, album, album_item, single_item, single_path, single, summary, created_at, "
+                             "single_key, single_ms, track_key, track_ms"_s;
+
+SupersedeFlag readFlag(const Statement &query)
+{
+    SupersedeFlag flag;
+    flag.id = query.int64(0);
+    flag.album = query.text(1);
+    if (!query.isNull(2)) {
+        flag.albumItem = query.int64(2);
+    }
+    if (!query.isNull(3)) {
+        flag.singleItem = query.int64(3);
+    }
+    flag.singlePath = query.text(4);
+    flag.single = query.text(5);
+    flag.summary = query.text(6);
+    flag.createdAt = query.int64(7);
+    flag.singleTrack = {query.text(8), query.int64(9)};
+    flag.albumTrack = {query.text(10), query.int64(11)};
+    return flag;
+}
+
 } // namespace
 
 QString AlbumDownload::folderName() const
@@ -162,7 +185,8 @@ std::optional<qint64> SupersedeFlagStore::add(const SupersedeFlag &flag)
         return existing.int64(0);
     }
     Statement insert = m_db.prepare(u"INSERT INTO supersede_flags (album, album_item, single_item, single_path, "
-                                    "single, summary, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);");
+                                    "single, summary, created_at, single_key, single_ms, track_key, track_ms) "
+                                    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11);");
     if (!insert.isValid()) {
         return std::nullopt;
     }
@@ -183,6 +207,8 @@ std::optional<qint64> SupersedeFlagStore::add(const SupersedeFlag &flag)
         insert.bind(4, flag.singlePath);
     }
     insert.bind(5, flag.single).bind(6, flag.summary).bind(7, flag.createdAt);
+    insert.bind(8, flag.singleTrack.key).bind(9, flag.singleTrack.durationMs);
+    insert.bind(10, flag.albumTrack.key).bind(11, flag.albumTrack.durationMs);
     if (!insert.run()) {
         return std::nullopt;
     }
@@ -192,25 +218,32 @@ std::optional<qint64> SupersedeFlagStore::add(const SupersedeFlag &flag)
 QList<SupersedeFlag> SupersedeFlagStore::all()
 {
     QList<SupersedeFlag> flags;
-    Statement query = m_db.prepare(u"SELECT id, album, album_item, single_item, single_path, single, summary, "
-                                   "created_at FROM supersede_flags ORDER BY created_at DESC, id DESC;");
+    Statement query =
+        m_db.prepare(u"SELECT %1 FROM supersede_flags ORDER BY created_at DESC, id DESC;"_s.arg(kFlagColumns));
     while (query.isValid() && query.step() == Statement::Step::Row) {
-        SupersedeFlag flag;
-        flag.id = query.int64(0);
-        flag.album = query.text(1);
-        if (!query.isNull(2)) {
-            flag.albumItem = query.int64(2);
-        }
-        if (!query.isNull(3)) {
-            flag.singleItem = query.int64(3);
-        }
-        flag.singlePath = query.text(4);
-        flag.single = query.text(5);
-        flag.summary = query.text(6);
-        flag.createdAt = query.int64(7);
-        flags.append(flag);
+        flags.append(readFlag(query));
     }
     return flags;
+}
+
+std::optional<SupersedeFlag> SupersedeFlagStore::find(qint64 id)
+{
+    Statement query = m_db.prepare(u"SELECT %1 FROM supersede_flags WHERE id = ?1;"_s.arg(kFlagColumns));
+    if (query.isValid() && query.bind(1, id).step() == Statement::Step::Row) {
+        return readFlag(query);
+    }
+    return std::nullopt;
+}
+
+QHash<qint64, QList<qint64>> SupersedeFlagStore::idsByInboxItem()
+{
+    QHash<qint64, QList<qint64>> ids;
+    Statement query = m_db.prepare(
+        u"SELECT single_item, id FROM supersede_flags WHERE single_item IS NOT NULL ORDER BY created_at, id;");
+    while (query.isValid() && query.step() == Statement::Step::Row) {
+        ids[query.int64(0)].append(query.int64(1));
+    }
+    return ids;
 }
 
 QHash<qint64, QStringList> SupersedeFlagStore::albumsByInboxItem()

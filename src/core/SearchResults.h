@@ -2,6 +2,7 @@
 #pragma once
 
 #include "core/GetTracks.h"
+#include "core/MatchCorrections.h"
 #include "core/SearchService.h"
 #include "match/MatchIndex.h"
 #include "match/Quality.h"
@@ -13,6 +14,7 @@
 #include <QMetaType>
 #include <QString>
 
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -37,6 +39,18 @@ QString ownershipLabel(Ownership ownership);
 // and OtherVersion.
 bool isOwned(Ownership ownership);
 
+// A library record the matcher paired a result with: the best in the collection and in the Inbox (tier ≥ likely), or
+// the best other version. Kept so that the user's corrections (PRD LIB-6) can set one aside and fall back to the next.
+struct OwnedCandidate
+{
+    quint64 id = 0; // the collection file or Inbox item (match::LibraryTrack::id)
+    match::Source source = match::Source::Collection;
+    match::Tier tier = match::Tier::None;
+    match::Relation relation = match::Relation::None; // Same, Upgrade or OtherVersion
+
+    friend bool operator==(const OwnedCandidate &, const OwnedCandidate &) = default;
+};
+
 // One file of a search, with what Selecta worked out about it.
 struct SearchResult
 {
@@ -53,8 +67,9 @@ struct SearchResult
     QList<quint64> historyIds; // past downloads that are this very file
     quint64 ownedId = 0;       // the collection file or Inbox item behind the ownership (ownedSource says which)
     match::Source ownedSource = match::Source::Collection;
-    int peerFilesToday = 0;   // downloads from this peer today (FAIR-1)
-    qint64 peerBackoffMs = 0; // > 0: Selecta holds off this peer after a denial (FAIR-4)
+    QList<OwnedCandidate> candidates; // what the matcher paired it with: collection, Inbox, other version
+    int peerFilesToday = 0;           // downloads from this peer today (FAIR-1)
+    qint64 peerBackoffMs = 0;         // > 0: Selecta holds off this peer after a denial (FAIR-4)
 
     bool isAudio() const { return parsed.kind == match::FileKind::Audio; }
     int durationSec() const { return static_cast<int>(hit.attributes.duration.value_or(0)); }
@@ -88,6 +103,12 @@ QList<SearchResult> analyzeHits(const QList<SearchHit> &hits, int firstIndex,
 void scoreResults(QList<SearchResult> &results, const std::optional<match::ReleaseReference> &release);
 // Looks results up again in a new snapshot (Queued and the engine's details are left to the caller). Pure.
 void matchResults(QList<SearchResult> &results, const std::shared_ptr<const match::MatchIndex> &index);
+// The ownership a result's candidates and download history give it, in badge precedence: a sure collection match,
+// a likely one, the Inbox, a past download, another version. `verdictOf` gives the user's verdict on a candidate (PRD
+// LIB-6), by the candidate's id and source: Different sets it aside, Same makes it sure (another version included).
+// Sets ownership, ownedId and ownedSource; Queued and the engine's details are left to the caller. Pure.
+using CandidateVerdict = std::function<std::optional<Verdict>(quint64 id, match::Source source)>;
+void settleOwnership(SearchResult &result, const CandidateVerdict &verdictOf = {});
 
 } // namespace selecta::core
 

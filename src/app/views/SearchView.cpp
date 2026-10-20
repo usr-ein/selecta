@@ -239,6 +239,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
         if (folderAnchor()) {
             menu.addAction(tr("Download Folder as Album…"), this, &SearchView::downloadFolder);
         }
+        addCorrections(menu, selected);
         if (const core::SearchResult *first = m_model->result(selected.constFirst())) {
             menu.addSeparator();
             PeerMenu::addActions(menu, first->hit.peer, m_engine,
@@ -930,6 +931,50 @@ QList<int> SearchView::selectedResults() const
         }
     }
     return results;
+}
+
+void SearchView::addCorrections(QMenu &menu, const QList<int> &selected)
+{
+    // LIB-6: what the user owns is theirs to judge. Results matched with an owned track can be set apart from it, and
+    // a match Selecta isn't sure of confirmed; either is remembered.
+    QList<int> owned;
+    QList<int> unsure;
+    for (const int index : selected) {
+        const core::SearchResult *result = m_model->result(index);
+        if (!result || result->ownedId == 0) {
+            continue;
+        }
+        using core::Ownership;
+        const Ownership ownership = result->ownership;
+        bool sure = ownership == Ownership::InCollection || ownership == Ownership::Upgrade;
+        for (const core::OwnedCandidate &candidate : result->candidates) {
+            sure = sure || (ownership == Ownership::InInbox && candidate.id == result->ownedId &&
+                            candidate.source == result->ownedSource && candidate.tier == match::Tier::Exact);
+        }
+        if (sure || ownership == Ownership::LikelyInCollection || ownership == Ownership::InInbox ||
+            ownership == Ownership::OtherVersion) {
+            owned.append(index);
+            if (!sure) {
+                unsure.append(index);
+            }
+        }
+    }
+    if (owned.isEmpty() || m_searchId == 0) {
+        return;
+    }
+    menu.addSeparator();
+    menu.addAction(tr("Not What I Have"), this, [this, owned, searchId = m_searchId] {
+        for (const int index : owned) {
+            m_engine.correctSearchMatch(searchId, index, false);
+        }
+    });
+    if (!unsure.isEmpty()) {
+        menu.addAction(tr("Same as What I Have"), this, [this, unsure, searchId = m_searchId] {
+            for (const int index : unsure) {
+                m_engine.correctSearchMatch(searchId, index, true);
+            }
+        });
+    }
 }
 
 void SearchView::downloadSelected()

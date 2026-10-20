@@ -45,8 +45,9 @@ QString checkLibraryConfig(const LibraryConfig &config);
 struct InboxEntry
 {
     library::InboxItem item;
-    bool busy = false;  // being filed or trashed right now
-    QStringList alsoOn; // a single: the albums it is also on (DL-8)
+    bool busy = false;   // being filed or trashed right now
+    QStringList alsoOn;  // a single: the albums it is also on (DL-8)
+    QList<qint64> flags; // …and the supersede flags saying so (EngineHost::notTheSameTrack())
 };
 
 // An Inbox item Selecta moved to the Trash, with what it takes to put it back (Undo).

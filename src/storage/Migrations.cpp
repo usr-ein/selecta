@@ -305,6 +305,28 @@ constexpr std::array kMigrations{
         ALTER TABLE inbox_items ADD COLUMN quality_source_kbps INTEGER;
         ALTER TABLE inbox_items ADD COLUMN quality_key TEXT NOT NULL DEFAULT '';
     )sql"},
+    // The user's corrections of matches (PRD LIB-6): two tracks the matcher paired, by identity (core::TrackIdentity:
+    // match::TrackKeys::exactKey and the length), that the user says are the same track or not: a search result and an
+    // owned track, a Get tracks line and an owned track, a single and an album's track. Supersede flags keep their
+    // pair's identities so that "Not the Same Track" can be remembered.
+    Migration{17, R"sql(
+        CREATE TABLE match_corrections (
+            id         INTEGER PRIMARY KEY,
+            kind       TEXT NOT NULL CHECK (kind IN ('search', 'get', 'supersede')), -- where it was said
+            a_key      TEXT NOT NULL,                              -- the search result, the line or the single
+            a_ms       INTEGER NOT NULL DEFAULT 0 CHECK (a_ms >= 0), -- its length; 0 when unknown
+            b_key      TEXT NOT NULL,                              -- the owned track or the album's track
+            b_ms       INTEGER NOT NULL DEFAULT 0 CHECK (b_ms >= 0),
+            verdict    TEXT NOT NULL CHECK (verdict IN ('same', 'different')),
+            created_at INTEGER NOT NULL                            -- Unix time, ms
+        ) STRICT;
+        CREATE INDEX match_corrections_by_a ON match_corrections(a_key);
+        CREATE INDEX match_corrections_by_b ON match_corrections(b_key);
+        ALTER TABLE supersede_flags ADD COLUMN single_key TEXT NOT NULL DEFAULT '';
+        ALTER TABLE supersede_flags ADD COLUMN single_ms INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE supersede_flags ADD COLUMN track_key TEXT NOT NULL DEFAULT '';
+        ALTER TABLE supersede_flags ADD COLUMN track_ms INTEGER NOT NULL DEFAULT 0;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

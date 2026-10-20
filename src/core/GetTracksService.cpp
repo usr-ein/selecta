@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/GetTracksService.h"
 
+#include "core/MatchCorrections.h"
 #include "core/SearchService.h"
 #include "core/TransferService.h"
 #include "match/Matcher.h"
@@ -18,6 +19,25 @@ namespace selecta::core {
 namespace {
 
 Q_LOGGING_CATEGORY(lcGetTracks, "selecta.core.gettracks")
+
+// What a line is looked up as in the library: its release, else what was typed.
+match::LocalTrackQuery ownershipQuery(const GetLine &line)
+{
+    match::LocalTrackQuery query;
+    query.artist = line.release ? line.release->artist() : line.artist;
+    query.title = line.release ? line.release->title : line.title;
+    query.album = line.release ? line.release->album : QString();
+    query.durationMs =
+        line.release && line.release->durationMs ? *line.release->durationMs : line.durationHintMs.value_or(0);
+    return query;
+}
+
+// The line's track as corrections know it (LIB-6).
+TrackIdentity lineIdentity(const GetLine &line)
+{
+    const match::LocalTrackQuery query = ownershipQuery(line);
+    return trackIdentity(query.artist, query.title, query.durationMs);
+}
 
 using ReleaseState = GetLine::ReleaseState;
 
@@ -729,36 +749,14 @@ bool GetTracksService::checkOwnership(GetLine &line)
         line.findState == FindState::Searching) {
         return false;
     }
-    match::LocalTrackQuery query;
-    query.artist = line.release ? line.release->artist() : line.artist;
-    query.title = line.release ? line.release->title : line.title;
-    query.album = line.release ? line.release->album : QString();
-    query.durationMs =
-        line.release && line.release->durationMs ? *line.release->durationMs : line.durationHintMs.value_or(0);
-    if (query.title.isEmpty()) {
-        return false;
-    }
-    const QList<match::RecordMatch> matches = match::Matcher(m_index).matchLocal(query, 8);
-    const auto owned = [&matches](match::Source source) -> const match::RecordMatch * {
-        for (const match::RecordMatch &candidate : matches) {
-            const bool same =
-                candidate.relation == match::Relation::Same || candidate.relation == match::Relation::Upgrade;
-            if (candidate.source == source && same && candidate.tier != match::Tier::None) {
-                return &candidate;
-            }
-        }
-        return nullptr;
-    };
-    const match::RecordMatch *inCollection = owned(match::Source::Collection);
-    const match::RecordMatch *inInbox = inCollection ? nullptr : owned(match::Source::Inbox);
-    if (const match::RecordMatch *found = inCollection ? inCollection : inInbox) {
+    if (const std::optional<OwnedCopy> copy = ownedCopy(line)) {
+        const bool inCollection = copy->source == match::Source::Collection;
         const FindState state = inCollection ? FindState::Owned : FindState::InInbox;
-        const bool likely = found->tier == match::Tier::Likely;
         QString message;
         if (inCollection) {
-            message = likely ? tr("Probably in your collection already") : tr("In your collection already");
+            message = copy->sure ? tr("In your collection already") : tr("Probably in your collection already");
         } else {
-            message = likely ? tr("Probably in your Inbox already") : tr("In your Inbox already");
+            message = copy->sure ? tr("In your Inbox already") : tr("Probably in your Inbox already");
         }
         if (line.findState == state && line.message == message && !line.ticked) {
             return false;
@@ -769,12 +767,89 @@ bool GetTracksService::checkOwnership(GetLine &line)
         return true;
     }
     if (line.findState == FindState::Owned || line.findState == FindState::InInbox) {
-        // The copy went away (deleted, filed elsewhere, a folder removed from Settings): find it again.
+        // The copy went away (deleted, filed elsewhere, a folder removed from Settings, or the user said it's another
+        // track): find it again.
         line.findState = line.best ? FindState::Ready : FindState::Idle;
         line.message.clear();
         return true;
     }
     return false;
+}
+
+std::optional<GetTracksService::OwnedCopy> GetTracksService::ownedCopy(const GetLine &line)
+{
+    const match::LocalTrackQuery query = ownershipQuery(line);
+    if (!m_index || query.title.isEmpty()) {
+        return std::nullopt;
+    }
+    const QList<match::RecordMatch> matches = match::Matcher(m_index).matchLocal(query, 8);
+    // LIB-6: the user's verdicts on this track and a copy (another version included, when they said it's the same).
+    MatchCorrectionStore corrections(m_db);
+    const bool corrected = !corrections.isEmpty();
+    const TrackIdentity track = lineIdentity(line);
+    const auto owned = [&](match::Source source) -> std::optional<OwnedCopy> {
+        for (const match::RecordMatch &candidate : matches) {
+            if (candidate.source != source || candidate.tier == match::Tier::None) {
+                continue;
+            }
+            const std::optional<Verdict> verdict =
+                corrected ? corrections.verdict(CorrectionKind::GetLine, track,
+                                                libraryIdentity(m_db, candidate.id, candidate.source))
+                          : std::nullopt;
+            const bool same =
+                candidate.relation == match::Relation::Same || candidate.relation == match::Relation::Upgrade;
+            if (verdict == Verdict::Different || (!same && verdict != Verdict::Same)) {
+                continue;
+            }
+            return OwnedCopy{candidate.id, candidate.source,
+                             verdict == Verdict::Same || candidate.tier == match::Tier::Exact};
+        }
+        return std::nullopt;
+    };
+    if (std::optional<OwnedCopy> copy = owned(match::Source::Collection)) {
+        return copy;
+    }
+    return owned(match::Source::Inbox);
+}
+
+void GetTracksService::notOwned(const QList<qint64> &ids)
+{
+    using FindState = GetLine::FindState;
+    QList<qint64> toFind;
+    for (const qint64 id : ids) {
+        GetLine *line = lineWithId(id);
+        if (!line || (line->findState != FindState::Owned && line->findState != FindState::InInbox)) {
+            continue;
+        }
+        const std::optional<OwnedCopy> copy = ownedCopy(*line);
+        if (!copy) {
+            continue;
+        }
+        if (!MatchCorrectionStore(m_db).record(CorrectionKind::GetLine, lineIdentity(*line),
+                                               libraryIdentity(m_db, copy->id, copy->source), Verdict::Different,
+                                               m_now())) {
+            qCWarning(lcGetTracks) << "couldn't remember the correction of line" << id << ':' << m_db.lastError();
+            continue;
+        }
+        if (checkOwnership(*line)) {
+            store(*line);
+        }
+        if (line->findState != FindState::Owned && line->findState != FindState::InInbox) {
+            toFind.append(id);
+        }
+    }
+    if (!toFind.isEmpty()) {
+        find(toFind);
+    }
+}
+
+void GetTracksService::recheckOwnership()
+{
+    for (GetLine &line : m_lines) {
+        if (checkOwnership(line)) {
+            store(line);
+        }
+    }
 }
 
 GetLine *GetTracksService::lineWithId(qint64 id)

@@ -90,6 +90,8 @@ public:
 
     void setLibraryIndex(std::shared_ptr<const match::MatchIndex> index);
     void setAnnotate(Annotate annotate) { m_annotate = std::move(annotate); }
+    // Annotates every open browse's results again (after the user corrected a match, LIB-6): resultsReset() for each.
+    void refreshAnnotations();
     void setResolver(ResolveFunction resolve) { m_resolve = std::move(resolve); }
     void setDownloads(Enqueue enqueue, EnqueueAlbum enqueueAlbum);
 

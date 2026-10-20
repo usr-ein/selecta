@@ -23,6 +23,7 @@ qt_add_library(selecta_core STATIC
     InboxRetag.h InboxRetag.cpp
     InboxService.h InboxService.cpp
     ManualSearchService.h ManualSearchService.cpp
+    MatchCorrections.h MatchCorrections.cpp
     MetaServices.h MetaServices.cpp
     NetworkService.h NetworkService.cpp
     OwnRelease.h OwnRelease.cpp

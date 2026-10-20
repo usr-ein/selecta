@@ -79,6 +79,7 @@ if(SELECTA_WITH_MEDIA)
             core/InboxRetagTest.cpp
             core/InboxServiceTest.cpp
             core/ManualSearchServiceTest.cpp
+            core/MatchCorrectionsTest.cpp
             core/MetaServicesTest.cpp
             core/NetworkServiceTest.cpp
             core/PreviewCacheTest.cpp

@@ -7,6 +7,7 @@
 #include "core/ActivityLog.h"
 #include "core/CollectionStore.h"
 #include "core/InboxService.h"
+#include "core/MatchCorrections.h"
 #include "core/NetworkService.h"
 #include "core/TransferService.h"
 #include "fixtures/FakePeer.h"
@@ -121,7 +122,13 @@ protected:
         ASSERT_TRUE(QDir().mkpath(library.inboxRoot));
         ASSERT_TRUE(QDir().mkpath(library.collectionRoots.constFirst()));
         inbox = std::make_unique<selecta::core::InboxService>(db, library, trash());
+        makeAlbums();
+    }
 
+    // The album service, as at a launch.
+    void makeAlbums()
+    {
+        albums.reset();
         AlbumService::Options options;
         options.stagingDir = dir.filePath(u"staging"_s);
         options.encodedBy = u"Selecta 9.9.9"_s;
@@ -135,6 +142,18 @@ protected:
                          &AlbumService::downloadChanged);
         QObject::connect(inbox.get(), &selecta::core::InboxService::trashed, albums.get(),
                          &AlbumService::inboxItemTrashed);
+    }
+
+    // Downloads vinyl_ghost's album and returns what its arrival reported.
+    std::optional<AlbumReport> arriveAlbum(const FakePeer &peer)
+    {
+        QSignalSpy reported(albums.get(), &AlbumService::reported);
+        const std::optional<qint64> id = albums->download(peer.username(), albumFolder(), {}, neonRain());
+        if (!id || !finishes(*id) || !waitFor([&] { return !reported.isEmpty(); })) {
+            ADD_FAILURE() << "the album didn't arrive";
+            return std::nullopt;
+        }
+        return reported.at(0).at(0).value<AlbumReport>();
     }
 
     void TearDown() override
@@ -545,6 +564,8 @@ TEST(SupersedeFlagStore, KeepsOneFlagPerPairAndDropsItWithTheSingle)
     flag.singleItem = item;
     flag.single = u"Okuma Drift – Neon Rain"_s;
     flag.createdAt = 1000;
+    flag.singleTrack = selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000);
+    flag.albumTrack = selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain (Album Version)"_s, 380'000);
     const std::optional<qint64> first = store.add(flag);
     ASSERT_TRUE(first.has_value());
     EXPECT_EQ(store.add(flag), first); // the same pair again
@@ -560,9 +581,88 @@ TEST(SupersedeFlagStore, KeepsOneFlagPerPairAndDropsItWithTheSingle)
     EXPECT_EQ(store.all().size(), 2);
     EXPECT_EQ(store.all().constFirst().id, *second); // newest first
     EXPECT_EQ(store.albumsByInboxItem().value(*item), QStringList{u"Night Signals"_s});
+    EXPECT_EQ(store.idsByInboxItem().value(*item), QList<qint64>{*first});
+    // The pair's identities, for "Not the Same Track" (LIB-6); none on a flag that didn't know them.
+    const std::optional<selecta::core::SupersedeFlag> found = store.find(*first);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->singleTrack, flag.singleTrack);
+    EXPECT_EQ(found->albumTrack, flag.albumTrack);
+    EXPECT_FALSE(store.find(*second)->albumTrack.isValid());
+    EXPECT_FALSE(store.find(*second + 100).has_value());
 
     ASSERT_TRUE(selecta::library::InboxStore(db).remove(*item));
     EXPECT_EQ(store.all().size(), 1); // the Inbox single's flag went with it
     EXPECT_TRUE(store.remove(*second));
     EXPECT_TRUE(store.all().isEmpty());
+}
+
+// LIB-6: "Not the Same Track" on a flag is remembered: after a restart, a rescan and the album arriving again, the
+// pair is never flagged again.
+TEST_F(AlbumServiceTest, NotTheSameTrackIsNeverFlaggedAgain)
+{
+    const QString filed = QDir(dir.filePath(u"Collection/Singles"_s)).filePath(u"Okuma Drift - Neon Rain.mp3"_s);
+    ASSERT_TRUE(writeFile(filed, "filed"));
+    selecta::collection::ScannedFile file;
+    file.file.path = filed;
+    file.file.size = 5;
+    file.artist = u"Okuma Drift"_s;
+    file.title = u"Neon Rain"_s;
+    file.durationMs = 3000;
+    file.quality.codec = selecta::match::Codec::Mp3;
+    file.quality.bitrateKbps = 320;
+    ASSERT_TRUE(selecta::core::CollectionStore(db).apply({file}, {}, {}));
+    const auto peer = ghost();
+    const std::optional<AlbumReport> first = arriveAlbum(*peer);
+    ASSERT_TRUE(first.has_value());
+    ASSERT_EQ(first->flagged, QStringList{u"Okuma Drift – Neon Rain"_s});
+
+    // The flag knows its pair; what Engine::notTheSameTrack() does with it.
+    const QList<selecta::core::SupersedeFlag> flags = selecta::core::SupersedeFlagStore(db).all();
+    ASSERT_EQ(flags.size(), 1);
+    const selecta::core::SupersedeFlag &flag = flags.constFirst();
+    EXPECT_EQ(flag.singleTrack, selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 3000));
+    ASSERT_TRUE(flag.albumTrack.isValid());
+    ASSERT_EQ(selecta::core::SupersedeFlagStore(db).find(flag.id)->albumTrack, flag.albumTrack);
+    ASSERT_TRUE(selecta::core::MatchCorrectionStore(db).record(selecta::core::CorrectionKind::Supersede,
+                                                               flag.singleTrack, flag.albumTrack,
+                                                               selecta::core::Verdict::Different, now));
+    ASSERT_TRUE(selecta::core::SupersedeFlagStore(db).remove(flag.id));
+
+    // A restart, a rescan that reads the single again, and the album arriving once more (the first one trashed).
+    inbox->trash({inboxItems(InboxItem::Kind::Album).constFirst().id});
+    ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Album).isEmpty(); }));
+    makeAlbums();
+    file.file.size = 6;
+    ASSERT_TRUE(selecta::core::CollectionStore(db).apply({}, {file}, {}));
+    const std::optional<AlbumReport> again = arriveAlbum(*peer);
+    ASSERT_TRUE(again.has_value());
+    EXPECT_TRUE(again->flagged.isEmpty());
+    EXPECT_TRUE(again->trashed.isEmpty());
+    EXPECT_TRUE(selecta::core::SupersedeFlagStore(db).all().isEmpty());
+    EXPECT_TRUE(QFileInfo::exists(filed));
+    bool said = false;
+    const QList<selecta::core::ActivityEntry> recent = selecta::core::ActivityLog::recent(db, 50);
+    for (const selecta::core::ActivityEntry &entry : recent) {
+        said = said || (entry.operation == u"supersede"_s && entry.outcome == u"corrected"_s);
+    }
+    EXPECT_TRUE(said) << "the activity log says why";
+}
+
+// A single in the Inbox the user said isn't the album's track is neither trashed nor flagged.
+TEST_F(AlbumServiceTest, ACorrectedInboxSingleStays)
+{
+    const qint64 single = inboxSingle(u"Neon Rain"_s, 3000);
+    ASSERT_GT(single, 0);
+    // Same name, same length, another track (a re-recording): what the user said about this pair.
+    ASSERT_TRUE(selecta::core::MatchCorrectionStore(db).record(
+        selecta::core::CorrectionKind::Supersede, selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 3000),
+        selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 3000), selecta::core::Verdict::Different, now));
+    const auto peer = ghost();
+    const std::optional<AlbumReport> report = arriveAlbum(*peer);
+    ASSERT_TRUE(report.has_value());
+    EXPECT_TRUE(report->trashed.isEmpty());
+    EXPECT_TRUE(report->flagged.isEmpty());
+    ASSERT_EQ(inboxItems(InboxItem::Kind::Single).size(), 1);
+    EXPECT_EQ(inboxItems(InboxItem::Kind::Single).constFirst().id, single);
+    EXPECT_TRUE(QFileInfo::exists(dir.filePath(u"Inbox/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s)));
 }

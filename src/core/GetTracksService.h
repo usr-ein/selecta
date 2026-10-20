@@ -104,8 +104,14 @@ public:
 
     // --- what the user owns (BATCH-3, DL-11) ---
     // The collection, Inbox and history snapshot. Lines found in the collection become "You have it", lines in the
-    // Inbox "In your Inbox", and both are unticked; a line whose copy went away goes back to be found.
+    // Inbox "In your Inbox", and both are unticked; a line whose copy went away goes back to be found. Copies the user
+    // said aren't the line's track don't count (LIB-6).
     void setLibraryIndex(std::shared_ptr<const match::MatchIndex> index);
+    // LIB-6, "Not What I Have, Find It": these owned lines aren't the copy they were matched with. The pair is
+    // remembered (match_corrections); a line with no other copy goes back to be found, and is searched for.
+    void notOwned(const QList<qint64> &ids);
+    // Checks every line's ownership again (after a correction elsewhere).
+    void recheckOwnership();
 
     QList<GetLine> lines() const { return m_lines; }
     int resolvingCount() const { return static_cast<int>(m_resolving.size()); }
@@ -124,6 +130,15 @@ private:
     GetLine *lineWithId(qint64 id);
     void startDownload(GetLine &line);
     bool checkOwnership(GetLine &line);
+    struct OwnedCopy
+    {
+        quint64 id = 0;
+        match::Source source = match::Source::Collection;
+        bool sure = false; // the matcher is sure, or the user said so
+    };
+    // The copy checkOwnership() takes: the first collection copy at tier ≥ likely, else the first Inbox copy,
+    // skipping copies the user said aren't the line's track.
+    std::optional<OwnedCopy> ownedCopy(const GetLine &line);
     bool tryAlternative(GetLine &line, const QString &reason);
     void cancelDownloadOf(const GetLine &line);
 

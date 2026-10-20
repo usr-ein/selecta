@@ -4,6 +4,7 @@
 #include "base/Clock.h"
 #include "base/Version.h"
 #include "core/GovernorStore.h"
+#include "core/MatchCorrections.h"
 #include "core/ReleaseJson.h"
 #include "core/ResultAnnotator.h"
 #include "governor/Limits.h"
@@ -506,6 +507,62 @@ void Engine::refreshSupersedeFlags()
     if (m_db) {
         Q_EMIT supersedeFlagsChanged(SupersedeFlagStore(*m_db).all());
     }
+}
+
+void Engine::correctSearchMatch(qint64 searchId, int index, bool same)
+{
+    if (!m_started) {
+        return;
+    }
+    const std::optional<SearchResult> result = m_manualSearch->result(searchId, index);
+    if (!result) {
+        return;
+    }
+    if (!ResultAnnotator::recordCorrection(*m_db, *result, same ? Verdict::Same : Verdict::Different,
+                                           m_options.wallClock())) {
+        qCWarning(lcEngine) << "couldn't remember the correction of" << result->path << ':' << m_db->lastError();
+        return;
+    }
+    refreshCorrections();
+}
+
+void Engine::notOwnedFindTracks(const QList<qint64> &ids)
+{
+    if (m_started) {
+        m_getTracks->notOwned(ids);
+        refreshCorrections();
+    }
+}
+
+void Engine::notTheSameTrack(qint64 flagId)
+{
+    if (!m_db) {
+        return;
+    }
+    SupersedeFlagStore flags(*m_db);
+    const std::optional<SupersedeFlag> flag = flags.find(flagId);
+    if (!flag) {
+        return;
+    }
+    // Flags from before LIB-6 don't know their album track: they can only go.
+    if (flag->singleTrack.isValid() && flag->albumTrack.isValid() &&
+        !MatchCorrectionStore(*m_db).record(CorrectionKind::Supersede, flag->singleTrack, flag->albumTrack,
+                                            Verdict::Different, m_options.wallClock())) {
+        qCWarning(lcEngine) << "couldn't remember that" << flag->single << "isn't on" << flag->album << ':'
+                            << m_db->lastError();
+        return;
+    }
+    dismissSupersedeFlag(flagId); // a supersede verdict holds for supersede only: nothing else to look at again
+}
+
+void Engine::refreshCorrections()
+{
+    // A verdict on a wanted track and an owned copy holds for search results and Get tracks lines alike.
+    m_manualSearch->refreshAnnotations();
+    if (m_browse) {
+        m_browse->refreshAnnotations();
+    }
+    m_getTracks->recheckOwnership();
 }
 
 void Engine::dismissSupersedeFlag(qint64 id)
