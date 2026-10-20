@@ -172,14 +172,17 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: macos-26
     timeout-minutes: 180
-    # The prebuilt Qt isn't instrumented, so ThreadSanitizer can't see the locks in Qt's event queue and thread pool:
-    # every payload of a cross-thread queued call shows as a race. Until Qt is built with TSan, tsan doesn't fail the
-    # run.
+    # tsan builds Qt with ThreadSanitizer (its own triplet), so TSan sees the locks inside Qt. Until a run of it is
+    # clean, a tsan failure doesn't fail the run.
     continue-on-error: ${{ matrix.preset == 'tsan' }}
     strategy:
       fail-fast: false
       matrix:
-        preset: [asan, tsan]
+        include:
+          - preset: asan
+            triplet: arm64-osx-selecta
+          - preset: tsan
+            triplet: arm64-osx-tsan-selecta
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
@@ -192,9 +195,10 @@ jobs:
         run: brew install autoconf autoconf-archive automake libtool ccache
 
       - name: vcpkg
+        id: vcpkg
         uses: ./.github/actions/vcpkg
         with:
-          triplet: arm64-osx-selecta
+          triplet: ${{ matrix.triplet }}
 
       - name: Restore the compiler cache
         uses: actions/cache/restore@v6
@@ -203,11 +207,21 @@ jobs:
           key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-macos-${{ matrix.preset }}-
 
+      # asan uses the macOS job's dependencies; tsan's own Qt is built here the first time.
       - name: Configure
+        id: configure
         run: >-
           cmake --preset ${{ matrix.preset }} -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF
           -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Save the vcpkg binary cache
+        if: always() && steps.vcpkg.outcome == 'success'
+        uses: ./.github/actions/vcpkg-save
+        with:
+          key: ${{ steps.vcpkg.outputs.cache-key }}
+          installed: build/${{ matrix.preset }}/vcpkg_installed
+          complete: ${{ steps.configure.outcome == 'success' }}
 
       - name: The live-server switch is off
         run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/${{ matrix.preset }}/CMakeCache.txt

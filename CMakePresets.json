@@ -94,8 +94,13 @@
     {
       "name": "tsan",
       "displayName": "Debug with ThreadSanitizer",
+      "description": "Qt is built with ThreadSanitizer too (triplet arm64-osx-tsan-selecta), so TSan sees the locks inside Qt.",
       "inherits": "dev",
-      "cacheVariables": { "SELECTA_SANITIZE": "thread" }
+      "cacheVariables": {
+        "SELECTA_SANITIZE": "thread",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx-tsan-selecta",
+        "VCPKG_HOST_TRIPLET": "arm64-osx-tsan-selecta"
+      }
     },
     {
       "name": "lint",
