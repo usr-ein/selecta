@@ -25,7 +25,7 @@ using State = PortMappingStatus::State;
 
 namespace {
 
-constexpr quint16 kPort = 42234; // only a number in the requests: nothing listens on it
+constexpr quint16 kPort = 42234;                             // only a number in the requests: nothing listens on it
 constexpr std::chrono::milliseconds kQuickNatPmpWait = 50ms; // the first NAT-PMP wait where nobody answers
 
 class PortMapperTest : public ::testing::Test
