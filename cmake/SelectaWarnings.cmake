@@ -25,6 +25,12 @@ function(selecta_set_warnings target)
         -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor -Woverloaded-virtual -Wcast-align
         -Wnull-dereference -Wformat=2 -Wimplicit-fallthrough -Wmissing-declarations
         $<$<COMPILE_LANGUAGE:CXX>:-Wold-style-cast>)
+    # Clang decides these two. GCC's -Wshadow also flags constructor parameters named after the fields they set and
+    # lambda locals named like an outer variable the lambda doesn't capture; its -Wmissing-field-initializers flags
+    # designated initializers that leave the other fields to their defaults. The code does all three on purpose.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${target} PRIVATE -Wno-shadow -Wno-missing-field-initializers)
+    endif()
     if(SELECTA_WARNINGS_AS_ERRORS)
         target_compile_options(${target} PRIVATE -Werror)
     endif()
