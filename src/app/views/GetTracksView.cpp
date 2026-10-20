@@ -245,6 +245,13 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
         refresh();
     });
     connect(&m_engine, &core::EngineHost::tracksAdded, this, &GetTracksView::showAdded);
+    // The inspector's ways out (P-004): get a near miss anyway, leave a queue for another peer, find again.
+    connect(m_inspector, &GetTracksInspector::getAnywayRequested, this,
+            [this](qint64 id, const QString &peer, const QByteArray &path) { m_engine.getTrackAnyway(id, peer, path); });
+    connect(m_inspector, &GetTracksInspector::switchRequested, this,
+            [this](qint64 id, const QString &peer, const QByteArray &path) { m_engine.switchTrackPeer(id, peer, path); });
+    connect(m_inspector, &GetTracksInspector::findAgainRequested, this,
+            [this](qint64 id) { m_engine.findTracks({id}); });
     m_model->reset(m_engine.getLines());
     refresh();
 }

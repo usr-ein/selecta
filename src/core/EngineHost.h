@@ -76,6 +76,11 @@ public:
     // Downloads the chosen file of these lines (every ticked line when empty) into the Inbox, converted and tagged.
     void downloadTracks(const QList<qint64> &ids = {});
     void cancelTrackDownloads(const QList<qint64> &ids);
+    // "Get anyway" (P-004): downloads a near miss of a line not found, below the quality wanted.
+    void getTrackAnyway(qint64 lineId, const QString &peer, const QByteArray &remotePath);
+    // "Try another peer" (P-004): moves a line waiting in a peer's queue to another peer's file; an empty peer takes
+    // the best other one (GetTracksService::switchPeer).
+    void switchTrackPeer(qint64 lineId, const QString &peer = {}, const QByteArray &remotePath = {});
     // Previews a line's chosen file while it arrives (previewStarted / previewRefused); stops the one playing.
     void previewTrack(qint64 lineId, PreviewSource source = PreviewSource::Automatic);
     void stopPreview();

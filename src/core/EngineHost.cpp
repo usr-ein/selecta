@@ -957,6 +957,24 @@ void EngineHost::cancelTrackDownloads(const QList<qint64> &ids)
     });
 }
 
+void EngineHost::getTrackAnyway(qint64 lineId, const QString &peer, const QByteArray &remotePath)
+{
+    post([lineId, peer, remotePath](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().getAnyway(lineId, peer, remotePath);
+        }
+    });
+}
+
+void EngineHost::switchTrackPeer(qint64 lineId, const QString &peer, const QByteArray &remotePath)
+{
+    post([lineId, peer, remotePath](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().switchPeer(lineId, peer, remotePath);
+        }
+    });
+}
+
 void EngineHost::findTracks(const QList<qint64> &ids)
 {
     post([ids](Engine &engine) {
