@@ -17,13 +17,12 @@
 #include <QXmlStreamReader>
 #include <QtEndian>
 
-
 namespace selecta::core::testing {
 
 using namespace Qt::StringLiterals;
 
 // A NAT-PMP gateway (RFC 6886) on 127.0.0.1.
-class FakeNatPmp : public QObject
+class FakeNatPmp
 {
 public:
     struct Request
@@ -37,8 +36,14 @@ public:
     FakeNatPmp()
     {
         m_socket.bind(QHostAddress::LocalHost, 0);
-        connect(&m_socket, &QUdpSocket::readyRead, this, [this] { answer(); });
+        QObject::connect(&m_socket, &QUdpSocket::readyRead, &m_socket, [this] { answer(); });
     }
+
+    ~FakeNatPmp() = default;
+    FakeNatPmp(const FakeNatPmp &) = delete;
+    FakeNatPmp &operator=(const FakeNatPmp &) = delete;
+    FakeNatPmp(FakeNatPmp &&) = delete;
+    FakeNatPmp &operator=(FakeNatPmp &&) = delete;
 
     quint16 port() const { return m_socket.localPort(); }
     int mapRequests() const
@@ -128,7 +133,7 @@ private:
 };
 
 // An Internet Gateway Device: SSDP answers on a loopback UDP port and an HTTP server for its description and SOAP.
-class FakeIgd : public QObject
+class FakeIgd
 {
 public:
     struct Call
@@ -140,12 +145,12 @@ public:
     FakeIgd()
     {
         m_ssdp.bind(QHostAddress::LocalHost, 0);
-        connect(&m_ssdp, &QUdpSocket::readyRead, this, [this] { answerSearch(); });
+        QObject::connect(&m_ssdp, &QUdpSocket::readyRead, &m_ssdp, [this] { answerSearch(); });
         m_http.listen(QHostAddress::LocalHost, 0);
-        connect(&m_http, &QTcpServer::newConnection, this, [this] {
+        QObject::connect(&m_http, &QTcpServer::newConnection, &m_http, [this] {
             while (QTcpSocket *socket = m_http.nextPendingConnection()) {
-                connect(socket, &QTcpSocket::readyRead, this, [this, socket] { serve(socket); });
-                connect(socket, &QTcpSocket::disconnected, this, [this, socket] {
+                QObject::connect(socket, &QTcpSocket::readyRead, socket, [this, socket] { serve(socket); });
+                QObject::connect(socket, &QTcpSocket::disconnected, socket, [this, socket] {
                     m_buffers.remove(socket);
                     socket->deleteLater();
                 });
@@ -153,11 +158,11 @@ public:
         });
     }
 
-    ~FakeIgd() override
+    ~FakeIgd()
     {
         // Connections still open die with the server, after our members: they mustn't call back into us.
-        for (QTcpSocket *socket : m_http.findChildren<QTcpSocket *>()) {
-            QObject::disconnect(socket, nullptr, this, nullptr);
+        const QList<QTcpSocket *> sockets = m_http.findChildren<QTcpSocket *>();
+        for (const QTcpSocket *const socket : sockets) {
             delete socket;
         }
     }
@@ -180,12 +185,12 @@ public:
     }
 
     // Behaviour.
-    bool chunked = false;                  // sends the description in chunks
-    int addPortMappingError = 0;           // a UPnP error for every AddPortMapping (606: not authorised…)
-    bool permanentLeasesOnly = false;      // 725 for a lease other than 0
+    bool chunked = false;             // sends the description in chunks
+    int addPortMappingError = 0;      // a UPnP error for every AddPortMapping (606: not authorised…)
+    bool permanentLeasesOnly = false; // 725 for a lease other than 0
     QString externalAddress = u"203.0.113.9"_s;
-    QString locationHost;                  // the host in LOCATION; default: 127.0.0.1
-    QMap<quint16, QString> otherDevices;   // external port → another device's mapping (718 for us)
+    QString locationHost;                // the host in LOCATION; default: 127.0.0.1
+    QMap<quint16, QString> otherDevices; // external port → another device's mapping (718 for us)
 
     // What it saw and holds.
     QList<Call> calls;
@@ -221,7 +226,8 @@ private:
         const QByteArray head = buffer.left(headerEnd);
         qsizetype length = 0;
         QByteArray soapAction;
-        for (const QByteArray &line : head.split('\n')) {
+        const QList<QByteArray> lines = head.split('\n');
+        for (const QByteArray &line : lines) {
             const QByteArray lower = line.toLower();
             if (lower.startsWith("content-length:")) {
                 length = line.mid(15).trimmed().toLongLong();
@@ -280,16 +286,19 @@ private:
             } else if (otherDevices.contains(port)) {
                 fault(socket, 718, u"ConflictInMappingEntry"_s);
             } else {
-                mappings.insert(port, {args.value(u"NewInternalClient"_s), args.value(u"NewInternalPort"_s).toUShort()});
+                mappings.insert(port,
+                                {args.value(u"NewInternalClient"_s), args.value(u"NewInternalPort"_s).toUShort()});
                 ok(socket, action, {});
             }
         } else if (action == "GetSpecificPortMappingEntry"_L1) {
             if (otherDevices.contains(port)) {
-                ok(socket, action, {{u"NewInternalPort"_s, args.value(u"NewExternalPort"_s)},
-                                    {u"NewInternalClient"_s, otherDevices.value(port)}});
+                ok(socket, action,
+                   {{u"NewInternalPort"_s, args.value(u"NewExternalPort"_s)},
+                    {u"NewInternalClient"_s, otherDevices.value(port)}});
             } else if (mappings.contains(port)) {
-                ok(socket, action, {{u"NewInternalPort"_s, QString::number(mappings.value(port).second)},
-                                    {u"NewInternalClient"_s, mappings.value(port).first}});
+                ok(socket, action,
+                   {{u"NewInternalPort"_s, QString::number(mappings.value(port).second)},
+                    {u"NewInternalClient"_s, mappings.value(port).first}});
             } else {
                 fault(socket, 714, u"NoSuchEntryInArray"_s);
             }
@@ -306,8 +315,9 @@ private:
 
     static void ok(QTcpSocket *socket, const QString &action, const QList<std::pair<QString, QString>> &values)
     {
-        QString xml = u"<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">"
-                      u"<s:Body><u:%1Response xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\">"_s.arg(action);
+        QString xml =
+            u"<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\">"
+            u"<s:Body><u:%1Response xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\">"_s.arg(action);
         for (const auto &[name, value] : values) {
             xml += u"<%1>%2</%1>"_s.arg(name, value);
         }

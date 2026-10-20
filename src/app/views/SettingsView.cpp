@@ -564,7 +564,7 @@ QString SettingsView::portMappingText(const core::PortMappingStatus &mapping, qu
 {
     using State = core::PortMappingStatus::State;
     const quint16 port = mapping.internalPort != 0 ? mapping.internalPort : listenPort;
-    const QString forward = tr("Forward TCP port %1 to this Mac on your router.").arg(port);
+    QString forward = tr("Forward TCP port %1 to this Mac on your router.").arg(port);
     switch (mapping.state) {
     case State::Unavailable:
         return tr("Isolated runs leave the router alone (start with --port-mapping to use it). %1").arg(forward);
@@ -655,11 +655,13 @@ void SettingsView::setNetworkStatus(const core::NetworkStatus &status)
     }
     m_networkState->setText(text);
     m_portMappingState->setText(portMappingText(status.portMapping, m_network.listenPort));
-    m_reachability->setText(status.peersReachedUs == 1
-                                ? tr("Reachable: 1 peer connected directly.")
-                                : status.peersReachedUs > 1
-                                      ? tr("Reachable: %1 peers connected directly.").arg(status.peersReachedUs)
-                                      : tr("Reachable: not confirmed yet."));
+    QString reachable = tr("Reachable: not confirmed yet.");
+    if (status.peersReachedUs == 1) {
+        reachable = tr("Reachable: 1 peer connected directly.");
+    } else if (status.peersReachedUs > 1) {
+        reachable = tr("Reachable: %1 peers connected directly.").arg(status.peersReachedUs);
+    }
+    m_reachability->setText(reachable);
     const bool active =
         status.state == State::Online || status.state == State::Connecting || status.state == State::Reconnecting;
     m_networkConnect->setText(active ? tr("Disconnect") : tr("Connect"));

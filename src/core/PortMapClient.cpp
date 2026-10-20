@@ -10,10 +10,9 @@
 #include <QXmlStreamReader>
 #include <QtEndian>
 
-#include <natpmp.h>
-
 #include <algorithm>
 #include <array>
+#include <natpmp.h>
 
 using namespace Qt::StringLiterals;
 
@@ -60,7 +59,7 @@ std::optional<QHostAddress> hostOf(const QUrl &url)
     if (!url.isValid() || url.scheme() != "http"_L1) {
         return std::nullopt;
     }
-    const QHostAddress address(url.host());
+    QHostAddress address(url.host());
     if (address.isNull() || address.protocol() != QAbstractSocket::IPv4Protocol) {
         return std::nullopt;
     }
@@ -136,9 +135,9 @@ NatPmpTry natPmpMap(const MapRequest &request, const Endpoint &gateway, quint16 
         return result;
     }
     const auto lifetime = static_cast<quint32>(request.natPmpLifetime.count());
-    const auto answer =
-        natPmpExchange(gateway, request.bindAddress, detail::natPmpMapRequest(request.internalPort, externalPort, lifetime),
-                       kOpAnswer | kOpMapTcp, request.timing, cancel);
+    const auto answer = natPmpExchange(gateway, request.bindAddress,
+                                       detail::natPmpMapRequest(request.internalPort, externalPort, lifetime),
+                                       kOpAnswer | kOpMapTcp, request.timing, cancel);
     if (!answer || answer->internalPort != request.internalPort) {
         result.refusal = QObject::tr("The router didn't answer the NAT-PMP mapping request.");
         return result;
@@ -152,7 +151,7 @@ NatPmpTry natPmpMap(const MapRequest &request, const Endpoint &gateway, quint16 
     mapping.protocol = Protocol::NatPmp;
     mapping.internalPort = request.internalPort;
     mapping.externalPort = answer->externalPort;
-    mapping.externalAddress = external;
+    mapping.externalAddress = std::move(external);
     mapping.lifetime = std::chrono::seconds(answer->lifetime);
     mapping.gateway = gateway;
     result.mapping = mapping;
@@ -237,11 +236,11 @@ struct SoapCall
 SoapCall soap(const QUrl &controlUrl, const QString &serviceType, const QString &action,
               const QList<std::pair<QString, QString>> &arguments, const Timing &timing, const Cancel &cancel)
 {
-    const QByteArray headers = "Content-Type: text/xml; charset=\"utf-8\"\r\nSOAPAction: \""_ba +
-                               serviceType.toUtf8() + '#' + action.toUtf8() + "\"\r\n"_ba;
-    const HttpExchange exchange = httpExchange(controlUrl, "POST"_ba, headers,
-                                               detail::soapEnvelope(serviceType, action, arguments),
-                                               timing.httpTimeout, cancel);
+    const QByteArray headers = "Content-Type: text/xml; charset=\"utf-8\"\r\nSOAPAction: \""_ba + serviceType.toUtf8() +
+                               '#' + action.toUtf8() + "\"\r\n"_ba;
+    const HttpExchange exchange =
+        httpExchange(controlUrl, "POST"_ba, headers, detail::soapEnvelope(serviceType, action, arguments),
+                     timing.httpTimeout, cancel);
     SoapCall call;
     call.localAddress = exchange.localAddress;
     if (exchange.response) {
@@ -325,6 +324,9 @@ struct Igd
 // The first WAN connection service that answers, preferring one with a public address.
 std::optional<Igd> findIgd(const MapRequest &request, const Cancel &cancel)
 {
+    if (!request.ssdp) {
+        return std::nullopt;
+    }
     const QList<QUrl> locations = ssdpDiscover(*request.ssdp, request.bindAddress, request.timing.ssdpWait, cancel);
     std::optional<Igd> fallback;
     for (const QUrl &location : locations) {
@@ -389,11 +391,11 @@ UpnpTry upnpMap(const MapRequest &request, quint16 externalPort, const Cancel &c
     for (int i = 0; i < kAlternativePorts && !request.renew; ++i) {
         ports.append(static_cast<quint16>(QRandomGenerator::global()->bounded(49152, 65536))); // dynamic range
     }
-    for (qsizetype i = 0; i < ports.size(); ++i) {
+    for (const quint16 candidate : std::as_const(ports)) {
         if (cancel.load()) {
             return result;
         }
-        const QString port = QString::number(ports.at(i));
+        const QString port = QString::number(candidate);
         const auto add = [&] {
             return soap(igd.service.controlUrl, igd.service.serviceType, u"AddPortMapping"_s,
                         {{u"NewRemoteHost"_s, QString()},
@@ -419,15 +421,14 @@ UpnpTry upnpMap(const MapRequest &request, quint16 externalPort, const Cancel &c
         bool mapped = call.answer->ok;
         if (!mapped && call.answer->errorCode == kConflict) {
             // Taken: by us (a mapping left from an earlier run), or by another device.
-            const SoapCall entry = soap(igd.service.controlUrl, igd.service.serviceType,
-                                        u"GetSpecificPortMappingEntry"_s,
-                                        {{u"NewRemoteHost"_s, QString()},
-                                         {u"NewExternalPort"_s, port},
-                                         {u"NewProtocol"_s, u"TCP"_s}},
-                                        request.timing, cancel);
-            mapped = entry.answer && entry.answer->ok &&
-                     sameAddress(QHostAddress(entry.answer->values.value(u"NewInternalClient"_s)), igd.internalClient) &&
-                     entry.answer->values.value(u"NewInternalPort"_s) == internalPort;
+            const SoapCall entry =
+                soap(igd.service.controlUrl, igd.service.serviceType, u"GetSpecificPortMappingEntry"_s,
+                     {{u"NewRemoteHost"_s, QString()}, {u"NewExternalPort"_s, port}, {u"NewProtocol"_s, u"TCP"_s}},
+                     request.timing, cancel);
+            mapped =
+                entry.answer && entry.answer->ok &&
+                sameAddress(QHostAddress(entry.answer->values.value(u"NewInternalClient"_s)), igd.internalClient) &&
+                entry.answer->values.value(u"NewInternalPort"_s) == internalPort;
             if (!mapped) {
                 result.refusal = QObject::tr("Port %1 is already open on the router for another device.").arg(port);
                 continue;
@@ -440,7 +441,7 @@ UpnpTry upnpMap(const MapRequest &request, quint16 externalPort, const Cancel &c
         Mapping mapping;
         mapping.protocol = Protocol::Upnp;
         mapping.internalPort = request.internalPort;
-        mapping.externalPort = ports.at(i);
+        mapping.externalPort = candidate;
         mapping.externalAddress = igd.externalAddress;
         mapping.lifetime = lease;
         mapping.controlUrl = igd.service.controlUrl;
@@ -480,17 +481,20 @@ bool isUnroutable(const QHostAddress &address)
     if (!ok) {
         return address.isNull() || address.isLoopback() || address.isLinkLocal() || address.isPrivateUse();
     }
-    const auto in = [v4](quint32 network, int bits) { return (v4 >> (32 - bits)) == (network >> (32 - bits)); };
-    return v4 == 0 || in(0x0A000000, 8) || in(0xAC100000, 12) || in(0xC0A80000, 16) || in(0x64400000, 10) ||
-           in(0xA9FE0000, 16) || in(0x7F000000, 8);
+    const auto in = [v4](quint32 network, unsigned bits) { return (v4 >> (32U - bits)) == (network >> (32U - bits)); };
+    return v4 == 0 || in(0x0A000000, 8U) || in(0xAC100000, 12U) || in(0xC0A80000, 16U) || in(0x64400000, 10U) ||
+           in(0xA9FE0000, 16U) || in(0x7F000000, 8U);
 }
 
 MapResult mapPort(const MapRequest &request, const Cancel &cancel)
 {
     MapResult result;
-    const quint16 wanted = request.renew ? request.renew->externalPort
-                                         : (request.externalPort != 0 ? request.externalPort : request.internalPort);
-    const bool tryNatPmp = request.renew ? request.renew->protocol == Protocol::NatPmp : request.natPmpGateway.has_value();
+    quint16 wanted = request.externalPort != 0 ? request.externalPort : request.internalPort;
+    if (request.renew) {
+        wanted = request.renew->externalPort;
+    }
+    const bool tryNatPmp =
+        request.renew ? request.renew->protocol == Protocol::NatPmp : request.natPmpGateway.has_value();
     const bool tryUpnp = request.renew ? request.renew->protocol == Protocol::Upnp : request.ssdp.has_value();
     QString refusal;
     if (tryNatPmp && !cancel.load()) {
@@ -520,19 +524,18 @@ MapResult mapPort(const MapRequest &request, const Cancel &cancel)
         result.outcome = Outcome::Cancelled;
     } else if (!refusal.isEmpty()) {
         result.outcome = Outcome::Refused;
-        result.reason = refusal;
+        result.reason = std::move(refusal);
     }
     return result;
 }
 
-bool removeMapping(const Mapping &mapping, const QHostAddress &bindAddress, const Timing &timing,
-                   const Cancel &cancel)
+bool removeMapping(const Mapping &mapping, const QHostAddress &bindAddress, const Timing &timing, const Cancel &cancel)
 {
     if (mapping.protocol == Protocol::NatPmp) {
         // RFC 6886 §3.4: lifetime 0 and external port 0 delete the mapping of this internal port.
-        const auto answer = natPmpExchange(mapping.gateway, bindAddress,
-                                           detail::natPmpMapRequest(mapping.internalPort, 0, 0),
-                                           kOpAnswer | kOpMapTcp, timing, cancel);
+        const auto answer =
+            natPmpExchange(mapping.gateway, bindAddress, detail::natPmpMapRequest(mapping.internalPort, 0, 0),
+                           kOpAnswer | kOpMapTcp, timing, cancel);
         return answer && answer->result == 0;
     }
     const SoapCall call = soap(mapping.controlUrl, mapping.serviceType, u"DeletePortMapping"_s,
@@ -547,7 +550,7 @@ namespace detail {
 
 QByteArray natPmpAddressRequest()
 {
-    return QByteArray(2, '\0'); // version 0, opcode 0
+    return {2, '\0'}; // version 0, opcode 0
 }
 
 QByteArray natPmpMapRequest(quint16 internalPort, quint16 externalPort, quint32 lifetime)
@@ -627,7 +630,7 @@ std::optional<QUrl> ssdpLocation(const QByteArray &datagram, const QHostAddress 
         if (colon <= 0 || line.left(colon).trimmed().toUpper() != "LOCATION"_ba) {
             continue;
         }
-        const QUrl url(QString::fromLatin1(line.mid(colon + 1).trimmed()), QUrl::StrictMode);
+        QUrl url(QString::fromLatin1(line.mid(colon + 1).trimmed()), QUrl::StrictMode);
         const auto host = hostOf(url);
         if (!host || url.port() <= 0 || !sameAddress(*host, sender)) {
             return std::nullopt;
@@ -743,6 +746,47 @@ SoapAnswer parseSoapAnswer(int httpStatus, const QByteArray &body)
     return answer;
 }
 
+namespace {
+
+// A chunked body (RFC 9112 §7.1), every chunk size bounded by kHttpMax; trailers are ignored.
+HttpParse decodeChunked(const QByteArray &body, bool closed, HttpParse parse)
+{
+    using State = HttpParse::State;
+    QByteArray decoded;
+    qsizetype at = 0;
+    for (;;) {
+        const qsizetype lineEnd = body.indexOf("\r\n"_ba, at);
+        if (lineEnd < 0) {
+            parse.state = closed ? State::Malformed : State::Incomplete;
+            return parse;
+        }
+        QByteArray size = body.mid(at, lineEnd - at);
+        if (const qsizetype extension = size.indexOf(';'); extension >= 0) {
+            size.truncate(extension);
+        }
+        bool ok = false;
+        const qint64 length = size.trimmed().toLongLong(&ok, 16);
+        if (!ok || length < 0 || length > kHttpMax || decoded.size() + length > kHttpMax) {
+            parse.state = State::Malformed;
+            return parse;
+        }
+        at = lineEnd + 2;
+        if (length == 0) {
+            parse.response.body = std::move(decoded);
+            parse.state = State::Complete;
+            return parse;
+        }
+        if (body.size() < at + length + 2) {
+            parse.state = closed ? State::Malformed : State::Incomplete;
+            return parse;
+        }
+        decoded += body.mid(at, length);
+        at += length + 2;
+    }
+}
+
+} // namespace
+
 HttpParse parseHttpResponse(const QByteArray &raw, bool closed)
 {
     using State = HttpParse::State;
@@ -760,8 +804,7 @@ HttpParse parseHttpResponse(const QByteArray &raw, bool closed)
     const QList<QByteArray> status = lines.first().trimmed().split(' ');
     bool ok = false;
     parse.response.status = status.size() >= 2 ? status.at(1).toInt(&ok) : 0;
-    if (!status.first().startsWith("HTTP/1."_ba) || !ok || parse.response.status < 100 ||
-        parse.response.status > 599) {
+    if (!status.first().startsWith("HTTP/1."_ba) || !ok || parse.response.status < 100 || parse.response.status > 599) {
         parse.state = State::Malformed;
         return parse;
     }
@@ -785,39 +828,10 @@ HttpParse parseHttpResponse(const QByteArray &raw, bool closed)
             chunked = true;
         }
     }
-    const QByteArray body = raw.mid(headerEnd + 4);
     if (chunked) {
-        QByteArray decoded;
-        qsizetype at = 0;
-        for (;;) {
-            const qsizetype lineEnd = body.indexOf("\r\n"_ba, at);
-            if (lineEnd < 0) {
-                parse.state = closed ? State::Malformed : State::Incomplete;
-                return parse;
-            }
-            QByteArray size = body.mid(at, lineEnd - at);
-            if (const qsizetype extension = size.indexOf(';'); extension >= 0) {
-                size.truncate(extension);
-            }
-            const qint64 length = size.trimmed().toLongLong(&ok, 16);
-            if (!ok || length < 0 || length > kHttpMax) {
-                parse.state = State::Malformed;
-                return parse;
-            }
-            at = lineEnd + 2;
-            if (length == 0) {
-                parse.response.body = decoded;
-                parse.state = State::Complete; // trailers, if any, are ignored
-                return parse;
-            }
-            if (body.size() < at + length + 2) {
-                parse.state = closed ? State::Malformed : State::Incomplete;
-                return parse;
-            }
-            decoded += body.mid(at, length);
-            at += length + 2;
-        }
+        return decodeChunked(raw.mid(headerEnd + 4), closed, std::move(parse));
     }
+    const QByteArray body = raw.mid(headerEnd + 4);
     if (contentLength >= 0) {
         if (body.size() < contentLength) {
             parse.state = closed ? State::Malformed : State::Incomplete;

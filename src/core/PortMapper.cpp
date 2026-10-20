@@ -152,8 +152,8 @@ void PortMapper::startAttempt(const std::optional<Mapping> &renew)
     });
     watcher->setFuture(promise->future());
     promise->start();
-    m_pool.start([promise, request = std::move(request), gateway = m_options.gateway,
-                  natPmpPort = m_options.natPmpPort, cancel = m_cancel]() mutable {
+    m_pool.start([promise, request = std::move(request), gateway = m_options.gateway, natPmpPort = m_options.natPmpPort,
+                  cancel = m_cancel]() mutable {
         if (!request.renew && gateway) {
             if (const std::optional<QHostAddress> address = gateway()) {
                 request.natPmpGateway = portmap::Endpoint{*address, natPmpPort};

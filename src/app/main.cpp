@@ -50,7 +50,7 @@ struct Options
 {
     bool isolated = false;        // --data-dir: nothing outside that folder, not even the Keychain
     bool metadataNetwork = false; // --metadata-network: let an isolated run reach Spotify, Deezer and the rest
-    bool portMapping = false;     // --port-mapping: let an isolated run open its listening port on the router
+    bool portMapping = false;     // may open the listening port on the router: a normal run, or --port-mapping
     bool headless = false;
     bool debugServer = false;
     QString debugSocket;
@@ -85,8 +85,8 @@ Options parseOptions(const QApplication &app)
     if (parser.isSet(dataDir)) {
         paths::setRootOverride(parser.value(dataDir));
     }
-    return {parser.isSet(dataDir),   parser.isSet(metadataNetwork), parser.isSet(portMapping),
-            parser.isSet(headless),  parser.isSet(debugServer),     parser.value(debugSocket)};
+    return {parser.isSet(dataDir),  parser.isSet(metadataNetwork), !parser.isSet(dataDir) || parser.isSet(portMapping),
+            parser.isSet(headless), parser.isSet(debugServer),     parser.value(debugSocket)};
 }
 
 // Tells the user why Selecta can't start: a dialog normally, stderr when headless.
@@ -227,7 +227,7 @@ int runSelecta(int argc, char **argv)
     } else if (!options.metadataNetwork) {
         engineOptions.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // nothing leaves the machine
     } // isolated runs keep secrets in memory only
-    if (!options.isolated || options.portMapping) {
+    if (options.portMapping) {
         engineOptions.portMapping = selecta::core::PortMapper::Options{}; // NET-3; isolated runs leave the router alone
     }
     if (options.isolated) {

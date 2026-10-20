@@ -3,13 +3,18 @@
 
 #include "base/Clock.h"
 #include "core/ActivityLog.h"
+#include "core/FakeRouter.h"
 #include "governor/Governor.h"
 #include "governor/Limits.h"
 #include "meta/TokenStore.h"
+#include "slsk/Frame.h"
+#include "slsk/PeerMessages.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
 #include <QSignalSpy>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTest>
 
 #include <gtest/gtest.h>
@@ -141,4 +146,64 @@ TEST_F(NetworkServiceTest, SearchingOfflineSendsNothing)
     auto decision = governor.request(selecta::governor::Operation::Search, {.query = u"okuma drift"_s});
     ASSERT_TRUE(decision.permit.has_value());
     EXPECT_EQ(service->search(decision.cleanedQuery, std::move(*decision.permit)), 0U);
+}
+
+// --- NET-3: the port on the router, and peers that reach it ---------------------------------------------------------
+
+TEST_F(NetworkServiceTest, PortMappingIsUnavailableUnlessEnabled)
+{
+    service->start(config(u"127.0.0.1"_s, 1));
+    EXPECT_EQ(service->status().portMapping.state, selecta::core::PortMappingStatus::State::Unavailable);
+    EXPECT_EQ(service->status().peersReachedUs, 0);
+}
+
+TEST_F(NetworkServiceTest, TheListeningPortIsMappedAndPeersThatReachItAreCounted)
+{
+    using MappingState = selecta::core::PortMappingStatus::State;
+    selecta::core::testing::FakeNatPmp router;
+    selecta::core::PortMapper::Options options;
+    options.gateway = [] { return std::optional<QHostAddress>(QHostAddress(QHostAddress::LocalHost)); };
+    options.natPmpPort = router.port();
+    options.ssdp.reset();
+    options.bindAddress = QHostAddress(QHostAddress::LocalHost);
+    service->enablePortMapping(options);
+
+    quint16 listenPort = 0;
+    {
+        QTcpServer probe; // a free port for the listener
+        ASSERT_TRUE(probe.listen(QHostAddress::LocalHost, 0));
+        listenPort = probe.serverPort();
+    }
+    NetworkConfig withPort = config(u"127.0.0.1"_s, 1); // nothing listens on port 1: the session never starts
+    withPort.listenPort = listenPort;
+    service->start(withPort);
+    EXPECT_EQ(service->status().portMapping.state, MappingState::Idle); // not listening yet
+    service->setPassword(u"pw"_s);                                      // the attempt opens the listener
+    ASSERT_TRUE(settle([&] { return service->status().portMapping.state == MappingState::Mapped; }));
+    EXPECT_EQ(service->status().portMapping.internalPort, listenPort);
+    EXPECT_EQ(router.mappings.value(listenPort), listenPort);
+
+    const auto connectAs = [&](const QString &username) {
+        auto socket = std::make_unique<QTcpSocket>();
+        socket->connectToHost(QHostAddress::LocalHost, listenPort);
+        EXPECT_TRUE(socket->waitForConnected(3000));
+        socket->write(
+            selecta::slsk::frame(selecta::slsk::peerinit::PeerInit{username, selecta::slsk::ConnectionType::Peer, 0}));
+        return socket;
+    };
+    const auto alice = connectAs(u"alice"_s);
+    ASSERT_TRUE(settle([&] { return service->status().peersReachedUs == 1; }));
+    const auto aliceAgain = connectAs(u"alice"_s);
+    const auto bob = connectAs(u"bob"_s);
+    ASSERT_TRUE(settle([&] { return service->status().peersReachedUs == 2; }));
+    QTest::qWait(100);
+    EXPECT_EQ(service->status().peersReachedUs, 2); // alice counts once
+
+    // Turned off in Settings: the mapping goes, the count stays.
+    withPort.portMapping = false;
+    service->setConfig(withPort);
+    EXPECT_EQ(service->status().portMapping.state, MappingState::Off);
+    ASSERT_TRUE(settle([&] { return router.mappings.isEmpty(); }));
+    EXPECT_EQ(service->status().peersReachedUs, 2);
+    service->disconnectNow();
 }

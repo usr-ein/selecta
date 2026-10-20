@@ -10,7 +10,6 @@
 #include <QUdpSocket>
 
 #include <gtest/gtest.h>
-
 #include <memory>
 
 using namespace Qt::StringLiterals;
@@ -81,7 +80,7 @@ TEST_F(PortMapperTest, MapsTheListeningPortWithNatPmp)
     EXPECT_FALSE(status.behindAnotherNat);
     EXPECT_EQ(natPmpFake.mappings.value(kPort), kPort);
     ASSERT_FALSE(natPmpFake.requests.isEmpty());
-    EXPECT_EQ(natPmpFake.requests.last().lifetime, 7200u);
+    EXPECT_EQ(natPmpFake.requests.last().lifetime, 7200U);
     EXPECT_EQ(igdFake.searches, 0); // NAT-PMP answered: no UPnP search
 }
 
@@ -161,7 +160,8 @@ TEST_F(PortMapperTest, APortChangeMovesTheMapping)
     mapper.configure(true, kPort);
     ASSERT_TRUE(reaches(mapper, State::Mapped));
     mapper.configure(true, kPort + 10);
-    ASSERT_TRUE(waitFor([&] { return mapper.status().state == State::Mapped && mapper.status().internalPort == kPort + 10; }));
+    ASSERT_TRUE(
+        waitFor([&] { return mapper.status().state == State::Mapped && mapper.status().internalPort == kPort + 10; }));
     ASSERT_TRUE(waitFor([&] { return !natPmpFake.mappings.contains(kPort); }));
     EXPECT_EQ(natPmpFake.mappings.value(kPort + 10), kPort + 10);
     EXPECT_EQ(natPmpFake.removals(), 1);
@@ -172,7 +172,8 @@ TEST_F(PortMapperTest, APortChangeDuringAnAttemptMapsOnlyTheNewPort)
     PortMapper mapper(options(true, false));
     mapper.configure(true, kPort);
     mapper.configure(true, kPort + 10); // at once, while the first attempt is on the worker
-    ASSERT_TRUE(waitFor([&] { return mapper.status().state == State::Mapped && mapper.status().internalPort == kPort + 10; }));
+    ASSERT_TRUE(
+        waitFor([&] { return mapper.status().state == State::Mapped && mapper.status().internalPort == kPort + 10; }));
     QTest::qWait(200);
     EXPECT_FALSE(natPmpFake.mappings.contains(kPort));
     EXPECT_TRUE(natPmpFake.mappings.contains(kPort + 10));

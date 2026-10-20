@@ -20,9 +20,10 @@ namespace selecta::core::portmap {
 // than taken from miniupnpc so that every answer is bounded and every wait has a deadline: miniupnpc's HTTP reader
 // grows its buffer to whatever Content-Length a device claims and has no overall time limit.
 //
-// Everything a router or any other device on the network sends is untrusted: datagrams and HTTP answers are size-capped,
-// NAT-PMP answers count only from the gateway's address and port, an SSDP answer only when its LOCATION is an IP literal
-// equal to the sender's address, and a control URL only on that same host. Nothing is ever looked up by name.
+// Everything a router or any other device on the network sends is untrusted: datagrams and HTTP answers are
+// size-capped, NAT-PMP answers count only from the gateway's address and port, an SSDP answer only when its LOCATION is
+// an IP literal equal to the sender's address, and a control URL only on that same host. Nothing is ever looked up by
+// name.
 //
 // Threading: any thread, no event loop needed (Qt sockets in blocking mode). Each call creates and destroys its own
 // sockets. Every wait is sliced so that `cancel` stops a call within about 100 ms.
@@ -107,8 +108,7 @@ std::optional<QHostAddress> defaultGateway();
 MapResult mapPort(const MapRequest &request, const Cancel &cancel);
 
 // Removes a mapping. True when the router confirmed it, or said there was no such mapping.
-bool removeMapping(const Mapping &mapping, const QHostAddress &bindAddress, const Timing &timing,
-                   const Cancel &cancel);
+bool removeMapping(const Mapping &mapping, const QHostAddress &bindAddress, const Timing &timing, const Cancel &cancel);
 
 // True for addresses peers on the internet can't reach: private, shared (carrier-grade NAT), link-local, loopback or
 // unspecified. A router whose own public address is one of these sits behind another NAT.
@@ -117,7 +117,7 @@ bool isUnroutable(const QHostAddress &address);
 // The wire formats, for tests.
 namespace detail {
 
-inline constexpr qsizetype kDatagramMax = 2048;       // SSDP and NAT-PMP answers
+inline constexpr qsizetype kDatagramMax = 2048;              // SSDP and NAT-PMP answers
 inline constexpr qsizetype kHttpMax = qsizetype{256} * 1024; // a device description or SOAP answer, headers included
 inline constexpr qsizetype kHttpHeaderMax = qsizetype{16} * 1024;
 

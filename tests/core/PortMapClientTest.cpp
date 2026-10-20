@@ -12,7 +12,10 @@ using ParseState = HttpParse::State;
 
 namespace {
 
-const QUrl kLocation(u"http://192.168.1.1:5000/rootDesc.xml"_s);
+QUrl location() // the device description's URL
+{
+    return QUrl(u"http://192.168.1.1:5000/rootDesc.xml"_s);
+}
 
 QByteArray description(const QString &services, const QString &urlBase = {})
 {
@@ -53,15 +56,16 @@ TEST(PortMapClient, NatPmpAnswersAreParsed)
     EXPECT_EQ(mapping->opcode, 130);
     EXPECT_EQ(mapping->internalPort, 2234);
     EXPECT_EQ(mapping->externalPort, 2235);
-    EXPECT_EQ(mapping->lifetime, 3600u);
+    EXPECT_EQ(mapping->lifetime, 3600U);
 }
 
 TEST(PortMapClient, MalformedNatPmpAnswersAreRefused)
 {
     EXPECT_FALSE(parseNatPmpAnswer({}).has_value());
-    EXPECT_FALSE(parseNatPmpAnswer(QByteArray::fromHex("0082 0000 000003e8")).has_value()); // short
+    EXPECT_FALSE(parseNatPmpAnswer(QByteArray::fromHex("0082 0000 000003e8")).has_value());          // short
     EXPECT_FALSE(parseNatPmpAnswer(QByteArray::fromHex("0180 0000 000003e8 cb007107")).has_value()); // version 1
-    EXPECT_FALSE(parseNatPmpAnswer(QByteArray::fromHex("0002 0000 000003e8 08ba 08bb 00000e10")).has_value()); // a request
+    EXPECT_FALSE(
+        parseNatPmpAnswer(QByteArray::fromHex("0002 0000 000003e8 08ba 08bb 00000e10")).has_value()); // a request
     EXPECT_FALSE(parseNatPmpAnswer(QByteArray::fromHex("0081 0000 000003e8 08ba 08bb 00000e10")).has_value()); // UDP
 }
 
@@ -77,8 +81,7 @@ TEST(PortMapClient, NatPmpResultsAreWords)
 
 TEST(PortMapClient, SsdpSearchNamesItsTarget)
 {
-    const QByteArray search =
-        ssdpSearch(u"urn:schemas-upnp-org:device:InternetGatewayDevice:1"_s, ssdpMulticast());
+    const QByteArray search = ssdpSearch(u"urn:schemas-upnp-org:device:InternetGatewayDevice:1"_s, ssdpMulticast());
     EXPECT_TRUE(search.startsWith("M-SEARCH * HTTP/1.1\r\n"));
     EXPECT_TRUE(search.contains("HOST: 239.255.255.250:1900\r\n"));
     EXPECT_TRUE(search.contains("MAN: \"ssdp:discover\"\r\n"));
@@ -90,20 +93,20 @@ TEST(PortMapClient, SsdpLocationMustBeTheSendersOwnAddress)
 {
     const QHostAddress router(u"192.168.1.1"_s);
     const QByteArray answer = "HTTP/1.1 200 OK\r\nST: x\r\nlocation:  http://192.168.1.1:5000/rootDesc.xml \r\n\r\n"_ba;
-    const auto location = ssdpLocation(answer, router);
-    ASSERT_TRUE(location.has_value());
-    EXPECT_EQ(*location, kLocation);
+    const auto found = ssdpLocation(answer, router);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, location());
     EXPECT_TRUE(ssdpLocation(answer, QHostAddress(u"::ffff:192.168.1.1"_s)).has_value()); // IPv4-mapped sender
 
     EXPECT_FALSE(ssdpLocation(answer, QHostAddress(u"192.168.1.66"_s)).has_value()); // someone else's URL
     EXPECT_FALSE(ssdpLocation("HTTP/1.1 200 OK\r\nLOCATION: http://router.lan:5000/d.xml\r\n\r\n"_ba, router)
                      .has_value()); // never looked up by name
-    EXPECT_FALSE(ssdpLocation("HTTP/1.1 200 OK\r\nLOCATION: https://192.168.1.1:5000/d.xml\r\n\r\n"_ba, router)
-                     .has_value());
+    EXPECT_FALSE(
+        ssdpLocation("HTTP/1.1 200 OK\r\nLOCATION: https://192.168.1.1:5000/d.xml\r\n\r\n"_ba, router).has_value());
     EXPECT_FALSE(ssdpLocation("HTTP/1.1 200 OK\r\nLOCATION: http://192.168.1.1/d.xml\r\n\r\n"_ba, router)
                      .has_value()); // no port
-    EXPECT_FALSE(ssdpLocation("NOTIFY * HTTP/1.1\r\nLOCATION: http://192.168.1.1:5000/d.xml\r\n\r\n"_ba, router)
-                     .has_value());
+    EXPECT_FALSE(
+        ssdpLocation("NOTIFY * HTTP/1.1\r\nLOCATION: http://192.168.1.1:5000/d.xml\r\n\r\n"_ba, router).has_value());
     EXPECT_FALSE(ssdpLocation("HTTP/1.1 200 OK\r\nST: x\r\n\r\n"_ba, router).has_value());
 }
 
@@ -111,11 +114,10 @@ TEST(PortMapClient, SsdpLocationMustBeTheSendersOwnAddress)
 
 TEST(PortMapClient, DescriptionPrefersIpConnections)
 {
-    const QList<IgdService> found =
-        parseDescription(description(service(u"WANPPPConnection:1"_s, u"/ctl/PPP"_s) +
-                                     service(u"Layer3Forwarding:1"_s, u"/ctl/L3F"_s) +
-                                     service(u"WANIPConnection:1"_s, u"/ctl/IP"_s)),
-                         kLocation);
+    const QList<IgdService> found = parseDescription(description(service(u"WANPPPConnection:1"_s, u"/ctl/PPP"_s) +
+                                                                 service(u"Layer3Forwarding:1"_s, u"/ctl/L3F"_s) +
+                                                                 service(u"WANIPConnection:1"_s, u"/ctl/IP"_s)),
+                                                     location());
     ASSERT_EQ(found.size(), 2);
     EXPECT_EQ(found.at(0).serviceType, u"urn:schemas-upnp-org:service:WANIPConnection:1"_s);
     EXPECT_EQ(found.at(0).controlUrl, QUrl(u"http://192.168.1.1:5000/ctl/IP"_s));
@@ -125,33 +127,33 @@ TEST(PortMapClient, DescriptionPrefersIpConnections)
 TEST(PortMapClient, DescriptionControlUrlsStayOnTheDevice)
 {
     // Absolute control URLs elsewhere, and a URLBase elsewhere, are ignored.
-    EXPECT_TRUE(parseDescription(description(service(u"WANIPConnection:1"_s, u"http://10.0.0.9:80/ctl"_s)), kLocation)
+    EXPECT_TRUE(parseDescription(description(service(u"WANIPConnection:1"_s, u"http://10.0.0.9:80/ctl"_s)), location())
                     .isEmpty());
     const QList<IgdService> based = parseDescription(
-        description(service(u"WANIPConnection:1"_s, u"ctl/IP"_s), u"http://10.0.0.9:80/"_s), kLocation);
+        description(service(u"WANIPConnection:1"_s, u"ctl/IP"_s), u"http://10.0.0.9:80/"_s), location());
     ASSERT_EQ(based.size(), 1);
     EXPECT_EQ(based.at(0).controlUrl, QUrl(u"http://192.168.1.1:5000/ctl/IP"_s));
     // A URLBase on the same host, another port, is followed.
     const QList<IgdService> samehost = parseDescription(
-        description(service(u"WANIPConnection:2"_s, u"/ctl/IP"_s), u"http://192.168.1.1:49000/"_s), kLocation);
+        description(service(u"WANIPConnection:2"_s, u"/ctl/IP"_s), u"http://192.168.1.1:49000/"_s), location());
     ASSERT_EQ(samehost.size(), 1);
     EXPECT_EQ(samehost.at(0).controlUrl, QUrl(u"http://192.168.1.1:49000/ctl/IP"_s));
 }
 
 TEST(PortMapClient, BrokenDescriptionsFindNothing)
 {
-    EXPECT_TRUE(parseDescription({}, kLocation).isEmpty());
-    EXPECT_TRUE(parseDescription("<root><device>"_ba, kLocation).isEmpty());
-    EXPECT_TRUE(parseDescription(description(service(u"WANIPConnection:1"_s, QString())), kLocation).isEmpty());
+    EXPECT_TRUE(parseDescription({}, location()).isEmpty());
+    EXPECT_TRUE(parseDescription("<root><device>"_ba, location()).isEmpty());
+    EXPECT_TRUE(parseDescription(description(service(u"WANIPConnection:1"_s, QString())), location()).isEmpty());
 }
 
 // --- SOAP ------------------------------------------------------------------------------------------------------------
 
 TEST(PortMapClient, SoapEnvelopeEscapesItsArguments)
 {
-    const QByteArray envelope = soapEnvelope(u"urn:schemas-upnp-org:service:WANIPConnection:1"_s, u"AddPortMapping"_s,
-                                             {{u"NewExternalPort"_s, u"2234"_s},
-                                              {u"NewPortMappingDescription"_s, u"<Selecta & co>"_s}});
+    const QByteArray envelope =
+        soapEnvelope(u"urn:schemas-upnp-org:service:WANIPConnection:1"_s, u"AddPortMapping"_s,
+                     {{u"NewExternalPort"_s, u"2234"_s}, {u"NewPortMappingDescription"_s, u"<Selecta & co>"_s}});
     EXPECT_TRUE(envelope.contains("<u:AddPortMapping xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\">"));
     EXPECT_TRUE(envelope.contains("<NewExternalPort>2234</NewExternalPort>"));
     EXPECT_TRUE(envelope.contains("<NewPortMappingDescription>&lt;Selecta &amp; co&gt;</NewPortMappingDescription>"));
@@ -161,9 +163,10 @@ TEST(PortMapClient, SoapEnvelopeEscapesItsArguments)
 TEST(PortMapClient, SoapAnswersAndFaults)
 {
     const SoapAnswer answer = parseSoapAnswer(
-        200, "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:GetExternalIPAddressResponse "
-             "xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\"><NewExternalIPAddress> 203.0.113.9 "
-             "</NewExternalIPAddress></u:GetExternalIPAddressResponse></s:Body></s:Envelope>"_ba);
+        200,
+        "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><u:GetExternalIPAddressResponse "
+        "xmlns:u=\"urn:schemas-upnp-org:service:WANIPConnection:1\"><NewExternalIPAddress> 203.0.113.9 "
+        "</NewExternalIPAddress></u:GetExternalIPAddressResponse></s:Body></s:Envelope>"_ba);
     EXPECT_TRUE(answer.ok);
     EXPECT_EQ(answer.values.value(u"NewExternalIPAddress"_s), u"203.0.113.9"_s);
 
@@ -229,9 +232,9 @@ TEST(PortMapClient, HttpOutOfBoundsIsMalformed)
 
 TEST(PortMapClient, UnroutableAddresses)
 {
-    for (const QString &address : {u"10.1.2.3"_s, u"172.16.0.1"_s, u"172.31.255.255"_s, u"192.168.0.1"_s,
-                                   u"100.64.0.1"_s, u"100.127.255.254"_s, u"169.254.1.1"_s, u"127.0.0.1"_s,
-                                   u"0.0.0.0"_s}) {
+    for (const QString &address :
+         {u"10.1.2.3"_s, u"172.16.0.1"_s, u"172.31.255.255"_s, u"192.168.0.1"_s, u"100.64.0.1"_s, u"100.127.255.254"_s,
+          u"169.254.1.1"_s, u"127.0.0.1"_s, u"0.0.0.0"_s}) {
         EXPECT_TRUE(isUnroutable(QHostAddress(address))) << address.toStdString();
     }
     for (const QString &address : {u"203.0.113.7"_s, u"172.32.0.1"_s, u"100.128.0.1"_s, u"8.8.8.8"_s}) {

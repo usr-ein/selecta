@@ -115,8 +115,8 @@ private:
     bool m_enabled = false;
     quint16 m_port = 0;
     std::optional<portmap::Mapping> m_mapping;
-    int m_failures = 0;        // failed attempts in a row
-    quint16 m_attemptPort = 0; // the port the attempt in flight maps
+    int m_failures = 0;                                      // failed attempts in a row
+    quint16 m_attemptPort = 0;                               // the port the attempt in flight maps
     QFutureWatcher<portmap::MapResult> *m_attempt = nullptr; // the attempt in flight
     std::shared_ptr<portmap::Cancel> m_cancel;
     QTimer *m_retryTimer = nullptr;
