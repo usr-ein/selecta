@@ -3,17 +3,22 @@
 
 #include "base/Paths.h"
 
+#include <QDir>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLoggingCategory>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
 namespace {
+
+Q_LOGGING_CATEGORY(lcSettings, "selecta.app.settings")
 
 const QString kAppearance = u"appearance"_s;
 const QString kGeometry = u"window/geometry"_s;
@@ -36,10 +41,12 @@ const QString kConverterMp3SampleRateKey = u"converter/mp3SampleRate"_s;
 const QString kConverterId3v24 = u"converter/id3v24"_s;
 const QString kConverterArtwork = u"converter/artworkMax"_s;
 const QString kConverterFolder = u"converter/outputFolder"_s;
-const QString kInboxDir = u"library/inbox"_s;
-const QString kCollectionRoots = u"library/collections"_s;
-const QString kSinglesFolder = u"library/singlesFolder"_s;
-const QString kAlbumsFolder = u"library/albumsFolder"_s;
+const QString kTracksFolder = u"library/tracks"_s; // absolute; absent until chosen
+const QString kAlbumsFolder = u"library/albums"_s;
+// Before P-001: a user-chosen Inbox, a list of collection folders, and the names of the Singles and Albums folders
+// inside the first one. Removed at start-up.
+const std::array kFormerLibraryKeys{u"library/inbox"_s, u"library/collections"_s, u"library/singlesFolder"_s,
+                                    u"library/albumsFolder"_s};
 const QString kSingleTemplate = u"filing/single"_s;
 const QString kAlbumFolderTemplate = u"filing/albumFolder"_s;
 const QString kAlbumTrackTemplate = u"filing/albumTrack"_s;
@@ -69,21 +76,33 @@ quint16 portFrom(const QVariant &value, quint16 fallback)
     return ok && port >= 0 && port <= 65535 ? static_cast<quint16>(port) : fallback;
 }
 
-// A folder name typed in Settings: one plain component, or the default.
-QString folderName(const QString &value, const QString &fallback)
+// A collection folder as stored: a cleaned absolute path, or empty (not chosen, or not a full path).
+QString folderPath(const QVariant &value)
 {
-    QString name = value.trimmed();
-    if (name.isEmpty() || name == u"." || name == u".." || name.contains(u'/') || name.contains(u'\\')) {
-        return fallback;
-    }
-    return name;
+    const QString path = value.toString().trimmed();
+    return path.isEmpty() || !QDir::isAbsolutePath(path) ? QString() : QDir::cleanPath(path);
 }
 
 } // namespace
 
-AppSettings::AppSettings(const QString &iniPath)
+AppSettings::AppSettings(const QString &iniPath, const QString &inboxRoot)
     : m_settings(iniPath, QSettings::IniFormat)
-{}
+    , m_inboxRoot(inboxRoot.isEmpty() ? base::paths::inboxDir() : QDir::cleanPath(inboxRoot))
+{
+    // The old Inbox folder and its files stay where they are; Selecta's own Inbox starts empty. The old collection
+    // folder isn't guessed into a tracks or an albums folder: Settings asks for both.
+    bool migrated = false;
+    for (const QString &key : kFormerLibraryKeys) {
+        if (m_settings.contains(key)) {
+            m_settings.remove(key);
+            migrated = true;
+        }
+    }
+    if (migrated) {
+        qCInfo(lcSettings).noquote() << u"the Inbox is now Selecta's own (%1); the tracks and albums folders wait "
+                                        "to be chosen in Settings"_s.arg(m_inboxRoot);
+    }
+}
 
 Appearance AppSettings::appearance() const
 {
@@ -314,12 +333,14 @@ void AppSettings::setSpotifyTermsAccepted(bool accepted)
 core::LibraryConfig AppSettings::libraryConfig() const
 {
     core::LibraryConfig config;
-    const QString inbox = m_settings.value(kInboxDir).toString();
-    config.inboxRoot = inbox.isEmpty() ? base::paths::defaultInboxDir() : inbox;
-    config.collectionRoots = m_settings.value(kCollectionRoots).toStringList();
-    config.collectionRoots.removeAll(QString());
-    config.singlesFolder = folderName(m_settings.value(kSinglesFolder).toString(), config.singlesFolder);
-    config.albumsFolder = folderName(m_settings.value(kAlbumsFolder).toString(), config.albumsFolder);
+    config.inboxRoot = m_inboxRoot;
+    config.tracksRoot = folderPath(m_settings.value(kTracksFolder));
+    config.albumsRoot = folderPath(m_settings.value(kAlbumsFolder));
+    if (!core::checkLibraryConfig(config).isEmpty()) {
+        // An edited file can hold what Settings refuses (the same folder twice, one inside the other): ask again.
+        config.tracksRoot.clear();
+        config.albumsRoot.clear();
+    }
     const auto templ = [this](const QString &key, const QString &fallback) {
         const QString value = m_settings.value(key).toString().trimmed();
         return value.isEmpty() ? fallback : value;
@@ -337,10 +358,15 @@ core::LibraryConfig AppSettings::libraryConfig() const
 
 void AppSettings::setLibraryConfig(const core::LibraryConfig &config)
 {
-    m_settings.setValue(kInboxDir, config.inboxRoot);
-    m_settings.setValue(kCollectionRoots, config.collectionRoots);
-    m_settings.setValue(kSinglesFolder, config.singlesFolder);
-    m_settings.setValue(kAlbumsFolder, config.albumsFolder);
+    const auto setFolder = [this](const QString &key, const QString &folder) {
+        if (folder.isEmpty()) {
+            m_settings.remove(key);
+        } else {
+            m_settings.setValue(key, QDir::cleanPath(folder));
+        }
+    };
+    setFolder(kTracksFolder, config.tracksRoot);
+    setFolder(kAlbumsFolder, config.albumsRoot);
     m_settings.setValue(kSingleTemplate, config.templates.single);
     m_settings.setValue(kAlbumFolderTemplate, config.templates.albumFolder);
     m_settings.setValue(kAlbumTrackTemplate, config.templates.albumTrack);

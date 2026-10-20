@@ -65,12 +65,9 @@ QString settingsFile()
     return appSupportDir() + u"/settings.ini"_s;
 }
 
-QString defaultInboxDir()
+QString inboxDir()
 {
-    if (!g_root.isEmpty()) {
-        return g_root + u"/Inbox"_s;
-    }
-    return QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + u"/Selecta/Inbox"_s;
+    return appSupportDir() + u"/Inbox"_s;
 }
 
 bool ensureDir(const QString &path)

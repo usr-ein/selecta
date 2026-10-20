@@ -15,7 +15,6 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
-class QListWidget;
 class QPushButton;
 class QSpinBox;
 
@@ -47,7 +46,8 @@ public:
     core::LibraryConfig libraryConfig() const { return m_library; }
 
     // Changes the library configuration as if the user had (for tests and the debug socket, which can't drive folder
-    // pickers). Returns the reason it was refused, or an empty string.
+    // pickers). Returns the reason it was refused, or an empty string. The Inbox is Selecta's own: config.inboxRoot
+    // is ignored.
     QString applyLibraryConfig(const core::LibraryConfig &config);
 
     // Shows the engine's view of the Spotify set-up.
@@ -108,16 +108,14 @@ private:
     void askAboutSpotifyTerms(const std::function<void()> &accepted);
     void showLibrary();
     void refreshPreview();
-    void chooseInbox();
-    void addCollection();
-    void removeCollection();
+    // The folder picker for the tracks folder, or the albums folder.
+    void chooseFolder(bool albums);
     void editsFinished();
 
     QComboBox *m_appearance;
     core::LibraryConfig m_library;
-    QLineEdit *m_inbox = nullptr;
-    QListWidget *m_collections = nullptr;
-    QLineEdit *m_singlesFolder = nullptr;
+    QLabel *m_libraryPrompt = nullptr; // asks for the folders not chosen yet
+    QLineEdit *m_tracksFolder = nullptr;
     QLineEdit *m_albumsFolder = nullptr;
     QLineEdit *m_singleTemplate = nullptr;
     QLineEdit *m_albumFolderTemplate = nullptr;

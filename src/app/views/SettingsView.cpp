@@ -11,12 +11,12 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QLocale>
 #include <QMessageBox>
 #include <QPushButton>
@@ -27,6 +27,7 @@
 #include <QVBoxLayout>
 
 #include <array>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -162,56 +163,52 @@ QWidget *SettingsView::createLibraryBox(QWidget *parent)
     auto *form = new QFormLayout(box);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
-    auto *inboxRow = new QWidget(box);
-    auto *inboxLayout = new QHBoxLayout(inboxRow);
-    inboxLayout->setContentsMargins(0, 0, 0, 0);
-    m_inbox = new QLineEdit(inboxRow);
-    m_inbox->setObjectName(u"settings.inbox"_s);
-    m_inbox->setReadOnly(true);
-    auto *chooseInbox = new QPushButton(tr("Choose…"), inboxRow);
-    chooseInbox->setObjectName(u"settings.inbox.choose"_s);
-    connect(chooseInbox, &QPushButton::clicked, this, &SettingsView::chooseInbox);
-    inboxLayout->addWidget(m_inbox, 1);
-    inboxLayout->addWidget(chooseInbox);
-    form->addRow(tr("Inbox:"), inboxRow);
+    auto *intro = new QLabel(tr("Your music, in two folders. Selecta reads them to know what you have, and files "
+                                "downloads into them. It never changes, moves or deletes the files already there."),
+                             box);
+    intro->setWordWrap(true);
+    intro->setForegroundRole(QPalette::PlaceholderText);
+    form->addRow(intro);
 
-    auto *collectionRow = new QWidget(box);
-    auto *collectionLayout = new QVBoxLayout(collectionRow);
-    collectionLayout->setContentsMargins(0, 0, 0, 0);
-    m_collections = new QListWidget(collectionRow);
-    m_collections->setObjectName(u"settings.collections"_s);
-    m_collections->setMaximumHeight(72);
-    m_collections->setTextElideMode(Qt::ElideMiddle);
-    m_collections->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_collections->setUniformItemSizes(true);
-    auto *buttons = new QHBoxLayout;
-    auto *add = new QPushButton(tr("Add…"), collectionRow);
-    add->setObjectName(u"settings.collections.add"_s);
-    auto *remove = new QPushButton(tr("Remove"), collectionRow);
-    remove->setObjectName(u"settings.collections.remove"_s);
-    connect(add, &QPushButton::clicked, this, &SettingsView::addCollection);
-    connect(remove, &QPushButton::clicked, this, &SettingsView::removeCollection);
-    buttons->addWidget(add);
-    buttons->addWidget(remove);
-    buttons->addStretch(1);
-    auto *note = new QLabel(tr("Filing adds new files to the first folder. Selecta never changes, moves or deletes "
-                               "files already in your collection."),
-                            collectionRow);
-    note->setWordWrap(true);
-    note->setForegroundRole(QPalette::PlaceholderText);
-    collectionLayout->addWidget(m_collections);
-    collectionLayout->addLayout(buttons);
-    collectionLayout->addWidget(note);
-    form->addRow(tr("Collection:"), collectionRow);
+    m_libraryPrompt = new QLabel(box);
+    m_libraryPrompt->setObjectName(u"settings.libraryPrompt"_s);
+    m_libraryPrompt->setWordWrap(true);
+    QFont promptFont = m_libraryPrompt->font();
+    promptFont.setWeight(QFont::DemiBold);
+    m_libraryPrompt->setFont(promptFont);
+    form->addRow(m_libraryPrompt);
 
-    m_singlesFolder = new QLineEdit(box);
-    m_singlesFolder->setObjectName(u"settings.singlesFolder"_s);
-    m_albumsFolder = new QLineEdit(box);
-    m_albumsFolder->setObjectName(u"settings.albumsFolder"_s);
-    connect(m_singlesFolder, &QLineEdit::editingFinished, this, &SettingsView::editsFinished);
-    connect(m_albumsFolder, &QLineEdit::editingFinished, this, &SettingsView::editsFinished);
-    form->addRow(tr("Singles folder:"), m_singlesFolder);
-    form->addRow(tr("Albums folder:"), m_albumsFolder);
+    // One folder each, chosen in the folder picker: the path read-only, the role underneath.
+    const auto pickerRow = [this, box, form](bool albums, const QString &label, const QString &chooseName,
+                                             const QString &role) {
+        auto *row = new QWidget(box);
+        auto *layout = new QHBoxLayout(row);
+        layout->setContentsMargins(0, 0, 0, 0);
+        auto *field = new QLineEdit(row);
+        const QString name = albums ? u"settings.albumsFolder"_s : u"settings.tracksFolder"_s;
+        field->setObjectName(name);
+        field->setReadOnly(true);
+        field->setPlaceholderText(tr("Not chosen yet"));
+        field->setAccessibleName(label);
+        auto *choose = new QPushButton(tr("Choose…"), row);
+        choose->setObjectName(name + u".choose"_s);
+        choose->setAccessibleName(chooseName);
+        connect(choose, &QPushButton::clicked, this, [this, albums] { chooseFolder(albums); });
+        layout->addWidget(field, 1);
+        layout->addWidget(choose);
+        form->addRow(label + u':', row);
+        auto *note = new QLabel(role, box);
+        note->setWordWrap(true);
+        note->setForegroundRole(QPalette::PlaceholderText);
+        form->addRow(QString(), note);
+        return field;
+    };
+    m_tracksFolder = pickerRow(false, tr("Tracks folder"), tr("Choose the tracks folder"),
+                               tr("Loose tracks: the files in this folder. Its subfolders are left out. Filed singles go "
+                                  "here."));
+    m_albumsFolder = pickerRow(true, tr("Albums folder"), tr("Choose the albums folder"),
+                               tr("One album per subfolder, whatever the tags say. Files lying in the folder itself "
+                                  "are left out. Filed albums go here, in a folder each."));
 
     m_libraryError = new QLabel(box);
     m_libraryError->setObjectName(u"settings.libraryError"_s);
@@ -818,21 +815,23 @@ void SettingsView::setSpotifyStatus(const core::SpotifyStatus &status)
 
 void SettingsView::showLibrary()
 {
-    m_inbox->setText(QDir::toNativeSeparators(m_library.inboxRoot));
-    m_inbox->setToolTip(m_library.inboxRoot);
-    m_collections->clear();
-    for (const QString &root : std::as_const(m_library.collectionRoots)) {
-        auto *item = new QListWidgetItem(QDir::toNativeSeparators(root));
-        item->setToolTip(root);
-        m_collections->addItem(item);
+    for (const auto &[field, folder] : {std::pair{m_tracksFolder, m_library.tracksRoot},
+                                        std::pair{m_albumsFolder, m_library.albumsRoot}}) {
+        field->setText(QDir::toNativeSeparators(folder));
+        field->setToolTip(QDir::toNativeSeparators(folder));
+        field->setCursorPosition(0);
     }
-    if (m_library.collectionRoots.isEmpty()) {
-        auto *placeholder = new QListWidgetItem(tr("No collection folder yet: add one to file downloads."));
-        placeholder->setFlags(Qt::NoItemFlags);
-        m_collections->addItem(placeholder);
+    // Asked for until both are chosen (after the update from a single collection folder too: no guessing).
+    const bool tracks = !m_library.tracksRoot.isEmpty();
+    const bool albums = !m_library.albumsRoot.isEmpty();
+    if (!tracks && !albums) {
+        m_libraryPrompt->setText(tr("Choose your tracks folder and your albums folder."));
+    } else if (!tracks) {
+        m_libraryPrompt->setText(tr("Choose your tracks folder: filed singles go there."));
+    } else if (!albums) {
+        m_libraryPrompt->setText(tr("Choose your albums folder: filed albums go there."));
     }
-    m_singlesFolder->setText(m_library.singlesFolder);
-    m_albumsFolder->setText(m_library.albumsFolder);
+    m_libraryPrompt->setVisible(!tracks || !albums);
     m_singleTemplate->setText(m_library.templates.single);
     m_albumFolderTemplate->setText(m_library.templates.albumFolder);
     m_albumTrackTemplate->setText(m_library.templates.albumTrack);
@@ -864,13 +863,20 @@ void SettingsView::refreshPreview()
     const QString singleName = library::naming::componentName(m_singleTemplate->text(), single, cleaner, u"mp3"_s);
     const QString folder = library::naming::componentName(m_albumFolderTemplate->text(), album, cleaner);
     const QString track = library::naming::componentName(m_albumTrackTemplate->text(), album, cleaner, u"mp3"_s);
-    m_preview->setText(m_singlesFolder->text() + u'/' + singleName + u'\n' + m_albumsFolder->text() + u'/' + folder +
-                       u'/' + track);
+    // Under the folders' own names, as they show in Finder.
+    const auto folderName = [](const QString &root, const QString &unchosen) {
+        const QString name = QFileInfo(root).fileName();
+        return name.isEmpty() ? unchosen : name;
+    };
+    m_preview->setText(folderName(m_library.tracksRoot, tr("Tracks folder")) + u'/' + singleName + u'\n' +
+                       folderName(m_library.albumsRoot, tr("Albums folder")) + u'/' + folder + u'/' + track);
 }
 
 QString SettingsView::applyLibraryConfig(const core::LibraryConfig &config)
 {
-    QString problem = core::checkLibraryConfig(config);
+    core::LibraryConfig changed = config;
+    changed.inboxRoot = m_library.inboxRoot; // Selecta's own, never chosen here
+    QString problem = core::checkLibraryConfig(changed);
     if (!problem.isEmpty()) {
         m_libraryError->setText(problem);
         m_libraryError->show();
@@ -878,52 +884,33 @@ QString SettingsView::applyLibraryConfig(const core::LibraryConfig &config)
         return problem;
     }
     m_libraryError->hide();
-    m_library = config;
+    m_library = changed;
     showLibrary();
     Q_EMIT libraryConfigChanged(m_library);
     return {};
 }
 
-void SettingsView::chooseInbox()
+void SettingsView::chooseFolder(bool albums)
 {
-    const QString folder = QFileDialog::getExistingDirectory(this, tr("Choose the Inbox folder"), m_library.inboxRoot);
+    const QString current = albums ? m_library.albumsRoot : m_library.tracksRoot;
+    const QString other = albums ? m_library.tracksRoot : m_library.albumsRoot;
+    // Start where the folder is, else next to the other one (they often sit side by side), else at home.
+    const QString start = !current.isEmpty() ? current
+                          : !other.isEmpty() ? QFileInfo(other).absolutePath()
+                                             : QDir::homePath();
+    const QString folder = QFileDialog::getExistingDirectory(
+        this, albums ? tr("Choose the albums folder") : tr("Choose the tracks folder"), start);
     if (folder.isEmpty()) {
         return;
     }
     core::LibraryConfig config = m_library;
-    config.inboxRoot = QDir::cleanPath(folder);
-    applyLibraryConfig(config);
-}
-
-void SettingsView::addCollection()
-{
-    const QString folder = QFileDialog::getExistingDirectory(this, tr("Add a collection folder"), QDir::homePath());
-    if (folder.isEmpty()) {
-        return;
-    }
-    core::LibraryConfig config = m_library;
-    if (!config.collectionRoots.contains(QDir::cleanPath(folder))) {
-        config.collectionRoots.append(QDir::cleanPath(folder));
-    }
-    applyLibraryConfig(config);
-}
-
-void SettingsView::removeCollection()
-{
-    const int row = m_collections->currentRow();
-    if (row < 0 || row >= m_library.collectionRoots.size()) {
-        return;
-    }
-    core::LibraryConfig config = m_library;
-    config.collectionRoots.removeAt(row);
+    (albums ? config.albumsRoot : config.tracksRoot) = QDir::cleanPath(folder);
     applyLibraryConfig(config);
 }
 
 void SettingsView::editsFinished()
 {
     core::LibraryConfig config = m_library;
-    config.singlesFolder = m_singlesFolder->text().trimmed();
-    config.albumsFolder = m_albumsFolder->text().trimmed();
     const auto templ = [](const QLineEdit *field, const QString &fallback) {
         const QString text = field->text().trimmed();
         return text.isEmpty() ? fallback : text;
@@ -934,7 +921,6 @@ void SettingsView::editsFinished()
     config.cleaner.enabled = m_clean->isChecked();
     config.cleaner.separator = separatorOf(m_separator);
     const bool changed =
-        config.singlesFolder != m_library.singlesFolder || config.albumsFolder != m_library.albumsFolder ||
         config.templates.single != m_library.templates.single ||
         config.templates.albumFolder != m_library.templates.albumFolder ||
         config.templates.albumTrack != m_library.templates.albumTrack ||

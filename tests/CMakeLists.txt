@@ -112,6 +112,7 @@ if(SELECTA_WITH_MEDIA)
             app/ConverterViewTest.cpp
             app/FormatTest.cpp
             app/GetTracksModelTest.cpp
+            app/LibrarySettingsTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp
             app/NotifierTest.cpp

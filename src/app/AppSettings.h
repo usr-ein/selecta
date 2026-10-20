@@ -20,7 +20,10 @@ namespace selecta::app {
 class AppSettings
 {
 public:
-    explicit AppSettings(const QString &iniPath);
+    // `inboxRoot`: Selecta's own Inbox, which libraryConfig() reports and no setting changes; empty: paths::inboxDir().
+    // Settings from before the two collection folders (P-001: an Inbox folder, collection folders, Singles and Albums
+    // names) are removed here: the new folders start unset, and Settings asks for them.
+    explicit AppSettings(const QString &iniPath, const QString &inboxRoot = {});
 
     Appearance appearance() const;
     void setAppearance(Appearance appearance);
@@ -89,7 +92,9 @@ public:
     ConverterState converterState() const;
     void setConverterState(const ConverterState &state);
 
-    // Settings → Library and Filing (PRD LIB-1, DL-5, DL-13). Missing or invalid values read as the defaults.
+    // Settings → Library and File names (PRD LIB-1, DL-5, DL-13): the tracks and albums folders (unset until chosen;
+    // a pair core::checkLibraryConfig refuses reads as unset) and the naming; inboxRoot is always the one given at
+    // construction. Missing or invalid values read as the defaults. setLibraryConfig() ignores inboxRoot.
     core::LibraryConfig libraryConfig() const;
     void setLibraryConfig(const core::LibraryConfig &config);
 
@@ -128,6 +133,7 @@ public:
 
 private:
     QSettings m_settings;
+    QString m_inboxRoot;
 };
 
 } // namespace selecta::app

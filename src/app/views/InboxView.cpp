@@ -447,13 +447,35 @@ void InboxView::showSelection()
 void InboxView::refreshActions()
 {
     const QList<qint64> selected = selectedIds();
-    const bool haveCollection = !m_config.collectionRoots.isEmpty();
-    m_file->setEnabled(!selected.isEmpty() && haveCollection);
+    // Singles are filed into the tracks folder, albums into the albums folder: each kind needs its own.
+    bool singles = false;
+    bool albums = false;
+    for (const core::InboxEntry &entry : std::as_const(m_entries)) {
+        if (selected.contains(entry.item.id)) {
+            (entry.item.kind == InboxItem::Kind::Album ? albums : singles) = true;
+        }
+    }
+    const bool tracksChosen = !m_config.tracksRoot.isEmpty();
+    const bool albumsChosen = !m_config.albumsRoot.isEmpty();
+    const QString tracksFolder = QDir::toNativeSeparators(m_config.tracksRoot);
+    const QString albumsFolder = QDir::toNativeSeparators(m_config.albumsRoot);
+    m_file->setEnabled((singles && tracksChosen) || (albums && albumsChosen));
     m_file->setText(selected.size() > 1 ? tr("File %1").arg(selected.size()) : tr("File"));
-    m_file->setToolTip(
-        haveCollection
-            ? tr("Move the selection into %1").arg(QDir::toNativeSeparators(m_config.collectionRoots.first()))
-            : tr("Choose your collection folder in Settings → Library first"));
+    QString tip;
+    if ((singles || selected.isEmpty()) && !tracksChosen && (albums || selected.isEmpty()) && !albumsChosen) {
+        tip = tr("Choose your tracks folder and your albums folder in Settings → Library first");
+    } else if (singles && !tracksChosen) {
+        tip = tr("Choose your tracks folder in Settings → Library first: singles are filed there");
+    } else if (albums && !albumsChosen) {
+        tip = tr("Choose your albums folder in Settings → Library first: albums are filed there");
+    } else if (singles && albums) {
+        tip = tr("Move the singles into %1 and the albums into %2").arg(tracksFolder, albumsFolder);
+    } else if (singles || albums) {
+        tip = tr("Move the selection into %1").arg(albums ? albumsFolder : tracksFolder);
+    } else {
+        tip = tr("Move singles into your tracks folder and albums into your albums folder");
+    }
+    m_file->setToolTip(tip);
     m_trash->setEnabled(!selected.isEmpty());
     if (selected.isEmpty()) {
         m_summary->setText(summary());
@@ -465,8 +487,8 @@ void InboxView::refreshActions()
 void InboxView::fileSelected()
 {
     const QList<qint64> ids = selectedIds();
-    if (!ids.isEmpty() && !m_config.collectionRoots.isEmpty()) {
-        m_engine.fileInboxItems(ids);
+    if (!ids.isEmpty() && m_file->isEnabled()) {
+        m_engine.fileInboxItems(ids); // an item whose folder isn't chosen stays, and the result line says why
     }
 }
 

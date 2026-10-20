@@ -186,9 +186,8 @@ TEST_F(AccessibilityTest, EveryControlHasAName)
 {
     // Waiting for the teammate who is in these files (SettingsView, ConverterView).
     const QStringList notYet{u"converter.items"_s,       u"converter.artwork"_s,      u"converter.id3"_s,
-                             u"settings.dataDir"_s,      u"settings.inbox"_s,         u"settings.logDir"_s,
-                             u"settings.network.host"_s, u"settings.preview.ytDlp"_s, u"settings.collections"_s,
-                             u"settings.network.port"_s};
+                             u"settings.dataDir"_s,      u"settings.logDir"_s,        u"settings.network.host"_s,
+                             u"settings.preview.ytDlp"_s, u"settings.network.port"_s};
     auto window = makeWindow();
     const QList<QWidget *> found = controls(*window);
     EXPECT_GT(found.size(), 100); // the walk found the views' controls

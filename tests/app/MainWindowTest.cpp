@@ -72,7 +72,7 @@ protected:
         ASSERT_TRUE(db.open(u":memory:"_s));
         ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
         session = sessions.start(1'000);
-        settings = std::make_unique<AppSettings>(dir.filePath(u"settings.ini"_s));
+        settings = std::make_unique<AppSettings>(dir.filePath(u"settings.ini"_s), dir.filePath(u"Inbox"_s));
         selecta::core::EngineOptions options;
         options.databasePath = dir.filePath(u"engine.sqlite3"_s);
         options.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // tests never reach real services
@@ -247,8 +247,10 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
 {
     selecta::core::LibraryConfig library;
     library.inboxRoot = dir.filePath(u"Inbox"_s);
-    library.collectionRoots = {dir.filePath(u"Music"_s)};
-    ASSERT_TRUE(QDir().mkpath(library.inboxRoot + u"/Singles"_s) && QDir().mkpath(library.collectionRoots.first()));
+    library.tracksRoot = dir.filePath(u"Music/Tracks"_s);
+    library.albumsRoot = dir.filePath(u"Music/Albums"_s);
+    ASSERT_TRUE(QDir().mkpath(library.inboxRoot + u"/Singles"_s) && QDir().mkpath(library.tracksRoot) &&
+                QDir().mkpath(library.albumsRoot));
     {
         QFile song(library.inboxRoot + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s);
         ASSERT_TRUE(song.open(QIODevice::WriteOnly) && song.write("audio") == 5);
@@ -296,7 +298,7 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
     file->click();
     ASSERT_TRUE(finished.wait(5000));
     EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
-    EXPECT_TRUE(QFileInfo::exists(library.collectionRoots.first() + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s));
+    EXPECT_TRUE(QFileInfo::exists(library.tracksRoot + u"/Okuma_Drift_-_Neon_Rain.mp3"_s));
     ASSERT_TRUE(QTest::qWaitFor([&] { return window->currentSubtitle() == u"Nothing waiting"_s; }, 5000));
     engine->stop();
 }
@@ -1631,8 +1633,9 @@ TEST_F(MainWindowTest, NotWhatIHaveFindsAGetTracksLine)
 {
     selecta::core::LibraryConfig library;
     library.inboxRoot = dir.filePath(u"Inbox"_s);
-    library.collectionRoots = {dir.filePath(u"Music"_s)};
-    const QString owned = dir.filePath(u"Music/Singles/Okuma Drift - Neon Rain.mp3"_s);
+    library.tracksRoot = dir.filePath(u"Music/Tracks"_s);
+    library.albumsRoot = dir.filePath(u"Music/Albums"_s);
+    const QString owned = dir.filePath(u"Music/Tracks/Okuma Drift - Neon Rain.mp3"_s);
     ASSERT_TRUE(QDir().mkpath(QFileInfo(owned).absolutePath()) && QDir().mkpath(library.inboxRoot));
     {
         QFile file(owned);
