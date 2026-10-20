@@ -2,9 +2,12 @@
 # meta/: metadata and preview services (contract: docs/contracts/meta.md, design: DESIGN.md). Qt Core and Network
 # only; the macOS Security framework for the Keychain token store.
 qt_add_library(selecta_meta STATIC
+    CoverFetcher.h CoverFetcher.cpp
     KeychainTokenStore.h KeychainTokenStore.cpp
     MetaCache.h MetaCache.cpp
+    MusicBrainzClient.h MusicBrainzClient.cpp
     Pkce.h Pkce.cpp
+    Priority.h
     Release.h Release.cpp
     RequestPacer.h RequestPacer.cpp
     Result.h Result.cpp
@@ -16,10 +19,13 @@ qt_add_library(selecta_meta STATIC
     detail/Async.h
     detail/HttpChannel.h detail/HttpChannel.cpp
     detail/Identifiers.h detail/Identifiers.cpp
+    detail/ImageHeader.h detail/ImageHeader.cpp
     detail/Json.h detail/Json.cpp
     detail/LoopbackReceiver.h detail/LoopbackReceiver.cpp
+    detail/MusicBrainzJson.h detail/MusicBrainzJson.cpp
     detail/ServiceGate.h detail/ServiceGate.cpp
-    detail/SpotifyJson.h detail/SpotifyJson.cpp)
+    detail/SpotifyJson.h detail/SpotifyJson.cpp
+    detail/TextFold.h detail/TextFold.cpp)
 add_library(Selecta::Meta ALIAS selecta_meta)
 target_link_libraries(selecta_meta PUBLIC selecta_base selecta_governor Qt6::Core Qt6::Network)
 if(APPLE)

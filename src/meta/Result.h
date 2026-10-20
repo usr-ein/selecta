@@ -21,7 +21,7 @@ namespace selecta::meta {
 enum class Service : quint8 {
     SpotifyApi,      // api.spotify.com: catalogue, playlists, Liked Songs
     SpotifyAccounts, // accounts.spotify.com: sign-in and tokens
-    SpotifyImages,   // i.scdn.co: cover images linked from Spotify
+    CoverImages,     // cover images a release links to: Spotify (i.scdn.co) and Deezer CDNs
     Deezer,          // api.deezer.com: keyless catalogue and 30-second clip URLs
     MusicBrainz,     // musicbrainz.org/ws/2
     CoverArtArchive, // coverartarchive.org and the archive.org hosts it redirects to

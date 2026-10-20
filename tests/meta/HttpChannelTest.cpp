@@ -107,7 +107,7 @@ TEST_F(HttpChannelTest, EachServiceAsksForItsOperation)
         {{Service::MusicBrainz, Operation::MusicBrainzRequest},
          {Service::Deezer, Operation::DeezerRequest},
          {Service::CoverArtArchive, Operation::CoverArtRequest},
-         {Service::SpotifyImages, Operation::CoverArtRequest},
+         {Service::CoverImages, Operation::CoverArtRequest},
          {Service::SpotifyAccounts, Operation::SpotifyRequest}}};
     for (const auto &[service, operation] : cases) {
         FakePacer local;

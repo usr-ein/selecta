@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "meta/Priority.h"
 #include "meta/Release.h"
 #include "meta/Result.h"
 
@@ -104,29 +105,39 @@ public:
     MusicBrainzClient(MusicBrainzClient &&) = delete;
     MusicBrainzClient &operator=(MusicBrainzClient &&) = delete;
 
+    // MusicBrainz serves the arrival pipeline, so every call defaults to the Background lane (meta/Priority.h).
+
     // Recordings carrying `isrc` (GET /isrc/{isrc}?inc=artist-credits). NotFound when MusicBrainz doesn't know it.
-    QFuture<Result<QList<musicbrainz::Recording>>> recordingsByIsrc(const QString &isrc);
+    QFuture<Result<QList<musicbrainz::Recording>>> recordingsByIsrc(const QString &isrc,
+                                                                    Priority priority = Priority::Background);
     // Releases of a recording with labels and release groups (GET /release?recording=…&inc=labels+release-groups).
-    QFuture<Result<QList<musicbrainz::ReleaseInfo>>> releasesOfRecording(const QString &recordingId);
+    QFuture<Result<QList<musicbrainz::ReleaseInfo>>> releasesOfRecording(const QString &recordingId,
+                                                                         Priority priority = Priority::Background);
     // Community genres of an entity, most votes first (GET /<entity>/{mbid}?inc=genres).
-    QFuture<Result<QList<musicbrainz::Genre>>> genres(musicbrainz::Entity entity, const QString &id);
+    QFuture<Result<QList<musicbrainz::Genre>>> genres(musicbrainz::Entity entity, const QString &id,
+                                                      Priority priority = Priority::Background);
     // Recording search by title, artist and length ±3 s (Lucene query; special characters escaped).
     QFuture<Result<QList<musicbrainz::Recording>>> searchRecordings(const QString &title, const QString &artist,
-                                                                    std::optional<qint64> durationMs);
+                                                                    std::optional<qint64> durationMs,
+                                                                    Priority priority = Priority::Background);
 
     // D30 gap fill for a release (§5.3): recording by ISRC (or, when MusicBrainz doesn't know the ISRC, one search
     // accepted only at score ≥ 90 with a matching artist), keeping recordings within ±3 s of the release's length;
     // then its releases, choosing by barcode = UPC, else title and date, else the earliest official release of the
     // same type, never a compilation or DJ mix unless the release is one; then genres from the release group, the
     // recording or the artist. About 3 requests at 1/s. NotFound when no recording fits.
-    QFuture<Result<musicbrainz::Enrichment>> enrich(const Release &release);
+    QFuture<Result<musicbrainz::Enrichment>> enrich(const Release &release, Priority priority = Priority::Background);
 
     // Copies an enrichment into a release (label, catalogue number, genres, MBIDs; labelSource/genreSource =
     // MusicBrainz when filled). Thread-safe (pure).
     static Release applied(Release release, const musicbrainz::Enrichment &enrichment);
 
+    // The Lucene query searchRecordings() sends (exposed for tests). Thread-safe (pure).
+    static QString recordingQuery(const QString &title, const QString &artist, std::optional<qint64> durationMs);
+
 private:
     struct Private;
+    class Enricher;
     std::unique_ptr<Private> d;
 };
 

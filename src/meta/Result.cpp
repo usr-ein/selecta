@@ -12,7 +12,7 @@ std::optional<governor::Operation> operationFor(Service service)
     case Service::SpotifyApi:
     case Service::SpotifyAccounts:
         return Operation::SpotifyRequest;
-    case Service::SpotifyImages:
+    case Service::CoverImages:
     case Service::CoverArtArchive:
         return Operation::CoverArtRequest;
     case Service::Deezer:
@@ -34,8 +34,8 @@ QString serviceName(Service service)
         return u"Spotify"_s;
     case Service::SpotifyAccounts:
         return u"Spotify accounts"_s;
-    case Service::SpotifyImages:
-        return u"Spotify images"_s;
+    case Service::CoverImages:
+        return u"cover images"_s;
     case Service::Deezer:
         return u"Deezer"_s;
     case Service::MusicBrainz:
