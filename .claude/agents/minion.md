@@ -34,7 +34,9 @@ Then work on what doesn't depend on the answer. If nothing doesn't, end your tur
 
 ## Building
 
-Work in your worktree, which has its own `build/dev`.
+Work in your worktree, which has its own `build/dev`. Compiles go through a ccache that every worktree shares
+(`cmake/SelectaCcache.cmake`), so your first build mostly reuses what main already compiled. Keep it that way: no
+`SELECTA_CCACHE=OFF`, and no flags of your own in a preset.
 
 ```sh
 export VCPKG_ROOT="$HOME/vcpkg"

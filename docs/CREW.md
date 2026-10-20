@@ -28,7 +28,7 @@ checkout (git-ignored).
    `selecta-minion-P-NNN-slug`.
 4. **Built.** The minion works in its worktree:
    - a test for each requirement;
-   - its own `build/dev`;
+   - its own `build/dev`, compiling through the ccache that every worktree shares;
    - the targeted tests, then the full suite once, then `tools/lint.sh` on the directories it touched.
 5. **Pull request.** The minion merges `origin/main` once, then pushes the branch and opens the PR:
    `gh pr create --base main --label review:needed`. The body says what changed, the test and lint results, the

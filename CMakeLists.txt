@@ -36,6 +36,7 @@ option(SELECTA_CLANG_TIDY "Run clang-tidy on Selecta's own sources while compili
 # PRD SAFE-3: a build can reach the live Soulseek server only when this is ON *and* the user enables it at run time.
 option(SELECTA_ENABLE_LIVE_SERVER "Allow connecting to the live Soulseek server" OFF)
 set(SELECTA_SANITIZE "" CACHE STRING "Sanitizers to enable, e.g. address;undefined or thread")
+include(SelectaCcache)
 
 if(SELECTA_BUILD_TESTS AND SELECTA_ENABLE_LIVE_SERVER)
     message(FATAL_ERROR "Tests must never be built with SELECTA_ENABLE_LIVE_SERVER (CLAUDE.md network safety rules)")

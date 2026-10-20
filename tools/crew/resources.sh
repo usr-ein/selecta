@@ -26,6 +26,12 @@ else
     echo "OK   disk: repo ${repo_gb} GB of ${budget_gb} GB; ${free_gb} GB free"
 fi
 
+# The compiler cache every worktree shares (cmake/SelectaCcache.cmake) lives outside the repo; ccache keeps it under
+# its own max_size.
+if command -v ccache >/dev/null; then
+    echo "     ccache: $(ccache -s 2>/dev/null | awk -F': ' '/Cache size/ { print $2; exit }')"
+fi
+
 # --- Memory: macOS's own pressure figure and swap.
 free_pct=$(memory_pressure 2>/dev/null | awk -F': ' '/free percentage/ { gsub("%", "", $2); print $2 }')
 swap_used=$(sysctl -n vm.swapusage | awk '{ print $6 }')
