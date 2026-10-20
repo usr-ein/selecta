@@ -4,10 +4,12 @@
 #include "meta/Release.h"
 
 #include <QByteArray>
+#include <QHash>
 #include <QList>
 #include <QMetaType>
 #include <QString>
 
+#include <chrono>
 #include <optional>
 
 namespace selecta::storage {
@@ -96,6 +98,18 @@ private:
 // FileChoice ↔ JSON text, for the database.
 QByteArray fileChoiceToText(const FileChoice &choice);
 std::optional<FileChoice> fileChoiceFromText(const QByteArray &text);
+
+// About how long finding the rest of a Get tracks list takes (BATCH-4), at the governor's pace (D31): the searches
+// still to start take what the budget holds beyond the reserve kept for searches typed by hand, then one per refill
+// (the first when `nextIn` says), and the last one collects answers for a while. Zero when nothing is left. Pure.
+std::chrono::milliseconds findingTimeLeft(int searchesToStart, int searchesCollecting, int searchesAvailable,
+                                          std::chrono::milliseconds nextIn);
+
+// Spreading a batch over peers (BATCH-7): which file a line should download, given how many of the batch's downloads
+// each peer already has (`load`). The best file stays unless an alternative is as good (as close a fit to the release,
+// a free slot if the best has one) and its peer has fewer of the batch's downloads; the least loaded such peer wins.
+// -1: the best; otherwise the alternative's index. Every alternative already passed the list's preset. Pure.
+qsizetype spreadChoice(const FileChoice &best, const QList<FileChoice> &alternatives, const QHash<QString, int> &load);
 
 } // namespace selecta::core
 

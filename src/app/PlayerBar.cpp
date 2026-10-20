@@ -6,6 +6,7 @@
 #include "app/Preview.h"
 #include "app/WaveformView.h"
 
+#include <QAction>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -45,12 +46,14 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     , m_preview(preview)
     , m_title(new QLabel(this))
     , m_subtitle(new QLabel(this))
+    , m_quality(new QLabel(this))
     , m_back(transportButton(u"player.back"_s, u"gobackward.5"_s, u"media-seek-backward"_s, tr("Back 5 seconds"), 18,
                              this))
     , m_play(transportButton(u"player.play"_s, u"play.fill"_s, u"media-playback-start"_s, tr("Play (Space)"), 22, this))
     , m_forward(transportButton(u"player.forward"_s, u"goforward.5"_s, u"media-seek-forward"_s, tr("Forward 5 seconds"),
                                 18, this))
     , m_time(new QLabel(this))
+    , m_actions(new QHBoxLayout)
     , m_volume(new QSlider(Qt::Horizontal, this))
     , m_waveform(new WaveformView(this))
     , m_ticker(new QTimer(this))
@@ -70,6 +73,9 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     for (QLabel *label : {m_title, m_subtitle}) {
         label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // long names elide, never widen the bar
     }
+    m_quality->setObjectName(u"player.quality"_s);
+    m_quality->setTextFormat(Qt::PlainText);
+    m_quality->hide();
 
     m_time->setObjectName(u"player.time"_s);
     QFont timeFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -95,11 +101,15 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     auto *row = new QHBoxLayout;
     row->setSpacing(6);
     row->addLayout(texts, 1);
+    row->addWidget(m_quality);
+    row->addSpacing(8);
     row->addWidget(m_back);
     row->addWidget(m_play);
     row->addWidget(m_forward);
     row->addSpacing(8);
     row->addWidget(m_time);
+    m_actions->setSpacing(2);
+    row->addLayout(m_actions);
     row->addSpacing(12);
     row->addWidget(speaker);
     row->addWidget(m_volume);
@@ -122,7 +132,12 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     player.setVolume(m_volume->value() / 100.0);
     connect(m_waveform, &WaveformView::seekRequested, &player, &playback::Player::seek);
 
-    connect(&player, &playback::Player::stateChanged, this, &PlayerBar::refresh);
+    connect(&player, &playback::Player::stateChanged, this, [this](State state) {
+        if (state == State::Playing) {
+            m_message.clear(); // "Asking vinyl_ghost…" and the like are over once it plays
+        }
+        refresh();
+    });
     connect(&player, &playback::Player::detailChanged, this, &PlayerBar::refresh);
     connect(&player, &playback::Player::trackChanged, this, &PlayerBar::trackChanged);
     connect(&player, &playback::Player::durationChanged, m_waveform, &WaveformView::setDuration);
@@ -133,6 +148,7 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     });
     connect(&m_preview, &PreviewController::waveformChanged, this,
             [this] { m_waveform->setWaveform(m_preview.waveform()); });
+    connect(&m_preview, &PreviewController::qualityChanged, this, &PlayerBar::refreshQuality);
     m_ticker->setInterval(kTickMs);
     m_ticker->setTimerType(Qt::PreciseTimer);
     connect(m_ticker, &QTimer::timeout, this, &PlayerBar::tick);
@@ -143,6 +159,19 @@ void PlayerBar::showMessage(const QString &message)
 {
     m_message = message;
     refresh();
+}
+
+void PlayerBar::addPreviewAction(QAction *action, const QString &objectName)
+{
+    auto *button = new QToolButton(this);
+    button->setObjectName(objectName);
+    button->setDefaultAction(action);
+    button->setIconSize(QSize(16, 16));
+    button->setAutoRaise(true);
+    button->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    button->setAccessibleName(action->text());
+    button->setFocusPolicy(Qt::NoFocus); // as the transport: keys belong to the window's shortcuts
+    m_actions->addWidget(button);
 }
 
 double PlayerBar::volume() const
@@ -174,9 +203,6 @@ void PlayerBar::refresh()
     const playback::Player &player = m_preview.player();
     const playback::PlayerTrack &track = player.track();
     const State state = player.state();
-    if (state == State::Playing) {
-        m_message.clear(); // "Asking vinyl_ghost…" and the like are over once it plays
-    }
     const bool loaded = player.isActive() || state == State::Ended;
 
     if (!loaded && state != State::Failed) {
@@ -230,6 +256,26 @@ void PlayerBar::refresh()
         m_ticker->stop();
     }
     tick();
+}
+
+void PlayerBar::refreshQuality()
+{
+    // A symbol and words (UI-4), worded "likely" (PREV-9); the details in the tooltip.
+    const std::optional<audio::QualityReport> &report = m_preview.quality();
+    if (!report || report->findings.isEmpty()) {
+        m_quality->hide();
+        m_quality->clear();
+        m_quality->setToolTip({});
+        return;
+    }
+    m_quality->setText(tr("⚠ %1").arg(audio::findingBadge(report->findings.constFirst(), report->likelySourceKbps)));
+    QStringList details;
+    for (const audio::QualityFinding finding : report->findings) {
+        details.append(audio::describeFinding(finding, *report) + u'.');
+    }
+    m_quality->setToolTip(details.join(u'\n'));
+    m_quality->setAccessibleName(m_quality->text());
+    m_quality->show();
 }
 
 void PlayerBar::tick()

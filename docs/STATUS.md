@@ -4,6 +4,33 @@ Kept up to date by the head implementer (session `main-impl`). Newest first with
 the **Decisions taken autonomously** and **Waiting for the maintainer** sections. The progress report against every PRD
 requirement (2026-10-20): https://claude.ai/code/artifact/e3077d17-237e-44dd-84ce-afc8aa483747
 
+## Road to v1 (fixed 2026-10-20)
+
+**End goal: v1.0 release candidate 1 (`v1.0.0-rc1`) in the maintainer's hands for the live-network test (M9).** That
+is a release-preset build of `main`:
+- every P0 requirement and the v1 P1s below done;
+- CI green;
+- a scripted end-to-end pass on the local test network;
+- a pass against the real metadata services;
+- an ad-hoc-signed app bundle that defaults to the live server (SAFE-3);
+- a test script for the maintainer.
+
+**v1 scope (frozen):**
+- **In:** every P0, plus these P1s: NET-3 (D38), NET-7, NET-8, NET-10, SRCH-14, SRCH-15, BRWS-1, BRWS-2, BATCH-7,
+  BATCH-8, PREV-9, PREV-11, PREV-12, DL-10, DL-12, LIB-6, CONV-8, META-5, META-7, FAIR-5, UI-6.
+- **Out:** SHARE-4 buddy-only folders (D34); P2 (PREV-10, LIB-7, LIB-8, META-6, META-8, NFR-8); Linux and Windows
+  packages (they compile and test in CI only).
+
+Each step ends at its gate; the next starts only when the gate holds.
+
+| Step | What | Who | Gate |
+|---|---|---|---|
+| 1. Feature-complete | CONV-1 (converter rate, depth, ALAC) and Spotify "Open Again" · PREV-9 app side (badge, spectrogram) · live-test fixes (compilations, YouTube channels, leading brackets, genre, debug socket) · UI-5 VoiceOver and keyboard · NET-3 port mapping and reachability · BATCH-7 + FAIR-5 in Get tracks ✅ · BATCH-4 time left ✅ · LIB-6 corrections | gaps · media · fixes · a11y · upnp · main-impl · next free teammate | All merged into main; full suite green; lint clean |
+| 2. CI green | macOS build, tests, lint, ASan; Linux build and tests; TSan reporting (fully gating once Qt is TSan-built) | ci | A green run on main, linked here |
+| 3. Freeze and QA | Feature freeze. A scripted end-to-end pass of every view on the local test network; the real-services pass again (Spotify sign-in, a playlist, YouTube previews, tags and cover); NFR-2 timings (filter + sort of 10 000 results < 50 ms, waveform < 300 ms); every bug found fixed | main-impl + teammates on bugs | QA checklist all pass; no open P0 bug |
+| 4. Release candidate | `release` preset build, version 1.0.0-rc1, live server allowed (both SAFE-3 switches), ad-hoc signed bundle with the icon, user notes in the README, tag `v1.0.0-rc1` pushed | main-impl | The RC launches in a fresh user data folder and reaches the local test network; the tag is on origin |
+| 5. Maintainer tests v1 (M9) | The live-network script: pre-flight (PLAN §5.5) with a dedicated account, then a playlist through Get tracks to tagged MP3 320s in the Inbox, previews, filing, sharing and the ratio, messages and rooms. Issues go to triage, then rc2 | maintainer | Two weeks of personal use without bans → M10 (Developer ID signing and notarisation by the maintainer, DMG, `v1.0.0`) |
+
 ## Milestones
 
 | Milestone | State | Notes |
@@ -42,6 +69,11 @@ their branches are on origin.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-20 | The spectrum check informs and never changes what the Inbox gets: a likely-transcoded FLAC still becomes MP3 320; only peer previews are judged (YouTube and Deezer clips are lossy by design); spectrograms live in the analysis cache (evictable, the badge stays); inferno colour scale, fixed −120…0 dB | PREV-9; keeping suspect files as FLAC would be a product call (selecta-media) |
+| 2026-10-20 | Get tracks moves a line to another peer's copy only when it's as good (fit within 0.05, a free slot if the best had one); the best stays first in line if that fails | BATCH-7; spreading must never cost quality |
+| 2026-10-20 | Previews: the cache index lives in the cache folder (index.json); files expire 30 days after last use within the 2 GB LRU; Discard is D (⌫ removes rows); discarding a kept preview doesn't cancel its download | CACHE-1, PREV-5, PREV-8 (selecta-previews) |
+| 2026-10-20 | Notifications only while the window isn't active (toasts always); messages and mentions coalesce per peer or room; permission asked at the first notification, never at launch; Dock badge = unread messages + arrivals while away | UI-6, NET-7 (selecta-notify) |
+| 2026-10-20 | The app icon is an Icon Composer `.icon` (dark tile, the disc at 92 %) compiled by actool when Xcode 26+ is there, with the round `.icns` as the fallback; macOS 26+ never draws a truly round app icon | D36 (selecta-logo) |
 | 2026-10-20 | The dev preset builds with line tables only (`-g1`) | Keeps file:line backtraces; build folders about half the size (the maintainer asked for about 10 GB for the whole repo, worktrees included) |
 | 2026-10-20 | Presets: Selecta's four (MP3 320 or lossless, the default; lossless only; hi-res 24-bit; any quality) plus the user's, kept in settings.ini; each Wishlist search keeps a copy of its filter | A saved search shouldn't change under a later edit of a preset; SRCH-8 |
 | 2026-10-20 | Changing Get tracks' quality ranks the lines already found again, from the search cache | Spends no search budget; a new network search only when the cache has nothing |

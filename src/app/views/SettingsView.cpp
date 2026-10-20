@@ -345,18 +345,22 @@ QWidget *SettingsView::createCacheBox(QWidget *parent)
     };
     row(tr("Search results:"), u"searches"_s, m_searchCache, &SettingsView::clearSearchCacheRequested);
     row(tr("Previews:"), u"previews"_s, m_previewCache, &SettingsView::clearPreviewCacheRequested);
-    row(tr("Waveforms:"), u"waveforms"_s, m_waveformCache, &SettingsView::clearWaveformCacheRequested);
+    row(tr("Waveforms and spectra:"), u"waveforms"_s, m_waveformCache, &SettingsView::clearWaveformCacheRequested);
     return box;
 }
 
-void SettingsView::setCacheSizes(const core::CacheStatus &engine, qint64 waveformBytes)
+void SettingsView::setCacheSizes(const core::CacheStatus &engine, qint64 analysisBytes, qint64 analysisBudgetBytes)
 {
     m_searchCache->setText(
         engine.searches == 1
             ? tr("1 search · %1, kept a day").arg(format::size(engine.searchBytes))
             : tr("%1 searches · %2, kept a day").arg(engine.searches).arg(format::size(engine.searchBytes)));
-    m_previewCache->setText(tr("%1 of audio, at most 2 GB").arg(format::size(engine.previewBytes)));
-    m_waveformCache->setText(tr("%1, at most 320 MB").arg(format::size(waveformBytes)));
+    m_previewCache->setText(tr("%1 of audio, at most 2 GB, each kept 30 days after it was last heard")
+                                .arg(format::size(engine.previewBytes)));
+    m_waveformCache->setText(
+        analysisBudgetBytes > 0
+            ? tr("%1, at most %2").arg(format::size(analysisBytes), format::size(analysisBudgetBytes))
+            : format::size(analysisBytes));
 }
 
 QWidget *SettingsView::createPreviewBox(QWidget *parent)
@@ -366,7 +370,7 @@ QWidget *SettingsView::createPreviewBox(QWidget *parent)
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     auto *note = new QLabel(tr("Space previews a track from YouTube through your own yt-dlp, which costs Soulseek "
                                "peers nothing; without yt-dlp, from Deezer's 30-second clip. ⇧Space always asks "
-                               "the peer for the very file a Get would download, and K keeps it."),
+                               "the peer for the very file a Get would download, K keeps it and D discards it."),
                             box);
     note->setWordWrap(true);
     note->setForegroundRole(QPalette::PlaceholderText);

@@ -9,6 +9,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <functional>
 #include <optional>
 
 namespace selecta::core {
@@ -31,7 +32,10 @@ class FileRanking
 public:
     static constexpr int kMaxChoices = 5;
 
-    static RankedChoices rank(const GetLine &line, const SearchOutcome &outcome, const SearchFilter &filter);
+    // `peerLoad` says how many files were taken from a peer today (FAIR-5); empty: nothing known.
+    using PeerLoad = std::function<int(const QString &peer)>;
+    static RankedChoices rank(const GetLine &line, const SearchOutcome &outcome, const SearchFilter &filter,
+                              const PeerLoad &peerLoad = {});
     // The words to search for a line (match's QueryPlanner), or an empty string when nothing selective is left.
     static QString query(const GetLine &line, const QStringList &excludedPhrases, QString *why = nullptr);
 };

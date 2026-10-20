@@ -81,6 +81,7 @@ if(SELECTA_WITH_MEDIA)
             core/ManualSearchServiceTest.cpp
             core/MetaServicesTest.cpp
             core/NetworkServiceTest.cpp
+            core/PreviewCacheTest.cpp
             core/ResultAnnotatorTest.cpp
             core/RoomServiceTest.cpp
             core/SearchCacheTest.cpp
@@ -107,15 +108,19 @@ if(SELECTA_WITH_MEDIA)
             app/NavModelTest.cpp
             app/NotifierTest.cpp
             app/PresetsTest.cpp
+            app/PreviewQualityTest.cpp
             app/SearchResultsModelTest.cpp
+            app/SpectrogramViewTest.cpp
             app/SpotifyTermsTest.cpp
             app/TickDelegateTest.cpp
             app/TransfersModelTest.cpp
             app/WaveformViewTest.cpp
-        LIBRARIES selecta_app)
+        LIBRARIES selecta_app selecta_media_test_support)
     if(APPLE)
         # The built bundle's icon (D36): Selecta.icns, and Assets.car when actool compiled the Icon Composer icon.
         add_test(NAME selecta_app_bundle_icon COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/app/check-bundle-icon.sh"
             "$<TARGET_BUNDLE_DIR:Selecta>" "$<BOOL:${SELECTA_ACTOOL}>")
     endif()
+    target_compile_definitions(selecta_ui_tests PRIVATE
+        SELECTA_META_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/meta/fixtures")
 endif()

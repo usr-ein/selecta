@@ -2,10 +2,13 @@
 #include "core/GetTracks.h"
 
 #include "core/ReleaseJson.h"
+#include "governor/Limits.h"
 #include "storage/Database.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
+
+#include <algorithm>
 
 using namespace Qt::StringLiterals;
 
@@ -331,6 +334,42 @@ std::optional<FileChoice> fileChoiceFromText(const QByteArray &text)
     choice.fit = object.value(u"fit"_s).toDouble();
     choice.fitsRelease = object.value(u"fitsRelease"_s).toBool();
     return choice;
+}
+
+std::chrono::milliseconds findingTimeLeft(int searchesToStart, int searchesCollecting, int searchesAvailable,
+                                          std::chrono::milliseconds nextIn)
+{
+    using namespace std::chrono;
+    if (searchesToStart <= 0) {
+        return searchesCollecting > 0 ? duration_cast<milliseconds>(governor::limits::kResultsIdle) : 0ms;
+    }
+    const int startNow =
+        std::clamp(searchesAvailable - governor::limits::kGetTracksReservedSearches, 0, searchesToStart);
+    const int later = searchesToStart - startNow;
+    milliseconds untilLastStarts = 0ms;
+    if (later > 0) {
+        const auto refill = duration_cast<milliseconds>(governor::limits::kSearchRefill);
+        const milliseconds first = nextIn > 0ms ? std::min(nextIn, refill) : refill;
+        untilLastStarts = first + (refill * (later - 1));
+    }
+    return untilLastStarts + duration_cast<milliseconds>(governor::limits::kResultsIdle);
+}
+
+qsizetype spreadChoice(const FileChoice &best, const QList<FileChoice> &alternatives, const QHash<QString, int> &load)
+{
+    constexpr double kFitSlack = 0.05; // ranking noise: a fit this close is the same match
+    qsizetype chosen = -1;
+    int chosenLoad = load.value(best.peer);
+    for (qsizetype i = 0; i < alternatives.size(); ++i) {
+        const FileChoice &candidate = alternatives.at(i);
+        const bool asGood = candidate.fitsRelease == best.fitsRelease && candidate.fit >= best.fit - kFitSlack &&
+                            (candidate.freeSlot || !best.freeSlot);
+        if (asGood && load.value(candidate.peer) < chosenLoad) {
+            chosen = i;
+            chosenLoad = load.value(candidate.peer);
+        }
+    }
+    return chosen;
 }
 
 } // namespace selecta::core
