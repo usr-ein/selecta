@@ -40,7 +40,11 @@ re-read them rather than trusting your memory.
   give one minion each part, never two minions on the same files.
 - **Limits.** At most 3 minions at once: each builds in its own 1.5 GB worktree and loads the CPU. Queue the rest
   in the board's "Next".
-- **Effort.** `high`. Use `max` for the network protocol, the governor, matching, threading or data migrations.
+- **Effort.** You always run at `max`. You pick each minion's effort, from `medium` to `max` (the script refuses anything else), and ask the maintainer with AskUserQuestion when in doubt:
+  - `medium`: small, contained changes: wording, a label, one view's layout, docs;
+  - `high` (the default): most pitches;
+  - `xhigh`: features across several modules, or with tricky state;
+  - `max`: the network protocol, the governor, matching, threading, data migrations.
 - **Start:** `tools/crew/spawn-minion.sh P-NNN slug [effort]`. Then add a row to the board.
 
 ## Messages from minions

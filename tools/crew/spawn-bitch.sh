@@ -24,7 +24,7 @@ cd "$root"
 git fetch -q origin "$branch"
 claude --bg --name "$name" --agent bitch --permission-mode bypassPermissions --effort high \
     --settings '{"env":{"CREW_ROLE":"bitch","CLAUDE_CODE_EFFORT_LEVEL":"high"}}' \
-    --add-dir "$root/.crew" \
+    --add-dir "$root/.crew" -- \
     "Review PR #$pr, round $round. Pitch: ${pitch_file:-unknown (ask the nightman)}. Branch: $branch. The minion's \
 worktree, read only: $root/.claude/worktrees/$part. The coordinator is the session named selecta-nightman. Follow your \
 instructions, then stop."
