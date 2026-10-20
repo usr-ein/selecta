@@ -1,0 +1,21 @@
+{
+  "created": "2026-10-20T00:00:00.000Z",
+  "count": 2,
+  "offset": 0,
+  "recordings": [
+    {
+      "id": "5bc8fbbc-bde5-4099-8164-d8399f767c45",
+      "score": 100,
+      "title": "Glass Harbour (extended mix)",
+      "length": 391500,
+      "artist-credit": [{ "name": "Kestrel Moon", "artist": { "id": "87b0b125-ec1d-4da0-a6eb-8c9ebd69fe29", "name": "Kestrel Moon" } }]
+    },
+    {
+      "id": "d76d4330-f144-4bea-b0c1-1fdecb91ce37",
+      "score": 72,
+      "title": "Glass Harbour",
+      "length": 391000,
+      "artist-credit": [{ "name": "Someone Else", "artist": { "id": "c30d8b76-28db-425e-a3b2-29f1c4069545", "name": "Someone Else" } }]
+    }
+  ]
+}

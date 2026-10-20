@@ -10,8 +10,8 @@ const ServicePolicy &policyFor(Service service)
         return kSpotifyApiPolicy;
     case Service::SpotifyAccounts:
         return kSpotifyAccountsPolicy;
-    case Service::SpotifyImages:
-        return kSpotifyImagesPolicy;
+    case Service::CoverImages:
+        return kCoverImagesPolicy;
     case Service::Deezer:
         return kDeezerPolicy;
     case Service::MusicBrainz:

@@ -1,0 +1,9 @@
+{
+  "id": "0d464138-a623-4255-bfc1-ea36f17fd374",
+  "title": "Glass Harbour",
+  "genres": [
+    { "id": "89255676-1f14-4dd8-bbad-fca839d6aff4", "name": "electronic", "count": 2, "disambiguation": "" },
+    { "id": "a2782cb6-1cd0-477c-a61d-b3f8b42dacad", "name": "house", "count": 3, "disambiguation": "" },
+    { "id": "41fe3a05-8f4d-4e9e-8a6e-0b1d2e3f4a5b", "name": "techno", "count": 0, "disambiguation": "" }
+  ]
+}

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "meta/Priority.h"
 #include "meta/Release.h"
 #include "meta/Result.h"
 
@@ -32,13 +33,14 @@ struct CoverImage
 };
 
 // Fetches the cover for a release (META-4, D29/D30): the largest image the release links to (Spotify's ~640 px, or
-// Deezer's 1000 px), then the Cover Art Archive front image by release MBID, then by release-group MBID (the 1200 px
-// thumbnail, never the unbounded original). Each download is bounded: an answer announcing or reaching more than
-// 20 MiB is aborted, and an image is accepted only when its header says JPEG or PNG with both sides ≤ 10 000 px
-// (read from the bytes before anything decodes them).
+// Deezer's 1000 px; only from their CDNs: i.scdn.co, *.spotifycdn.com, *.dzcdn.net), then the Cover Art Archive front
+// image by release MBID, then by release-group MBID (the 1200 px thumbnail, never the unbounded original). Each
+// download is bounded: an answer announcing or reaching more than 20 MiB is aborted, and an image is accepted only
+// when its header says JPEG or PNG with both sides ≤ 10 000 px (read from the bytes before anything decodes them).
 //
-// Covers are cached in `cacheDir` (one file per source URL, kept 30 days); the folder is read and written on a
-// private worker thread, never on the caller's.
+// Covers are cached in `cacheDir` (one file per source URL plus a small JSON sidecar, kept `ttl`, oldest dropped
+// beyond `maxCacheBytes`); the folder is read and written on a private worker thread, never on the caller's. A folder
+// that can't be created just disables the cache.
 //
 // Threading: lives on the meta thread; futures finish there. Ownership: network manager and pacer must outlive the
 // fetcher. Failures (after every source was tried): NotFound when the release links no cover and has no MBID,
@@ -53,6 +55,7 @@ public:
     {
         QString cacheDir; // empty: no disk cache
         std::chrono::hours ttl{24 * 30};
+        qint64 maxCacheBytes = qint64{500} * 1024 * 1024;
         QUrl coverArtArchiveUrl{QStringLiteral("https://coverartarchive.org")}; // tests point it at a fake
     };
 
@@ -64,7 +67,10 @@ public:
     CoverFetcher(CoverFetcher &&) = delete;
     CoverFetcher &operator=(CoverFetcher &&) = delete;
 
-    QFuture<Result<CoverImage>> fetch(const Release &release);
+    QFuture<Result<CoverImage>> fetch(const Release &release, Priority priority = Priority::Interactive);
+
+    // True for the CDN hosts a release's cover URL may point to (HTTPS only). Thread-safe (pure).
+    static bool isAllowedCoverUrl(const QUrl &url);
 
     // Checks downloaded bytes the way fetch() does: JPEG or PNG header, sides 1…10 000 px, at most 20 MiB. Fills
     // mimeType, width and height. Thread-safe (pure).
@@ -72,6 +78,7 @@ public:
 
 private:
     struct Private;
+    class Job;
     std::unique_ptr<Private> d;
 };
 
