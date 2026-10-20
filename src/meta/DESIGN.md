@@ -282,6 +282,57 @@ the main artist and core title whose best hit must agree on the version, fit ±3
 (`ReleaseResolver::score`), then `/track/{id}` for the signature (search answers are cached). `expiresAt` comes from
 the URL's `exp=`, else ten minutes from now. No match or no preview → `NotFound`; other errors pass through.
 
+## Smoke tool (M6, manual only)
+
+`selecta-cli` commands in `tools/selecta-cli/commands/meta/`, for checking behaviour against the real services by hand,
+sparingly; never from tests or CI:
+
+- `meta-search "artist - title" […up to 20 lines]` resolves lines as Get tracks does (one Spotify sign-in for all of
+  them); `--length`, `--label`, `--enrich` (MusicBrainz label and genres for each first candidate), `--all`.
+- `meta-isrc <isrc>`: Spotify's and Deezer's releases with that ISRC, then MusicBrainz's label, catalogue number and
+  genres (`--no-enrich` skips it).
+- `meta-ytdlp-search "artist - title"`: probes the user's yt-dlp, finds the release (or takes `--length`), searches
+  YouTube without downloading and prints the ±3 s pick; `--fetch <folder>` downloads the pick's audio there (delete the
+  folder afterwards). `--ytdlp <path>` overrides discovery.
+- Every command: `--verbose` prints each request's scrubbed activity-log line; `--no-spotify`; `--secrets <file>`.
+
+`GovernorPacer` implements `RequestPacer` over a real `governor::Governor` on `base::SteadyClock`: one
+`governor.request(op, {})` per acquire, the decision delivered on the next event-loop turn (never re-entrant), the
+governor's explanation as the refusal text and its `retryAfter`. Spotify runs in client-credentials mode only when
+`SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` come from the environment or a secrets file (`--secrets`, else the
+first `local/secrets.env` up from the working directory); the values are never printed, only where they came from.
+
+### Smoke run, 2026-10-20 (real services, by hand)
+
+Ten lines in one `meta-search` process (one token request, ten Spotify searches, about 0.2–0.4 s each):
+
+| Line | First candidate | Tier |
+|---|---|---|
+| Bicep - Glue | Glue (single, 4:29) | Likely → Confident after the margin fix below |
+| Daft Punk - One More Time (Radio Edit) | One More Time - Radio Edit (3:55) | Confident |
+| Disclosure feat. Sam Smith - Latch | Latch (4:16), featured artist credited | Likely → Confident after the fix |
+| Fred Again - Delilah (pull me out of this) | Fred again.., Delilah Montagu (4:11): the missing ".." didn't matter | Likely → Confident after the fix |
+| Peggy Gou - (It Goes Like) Nanana | the unspecified 6:08 version, "Edit" second (×0.9) | Confident |
+| RÜFÜS DU SOL - Innerbloom (What So Not Remix) | the remix (4:37); radio edit, other remixes and live version score 0 | Confident |
+| Four Tet - Baby | Baby (4:24); a later remix second | Confident |
+| Charlotte de Witte - Doppler | Formula EP version (7:14); a compilation copy titled "Doppler" is the 4:01 edit | Likely (right: two versions, no length) |
+| Bonobo - Kerala | Kerala (3:58) | Confident |
+| Avicii - Levels (Radio Edit) | Levels - Radio Edit (3:20); original, instrumental and remix score 0 | Confident |
+
+What changed because of it: compilation copies of the same track under their own ISRCs had blocked the Confident
+margin (Bicep, Disclosure, Fred again..); the margin now ignores the same title in a compatible version within ±3 s,
+and an original release sorts before a compilation's copy at equal scores. A re-run of those three lines gave
+Confident. "Streaming Mix" segments (Tomorrowland) scored ×0.9 instead of as DJ-mix segments; "streaming mix",
+"dj mix", "continuous mix" and "mixed by" now mark DJ-mix segments.
+
+Also checked: Deezer alone (`--no-spotify`) resolved "Bicep - Glue" and "Charlotte de Witte - Doppler" Confident;
+MusicBrainz enrichment gave Ninja Tune / house, electronic, dance, techno and KNTXT / electronic, techno (3 requests
+each, 1.1 s apart). `meta-isrc GBCFB1700229` merged Spotify's and Deezer's copies into one Exact candidate (score now
+1.0 for an ISRC-only line) and MusicBrainz chose the EP release (Spotify's "single" type). yt-dlp 2026.08.19 with Deno
+2.9.7: one 10-result search (2.1 s; the official video is 4:45, outside ±3 s of the 4:29 release; the pick was a
+4:30 upload) and the one allowed download: 4.4 MB m4a (AAC) in 3.5 s, with progress and the marker lines as designed;
+the file and its temp folder were deleted at once.
+
 ## Covers
 
 `CoverFetcher::fetch()`: the largest linked image (only from Spotify's and Deezer's CDNs; any other host is skipped,
@@ -324,6 +375,9 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
 | `--force-overwrites` on every fetch | A leftover partial file must never pass for a finished download; reuse is core's preview-cache decision |
 | Job signals and the `paused` signal are delivered from the event loop | A receiver that deletes the job or starts another run never re-enters the runner mid-step |
 | `ClipSource` always signs afresh, even after a cached search | The URL in a cached answer may already have expired |
+| The Confident margin ignores copies of the same version within ±3 s, whatever their ISRC | Seen in the smoke run: compilations re-register tracks; a copy of the chosen track is no doubt about what to search for |
+| At equal scores the original release sorts before a compilation's copy | Its album, date and track number are the ones to tag with |
+| `meta-search` takes up to 20 lines | One Spotify sign-in for a whole smoke run instead of one per line |
 
 ## Progress
 
@@ -337,10 +391,12 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
     CAA fallback through redirects, disk cache on a worker thread with TTL and size bound).
   - M4 (merged): `TextFold`/`TextMatcher` replaced by `match/`; `TitleInfo`, `DeezerJson`, `DeezerClient`,
     `ReleaseResolver` (the labelled table of tricky lines and the request flows), `jsonInspection` for the JSON APIs.
-  - M5: `ToolProcess`, `YtDlpOutput`, `YtDlpRunner`/`YtDlpFetch` (discovery, version, search, pick, fetch, error map,
-    pause, cleanup) against the fake yt-dlp script, `ClipSource`. 324 tests (+2 opt-in Keychain tests).
-- **Next:** M6 — `selecta-cli` commands `meta-search`, `meta-isrc`, `meta-ytdlp-search` with a `GovernorPacer`; the
-  manual smoke run (10 real lines, one yt-dlp search, at most one short download into a deleted temp folder).
+  - M5 (merged): `ToolProcess`, `YtDlpOutput`, `YtDlpRunner`/`YtDlpFetch` (discovery, version, search, pick, fetch,
+    error map, pause, cleanup) against the fake yt-dlp script, `ClipSource`; `Config::disabled()` for isolated runs.
+  - M6: `selecta-cli` `meta-search`, `meta-isrc`, `meta-ytdlp-search` over `GovernorPacer`; the manual smoke run
+    above, and the resolver fixes it led to. 329 tests (+2 opt-in Keychain tests), green under `ctest -j8`.
+- **Next:** nothing planned in meta. ADR-011 (previews through the user's own yt-dlp) is for the head implementer to
+  write from the "yt-dlp previews" section.
 - **Open questions:** none blocking.
 
 ### Notes for whoever resumes
@@ -349,3 +405,7 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
   `detail::ServiceGate::pollAll()` (or use `testing::awaitAdvancing`).
 - A flow's `LoopbackReceiver`/`QTimer` are deleted with `deleteLater()`: a flow can end inside their own signals.
 - `QT_USE_QSTRINGBUILDER` is on: wrap `a + b` in `QByteArray(...)`/`QString(...)` before calling members on it.
+- Process tests (`YtDlpRunnerTest`, `ToolProcessTest`) run real shells, so a loaded machine slows them: injected
+  timeouts are seconds, not milliseconds, waits have 30-s ceilings and return as soon as their condition holds, and a
+  test kills the fake only once its background child's pid file exists. Check changes with
+  `ctest -j16 -R 'YtDlp|ToolProcess' --repeat until-fail:3`.

@@ -31,6 +31,12 @@ using selecta::meta::testing::spinUntil;
 
 namespace {
 
+// Timeouts the tests inject: far above the fake's start-up even on a loaded machine (ctest -j8, sanitizers), so a
+// timeout never fires before the fake has done what the test needs. Waits use generous ceilings and return as soon
+// as their condition holds; nothing sleeps a fixed time against the fake.
+constexpr std::chrono::milliseconds kHangTimeout{3000};
+constexpr int kCeilingMs = 30000;
+
 void writeFile(const QString &path, const QByteArray &bytes)
 {
     QFile file(path);
@@ -66,10 +72,11 @@ protected:
         writeWrapper(u""_s);
         config.executable = bin(u"yt-dlp"_s);
         config.searchDirectories = {dir.filePath(u"bin"_s)}; // Deno only when a test puts one there
-        config.versionTimeout = 5s;
-        config.searchTimeout = 10s;
-        config.idleTimeout = 3s;
-        config.totalTimeout = 10s;
+        // Generous: only the tests about timeouts set short ones (kHangTimeout); a loaded machine never trips these.
+        config.versionTimeout = 30s;
+        config.searchTimeout = 30s;
+        config.idleTimeout = 30s;
+        config.totalTimeout = 60s;
         config.today = [] { return QDate(2026, 10, 20); };
     }
 
@@ -123,13 +130,18 @@ protected:
     }
 
     template <typename T>
-    std::optional<T> wait(const QFuture<T> &future, int ms = 15000)
+    std::optional<T> wait(const QFuture<T> &future, int ms = kCeilingMs)
     {
         return awaitAdvancing(future, clock, 1s, ms);
     }
 
+    // Runs the event loop until `done()`, within the generous ceiling.
+    static bool eventually(const std::function<bool()> &done) { return spinUntil(done, kCeilingMs); }
+
+    bool childPidWritten() const { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }
+
     // Runs the event loop, moving the clock (gate spacing), until `done()`.
-    bool spinAdvancing(const std::function<bool()> &done, int ms = 15000)
+    bool spinAdvancing(const std::function<bool()> &done, int ms = kCeilingMs)
     {
         return spinUntil(
             [&] {
@@ -155,7 +167,7 @@ protected:
     bool childGone()
     {
         bool hasPid = false;
-        if (!spinUntil([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }, 3000)) {
+        if (!eventually([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); })) {
             return false;
         }
         const QStringList pidLines = readLines(dir.filePath(u"child.pid"_s));
@@ -163,7 +175,15 @@ protected:
         if (!hasPid || pid <= 0) {
             return false;
         }
-        return spinUntil([pid] { return ::kill(pid, 0) != 0 && errno == ESRCH; }, 5000);
+        return eventually([pid] { return ::kill(pid, 0) != 0 && errno == ESRCH; });
+    }
+
+    // After a total timeout, which also counts the time to start the process (slow under a sanitizer): the fake may
+    // have been killed before it started its child; if it did start one, that child is gone too.
+    bool noChildLeft()
+    {
+        QTest::qWait(200); // a pid file being written lands
+        return !QFileInfo::exists(dir.filePath(u"child.pid"_s)) || childGone();
     }
 
     QTemporaryDir dir;
@@ -219,10 +239,10 @@ TEST_F(YtDlpRunnerTest, VersionCheckFailures)
 
 TEST_F(YtDlpRunnerTest, AHangingVersionCheckTimesOutAndIsKilled)
 {
-    config.versionTimeout = 300ms;
+    config.versionTimeout = kHangTimeout;
     setMode(u"versionhang"_s);
     EXPECT_EQ(wait(runner().probe())->error().code, ErrorCode::Timeout);
-    EXPECT_TRUE(childGone());
+    EXPECT_TRUE(noChildLeft());
 }
 
 TEST_F(YtDlpRunnerTest, MissingAndUnsafeExecutables)
@@ -275,7 +295,7 @@ TEST_F(YtDlpRunnerTest, ADisabledRunnerNeverFindsOrRunsAnything)
     EXPECT_EQ(wait(runner().search(u"Kestrel Moon"_s))->error().code, ErrorCode::NotConfigured);
     const std::unique_ptr<YtDlpFetch> job(runner().fetch(u"KmTopic00Ex"_s, cache()));
     const auto events = watch(job.get());
-    ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
+    ASSERT_TRUE(eventually([&] { return events->finished.has_value(); }));
     EXPECT_EQ(events->finished->error().code, ErrorCode::NotConfigured);
     EXPECT_TRUE(runs().isEmpty());
     EXPECT_EQ(pacer.acquiredCount(), 0);
@@ -348,10 +368,10 @@ TEST_F(YtDlpRunnerTest, SearchFailures)
 
 TEST_F(YtDlpRunnerTest, AHangingSearchTimesOut)
 {
-    config.searchTimeout = 400ms;
+    config.searchTimeout = kHangTimeout;
     setMode(u"hang"_s);
     EXPECT_EQ(wait(runner().search(u"Kestrel Moon"_s))->error().code, ErrorCode::Timeout);
-    EXPECT_TRUE(childGone());
+    EXPECT_TRUE(noChildLeft());
 }
 
 TEST_F(YtDlpRunnerTest, ARateLimitPausesYouTubeForAnHour)
@@ -369,7 +389,7 @@ TEST_F(YtDlpRunnerTest, ARateLimitPausesYouTubeForAnHour)
     const auto dropped = wait(queued);
     ASSERT_TRUE(dropped.has_value());
     EXPECT_EQ(dropped->error().code, ErrorCode::RateLimited); // failed without running
-    ASSERT_TRUE(spinUntil([&] { return pausedReasons->size() == 1; }));
+    ASSERT_TRUE(eventually([&] { return pausedReasons->size() == 1; }));
     EXPECT_EQ(pausedReasons->first(), ErrorCode::RateLimited);
     ASSERT_TRUE(runner().pausedUntil().has_value());
 
@@ -381,7 +401,7 @@ TEST_F(YtDlpRunnerTest, ARateLimitPausesYouTubeForAnHour)
     EXPECT_GT(refused->error().retryAfter.value_or(0s), 3000s);
     YtDlpFetch *job = runner().fetch(u"KmTopic00Ex"_s, cache());
     const auto events = watch(job);
-    ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
+    ASSERT_TRUE(eventually([&] { return events->finished.has_value(); }));
     EXPECT_EQ(events->finished->error().code, ErrorCode::RateLimited);
     EXPECT_EQ(static_cast<int>(runs().size()), runsBefore);
     EXPECT_EQ(pacer.acquiredCount(), permitsBefore);
@@ -515,18 +535,19 @@ TEST_F(YtDlpRunnerTest, AnOldYtDlpThatFailsTheChallengeWithDeno)
 
 TEST_F(YtDlpRunnerTest, StalledAndEndlessFetchesTimeOut)
 {
-    config.idleTimeout = 400ms;
+    config.idleTimeout = kHangTimeout;
     setMode(u"stall"_s);
     const std::unique_ptr<YtDlpFetch> stalled(runner().fetch(u"KmTopic00Ex"_s, cache()));
     const auto stalledEvents = watch(stalled.get());
+    ASSERT_TRUE(spinAdvancing([&] { return !stalledEvents->started.isEmpty(); })); // its child exists by now
     ASSERT_TRUE(spinAdvancing([&] { return stalledEvents->finished.has_value(); }));
     EXPECT_EQ(stalledEvents->finished->error().code, ErrorCode::Timeout);
     EXPECT_TRUE(childGone());
     EXPECT_FALSE(QFileInfo::exists(QDir(cache()).filePath(u"KmTopic00Ex.m4a"_s)));
 
     m_runner.reset();
-    config.idleTimeout = 3s;
-    config.totalTimeout = 700ms;
+    config.idleTimeout = 30s; // only the total timeout ends an endless stream of progress lines
+    config.totalTimeout = kHangTimeout;
     setMode(u"endless"_s);
     const std::unique_ptr<YtDlpFetch> endless(runner().fetch(u"KmTopic00Ex"_s, cache()));
     const auto endlessEvents = watch(endless.get());
@@ -540,10 +561,10 @@ TEST_F(YtDlpRunnerTest, CancellingAFetchKillsItAndDeletesThePartialFile)
     setMode(u"stall"_s);
     YtDlpFetch *job = runner().fetch(u"KmTopic00Ex"_s, cache());
     const auto events = watch(job);
-    ASSERT_TRUE(spinAdvancing([&] { return !events->started.isEmpty(); }));
+    ASSERT_TRUE(spinAdvancing([&] { return !events->started.isEmpty() && childPidWritten(); }));
     EXPECT_TRUE(QFileInfo::exists(events->started.first()));
     job->cancel();
-    ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
+    ASSERT_TRUE(eventually([&] { return events->finished.has_value(); }));
     EXPECT_EQ(events->finished->error().code, ErrorCode::Cancelled);
     EXPECT_TRUE(childGone());
     EXPECT_FALSE(QFileInfo::exists(events->started.first()));
@@ -553,7 +574,7 @@ TEST_F(YtDlpRunnerTest, CancellingAFetchKillsItAndDeletesThePartialFile)
     QFile::remove(dir.filePath(u"child.pid"_s));
     const QPointer<YtDlpFetch> doomed = runner().fetch(u"KmTopic00Re"_s, cache());
     const auto doomedEvents = watch(doomed.data());
-    ASSERT_TRUE(spinAdvancing([&] { return !doomedEvents->started.isEmpty(); }));
+    ASSERT_TRUE(spinAdvancing([&] { return !doomedEvents->started.isEmpty() && childPidWritten(); }));
     delete doomed.data();
     EXPECT_TRUE(childGone());
     EXPECT_FALSE(QFileInfo::exists(QDir(cache()).filePath(u"KmTopic00Re.m4a"_s)));
@@ -577,9 +598,9 @@ TEST_F(YtDlpRunnerTest, ACancelledFetchCleansUpEvenBeforeTheFormatIsNamed)
     ASSERT_TRUE(spinAdvancing([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
     ASSERT_TRUE(QFileInfo::exists(partial));
     job->cancel();
-    ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
+    ASSERT_TRUE(eventually([&] { return events->finished.has_value(); }));
     EXPECT_TRUE(childGone());
-    EXPECT_TRUE(spinUntil([&] { return !QFileInfo::exists(partial); }));
+    EXPECT_TRUE(eventually([&] { return !QFileInfo::exists(partial); }));
     EXPECT_TRUE(QFileInfo::exists(older));
     EXPECT_TRUE(events->started.isEmpty());
 }
@@ -589,11 +610,11 @@ TEST_F(YtDlpRunnerTest, DestroyingTheRunnerKillsTheProcess)
     setMode(u"stall"_s);
     const std::unique_ptr<YtDlpFetch> job(runner().fetch(u"KmTopic00Ex"_s, cache()));
     const auto events = watch(job.get());
-    ASSERT_TRUE(spinAdvancing([&] { return !events->started.isEmpty(); }));
+    ASSERT_TRUE(spinAdvancing([&] { return !events->started.isEmpty() && childPidWritten(); }));
     m_runner.reset();
     EXPECT_TRUE(childGone());
     EXPECT_FALSE(QFileInfo::exists(events->started.first()));
-    ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
+    ASSERT_TRUE(eventually([&] { return events->finished.has_value(); }));
     EXPECT_EQ(events->finished->error().code, ErrorCode::Cancelled);
     job->cancel(); // harmless once finished
 }
@@ -605,13 +626,13 @@ TEST_F(YtDlpRunnerTest, DestroyingTheRunnerMidSearchOrMidVersionCheckLeavesNoChi
     ASSERT_TRUE(spinAdvancing([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
     m_runner.reset();
     EXPECT_TRUE(childGone());
-    ASSERT_TRUE(spinUntil([&] { return search.isFinished(); }));
+    ASSERT_TRUE(eventually([&] { return search.isFinished(); }));
     EXPECT_TRUE(search.isCanceled());
 
     QFile::remove(dir.filePath(u"child.pid"_s));
     setMode(u"versionhang"_s);
     const QFuture<Result<YtDlpInstall>> probe = runner().probe();
-    ASSERT_TRUE(spinUntil([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
+    ASSERT_TRUE(eventually([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
     m_runner.reset();
     EXPECT_TRUE(childGone());
     EXPECT_TRUE(probe.isCanceled());
@@ -628,7 +649,7 @@ TEST_F(YtDlpRunnerTest, FetchRejectsBadInputAtOnce)
         const std::unique_ptr<YtDlpFetch> job(runner().fetch(id, folder));
         EXPECT_TRUE(job->isFinished());
         const auto events = watch(job.get());
-        ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
+        ASSERT_TRUE(eventually([&] { return events->finished.has_value(); }));
         EXPECT_EQ(events->finished->error().code, ErrorCode::InvalidArgument) << id.toStdString();
     }
     EXPECT_TRUE(runs().isEmpty());
