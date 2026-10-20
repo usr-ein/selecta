@@ -25,7 +25,8 @@ class PlayerBar : public QWidget
 public:
     explicit PlayerBar(PreviewController &preview, QWidget *parent = nullptr);
 
-    // A one-off line in place of the subtitle, e.g. why a preview couldn't start. Cleared by the next track.
+    // A one-off line in place of the subtitle, e.g. why a preview couldn't start, or what K or D did to the one
+    // playing. Cleared by the next track, and when playing starts.
     void showMessage(const QString &message);
 
     // A button for one of the window's preview actions (Discard…), after the time as the mock has it; named

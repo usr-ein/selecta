@@ -126,7 +126,12 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     player.setVolume(m_volume->value() / 100.0);
     connect(m_waveform, &WaveformView::seekRequested, &player, &playback::Player::seek);
 
-    connect(&player, &playback::Player::stateChanged, this, &PlayerBar::refresh);
+    connect(&player, &playback::Player::stateChanged, this, [this](State state) {
+        if (state == State::Playing) {
+            m_message.clear(); // "Asking vinyl_ghost…" and the like are over once it plays
+        }
+        refresh();
+    });
     connect(&player, &playback::Player::detailChanged, this, &PlayerBar::refresh);
     connect(&player, &playback::Player::trackChanged, this, &PlayerBar::trackChanged);
     connect(&player, &playback::Player::durationChanged, m_waveform, &WaveformView::setDuration);
@@ -191,9 +196,6 @@ void PlayerBar::refresh()
     const playback::Player &player = m_preview.player();
     const playback::PlayerTrack &track = player.track();
     const State state = player.state();
-    if (state == State::Playing) {
-        m_message.clear(); // "Asking vinyl_ghost…" and the like are over once it plays
-    }
     const bool loaded = player.isActive() || state == State::Ended;
 
     if (!loaded && state != State::Failed) {
