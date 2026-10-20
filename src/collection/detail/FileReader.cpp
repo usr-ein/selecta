@@ -1,75 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "collection/detail/FileReader.h"
 
-#include "audio/ByteSource.h"
 #include "audio/Decoder.h"
 #include "convert/TagReader.h"
 #include "match/RemotePathParser.h"
 
 #include <QFileInfo>
 
+#include <array>
 #include <cmath>
-#include <memory>
+#include <cstdlib>
+#include <limits>
 
 using namespace Qt::StringLiterals;
 
 namespace selecta::collection::detail {
 
 namespace {
-
-// A complete file presented as a download that has every byte but isn't finished: Decoder::open() then parses the
-// container header (and the Xing/LAME frame or STREAMINFO) instead of indexing every frame, which would read the
-// whole file (DESIGN.md decision 1).
-class HeaderOnlySource final : public audio::ByteSource
-{
-public:
-    explicit HeaderOnlySource(std::shared_ptr<audio::FileSource> file)
-        : m_file(std::move(file))
-    {}
-    ~HeaderOnlySource() override = default;
-    HeaderOnlySource(const HeaderOnlySource &) = delete;
-    HeaderOnlySource &operator=(const HeaderOnlySource &) = delete;
-    HeaderOnlySource(HeaderOnlySource &&) = delete;
-    HeaderOnlySource &operator=(HeaderOnlySource &&) = delete;
-
-    qint64 totalSize() const override { return m_file->totalSize(); }
-    audio::SourceSnapshot snapshot() const override { return {m_file->totalSize(), audio::SourceState::Growing}; }
-    qint64 read(qint64 position, char *destination, qint64 maxBytes) override
-    {
-        const qint64 count = m_file->read(position, destination, maxBytes);
-        if (count < 0) {
-            setLastError(m_file->lastError());
-        }
-        return count;
-    }
-    QString description() const override { return m_file->description(); }
-
-private:
-    std::shared_ptr<audio::FileSource> m_file;
-};
-
-// The stream facts of `path`, from its header. The one place that knows how: when audio/ offers a header probe,
-// this becomes a call to it.
-audio::Result<audio::StreamInfo> probeStream(const QString &path)
-{
-    audio::Result<std::shared_ptr<audio::FileSource>> opened = audio::FileSource::open(path);
-    if (!opened.ok()) {
-        return opened.error();
-    }
-    const std::shared_ptr<audio::FileSource> file = opened.takeValue();
-    const audio::DecoderOptions options{.sampleRate = 0, .channels = 0};
-    audio::Decoder decoder;
-    audio::Decoder::OpenStatus status = decoder.open(std::make_shared<HeaderOnlySource>(file), options);
-    if (status == audio::Decoder::OpenStatus::NeedsCompleteFile || status == audio::Decoder::OpenStatus::NeedMoreData) {
-        // A format only FFmpeg reads (MP4 without fast start, Ogg, WMA, …): its probe reads the header and a few
-        // packets of the complete file.
-        status = decoder.open(file, options);
-    }
-    if (status != audio::Decoder::OpenStatus::Ready) {
-        return decoder.error();
-    }
-    return decoder.info();
-}
 
 match::Codec codecOf(const audio::StreamInfo &info)
 {
@@ -107,22 +54,21 @@ match::Codec codecOf(const audio::StreamInfo &info)
     return match::Codec::Unknown;
 }
 
-// Samples per MPEG audio frame: Layer I 384, Layer II 1152, Layer III 1152 (MPEG-1) or 576 (MPEG-2 and 2.5).
-int samplesPerMpegFrame(const audio::StreamInfo &info)
+// The standard MPEG audio bitrate nearest to `kbps`: a CBR file's nominal rate from its average (the average counts the
+// Xing/Info frame too, so it runs a little high on short files).
+int nearestMpegBitrate(int kbps)
 {
-    if (!info.mpeg) {
-        return 0;
+    static constexpr std::array<int, 18> kRates{8,  16,  24,  32,  40,  48,  56,  64,  80,
+                                                96, 112, 128, 144, 160, 192, 224, 256, 320};
+    int best = kbps;
+    int distance = std::numeric_limits<int>::max();
+    for (const int rate : kRates) {
+        if (std::abs(rate - kbps) < distance) {
+            best = rate;
+            distance = std::abs(rate - kbps);
+        }
     }
-    switch (info.mpeg->layer) {
-    case 1:
-        return 384;
-    case 2:
-        return 1152;
-    case 3:
-        return info.mpeg->version == 1 ? 1152 : 576;
-    default:
-        return 0;
-    }
+    return best;
 }
 
 // Distinct non-empty values, joined with " & " (the matcher splits artist sets on it).
@@ -228,22 +174,16 @@ match::AudioQuality qualityOf(const audio::StreamInfo &info)
     quality.sampleRateHz = info.sampleRate;
     quality.bitDepth = info.lossless ? info.bitsPerSample : 0;
     quality.bitrateKbps = info.bitrateKbps;
+    // The probe's bitrate is the Xing/LAME tag's average over the stream when the tag has the counts, else the first
+    // frame's (exact for CBR).
     if (info.lameTag) {
         const audio::LameTag &tag = *info.lameTag;
         // LAME's method when recorded (1 and 8: CBR), else Info (CBR) against Xing (VBR, ABR).
         const bool vbr = tag.vbrMethod > 0 ? (tag.vbrMethod != 1 && tag.vbrMethod != 8) : !tag.isInfo;
         quality.vbr = vbr;
-        // CBR keeps the frames' nominal rate; VBR takes the tag's average over the whole stream (delay and padding
-        // included, as the byte count is).
-        const int samplesPerFrame = samplesPerMpegFrame(info);
-        if (vbr && tag.bytes > 0 && tag.frames > 0 && samplesPerFrame > 0 && info.sampleRate > 0) {
-            const double seconds =
-                static_cast<double>(tag.frames) * samplesPerFrame / static_cast<double>(info.sampleRate);
-            quality.bitrateKbps =
-                static_cast<int>(std::lround(static_cast<double>(tag.bytes) * 8.0 / seconds / 1000.0));
+        if (!vbr && info.codec == audio::Codec::Mp3) {
+            quality.bitrateKbps = nearestMpegBitrate(info.bitrateKbps);
         }
-    } else if (info.mpeg && info.mpeg->frameCount > 1) {
-        quality.vbr = !info.mpeg->constantBitrate();
     }
     return quality;
 }
@@ -252,7 +192,8 @@ ReadOutcome readFile(const FileSignature &signature, const QString &relativePath
                      const convert::TagReadOptions &tags)
 {
     ReadOutcome outcome;
-    const audio::Result<audio::StreamInfo> stream = probeStream(signature.path);
+    // The header alone (tens of KB, never a decode): audio::probeStreamInfo opens the file read-only.
+    const audio::Result<audio::StreamInfo> stream = audio::probeStreamInfo(signature.path);
     if (!stream.ok()) {
         if (!QFileInfo::exists(signature.path)) {
             outcome.status = ReadOutcome::Status::Vanished;

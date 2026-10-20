@@ -23,10 +23,9 @@ MatchIndex snapshots, the UI. The scanner has no database, no settings and no ne
    discNumber = 0, year = 0; qint64 durationMs = 0; match::AudioQuality quality; QString isrc;
    bool namesFromFileName = false; }`
    - The title keeps its version text, as tagged.
-   - Quality and duration come from the stream headers read by `audio::Decoder::open()`: header only, never a full
-     decode and never a whole-file read (MP3 and FLAC are opened as sources whose bytes are all available but which
-     aren't declared complete, so the decoder parses the header, the Xing/LAME frame or STREAMINFO, and doesn't index
-     every frame; MP4, Ogg and the formats only FFmpeg reads fall back to a complete source).
+   - Quality and duration come from the stream headers through `audio::probeStreamInfo()`: header only (tens of KB),
+     never a decode and never a whole-file read. Lengths are exact when the header carries them (STREAMINFO, a LAME
+     frame count, chunk sizes, an MP4 index), estimated otherwise.
    - When there are no tags (no title), the file and folder names are parsed with match's `RemotePathParser`, with
      the folder's other audio files as siblings; `namesFromFileName` says so.
 3. `struct ScanResult { QList<ScannedFile> added, changed; QStringList removed;
