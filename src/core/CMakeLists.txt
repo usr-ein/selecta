@@ -23,6 +23,7 @@ qt_add_library(selecta_core STATIC
     ManualSearchService.h ManualSearchService.cpp
     MetaServices.h MetaServices.cpp
     NetworkService.h NetworkService.cpp
+    PeerStats.h PeerStats.cpp
     ReleaseJson.h ReleaseJson.cpp
     ResultAnnotator.h ResultAnnotator.cpp
     SearchCache.h SearchCache.cpp

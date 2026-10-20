@@ -244,6 +244,26 @@ QList<HistoryEntry> HistoryStore::downloads()
     return readAll(query);
 }
 
+QList<PeerTotals> HistoryStore::peerTotals(std::optional<qint64> session)
+{
+    QList<PeerTotals> totals;
+    Statement query = m_db.prepare(
+        u"SELECT peer, count(*), coalesce(sum(size_bytes), 0), coalesce(sum(session IS ?1), 0), max(completed_at) "
+        u"FROM history WHERE kind <> 'preview' GROUP BY peer ORDER BY max(completed_at) DESC, peer;"_s);
+    if (!query.isValid()) {
+        return totals;
+    }
+    bindOptional(query, 1, session);
+    while (query.step() == Statement::Step::Row) {
+        totals.append(PeerTotals{.peer = query.text(0),
+                                 .files = static_cast<int>(query.int64(1)),
+                                 .bytes = query.int64(2),
+                                 .sessionFiles = session ? static_cast<int>(query.int64(3)) : 0,
+                                 .lastMs = query.int64(4)});
+    }
+    return totals;
+}
+
 bool HistoryStore::contains(const QString &peer, const QByteArray &remotePath)
 {
     Statement query = m_db.prepare(u"SELECT 1 FROM history WHERE peer = ?1 AND remote_path = ?2 LIMIT 1;");

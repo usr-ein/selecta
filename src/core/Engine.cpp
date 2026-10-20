@@ -175,9 +175,10 @@ bool Engine::start()
     m_albums->setMeta(m_meta.get());
     // A file of an album waits for the album's other files; any other file arrives on its own.
     connect(m_transfers.get(), &TransferService::completed, this, [this](const Download &download) {
-        if (download.album && m_albums) {
-            m_albums->fileCompleted(download);
-        } else if (!download.album && m_arrival) {
+        if (m_albums && m_albums->fileCompleted(download)) {
+            return;
+        }
+        if (m_arrival) {
             m_arrival->start(download);
         }
     });
@@ -266,6 +267,13 @@ bool Engine::start()
     connect(m_transfers.get(), &TransferService::changed, m_getTracks.get(), &GetTracksService::downloadChanged);
     connect(m_transfers.get(), &TransferService::progress, m_getTracks.get(), &GetTracksService::downloadProgress);
     connect(m_transfers.get(), &TransferService::previewChanged, this, &Engine::previewChanged);
+    connect(m_transfers.get(), &TransferService::changed, this, &Engine::downloadChanged);
+    connect(m_transfers.get(), &TransferService::progress, this, &Engine::downloadProgress);
+    m_peerStatsTimer = new QTimer(this);
+    m_peerStatsTimer->setSingleShot(true);
+    m_peerStatsTimer->setInterval(1s);
+    connect(m_peerStatsTimer, &QTimer::timeout, this, &Engine::refreshPeerStats);
+    connect(m_transfers.get(), &TransferService::changed, m_peerStatsTimer, qOverload<>(&QTimer::start));
     m_youtube = std::make_unique<YouTubePreviews>(
         m_meta->ytDlp(), m_options.previewDir.isEmpty() ? QString() : m_options.previewDir + u"/YouTube"_s);
     connect(m_youtube.get(), &YouTubePreviews::started, this, &Engine::previewStarted);
@@ -298,6 +306,8 @@ bool Engine::start()
     m_transfers->load();
     m_albums->restore();
     m_getTracks->downloadsRestored(m_transfers->unfinished());
+    Q_EMIT downloadsReset(m_transfers->unfinished());
+    refreshPeerStats();
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -313,6 +323,8 @@ void Engine::stop()
     m_budgetTimer = nullptr;
     delete m_annotateTimer;
     m_annotateTimer = nullptr;
+    delete m_peerStatsTimer;
+    m_peerStatsTimer = nullptr;
     m_manualSearch.reset(); // before the search and transfer services it uses
     m_getTracks.reset();
     m_shares.reset();     // stops uploads under way (their downloaders queue again later)
@@ -360,6 +372,40 @@ void Engine::restoreInboxItems(const QList<TrashedItem> &items)
     for (const TrashedItem &item : items) {
         m_inbox->restore(item);
     }
+}
+
+void Engine::cancelDownloads(const QList<qint64> &ids)
+{
+    if (!m_transfers) {
+        return;
+    }
+    for (const qint64 id : ids) {
+        m_transfers->cancel(id);
+    }
+}
+
+void Engine::retryDownloads(const QList<qint64> &ids)
+{
+    if (!m_transfers) {
+        return;
+    }
+    for (const qint64 id : ids) {
+        m_transfers->retry(id);
+    }
+}
+
+void Engine::refreshPeerStats()
+{
+    if (!m_transfers || !m_governor) {
+        return;
+    }
+    QSet<QString> current;
+    const QList<Download> unfinished = m_transfers->unfinished();
+    for (const Download &download : unfinished) {
+        current.insert(download.peer);
+    }
+    const std::optional<qint64> session = m_options.session ? std::optional<qint64>(*m_options.session) : std::nullopt;
+    Q_EMIT peerStatsChanged(peerStats(library::HistoryStore(*m_db).peerTotals(session), current, *m_governor));
 }
 
 void Engine::setLibraryConfig(const LibraryConfig &config)

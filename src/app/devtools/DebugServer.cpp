@@ -25,6 +25,7 @@
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QStyleHints>
+#include <QTabWidget>
 #include <QTimer>
 
 #include <algorithm>
@@ -423,10 +424,19 @@ QJsonValue DebugServer::type(const QJsonObject &args, QString *error)
 }
 
 // select name=<item view> row=<n> [parent=<n>]: makes a row current and selected (a child row under `parent` in a
-// tree).
+// tree); name=<tab widget> row=<n> shows that page.
 QJsonValue DebugServer::select(const QJsonObject &args, QString *error)
 {
     const QString name = args.value("name"_L1).toString();
+    if (auto *tabs = m_window.findChild<QTabWidget *>(name)) { // a page of a tab widget, by its number
+        const int page = args.value("row"_L1).toInt(-1);
+        if (page < 0 || page >= tabs->count()) {
+            *error = u"no page %1 there (%2 pages)"_s.arg(page).arg(tabs->count());
+            return {};
+        }
+        tabs->setCurrentIndex(page);
+        return tabs->tabText(page);
+    }
     auto *view = m_window.findChild<QAbstractItemView *>(name);
     if (!view || !view->model()) {
         *error = u"no item view named "_s + name;

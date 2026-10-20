@@ -876,8 +876,12 @@ QList<const core::SearchResult *> SearchView::folderFiles(const core::SearchResu
 void SearchView::downloadFolder()
 {
     const std::optional<int> anchor = folderAnchor();
-    const core::SearchResult *first = anchor ? m_model->result(*anchor) : nullptr;
-    if (!first || m_searchId == 0) {
+    if (!anchor || m_searchId == 0) {
+        return;
+    }
+    const int index = *anchor;
+    const core::SearchResult *first = m_model->result(index);
+    if (!first) {
         return;
     }
     const QList<const core::SearchResult *> files = folderFiles(*first);
@@ -929,7 +933,7 @@ void SearchView::downloadFolder()
     box->addButton(QMessageBox::Cancel);
     box->setDefaultButton(download);
     box->setWindowModality(Qt::WindowModal); // a sheet on macOS
-    connect(box, &QMessageBox::finished, this, [this, box, download, index = *anchor, searchId = m_searchId] {
+    connect(box, &QMessageBox::finished, this, [this, box, download, index, searchId = m_searchId] {
         if (box->clickedButton() == download && searchId == m_searchId) {
             m_engine.downloadFolder(searchId, index);
         }

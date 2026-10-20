@@ -38,6 +38,16 @@ struct HistoryEntry
     QString filedPath; // where it was filed, for Whereabouts::Filed
 };
 
+// One peer's downloads in the history (PRD FAIR-1).
+struct PeerTotals
+{
+    QString peer;
+    int files = 0;    // all time
+    qint64 bytes = 0; // all time
+    int sessionFiles = 0;
+    qint64 lastMs = 0; // the last one's completion, Unix time in ms
+};
+
 // Reads and writes the download history. Uses the Database on its owning thread; every method reports failure through
 // its return value and the database's lastError().
 class HistoryStore
@@ -69,6 +79,8 @@ public:
     QList<HistoryEntry> downloads();
     // Whether this exact file was downloaded from this peer before.
     bool contains(const QString &peer, const QByteArray &remotePath);
+    // Per peer, the downloads that arrived (previews aside), the most recent first; `sessionFiles` counts `session`'s.
+    QList<PeerTotals> peerTotals(std::optional<qint64> session);
 
 private:
     storage::Database &m_db;

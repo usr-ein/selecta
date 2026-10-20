@@ -157,3 +157,31 @@ TEST_F(HistoryStoreTest, RejectsWhatTheSchemaForbids)
     ASSERT_TRUE(id.has_value());
     EXPECT_EQ(store.find(*id)->sizeBytes, 0);
 }
+
+TEST_F(HistoryStoreTest, TotalsPerPeerWithTheSessionsShare)
+{
+    ASSERT_TRUE(store.add(download("a", 2000)).has_value());
+    ASSERT_TRUE(store.add(download("b", 3000)).has_value());
+    HistoryEntry older = download("c", 1000);
+    older.session = std::nullopt; // before sessions were recorded
+    ASSERT_TRUE(store.add(older).has_value());
+    HistoryEntry other = download("d", 2500);
+    other.peer = u"aiff_ada"_s;
+    other.sizeBytes = 100;
+    ASSERT_TRUE(store.add(other).has_value());
+    HistoryEntry preview = download("e", 4000, Kind::Preview);
+    preview.whereabouts = Whereabouts::Preview;
+    ASSERT_TRUE(store.add(preview).has_value());
+
+    const QList<selecta::library::PeerTotals> totals = store.peerTotals(session);
+    ASSERT_EQ(totals.size(), 2);
+    EXPECT_EQ(totals[0].peer, u"vinyl_ghost"_s); // the most recent first
+    EXPECT_EQ(totals[0].files, 3);               // the preview isn't a download
+    EXPECT_EQ(totals[0].bytes, 3 * 14'900'000LL);
+    EXPECT_EQ(totals[0].sessionFiles, 2);
+    EXPECT_EQ(totals[0].lastMs, 3000);
+    EXPECT_EQ(totals[1].peer, u"aiff_ada"_s);
+    EXPECT_EQ(totals[1].files, 1);
+    EXPECT_EQ(totals[1].bytes, 100);
+    EXPECT_EQ(store.peerTotals(std::nullopt).constFirst().sessionFiles, 0);
+}

@@ -257,9 +257,12 @@ void MainWindow::albumReported(const core::AlbumReport &report)
     }
     const Toasts::Kind kind = report.arrival && !report.complete ? Toasts::Kind::Warning : Toasts::Kind::Good;
     // A question waits longer than news, and news with Undo longer than plain news.
-    const std::chrono::milliseconds timeout = !report.held.isEmpty()      ? 60s
-                                              : !report.trashed.isEmpty() ? 14s
-                                                                          : Toasts::kTimeout;
+    std::chrono::milliseconds timeout = Toasts::kTimeout;
+    if (!report.held.isEmpty()) {
+        timeout = 60s;
+    } else if (!report.trashed.isEmpty()) {
+        timeout = 14s;
+    }
     m_toasts->show(title, lines.join(u'\n'), kind, actions, timeout);
 }
 

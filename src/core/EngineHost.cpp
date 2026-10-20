@@ -38,6 +38,10 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<SearchResult>();
     qRegisterMetaType<QList<SearchResult>>();
     qRegisterMetaType<AlbumDownload>();
+    qRegisterMetaType<Download>();
+    qRegisterMetaType<QList<Download>>();
+    qRegisterMetaType<PeerStats>();
+    qRegisterMetaType<QList<PeerStats>>();
     qRegisterMetaType<TrashedItem>();
     qRegisterMetaType<AlbumReport>();
     m_thread.setObjectName(u"selecta-engine"_s);
@@ -130,6 +134,30 @@ void EngineHost::start()
     connect(engine, &Engine::uploadsChanged, this, [this](const QList<UploadEntry> &uploads) {
         m_uploads = uploads;
         Q_EMIT uploadsChanged(uploads);
+    });
+    connect(engine, &Engine::downloadsReset, this, [this](const QList<Download> &downloads) {
+        m_downloads.clear();
+        m_progress.clear();
+        for (const Download &download : downloads) {
+            m_downloads.insert(download.id, download);
+            m_progress.insert(download.id, {download.received, download.size});
+        }
+        Q_EMIT downloadsReset();
+    });
+    connect(engine, &Engine::downloadChanged, this, [this](const Download &download) {
+        m_downloads.insert(download.id, download);
+        if (download.state != Download::State::Transferring) {
+            m_progress.insert(download.id, {download.received, download.size});
+        }
+        Q_EMIT downloadChanged(download);
+    });
+    connect(engine, &Engine::downloadProgress, this, [this](qint64 id, qint64 done, qint64 total) {
+        m_progress.insert(id, {done, total});
+        Q_EMIT downloadProgress(id, done, total);
+    });
+    connect(engine, &Engine::peerStatsChanged, this, [this](const QList<PeerStats> &peers) {
+        m_peerStats = peers;
+        Q_EMIT peerStatsChanged(peers);
     });
     connect(engine, &Engine::albumChanged, this, [this](const AlbumDownload &album) {
         m_albums.insert(album.id, album);
@@ -396,6 +424,41 @@ void EngineHost::downloadFolder(qint64 searchId, int index)
     post([searchId, index](Engine &engine) {
         if (engine.isStarted()) {
             engine.manualSearch().downloadFolder(searchId, index);
+        }
+    });
+}
+
+std::optional<Download> EngineHost::download(qint64 id) const
+{
+    if (const auto found = m_downloads.constFind(id); found != m_downloads.cend()) {
+        return found.value();
+    }
+    return std::nullopt;
+}
+
+void EngineHost::cancelDownloads(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.cancelDownloads(ids);
+        }
+    });
+}
+
+void EngineHost::retryDownloads(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.retryDownloads(ids);
+        }
+    });
+}
+
+void EngineHost::refreshPeerStats()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.refreshPeerStats();
         }
     });
 }

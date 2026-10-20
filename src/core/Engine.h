@@ -11,6 +11,7 @@
 #include "core/ManualSearchService.h"
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
+#include "core/PeerStats.h"
 #include "core/SearchCache.h"
 #include "core/SearchService.h"
 #include "core/ShareService.h"
@@ -139,6 +140,14 @@ public:
     // Puts back items inboxItemTrashed() reported.
     void restoreInboxItems(const QList<selecta::core::TrashedItem> &items);
 
+    // Transfers (DL-1): downloadsReset() at start with the unfinished ones, then downloadChanged() and
+    // downloadProgress() as they go.
+    void cancelDownloads(const QList<qint64> &ids);
+    // Failed downloads try again, with their retries renewed.
+    void retryDownloads(const QList<qint64> &ids);
+    // Per-peer counters (FAIR-1), reported by peerStatsChanged(); also a second after transfers change.
+    void refreshPeerStats();
+
     // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
     void setLibraryConfig(const LibraryConfig &config);
 
@@ -200,6 +209,11 @@ Q_SIGNALS:
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
     // An Inbox item the user moved to the Trash (trashInboxItems()), with what it takes to put it back.
     void inboxItemTrashed(const selecta::core::TrashedItem &item);
+    // Transfers (TransferService's signals, forwarded).
+    void downloadsReset(const QList<selecta::core::Download> &downloads);
+    void downloadChanged(const selecta::core::Download &download);
+    void downloadProgress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
+    void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     // Album downloads (AlbumService's signals, forwarded).
     void albumChanged(const selecta::core::AlbumDownload &album);
     void albumReported(const selecta::core::AlbumReport &report);
@@ -246,9 +260,10 @@ private:
     std::unique_ptr<ShareService> m_shares;
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
-    qint64 m_previewId = 0;          // the preview playing
-    quint64 m_previewGeneration = 0; // bumps when a preview is stopped or replaced
-    QSet<qint64> m_userTrashed;      // Inbox items the user asked to trash, until they've gone
+    qint64 m_previewId = 0;             // the preview playing
+    quint64 m_previewGeneration = 0;    // bumps when a preview is stopped or replaced
+    QSet<qint64> m_userTrashed;         // Inbox items the user asked to trash, until they've gone
+    QTimer *m_peerStatsTimer = nullptr; // paces peer counters after transfer changes
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     QTimer *m_annotateTimer = nullptr; // coalesces transfer changes before search results are annotated again

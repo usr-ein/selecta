@@ -224,7 +224,7 @@ bool Toasts::eventFilter(QObject *watched, QEvent *event)
 {
     if (watched == m_host && event->type() == QEvent::Resize && isVisible()) {
         place();
-    } else if (auto *toast = qobject_cast<Toast *>(watched); toast && toast->timer) {
+    } else if (const auto *toast = qobject_cast<const Toast *>(watched); toast && toast->timer) {
         if (event->type() == QEvent::Enter) {
             toast->timer->stop();
         } else if (event->type() == QEvent::Leave) {

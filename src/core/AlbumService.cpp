@@ -234,11 +234,17 @@ void AlbumService::listed(qint64 albumId, const QList<slsk::FileEntry> &files, b
     checkComplete(album->id);
 }
 
-void AlbumService::fileCompleted(const Download &download)
+bool AlbumService::fileCompleted(const Download &download)
 {
-    if (download.album) {
-        checkComplete(*download.album);
+    if (!download.album) {
+        return false;
     }
+    const std::optional<AlbumDownload> album = m_store.find(*download.album);
+    if (!album || album->isFinished()) {
+        return false;
+    }
+    checkComplete(album->id);
+    return true;
 }
 
 void AlbumService::downloadChanged(const Download &download)

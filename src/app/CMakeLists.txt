@@ -5,6 +5,7 @@ qt_add_library(selecta_app STATIC
     Format.h Format.cpp
     Icons.h Icons.cpp
     Inspector.h Inspector.cpp
+    MeterDelegate.h MeterDelegate.cpp
     MainWindow.h MainWindow.cpp
     NavDelegate.h NavDelegate.cpp
     NavModel.h NavModel.cpp
@@ -18,7 +19,9 @@ qt_add_library(selecta_app STATIC
     WaveformView.h WaveformView.cpp
     models/ActivityModel.h models/ActivityModel.cpp
     models/GetTracksModel.h models/GetTracksModel.cpp
+    models/PeersModel.h models/PeersModel.cpp
     models/SearchResultsModel.h models/SearchResultsModel.cpp
+    models/TransfersModel.h models/TransfersModel.cpp
     views/ActivityView.h views/ActivityView.cpp
     views/AddTracksDialog.h views/AddTracksDialog.cpp
     views/CollectionView.h views/CollectionView.cpp

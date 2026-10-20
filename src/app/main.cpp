@@ -231,7 +231,7 @@ int runSelecta(int argc, char **argv)
                 return false;
             }
             if (trashedPath) {
-                *trashedPath = target;
+                *trashedPath = std::move(target);
             }
             return true;
         };

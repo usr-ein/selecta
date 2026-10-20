@@ -41,7 +41,6 @@ public:
     // The notifications shown, newest first: title and body.
     QStringList texts() const;
 
-protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:

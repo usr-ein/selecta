@@ -105,8 +105,9 @@ public:
     void confirmSupersede(qint64 albumId);
 
     // --- fed by the transfers and the Inbox ---
-    // An album file has arrived whole (TransferService::completed): the album is made once every file is in.
-    void fileCompleted(const selecta::core::Download &download);
+    // An album file has arrived whole (TransferService::completed): the album is made once every file is in. False
+    // when the file isn't the album's to take (its album is done already: a file tried again later arrives on its own).
+    bool fileCompleted(const selecta::core::Download &download);
     // An album file changed state: a failure or a cancellation may complete the album.
     void downloadChanged(const selecta::core::Download &download);
     // The peer answered a folder listing (PeerNetwork::folderContentsReceived).

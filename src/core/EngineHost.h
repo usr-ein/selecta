@@ -103,6 +103,16 @@ public:
     // --- the collection ---
     void scanCollection();
     CollectionStatus collectionStatus() const { return m_collectionStatus; }
+    // --- transfers (DL-1) and peers (FAIR-1) ---
+    // This session's downloads and the unfinished ones, by id; bytes on disk and file size while they arrive.
+    QList<Download> downloads() const { return m_downloads.values(); }
+    std::optional<Download> download(qint64 id) const;
+    std::pair<qint64, qint64> progressOf(qint64 id) const { return m_progress.value(id, {-1, -1}); }
+    void cancelDownloads(const QList<qint64> &ids);
+    void retryDownloads(const QList<qint64> &ids);
+    QList<PeerStats> peerStats() const { return m_peerStats; }
+    void refreshPeerStats();
+
     // --- album downloads (DL-1, DL-3, DL-7, DL-8) ---
     void cancelAlbum(qint64 albumId);
     // Puts back the Inbox singles an album sent to the Trash.
@@ -168,6 +178,10 @@ Q_SIGNALS:
     void searchResultsReset(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsChanged(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void albumChanged(const selecta::core::AlbumDownload &album);
+    void downloadsReset();
+    void downloadChanged(const selecta::core::Download &download);
+    void downloadProgress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
+    void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     void albumReported(const selecta::core::AlbumReport &report);
 
 private:
@@ -183,8 +197,11 @@ private:
     CollectionStatus m_collectionStatus;
     ShareStatus m_shareStatus;
     QList<UploadEntry> m_uploads;
-    QMap<qint64, AlbumDownload> m_albums; // by id: oldest first
-    QList<ManualSearch> m_searches;       // in opening order
+    QMap<qint64, AlbumDownload> m_albums;                // by id: oldest first
+    QMap<qint64, Download> m_downloads;                  // by id: oldest first
+    QHash<qint64, std::pair<qint64, qint64>> m_progress; // bytes on disk, file size
+    QList<PeerStats> m_peerStats;
+    QList<ManualSearch> m_searches; // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;
 };

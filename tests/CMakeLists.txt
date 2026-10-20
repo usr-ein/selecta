@@ -100,6 +100,7 @@ if(SELECTA_WITH_MEDIA)
             app/NavModelTest.cpp
             app/SearchResultsModelTest.cpp
             app/TickDelegateTest.cpp
+            app/TransfersModelTest.cpp
             app/WaveformViewTest.cpp
         LIBRARIES selecta_app)
 endif()
