@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/Albums.h"
 #include "core/CollectionService.h"
 
 #include <QWidget>
@@ -36,6 +37,8 @@ Q_SIGNALS:
 
 private:
     void show(const core::CollectionStatus &status);
+    // DL-8: filed singles that are also on an album.
+    void showFlags(const QList<core::SupersedeFlag> &flags);
 
     core::EngineHost &m_engine;
     core::CollectionStatus m_status;
@@ -47,6 +50,8 @@ private:
     QPushButton *m_scan;
     QLabel *m_unreadableTitle;
     QListWidget *m_unreadable;
+    QLabel *m_flagsTitle;
+    QListWidget *m_flags;
 };
 
 } // namespace selecta::app

@@ -113,6 +113,10 @@ public:
     QList<PeerStats> peerStats() const { return m_peerStats; }
     void refreshPeerStats();
 
+    // --- supersede flags (DL-8): singles also on an album ---
+    QList<SupersedeFlag> supersedeFlags() const { return m_supersedeFlags; }
+    void dismissSupersedeFlag(qint64 id);
+
     // --- the converter (CONV-1…7) ---
     void addToConverter(const QStringList &paths);
     void removeFromConverter(const QList<qint64> &ids);
@@ -194,6 +198,7 @@ Q_SIGNALS:
     void downloadProgress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     void converterChanged(const QList<selecta::core::ConverterItem> &items);
+    void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
     void conversionsFinished(int done, int failed);
     void albumReported(const selecta::core::AlbumReport &report);
 
@@ -215,6 +220,7 @@ private:
     QHash<qint64, std::pair<qint64, qint64>> m_progress; // bytes on disk, file size
     QList<PeerStats> m_peerStats;
     QList<ConverterItem> m_converterItems;
+    QList<SupersedeFlag> m_supersedeFlags;
     QList<ManualSearch> m_searches; // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;

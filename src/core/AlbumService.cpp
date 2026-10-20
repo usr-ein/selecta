@@ -545,6 +545,7 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
                         .busy = entry.busy});
     }
     // Singles filed in the collection are only ever flagged (DL-8, D3): rekordbox links to them.
+    QHash<quint64, QString> collectionPaths;
     const LibraryConfig config = m_inbox.config();
     if (!config.collectionRoots.isEmpty()) {
         const QString singlesRoot =
@@ -556,6 +557,7 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
             }
             const quint64 id = static_cast<quint64>(file.id) | kCollectionIdBit;
             names.insert(id, displayName(file.file.artist, file.file.title));
+            collectionPaths.insert(id, file.file.file.path);
             singles.append({.id = id,
                             .track = {.artist = file.file.artist,
                                       .title = file.file.title,
@@ -569,18 +571,41 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
     const match::SupersedeDecision decision = match::SupersedeDecider::decide(state, tracks, singles, inboxSingles);
     Held held{.album = report.album, .peer = album.peer, .singles = {}, .names = {}};
     QList<qint64> trash;
+    SupersedeFlagStore flags(m_db);
+    bool flagged = false;
+    // DL-8: the pair stays visible in the Inbox and Collection views until the single goes.
+    const auto flag = [&](const match::SupersedePair &pair) {
+        SupersedeFlag entry;
+        entry.album = report.album;
+        entry.albumItem = album.inboxItem;
+        if (const auto path = collectionPaths.constFind(pair.singleId); path != collectionPaths.cend()) {
+            entry.singlePath = path.value();
+        } else {
+            entry.singleItem = static_cast<qint64>(pair.singleId);
+        }
+        entry.single = names.value(pair.singleId);
+        entry.summary = pair.summary;
+        entry.createdAt = m_now();
+        if (flags.add(entry)) {
+            flagged = true;
+        } else {
+            qCWarning(lcAlbums) << "couldn't flag" << entry.single << ':' << m_db.lastError();
+        }
+    };
     for (const match::SupersedePair &pair : decision.pairs) {
         m_activity.record(u"supersede"_s, album.peer, u"decided"_s, pair.summary);
         const auto single = static_cast<qint64>(pair.singleId);
         if (pair.action == match::SupersedeAction::Trash && decision.needsConfirmation) {
             held.singles.append(single); // the circuit breaker: so many at once that the user says first (T42)
             held.names.append(names.value(pair.singleId));
+            flag(pair);
         } else if (pair.action == match::SupersedeAction::Trash) {
             trash.append(single);
             m_supersedeTrash.insert(single, album.id);
             report.trashed.append(names.value(pair.singleId));
         } else if (pair.action == match::SupersedeAction::Flag) {
             report.flagged.append(names.value(pair.singleId));
+            flag(pair);
         }
     }
     if (!trash.isEmpty()) {
@@ -590,6 +615,10 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
         m_activity.record(u"supersede"_s, album.peer, u"asked"_s, decision.confirmationReason);
         report.held = held.names;
         m_held.insert(album.id, std::move(held));
+    }
+    if (flagged) {
+        m_inbox.refresh(); // the Inbox shows "also on" with its singles
+        Q_EMIT flagsChanged();
     }
 }
 

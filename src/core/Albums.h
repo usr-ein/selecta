@@ -4,9 +4,11 @@
 #include "meta/Release.h"
 
 #include <QByteArray>
+#include <QHash>
 #include <QList>
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 
 #include <optional>
 
@@ -70,6 +72,42 @@ private:
     storage::Database &m_db;
 };
 
+// A single that is also on an album (PRD DL-8), flagged for the user: the pair is shown in the Inbox and Collection
+// views. A single in the Inbox can be moved to the Trash from there; one filed in the collection is never touched.
+struct SupersedeFlag
+{
+    qint64 id = 0;
+    QString album;                    // the album's title
+    std::optional<qint64> albumItem;  // the album in the Inbox, while it's there
+    std::optional<qint64> singleItem; // an Inbox single…
+    QString singlePath;               // …or a single filed in the collection
+    QString single;                   // "Artist – Title"
+    QString summary;                  // the decision and why
+    qint64 createdAt = 0;             // Unix time, ms
+};
+
+// Reads and writes supersede flags (table supersede_flags). A flag on an Inbox single goes with it. Uses the Database
+// on its owning thread; failures are reported through return values and the database's lastError().
+class SupersedeFlagStore
+{
+public:
+    explicit SupersedeFlagStore(storage::Database &db)
+        : m_db(db)
+    {}
+
+    // Records a flag, unless the same single is already flagged for the same album. Returns its id.
+    std::optional<qint64> add(const SupersedeFlag &flag);
+    // Every flag, newest first.
+    QList<SupersedeFlag> all();
+    // The albums each flagged Inbox single is also on, by Inbox item.
+    QHash<qint64, QStringList> albumsByInboxItem();
+    [[nodiscard]] bool remove(qint64 id);
+
+private:
+    storage::Database &m_db;
+};
+
 } // namespace selecta::core
 
 Q_DECLARE_METATYPE(selecta::core::AlbumDownload)
+Q_DECLARE_METATYPE(selecta::core::SupersedeFlag)

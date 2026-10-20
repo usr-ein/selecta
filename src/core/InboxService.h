@@ -45,7 +45,8 @@ QString checkLibraryConfig(const LibraryConfig &config);
 struct InboxEntry
 {
     library::InboxItem item;
-    bool busy = false; // being filed or trashed right now
+    bool busy = false;  // being filed or trashed right now
+    QStringList alsoOn; // a single: the albums it is also on (DL-8)
 };
 
 // An Inbox item Selecta moved to the Trash, with what it takes to put it back (Undo).
@@ -98,6 +99,8 @@ public:
                const QString &tagSource = {}, const QString &releaseJson = {});
 
     QList<InboxEntry> entries();
+    // Publishes the list again (changed(): flags on the singles changed, for instance).
+    void refresh() { publish(); }
     std::optional<library::InboxItem> item(qint64 id) { return m_inbox.find(id); }
     // Where an item is on disk.
     QString absolutePath(const library::InboxItem &item) const;

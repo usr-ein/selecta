@@ -78,7 +78,8 @@ QString statusText(const core::InboxEntry &entry)
     case InboxItem::State::Failed:
         return InboxView::tr("Failed");
     case InboxItem::State::Ready:
-        return InboxView::tr("Ready");
+        return entry.alsoOn.isEmpty() ? InboxView::tr("Ready")
+                                      : InboxView::tr("⚑ Also on “%1”").arg(entry.alsoOn.constFirst());
     }
     return {};
 }
@@ -352,12 +353,15 @@ void InboxView::showSelection()
         id = selected.isEmpty() ? 0 : selected.constFirst();
     }
     std::optional<InboxItem> item;
+    QStringList alsoOn;
     for (const core::InboxEntry &entry : std::as_const(m_entries)) {
         if (entry.item.id == id) {
             item = entry.item;
+            alsoOn = entry.alsoOn;
             break;
         }
     }
+    m_inspector->setAlsoOn(alsoOn);
     // The same item, unchanged: keep what the inspector shows (and its read in flight).
     if (item && m_inspector->itemId() == item->id && m_shownItem && *m_shownItem == *item) {
         return;

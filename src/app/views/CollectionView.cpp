@@ -11,6 +11,8 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QLocale>
+#include <QMenu>
+#include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -31,6 +33,8 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     , m_scan(new QPushButton(tr("Scan Now"), this))
     , m_unreadableTitle(new QLabel(this))
     , m_unreadable(new QListWidget(this))
+    , m_flagsTitle(new QLabel(this))
+    , m_flags(new QListWidget(this))
 {
     setObjectName(u"view.collection"_s);
 
@@ -85,6 +89,24 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     m_unreadable->setObjectName(u"collection.unreadable"_s);
     m_unreadable->setSelectionMode(QAbstractItemView::NoSelection);
     m_unreadable->setFrameShape(QFrame::NoFrame);
+    m_flagsTitle->setObjectName(u"collection.flagsTitle"_s);
+    m_flags->setObjectName(u"collection.flags"_s);
+    m_flags->setFrameShape(QFrame::NoFrame);
+    m_flags->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_flags->setMaximumHeight(180);
+    connect(m_flags, &QListWidget::customContextMenuRequested, this, [this](QPoint position) {
+        const QListWidgetItem *item = m_flags->itemAt(position);
+        if (!item) {
+            return;
+        }
+        const qint64 id = item->data(Qt::UserRole).toLongLong();
+        const QString path = item->data(Qt::UserRole + 1).toString();
+        QMenu menu(this);
+        menu.addAction(tr("Show in Finder"), this,
+                       [path] { QProcess::startDetached(u"/usr/bin/open"_s, {u"-R"_s, path}); });
+        menu.addAction(tr("Dismiss"), this, [this, id] { m_engine.dismissSupersedeFlag(id); });
+        menu.exec(m_flags->viewport()->mapToGlobal(position));
+    });
 
     auto *buttons = new QHBoxLayout;
     buttons->addWidget(m_headline, 1);
@@ -98,6 +120,8 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     layout->addWidget(m_progress);
     layout->addWidget(m_message);
     layout->addSpacing(8);
+    layout->addWidget(m_flagsTitle);
+    layout->addWidget(m_flags);
     layout->addWidget(m_unreadableTitle);
     layout->addWidget(m_unreadable, 1);
     layout->addStretch(0);
@@ -108,7 +132,32 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     outer->addWidget(m_pages);
 
     connect(&m_engine, &core::EngineHost::collectionStatusChanged, this, &CollectionView::show);
+    connect(&m_engine, &core::EngineHost::supersedeFlagsChanged, this, &CollectionView::showFlags);
     show(m_engine.collectionStatus());
+    showFlags(m_engine.supersedeFlags());
+}
+
+void CollectionView::showFlags(const QList<core::SupersedeFlag> &flags)
+{
+    m_flags->clear();
+    for (const core::SupersedeFlag &flag : flags) {
+        if (flag.singlePath.isEmpty()) {
+            continue; // Inbox singles show their flag in the Inbox
+        }
+        auto *item = new QListWidgetItem(tr("⚑ %1 is also on “%2”").arg(flag.single, flag.album), m_flags);
+        item->setData(Qt::UserRole, flag.id);
+        item->setData(Qt::UserRole + 1, flag.singlePath);
+        item->setToolTip(QDir::toNativeSeparators(flag.singlePath) + u'\n' + flag.summary);
+    }
+    const int count = m_flags->count();
+    m_flagsTitle->setText(count == 1 ? tr("1 single in your collection is also on an album. Selecta never changes "
+                                          "it: keep both, or remove the single yourself.")
+                                     : tr("%1 singles in your collection are also on an album. Selecta never "
+                                          "changes them: keep both, or remove the singles yourself.")
+                                           .arg(count));
+    m_flagsTitle->setWordWrap(true);
+    m_flagsTitle->setVisible(count > 0);
+    m_flags->setVisible(count > 0);
 }
 
 QString CollectionView::summary() const

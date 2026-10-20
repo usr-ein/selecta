@@ -32,6 +32,8 @@ public:
     // The item to show (nullopt: the empty page), and the Inbox folder it lives in.
     void showItem(const std::optional<library::InboxItem> &item, const QString &inboxRoot);
     std::optional<qint64> itemId() const;
+    // DL-8: the albums the shown single is also on.
+    void setAlsoOn(const QStringList &albums);
 
     // What a read of the file found: its tags and a cover thumbnail.
     struct FileTags
@@ -65,6 +67,7 @@ private:
     QPushButton *m_release;
     QLabel *m_tagList;
     QLabel *m_provenance;
+    QLabel *m_alsoOn;
     QLabel *m_source;
     QPushButton *m_openRelease;
 };

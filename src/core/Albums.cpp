@@ -140,4 +140,97 @@ QList<AlbumDownload> AlbumStore::unfinished()
     return albums;
 }
 
+std::optional<qint64> SupersedeFlagStore::add(const SupersedeFlag &flag)
+{
+    Statement existing = m_db.prepare(u"SELECT id FROM supersede_flags WHERE album = ?1 AND (single_item = ?2 OR "
+                                      "single_path = ?3) LIMIT 1;");
+    if (!existing.isValid()) {
+        return std::nullopt;
+    }
+    existing.bind(1, flag.album);
+    if (flag.singleItem) {
+        existing.bind(2, *flag.singleItem);
+    } else {
+        existing.bindNull(2);
+    }
+    if (flag.singlePath.isEmpty()) {
+        existing.bindNull(3);
+    } else {
+        existing.bind(3, flag.singlePath);
+    }
+    if (existing.step() == Statement::Step::Row) {
+        return existing.int64(0);
+    }
+    Statement insert = m_db.prepare(u"INSERT INTO supersede_flags (album, album_item, single_item, single_path, "
+                                    "single, summary, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);");
+    if (!insert.isValid()) {
+        return std::nullopt;
+    }
+    insert.bind(1, flag.album);
+    if (flag.albumItem) {
+        insert.bind(2, *flag.albumItem);
+    } else {
+        insert.bindNull(2);
+    }
+    if (flag.singleItem) {
+        insert.bind(3, *flag.singleItem);
+    } else {
+        insert.bindNull(3);
+    }
+    if (flag.singlePath.isEmpty()) {
+        insert.bindNull(4);
+    } else {
+        insert.bind(4, flag.singlePath);
+    }
+    insert.bind(5, flag.single).bind(6, flag.summary).bind(7, flag.createdAt);
+    if (!insert.run()) {
+        return std::nullopt;
+    }
+    return m_db.lastInsertRowId();
+}
+
+QList<SupersedeFlag> SupersedeFlagStore::all()
+{
+    QList<SupersedeFlag> flags;
+    Statement query = m_db.prepare(u"SELECT id, album, album_item, single_item, single_path, single, summary, "
+                                   "created_at FROM supersede_flags ORDER BY created_at DESC, id DESC;");
+    while (query.isValid() && query.step() == Statement::Step::Row) {
+        SupersedeFlag flag;
+        flag.id = query.int64(0);
+        flag.album = query.text(1);
+        if (!query.isNull(2)) {
+            flag.albumItem = query.int64(2);
+        }
+        if (!query.isNull(3)) {
+            flag.singleItem = query.int64(3);
+        }
+        flag.singlePath = query.text(4);
+        flag.single = query.text(5);
+        flag.summary = query.text(6);
+        flag.createdAt = query.int64(7);
+        flags.append(flag);
+    }
+    return flags;
+}
+
+QHash<qint64, QStringList> SupersedeFlagStore::albumsByInboxItem()
+{
+    QHash<qint64, QStringList> albums;
+    Statement query = m_db.prepare(
+        u"SELECT single_item, album FROM supersede_flags WHERE single_item IS NOT NULL ORDER BY created_at, id;");
+    while (query.isValid() && query.step() == Statement::Step::Row) {
+        QStringList &titles = albums[query.int64(0)];
+        if (const QString album = query.text(1); !titles.contains(album)) {
+            titles.append(album);
+        }
+    }
+    return albums;
+}
+
+bool SupersedeFlagStore::remove(qint64 id)
+{
+    Statement remove = m_db.prepare(u"DELETE FROM supersede_flags WHERE id = ?1;");
+    return remove.isValid() && remove.bind(1, id).run() && m_db.changes() == 1;
+}
+
 } // namespace selecta::core

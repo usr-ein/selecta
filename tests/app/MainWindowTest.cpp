@@ -702,3 +702,36 @@ TEST_F(MainWindowTest, TheConverterMakesANewFileNextToTheOriginal)
     EXPECT_EQ(status->text(), u"1 file converted."_s);
     engine->stop();
 }
+
+TEST_F(MainWindowTest, SinglesAlsoOnAnAlbumAreFlaggedInTheInboxAndTheCollection)
+{
+    auto window = makeWindow();
+    // An Inbox single the album holds: its status says so.
+    selecta::core::InboxEntry entry;
+    entry.item.id = 7;
+    entry.item.kind = selecta::library::InboxItem::Kind::Single;
+    entry.item.relativePath = u"Singles/Okuma_Drift_-_Neon_Rain.mp3"_s;
+    entry.item.state = selecta::library::InboxItem::State::Ready;
+    entry.item.artist = u"Okuma Drift"_s;
+    entry.item.title = u"Neon Rain"_s;
+    entry.alsoOn = {u"Night Signals"_s};
+    Q_EMIT engine->inboxChanged({entry});
+    ASSERT_TRUE(window->navigateTo(u"inbox"_s));
+    auto *items = window->findChild<QTreeView *>(u"inbox.items"_s);
+    ASSERT_NE(items, nullptr);
+    const QModelIndex singles = items->model()->index(0, 0);
+    ASSERT_EQ(items->model()->rowCount(singles), 1);
+    EXPECT_EQ(items->model()->index(0, 4, singles).data().toString(), u"⚑ Also on “Night Signals”"_s);
+
+    // A filed single: listed in the Collection view, which never touches it.
+    selecta::core::SupersedeFlag flag;
+    flag.id = 3;
+    flag.album = u"Night Signals"_s;
+    flag.singlePath = u"/Music/Singles/Okuma Drift - Neon Rain.mp3"_s;
+    flag.single = u"Okuma Drift – Neon Rain"_s;
+    Q_EMIT engine->supersedeFlagsChanged({flag});
+    auto *flags = window->findChild<QListView *>(u"collection.flags"_s);
+    ASSERT_NE(flags, nullptr);
+    ASSERT_EQ(flags->model()->rowCount(), 1);
+    EXPECT_EQ(flags->model()->index(0, 0).data().toString(), u"⚑ Okuma Drift – Neon Rain is also on “Night Signals”"_s);
+}

@@ -124,6 +124,8 @@ Q_SIGNALS:
     void albumChanged(const selecta::core::AlbumDownload &album);
     // An album arrived (after its albumChanged()), with its supersede (DL-7, DL-8); or held singles went.
     void reported(const selecta::core::AlbumReport &report);
+    // Singles were flagged as also on an album (DL-8).
+    void flagsChanged();
 
 private Q_SLOTS:
     void drain();

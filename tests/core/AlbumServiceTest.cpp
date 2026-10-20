@@ -14,6 +14,7 @@
 #include "fixtures/TestUtil.h"
 #include "governor/Governor.h"
 #include "library/HistoryStore.h"
+#include "library/InboxStore.h"
 #include "meta/TokenStore.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
@@ -405,12 +406,19 @@ TEST_F(AlbumServiceTest, ManySinglesAtOnceWaitForAYes)
     const std::optional<qint64> id = albums->download(peer->username(), albumFolder(), {}, neonRain());
     ASSERT_TRUE(id.has_value());
     ASSERT_TRUE(finishes(*id));
-    ASSERT_TRUE(waitFor([&] { return !reported.isEmpty(); }));
+    ASSERT_TRUE(waitFor([&] { return !reported.isEmpty(); }, 15s));
     const auto asked = reported.at(0).at(0).value<AlbumReport>();
     EXPECT_TRUE(asked.trashed.isEmpty());
     EXPECT_EQ(asked.held.size(), 4);
     QTest::qWait(100);
     EXPECT_EQ(inboxItems(InboxItem::Kind::Single).size(), 4); // nothing moved yet
+    // Meanwhile each one says what album it's on (DL-8).
+    const QList<InboxEntry> entries = inbox->entries();
+    for (const InboxEntry &entry : entries) {
+        if (entry.item.kind == InboxItem::Kind::Single) {
+            EXPECT_EQ(entry.alsoOn, QStringList{u"Night Signals"_s}) << entry.item.relativePath.toStdString();
+        }
+    }
 
     // Yes: they go, and the report says so (with Undo in the app).
     albums->confirmSupersede(*id);
@@ -418,9 +426,10 @@ TEST_F(AlbumServiceTest, ManySinglesAtOnceWaitForAYes)
     const auto confirmed = reported.at(1).at(0).value<AlbumReport>();
     EXPECT_EQ(confirmed.trashed.size(), 4);
     EXPECT_TRUE(confirmed.held.isEmpty());
-    ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).isEmpty(); }));
+    ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).isEmpty(); }, 15s));
+    EXPECT_TRUE(selecta::core::SupersedeFlagStore(db).all().isEmpty()); // the flags went with the singles
     albums->undoSupersede(*id);
-    ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).size() == 4; }));
+    ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).size() == 4; }, 15s));
 
     // Asked once: a second yes does nothing.
     albums->confirmSupersede(*id);
@@ -453,6 +462,14 @@ TEST_F(AlbumServiceTest, ASingleFiledInTheCollectionIsOnlyFlagged)
     EXPECT_EQ(report.flagged, QStringList{u"Okuma Drift – Neon Rain"_s});
     EXPECT_TRUE(QFileInfo::exists(filed)); // never touched
     EXPECT_TRUE(trashed.filter(u"Collection"_s).isEmpty());
+
+    // The pair is kept, for the Collection view (DL-8).
+    const QList<selecta::core::SupersedeFlag> flags = selecta::core::SupersedeFlagStore(db).all();
+    ASSERT_EQ(flags.size(), 1);
+    EXPECT_EQ(flags.constFirst().singlePath, filed);
+    EXPECT_FALSE(flags.constFirst().singleItem.has_value());
+    EXPECT_EQ(flags.constFirst().album, u"Night Signals"_s);
+    EXPECT_EQ(flags.constFirst().single, u"Okuma Drift – Neon Rain"_s);
 }
 
 TEST_F(AlbumServiceTest, CancellingStopsTheAlbumAndItsDownloads)
@@ -511,4 +528,43 @@ TEST_F(AlbumServiceTest, AnUnfinishedAlbumGoesOnAfterARestart)
     }
     ASSERT_TRUE(finishes(*id));
     EXPECT_EQ(albums->album(*id)->state, AlbumDownload::State::Arrived) << albums->album(*id)->message.toStdString();
+}
+
+TEST(SupersedeFlagStore, KeepsOneFlagPerPairAndDropsItWithTheSingle)
+{
+    selecta::storage::Database db;
+    ASSERT_TRUE(db.open(u":memory:"_s));
+    ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
+    InboxItem single;
+    single.relativePath = u"Singles/a.mp3"_s;
+    single.state = InboxItem::State::Ready;
+    const std::optional<qint64> item = selecta::library::InboxStore(db).add(single);
+    ASSERT_TRUE(item.has_value());
+
+    selecta::core::SupersedeFlagStore store(db);
+    selecta::core::SupersedeFlag flag;
+    flag.album = u"Night Signals"_s;
+    flag.singleItem = item;
+    flag.single = u"Okuma Drift – Neon Rain"_s;
+    flag.createdAt = 1000;
+    const std::optional<qint64> first = store.add(flag);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ(store.add(flag), first); // the same pair again
+    selecta::core::SupersedeFlag filed;
+    filed.album = u"Night Signals"_s;
+    filed.singlePath = u"/Music/Singles/Okuma Drift - Neon Rain.mp3"_s;
+    filed.single = u"Okuma Drift – Neon Rain"_s;
+    filed.createdAt = 2000;
+    const std::optional<qint64> second = store.add(filed);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_NE(second, first);
+
+    EXPECT_EQ(store.all().size(), 2);
+    EXPECT_EQ(store.all().constFirst().id, *second); // newest first
+    EXPECT_EQ(store.albumsByInboxItem().value(*item), QStringList{u"Night Signals"_s});
+
+    ASSERT_TRUE(selecta::library::InboxStore(db).remove(*item));
+    EXPECT_EQ(store.all().size(), 1); // the Inbox single's flag went with it
+    EXPECT_TRUE(store.remove(*second));
+    EXPECT_TRUE(store.all().isEmpty());
 }

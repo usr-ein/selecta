@@ -222,6 +222,23 @@ constexpr std::array kMigrations{
         ALTER TABLE downloads ADD COLUMN album INTEGER REFERENCES album_downloads(id) ON DELETE SET NULL;
         CREATE INDEX downloads_by_album ON downloads(album);
     )sql"},
+    // Supersede flags (PRD DL-8): a single that is also on an album, shown in the Inbox and Collection views. The
+    // single is an Inbox item (the flag goes with it) or a file filed in the collection (never touched, only flagged).
+    Migration{9, R"sql(
+        CREATE TABLE supersede_flags (
+            id          INTEGER PRIMARY KEY,
+            album       TEXT NOT NULL,              -- the album's title
+            album_item  INTEGER REFERENCES inbox_items(id) ON DELETE SET NULL,
+            single_item INTEGER REFERENCES inbox_items(id) ON DELETE CASCADE,
+            single_path TEXT,                       -- a filed single's path
+            single      TEXT NOT NULL,              -- "Artist – Title"
+            summary     TEXT NOT NULL DEFAULT '',   -- the decision and why
+            created_at  INTEGER NOT NULL,           -- Unix time, ms
+            CHECK ((single_item IS NULL) <> (single_path IS NULL))
+        ) STRICT;
+        CREATE INDEX supersede_flags_by_item ON supersede_flags(single_item);
+        CREATE INDEX supersede_flags_by_path ON supersede_flags(single_path);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

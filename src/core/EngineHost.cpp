@@ -42,6 +42,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<QList<Download>>();
     qRegisterMetaType<PeerStats>();
     qRegisterMetaType<ConverterItem>();
+    qRegisterMetaType<SupersedeFlag>();
+    qRegisterMetaType<QList<SupersedeFlag>>();
     qRegisterMetaType<QList<ConverterItem>>();
     qRegisterMetaType<QList<PeerStats>>();
     qRegisterMetaType<TrashedItem>();
@@ -162,6 +164,10 @@ void EngineHost::start()
         Q_EMIT converterChanged(items);
     });
     connect(engine, &Engine::conversionsFinished, this, &EngineHost::conversionsFinished);
+    connect(engine, &Engine::supersedeFlagsChanged, this, [this](const QList<SupersedeFlag> &flags) {
+        m_supersedeFlags = flags;
+        Q_EMIT supersedeFlagsChanged(flags);
+    });
     connect(engine, &Engine::peerStatsChanged, this, [this](const QList<PeerStats> &peers) {
         m_peerStats = peers;
         Q_EMIT peerStatsChanged(peers);
@@ -466,6 +472,15 @@ void EngineHost::refreshPeerStats()
     post([](Engine &engine) {
         if (engine.isStarted()) {
             engine.refreshPeerStats();
+        }
+    });
+}
+
+void EngineHost::dismissSupersedeFlag(qint64 id)
+{
+    post([id](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.dismissSupersedeFlag(id);
         }
     });
 }

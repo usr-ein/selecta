@@ -116,6 +116,7 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     , m_release(new QPushButton(tr("Choose Release…"), this))
     , m_tagList(body(u"inspector.inbox.tags"_s, this))
     , m_provenance(body(u"inspector.inbox.provenance"_s, this))
+    , m_alsoOn(body(u"inspector.inbox.alsoOn"_s, this))
     , m_source(body(u"inspector.inbox.source"_s, this))
     , m_openRelease(new QPushButton(this))
 {
@@ -188,6 +189,8 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     actions->addWidget(m_edit);
     actions->addStretch(1);
     layout->addLayout(actions);
+    m_alsoOn->hide();
+    layout->addWidget(m_alsoOn);
     layout->addWidget(m_release, 0, Qt::AlignLeft);
 
     layout->addWidget(heading(tr("Tags in the file"), details));
@@ -315,6 +318,21 @@ void InboxInspector::showTags(const FileTags &read)
             labelColor, label.toHtmlEscaped(), value.toHtmlEscaped());
     }
     m_tagList->setText(rows.isEmpty() ? tr("The file has no tags.") : u"<table>"_s + rows + u"</table>"_s);
+}
+
+void InboxInspector::setAlsoOn(const QStringList &albums)
+{
+    if (albums.isEmpty()) {
+        m_alsoOn->hide();
+        return;
+    }
+    QStringList quoted;
+    for (const QString &album : albums) {
+        quoted.append(u"“"_s + album + u"”"_s);
+    }
+    m_alsoOn->setText(
+        tr("⚑ Also on %1. Keep the album and move this single to the Trash, or keep both.").arg(quoted.join(u", "_s)));
+    m_alsoOn->show();
 }
 
 void InboxInspector::refreshProvenance()

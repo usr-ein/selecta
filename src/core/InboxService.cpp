@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/InboxService.h"
 
+#include "core/Albums.h"
 #include "storage/Database.h"
 
 #include <QDir>
@@ -108,9 +109,10 @@ QList<InboxEntry> InboxService::entries()
 {
     QList<InboxEntry> result;
     const QList<InboxItem> items = m_inbox.all();
+    const QHash<qint64, QStringList> flagged = SupersedeFlagStore(m_db).albumsByInboxItem();
     result.reserve(items.size());
     for (const InboxItem &item : items) {
-        result.append(InboxEntry{.item = item, .busy = m_busy.contains(item.id)});
+        result.append(InboxEntry{.item = item, .busy = m_busy.contains(item.id), .alsoOn = flagged.value(item.id)});
     }
     return result;
 }

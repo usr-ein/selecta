@@ -185,6 +185,12 @@ bool Engine::start()
     connect(m_transfers.get(), &TransferService::changed, m_albums.get(), &AlbumService::downloadChanged);
     connect(m_inbox.get(), &InboxService::trashed, m_albums.get(), &AlbumService::inboxItemTrashed);
     connect(m_albums.get(), &AlbumService::albumChanged, this, &Engine::albumChanged);
+    connect(m_albums.get(), &AlbumService::flagsChanged, this, &Engine::refreshSupersedeFlags);
+    connect(m_inbox.get(), &InboxService::finished, this, [this](qint64 /*id*/, bool ok) {
+        if (ok) {
+            refreshSupersedeFlags(); // a flagged single filed or trashed takes its flag along
+        }
+    });
     connect(m_albums.get(), &AlbumService::reported, this, &Engine::albumReported);
     connect(m_transfers.get(), &TransferService::changed, m_arrival.get(),
             [arrival = m_arrival.get()](const Download &d) {
@@ -315,6 +321,7 @@ bool Engine::start()
     m_getTracks->downloadsRestored(m_transfers->unfinished());
     Q_EMIT downloadsReset(m_transfers->unfinished());
     refreshPeerStats();
+    refreshSupersedeFlags();
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -414,6 +421,27 @@ void Engine::refreshPeerStats()
     }
     const std::optional<qint64> session = m_options.session ? std::optional<qint64>(*m_options.session) : std::nullopt;
     Q_EMIT peerStatsChanged(peerStats(library::HistoryStore(*m_db).peerTotals(session), current, *m_governor));
+}
+
+void Engine::refreshSupersedeFlags()
+{
+    if (m_db) {
+        Q_EMIT supersedeFlagsChanged(SupersedeFlagStore(*m_db).all());
+    }
+}
+
+void Engine::dismissSupersedeFlag(qint64 id)
+{
+    if (!m_db) {
+        return;
+    }
+    if (!SupersedeFlagStore(*m_db).remove(id)) {
+        qCWarning(lcEngine) << "couldn't dismiss flag" << id << ':' << m_db->lastError();
+    }
+    refreshSupersedeFlags();
+    if (m_inbox) {
+        m_inbox->refresh();
+    }
 }
 
 void Engine::setLibraryConfig(const LibraryConfig &config)

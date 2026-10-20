@@ -148,6 +148,9 @@ public:
     void retryDownloads(const QList<qint64> &ids);
     // Per-peer counters (FAIR-1), reported by peerStatsChanged(); also a second after transfers change.
     void refreshPeerStats();
+    // DL-8: the singles flagged as also on an album (supersedeFlagsChanged()); a dismissed flag goes.
+    void refreshSupersedeFlags();
+    void dismissSupersedeFlag(qint64 id);
 
     // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
     void setLibraryConfig(const LibraryConfig &config);
@@ -216,6 +219,7 @@ Q_SIGNALS:
     void downloadChanged(const selecta::core::Download &download);
     void downloadProgress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
+    void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
     // The converter (ConverterService's signals, forwarded).
     void converterChanged(const QList<selecta::core::ConverterItem> &items);
     void conversionsFinished(int done, int failed);
