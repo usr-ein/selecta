@@ -19,6 +19,7 @@ selecta_add_test_suite(selecta_audio_tests
         DecoderTest.cpp
         ParserTest.cpp
         QualityCheckTest.cpp
+        SpectrogramTest.cpp
         StreamProbeTest.cpp
         WaveformJobTest.cpp
         WaveformTest.cpp
