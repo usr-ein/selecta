@@ -121,6 +121,9 @@ QList<slsk::FileEntry> evaluate(const IndexData &d, const detail::ParsedQuery &q
         }
         plain.push_back(d.postingsOf(*id));
     }
+    if (plain.empty()) {
+        return {}; // nothing to drive the walk (search() refuses such queries first)
+    }
     std::ranges::sort(plain, {}, [](std::span<const quint32> list) { return list.size(); });
     std::vector<std::vector<quint64>> partial;
     for (const QString &suffix : query.partial) {
@@ -140,7 +143,7 @@ QList<slsk::FileEntry> evaluate(const IndexData &d, const detail::ParsedQuery &q
         }
     }
     QList<slsk::FileEntry> results;
-    // The shortest list drives; the plain words guarantee there is one.
+    // The shortest list drives the walk; results come out in index order.
     for (const quint32 file : plain.front()) {
         if (!std::ranges::all_of(others, [file](Cursor &c) { return c.contains(file); }) ||
             !std::ranges::all_of(partial, [file](const auto &bits) { return hasBit(bits, file); }) ||
