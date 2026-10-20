@@ -74,7 +74,7 @@ struct Enrichment
     QString releaseGroupId;
     QString label; // empty when MusicBrainz has none
     QString catalogNumber;
-    QStringList genres;  // most votes first; empty when nobody voted
+    QStringList genres;  // most votes first, ties broken by the next levels' votes; empty when nobody voted
     QStringList reasons; // "ISRC GBCFB1700229: 2 recordings, 1 within ±3 s", "release chosen by barcode"…
 };
 
@@ -125,7 +125,8 @@ public:
     // accepted only at score ≥ 90 with a matching artist), keeping recordings within ±3 s of the release's length;
     // then its releases, choosing by barcode = UPC, else title and date, else the earliest official release of the
     // same type, never a compilation or DJ mix unless the release is one; then genres from the release group, the
-    // recording or the artist. About 3 requests at 1/s. NotFound when no recording fits.
+    // recording or the artist, most votes first, a tie at the top broken by the following levels' votes (one more
+    // request each). About 3 requests at 1/s. NotFound when no recording fits.
     QFuture<Result<musicbrainz::Enrichment>> enrich(const Release &release, Priority priority = Priority::Background);
 
     // Copies an enrichment into a release (label, catalogue number, genres, MBIDs; labelSource/genreSource =

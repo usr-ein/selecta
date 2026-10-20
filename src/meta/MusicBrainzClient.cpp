@@ -293,7 +293,8 @@ private:
         });
     }
 
-    // Genres from the release group, else the recording, else the artist (§5.3); none is a fine answer.
+    // Genres from the release group, else the recording, else the artist (§5.3); none is a fine answer. When the two
+    // most-voted genres tie, the following levels' votes break the tie: one more request each, until one does.
     void nextGenres(musicbrainz::Entity entity)
     {
         QString id;
@@ -309,7 +310,7 @@ private:
             break;
         }
         if (id.isEmpty()) {
-            m_promise.finish(m_result);
+            finishGenres();
             return;
         }
         QUrlQuery query;
@@ -320,28 +321,51 @@ private:
                      if (!result.ok() && result.error().code != ErrorCode::NotFound) {
                          // The label is worth keeping: report the missing genres instead of failing.
                          self->m_result.reasons.append(u"genres unavailable: %1"_s.arg(result.error().message));
-                         self->m_promise.finish(self->m_result);
+                         self->finishGenres();
                          return;
                      }
                      const QList<musicbrainz::Genre> found =
                          result.ok() ? mbjson::genres(result.value()) : QList<musicbrainz::Genre>{};
+                     const bool breakingTie = !self->m_genreLevels.isEmpty();
                      if (!found.isEmpty()) {
-                         for (const musicbrainz::Genre &genre : found) {
-                             self->m_result.genres.append(genre.name);
+                         self->m_genreLevels.append(found);
+                         if (!breakingTie) {
+                             self->m_result.reasons.append(u"genres from the %1"_s.arg(entityName(entity)));
+                         } else if (!mbjson::leadingGenresTied(self->m_genreLevels)) {
+                             self->m_result.reasons.append(u"tie broken by the %1's votes"_s.arg(entityName(entity)));
                          }
-                         self->m_result.reasons.append(u"genres from the %1"_s.arg(entityName(entity)));
-                         self->m_promise.finish(self->m_result);
+                     }
+                     const std::optional<musicbrainz::Entity> next = nextEntity(entity);
+                     const bool wanted =
+                         self->m_genreLevels.isEmpty() || mbjson::leadingGenresTied(self->m_genreLevels);
+                     if (next.has_value() && wanted) {
+                         self->nextGenres(*next);
                          return;
                      }
-                     if (entity == musicbrainz::Entity::ReleaseGroup) {
-                         self->nextGenres(musicbrainz::Entity::Recording);
-                     } else if (entity == musicbrainz::Entity::Recording) {
-                         self->nextGenres(musicbrainz::Entity::Artist);
-                     } else {
+                     if (self->m_genreLevels.isEmpty()) {
                          self->m_result.reasons.append(u"no genre votes"_s);
-                         self->m_promise.finish(self->m_result);
                      }
+                     self->finishGenres();
                  });
+    }
+
+    static std::optional<musicbrainz::Entity> nextEntity(musicbrainz::Entity entity)
+    {
+        switch (entity) {
+        case musicbrainz::Entity::ReleaseGroup:
+            return musicbrainz::Entity::Recording;
+        case musicbrainz::Entity::Recording:
+            return musicbrainz::Entity::Artist;
+        case musicbrainz::Entity::Artist:
+            break;
+        }
+        return std::nullopt;
+    }
+
+    void finishGenres()
+    {
+        m_result.genres = mbjson::rankedGenres(m_genreLevels);
+        m_promise.finish(m_result);
     }
 
     Private *m_d;
@@ -351,6 +375,7 @@ private:
     detail::CancelSlot m_slot;
     musicbrainz::Enrichment m_result;
     QString m_artistId;
+    QList<QList<musicbrainz::Genre>> m_genreLevels; // the levels' genres asked so far, the one that had votes first
 };
 
 QByteArray MusicBrainzClient::userAgent()
