@@ -8,6 +8,8 @@
 #include <QSet>
 
 #include <gtest/gtest.h>
+#include <string_view>
+#include <variant>
 
 using namespace Qt::StringLiterals;
 using namespace selecta::slsk;
@@ -76,6 +78,21 @@ TEST(ServerMessages, LoginMatchesTheNicotineDocumentExample)
         "32 64 34 35 32 39 32 39 01 00 00 00");
     EXPECT_EQ(expected.size(), 76);
     EXPECT_EQ(frame(login), expected);
+}
+
+TEST(ServerMessages, MessagesKnowTheirNames)
+{
+    // For logs: the struct's own name, whatever the code says.
+    static_assert(std::string_view(toserver::Login::kName) == "Login");
+    static_assert(std::string_view(fromserver::LoginReply::kName) == "LoginReply");
+    static_assert(std::string_view(fromserver::SearchRequest::kName) == "SearchRequest");
+    QSet<QString> names;
+    const QList<ToServerMessage> samples = toServerSamples();
+    for (const ToServerMessage &sample : samples) {
+        names.insert(
+            std::visit([](const auto &m) { return QString::fromLatin1(std::decay_t<decltype(m)>::kName); }, sample));
+    }
+    EXPECT_EQ(names.size(), static_cast<qsizetype>(std::variant_size_v<ToServerMessage>));
 }
 
 TEST(ServerMessages, IdentityIsTheExperimentalClientNumber)

@@ -163,7 +163,7 @@ TEST_F(TransferManagerTest, DownloadsAFile)
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"Music\\Album\\01 Track.flac"_s);
     const QByteArray content = randomContent(300'000, 1);
-    alice->files.insert(path.raw, FakePeer::Upload{content, -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{content, -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const QSignalSpy progress(&transfers, &TransferManager::downloadProgress);
     const TransferId id = download(u"alice"_s, path, static_cast<quint64>(content.size()));
@@ -220,7 +220,7 @@ TEST_F(TransferManagerTest, ResumesAfterAKilledTransfer)
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"Music\\long.flac"_s);
     const QByteArray content = randomContent(400'000, 2);
-    alice->files.insert(path.raw, FakePeer::Upload{content, 150'000, false}); // the first attempt dies at 150 000
+    alice->files.insert(path.raw, FakePeer::Upload{content, 150'000, false, {}}); // the first attempt dies at 150 000
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId first = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return reached(changes, first, DownloadState::Failed); }));
@@ -239,7 +239,7 @@ TEST_F(TransferManagerTest, ZeroSizeFromTheUploaderFallsBackToTheSearchResult)
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"big.wav"_s);
     const QByteArray content = randomContent(50'000, 3);
-    alice->files.insert(path.raw, FakePeer::Upload{content, -1, true}); // SoulseekQt-style size 0
+    alice->files.insert(path.raw, FakePeer::Upload{content, -1, true, {}}); // SoulseekQt-style size 0
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path, static_cast<quint64>(content.size()));
     ASSERT_TRUE(waitFor([&] { return reached(changes, id, DownloadState::Completed); }));
@@ -251,8 +251,8 @@ TEST_F(TransferManagerTest, TwoFilesFromOnePeerAreMatchedByToken)
     const auto alice = makePeer(u"alice"_s);
     const RemotePath a = RemotePath::fromText(u"a.flac"_s);
     const RemotePath b = RemotePath::fromText(u"b.flac"_s);
-    alice->files.insert(a.raw, FakePeer::Upload{randomContent(120'000, 4), -1, false});
-    alice->files.insert(b.raw, FakePeer::Upload{randomContent(90'000, 5), -1, false});
+    alice->files.insert(a.raw, FakePeer::Upload{randomContent(120'000, 4), -1, false, {}});
+    alice->files.insert(b.raw, FakePeer::Upload{randomContent(90'000, 5), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId first = download(u"alice"_s, a);
     const TransferId second = download(u"alice"_s, b);
@@ -267,7 +267,7 @@ TEST_F(TransferManagerTest, CancelMidTransferIgnoresTheEcho)
 {
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"Music\\huge.flac"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{randomContent(32 * kMiB, 6), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{randomContent(32 * kMiB, 6), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const QSignalSpy progress(&transfers, &TransferManager::downloadProgress);
     const TransferId id = download(u"alice"_s, path);
@@ -314,7 +314,7 @@ TEST_F(TransferManagerTest, WithdrawnQueuedDownloadIsAnsweredCancelled)
     const auto alice = makePeer(u"alice"_s);
     alice->queueBehaviour = FakePeer::QueueBehaviour::Hold;
     const RemotePath path = RemotePath::fromText(u"held.mp3"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(100, 'x'), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(100, 'x'), -1, false, {}});
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return alice->receivedOf<peer::QueueUpload>().size() == 1; }));
     transfers.cancelDownload(id);
@@ -343,7 +343,7 @@ TEST_F(TransferManagerTest, RefusedStorageDeclinesAndFails)
     storage.refuse = true;
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"a.mp3"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(1000, 'y'), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(1000, 'y'), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return reached(changes, id, DownloadState::Failed); }));
@@ -357,7 +357,7 @@ TEST_F(TransferManagerTest, UploaderThatNeverConnectsTimesOut)
     const auto alice = makePeer(u"alice"_s);
     alice->neverConnectFile = true;
     const RemotePath path = RemotePath::fromText(u"a.mp3"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(1000, 'z'), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(1000, 'z'), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return reached(changes, id, DownloadState::Failed); }));
@@ -400,7 +400,7 @@ TEST_F(TransferManagerTest, DownloadWhenTheUploaderMustDialBack)
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"Music\\indirect.flac"_s);
     const QByteArray content = randomContent(80'000, 7);
-    alice->files.insert(path.raw, FakePeer::Upload{content, -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{content, -1, false, {}});
     // Our own P connection to alice goes out directly; only her F connection needs the dial-back.
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
@@ -413,7 +413,7 @@ TEST_F(TransferManagerTest, PreviewFlagTravelsWithTheDownload)
 {
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"preview.mp3"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{randomContent(20'000, 8), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{randomContent(20'000, 8), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id =
         transfers.download(DownloadRequest{u"alice"_s, path, 0, true}, permit(Operation::QueueDownload));
@@ -428,7 +428,7 @@ TEST_F(TransferManagerTest, UnknownTokenOnAFileConnectionIsRefused)
     const auto alice = makePeer(u"alice"_s);
     alice->queueBehaviour = FakePeer::QueueBehaviour::Hold;
     const RemotePath path = RemotePath::fromText(u"t.mp3"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(10, 'a'), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(10, 'a'), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return alice->receivedOf<peer::QueueUpload>().size() == 1; }));
@@ -705,7 +705,7 @@ TEST_F(TransferManagerTest, StalledUploaderTimesTheDownloadOut)
     const auto alice = makePeer(u"alice"_s);
     alice->stallUploads = true;
     const RemotePath path = RemotePath::fromText(u"stall.flac"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{randomContent(10'000, 16), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{randomContent(10'000, 16), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return reached(changes, id, DownloadState::Failed); }));
@@ -716,7 +716,7 @@ TEST_F(TransferManagerTest, EmptyFileCompletesAtOnce)
 {
     const auto alice = makePeer(u"alice"_s);
     const RemotePath path = RemotePath::fromText(u"empty.cue"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return reached(changes, id, DownloadState::Completed); }));
@@ -744,7 +744,7 @@ TEST_F(TransferManagerTest, TokenArrivingInPiecesStillMatches)
     alice->neverConnectFile = true; // we play the uploader's F connection by hand
     const RemotePath path = RemotePath::fromText(u"pieces.flac"_s);
     const QByteArray content = randomContent(5'000, 17);
-    alice->files.insert(path.raw, FakePeer::Upload{content, -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{content, -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return alice->receivedOf<peer::QueueUpload>().size() == 1; }));
@@ -808,8 +808,8 @@ TEST_F(TransferManagerTest, ReceiversMayCancelDownloadsFromInsideASignal)
     const auto alice = makePeer(u"alice"_s);
     const RemotePath early = RemotePath::fromText(u"early.flac"_s);
     const RemotePath late = RemotePath::fromText(u"late.flac"_s);
-    alice->files.insert(early.raw, FakePeer::Upload{randomContent(200'000, 19), -1, false});
-    alice->files.insert(late.raw, FakePeer::Upload{randomContent(8 * kMiB, 20), -1, false});
+    alice->files.insert(early.raw, FakePeer::Upload{randomContent(200'000, 19), -1, false, {}});
+    alice->files.insert(late.raw, FakePeer::Upload{randomContent(8 * kMiB, 20), -1, false, {}});
     // A controller that cancels on a given state, connected before an observer that keeps a log.
     QObject::connect(&transfers, &TransferManager::downloadChanged, &transfers,
                      [this, early, late](const DownloadInfo &info) {
@@ -895,7 +895,7 @@ TEST_F(TransferManagerTest, FileConnectionThatSendsNoTokenIsDropped)
     alice->queueBehaviour = FakePeer::QueueBehaviour::Hold;
     alice->neverConnectFile = true; // only the connection below
     const RemotePath path = RemotePath::fromText(u"mute.flac"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(100, 'm'), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{QByteArray(100, 'm'), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path);
     ASSERT_TRUE(waitFor([&] { return alice->receivedOf<peer::QueueUpload>().size() == 1; }));
@@ -913,7 +913,7 @@ TEST_F(TransferManagerTest, DestroyingTheManagerClosesOpenDownloads)
     const auto alice = makePeer(u"alice"_s);
     alice->stallUploads = true;
     const RemotePath path = RemotePath::fromText(u"open.flac"_s);
-    alice->files.insert(path.raw, FakePeer::Upload{randomContent(10'000, 22), -1, false});
+    alice->files.insert(path.raw, FakePeer::Upload{randomContent(10'000, 22), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
     const TransferId id = download(u"alice"_s, path, 10'000);
     ASSERT_TRUE(waitFor([&] { return reached(changes, id, DownloadState::Connecting); }));
