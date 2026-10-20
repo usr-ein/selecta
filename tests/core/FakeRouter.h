@@ -22,6 +22,13 @@ namespace selecta::core::testing {
 using namespace Qt::StringLiterals;
 
 // A NAT-PMP gateway (RFC 6886) on 127.0.0.1.
+//
+// A client that hears nothing back sends the same request again from the same socket (RFC 6886 §3.1), and a fake
+// that answers from a busy test thread may get both copies before it answers either. The copy is answered like the
+// first but is not a new request: mapRequests() and removals() leave it out. It is told by its bytes and sender port,
+// both the same as the last datagram from that port: an exchange from a new socket always counts, unless the system
+// hands that socket the same ephemeral port and the request is the same (renewing a mapping), which is rare enough
+// to only ever undercount by one.
 class FakeNatPmp
 {
 public:
@@ -31,6 +38,7 @@ public:
         quint16 internalPort = 0;
         quint16 externalPort = 0;
         quint32 lifetime = 0;
+        bool retransmission = false; // the same datagram again from the same socket
     };
 
     FakeNatPmp()
@@ -50,7 +58,7 @@ public:
     {
         int n = 0;
         for (const Request &request : requests) {
-            n += request.opcode == 2 && request.lifetime != 0 ? 1 : 0;
+            n += request.opcode == 2 && request.lifetime != 0 && !request.retransmission ? 1 : 0;
         }
         return n;
     }
@@ -58,7 +66,7 @@ public:
     {
         int n = 0;
         for (const Request &request : requests) {
-            n += request.opcode == 2 && request.lifetime == 0 ? 1 : 0;
+            n += request.opcode == 2 && request.lifetime == 0 && !request.retransmission ? 1 : 0;
         }
         return n;
     }
@@ -70,6 +78,7 @@ public:
     quint32 grantedLifetime = 0;               // 0: as asked
     QHostAddress external{u"203.0.113.7"_s};   // the router's public address
     QMap<quint16, quint16> takenExternalPorts; // external port → used by someone else: the next free one is given
+    bool loseFirstAnswers = false;             // a mapping request is carried out, but only its copy is answered
 
     // What it saw and holds.
     int received = 0; // datagrams, answered or not
@@ -87,8 +96,11 @@ private:
             if (in.size() < 2 || bytes[0] != 0 || silent) {
                 continue;
             }
+            const quint16 from = datagram.senderPort();
             Request request;
             request.opcode = bytes[1];
+            request.retransmission = m_lastFrom.value(from) == in;
+            m_lastFrom.insert(from, in);
             QByteArray out;
             if (request.opcode == 0 && in.size() == 2) {
                 out = QByteArray(12, '\0');
@@ -125,11 +137,15 @@ private:
                 continue;
             }
             requests.append(request);
-            m_socket.writeDatagram(out, datagram.senderAddress(), datagram.senderPort());
+            if (loseFirstAnswers && request.opcode == 2 && !request.retransmission) {
+                continue; // lost on the way back
+            }
+            m_socket.writeDatagram(out, datagram.senderAddress(), from);
         }
     }
 
     QUdpSocket m_socket;
+    QHash<quint16, QByteArray> m_lastFrom; // the last datagram from each sender port (all on loopback)
 };
 
 // An Internet Gateway Device: SSDP answers on a loopback UDP port and an HTTP server for its description and SOAP.
