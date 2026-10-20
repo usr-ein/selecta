@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/InboxRetag.h"
 #include "library/FileOps.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
@@ -79,8 +80,14 @@ public:
     void file(const QList<qint64> &ids);
     // Moves these items to the macOS Trash.
     void trash(const QList<qint64> &ids);
+    // New tags for a single (DL-4, META-4): `changes` written over its own tags (a front cover in them replaces the
+    // embedded one), `cleared` fields removed, then the file is renamed after its new artist and title. `tagSource`
+    // and `releaseJson`, when given, say where the tags came from now. finished() reports the outcome.
+    void retag(qint64 id, const convert::MetadataModel &changes, const QStringList &cleared,
+               const QString &tagSource = {}, const QString &releaseJson = {});
 
     QList<InboxEntry> entries();
+    std::optional<library::InboxItem> item(qint64 id) { return m_inbox.find(id); }
     // Where an item is on disk.
     QString absolutePath(const library::InboxItem &item) const;
     // Blocks until file work in flight is done and its results are recorded. For shutdown and tests.
@@ -92,16 +99,21 @@ Q_SIGNALS:
     void finished(qint64 id, bool ok, const QString &message);
 
 private:
-    enum class Work { File, Trash };
+    enum class Work { File, Trash, Retag };
     struct Outcome
     {
         qint64 id = 0;
         Work work = Work::File;
         library::FileResult result;
+        RetagResult retag; // Work::Retag
+        QString tagSource;
+        QString releaseJson;
     };
 
     void start(qint64 id, Work work, std::function<library::FileResult()> job);
+    void post(Outcome outcome);
     void drain();
+    void retagged(const Outcome &outcome);
     void publish();
     void rebuildFileOps();
 

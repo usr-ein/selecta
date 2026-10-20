@@ -31,6 +31,7 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<CollectionStatus>();
     qRegisterMetaType<std::shared_ptr<audio::ByteSource>>();
     qRegisterMetaType<ManualSearch>();
+    qRegisterMetaType<QList<meta::Candidate>>();
     qRegisterMetaType<SearchResult>();
     qRegisterMetaType<QList<SearchResult>>();
     m_thread.setObjectName(u"selecta-engine"_s);
@@ -82,6 +83,7 @@ void EngineHost::start()
         Q_EMIT collectionStatusChanged(status);
     });
     connect(engine, &Engine::searchOpened, this, &EngineHost::searchOpened);
+    connect(engine, &Engine::inboxReleasesFound, this, &EngineHost::inboxReleasesFound);
     connect(engine, &Engine::manualSearchChanged, this, [this](const ManualSearch &search) {
         const auto known = std::ranges::find(m_searches, search.id, &ManualSearch::id);
         if (known == m_searches.end()) {
@@ -279,6 +281,21 @@ void EngineHost::previewTrack(qint64 lineId)
 void EngineHost::stopPreview()
 {
     post([](Engine &engine) { engine.stopPreview(); });
+}
+
+void EngineHost::editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared)
+{
+    post([itemId, changes, cleared](Engine &engine) { engine.editInboxTags(itemId, changes, cleared); });
+}
+
+void EngineHost::findInboxReleases(qint64 itemId)
+{
+    post([itemId](Engine &engine) { engine.findInboxReleases(itemId); });
+}
+
+void EngineHost::applyInboxRelease(qint64 itemId, const meta::Release &release)
+{
+    post([itemId, release](Engine &engine) { engine.applyInboxRelease(itemId, release); });
 }
 
 quint64 EngineHost::openSearch(const QString &text)

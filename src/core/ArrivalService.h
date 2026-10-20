@@ -4,6 +4,7 @@
 #include "convert/MetadataModel.h"
 #include "core/Downloads.h"
 #include "library/FileOps.h"
+#include "library/Naming.h"
 
 #include <QHash>
 #include <QList>
@@ -39,6 +40,10 @@ struct ArrivalResult
 // The tags a release gives a file (META-4, D30): title, artists, album, numbers, date, ISRC, label, genres and the
 // source link, all marked Provenance::Release. Pure.
 convert::MetadataModel tagsFromRelease(const meta::Release &release);
+// What an Inbox item records as its tags' source: "spotify", "deezer", "musicbrainz", or "file" without a release.
+QString tagSourceOf(const std::optional<meta::Release> &release);
+// The naming template's fields from a file's tags (DL-13). Pure.
+library::naming::Fields namingFieldsOf(const convert::MetadataModel &tags);
 
 // The arrival pipeline (PRD DL-3, D29, D30) on the engine thread: a completed download becomes an Inbox item. The
 // release's tags are completed first (label and genre from MusicBrainz by ISRC, the cover), then a worker converts the

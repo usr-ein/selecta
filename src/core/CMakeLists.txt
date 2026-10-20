@@ -13,6 +13,7 @@ qt_add_library(selecta_core STATIC
     GetTracksService.h GetTracksService.cpp
     GovernorPacer.h GovernorPacer.cpp
     GovernorStore.h GovernorStore.cpp
+    InboxRetag.h InboxRetag.cpp
     InboxService.h InboxService.cpp
     ManualSearchService.h ManualSearchService.cpp
     MetaServices.h MetaServices.cpp

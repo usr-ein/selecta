@@ -21,6 +21,8 @@ class EngineHost;
 
 namespace selecta::app {
 
+class InboxInspector;
+
 // The Inbox (PRD DL-4): downloads waiting to be filed, albums and singles, with their format, file name and source.
 // File moves the selection into the collection; Move to Trash sends it to the macOS Trash. The engine does the work;
 // this view shows its list and its results. Main thread.
@@ -35,6 +37,8 @@ public:
     // One line for the window subtitle.
     QString summary() const;
     QList<qint64> selectedIds() const;
+    // The inspector panel that follows this view's selection; the window hosts it.
+    InboxInspector *inspectorPanel() const { return m_inspector; }
 
     // What Space or a double-click previews: the current row's file, or an album folder (its first track plays).
     struct PreviewTarget
@@ -59,6 +63,7 @@ protected:
 private:
     void rebuild(const QList<core::InboxEntry> &entries);
     void refreshActions();
+    void showSelection();
     void showResult(qint64 id, bool ok, const QString &message);
 
     core::EngineHost &m_engine;
@@ -71,6 +76,8 @@ private:
     QLabel *m_result;
     QPushButton *m_file;
     QPushButton *m_trash;
+    InboxInspector *m_inspector;
+    std::optional<library::InboxItem> m_shownItem; // what the inspector shows
 };
 
 } // namespace selecta::app

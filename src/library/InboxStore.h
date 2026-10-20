@@ -43,6 +43,8 @@ struct InboxItem
     QByteArray remotePath;
     std::optional<int> session;
     qint64 createdAt = 0; // Unix time, ms
+
+    friend bool operator==(const InboxItem &, const InboxItem &) = default;
 };
 
 // Reads and writes Inbox items. Uses the Database on its owning thread. Every method reports failure through its

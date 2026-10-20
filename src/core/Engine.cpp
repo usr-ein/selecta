@@ -4,6 +4,7 @@
 #include "base/Clock.h"
 #include "base/Version.h"
 #include "core/GovernorStore.h"
+#include "core/ReleaseJson.h"
 #include "core/ResultAnnotator.h"
 #include "governor/Limits.h"
 #include "library/HistoryStore.h"
@@ -420,6 +421,88 @@ void Engine::openSearch(quint64 request, const QString &text)
 {
     const qint64 id = m_started ? m_manualSearch->open(text) : 0;
     Q_EMIT searchOpened(request, id);
+}
+
+void Engine::editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared)
+{
+    if (m_started) {
+        m_inbox->retag(itemId, changes, cleared, u"user"_s);
+    }
+}
+
+void Engine::findInboxReleases(qint64 itemId)
+{
+    if (!m_started) {
+        return;
+    }
+    const std::optional<library::InboxItem> item = m_inbox->item(itemId);
+    if (!item) {
+        return;
+    }
+    meta::ResolveQuery query;
+    query.artist = item->artist;
+    query.title = item->version.isEmpty() || item->title.contains(item->version)
+                      ? item->title
+                      : u"%1 (%2)"_s.arg(item->title, item->version);
+    query.album = item->album;
+    if (item->durationMs > 0) {
+        query.durationMs = item->durationMs;
+    }
+    m_meta->resolver()
+        .resolve(query, meta::Priority::Interactive)
+        .then(this, [this, itemId](const meta::Result<meta::Resolution> &result) {
+            if (!m_started) {
+                return;
+            }
+            if (!result.ok()) {
+                Q_EMIT inboxReleasesFound(itemId, {}, result.error().message);
+                return;
+            }
+            Q_EMIT inboxReleasesFound(itemId, result.value().candidates,
+                                      result.value().candidates.isEmpty() ? tr("No release matches it.") : QString());
+        });
+}
+
+void Engine::applyInboxRelease(qint64 itemId, const meta::Release &release)
+{
+    if (!m_started) {
+        return;
+    }
+    // As an arrival does (D30): label and genre from MusicBrainz by ISRC when the release lacks them, then the cover.
+    const auto retag = [this, itemId](const meta::Release &complete, const QByteArray &cover) {
+        convert::MetadataModel tags = tagsFromRelease(complete);
+        if (!cover.isEmpty()) {
+            convert::Picture picture;
+            picture.data = cover;
+            picture.provenance = convert::Provenance::Release;
+            tags.setFrontCover(picture);
+        }
+        m_inbox->retag(itemId, tags, {}, tagSourceOf(complete), QString::fromUtf8(releaseToText(complete)));
+    };
+    const auto withCover = [this, retag](const meta::Release &complete) {
+        meta::CoverFetcher *covers = m_meta->covers();
+        if (!covers) {
+            retag(complete, {});
+            return;
+        }
+        covers->fetch(complete, meta::Priority::Interactive)
+            .then(this, [this, retag, complete](const meta::Result<meta::CoverImage> &cover) {
+                if (m_started) {
+                    retag(complete, cover.ok() ? cover.value().bytes : QByteArray());
+                }
+            });
+    };
+    if (release.isrc.isEmpty() || (!release.label.isEmpty() && !release.genres.isEmpty())) {
+        withCover(release);
+        return;
+    }
+    m_meta->musicBrainz()
+        .enrich(release, meta::Priority::Interactive)
+        .then(this, [this, withCover, release](const meta::Result<meta::musicbrainz::Enrichment> &result) {
+            if (m_started) {
+                withCover(result.ok() ? meta::MusicBrainzClient::applied(release, result.value()) : release);
+            }
+        });
 }
 
 void Engine::annotate(QList<SearchResult> &results)

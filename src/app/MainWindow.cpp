@@ -14,6 +14,7 @@
 #include "app/views/GetTracksInspector.h"
 #include "app/views/GetTracksView.h"
 #include "app/views/HistoryView.h"
+#include "app/views/InboxInspector.h"
 #include "app/views/InboxView.h"
 #include "app/views/SearchInspector.h"
 #include "app/views/SearchView.h"
@@ -225,6 +226,7 @@ void MainWindow::createViews()
     m_inboxView = new InboxView(m_services.engine, m_stack);
     m_inboxView->setLibraryConfig(m_services.settings.libraryConfig());
     addView(u"inbox"_s, m_inboxView, [this] { return m_inboxView->summary(); });
+    m_inspector->addPanel(u"inbox"_s, m_inboxView->inspectorPanel());
     connect(m_inboxView, &InboxView::summaryChanged, this, [this] {
         if (m_currentId == u"inbox"_s) {
             refreshTitle();

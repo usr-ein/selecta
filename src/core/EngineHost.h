@@ -70,6 +70,11 @@ public:
     void previewTrack(qint64 lineId);
     void stopPreview();
 
+    // --- the Inbox inspector (DL-4, META-2, META-4) ---
+    void editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared);
+    void findInboxReleases(qint64 itemId);
+    void applyInboxRelease(qint64 itemId, const meta::Release &release);
+
     // --- searches typed by hand (SRCH-1) ---
     // Opens a search, or finds the open one with the same text: searchOpened() answers with the returned request
     // number.
@@ -130,6 +135,7 @@ Q_SIGNALS:
     void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
     void searchOpened(quint64 request, qint64 searchId);
     void manualSearchChanged(const selecta::core::ManualSearch &search);
     void manualSearchClosed(qint64 searchId);

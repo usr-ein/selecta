@@ -58,6 +58,10 @@ public:
     // Moves a file or folder inside the Inbox to the Trash. Anything outside the Inbox is refused.
     FileResult trashFromInbox(const QString &path) const;
 
+    // Puts `newFile` (a verified copy, next to it) in the place of `inboxFile` in one atomic rename, so the name only
+    // ever holds the old file or the new one (re-tagging, DL-4). Both must be inside the Inbox, on one volume.
+    FileResult replaceInInbox(const QString &newFile, const QString &inboxFile) const;
+
     // Whether `path` (existing or not) resolves inside `root`.
     static bool isInside(const QString &path, const QString &root);
 

@@ -21,11 +21,14 @@ qt_add_library(selecta_app STATIC
     views/ActivityView.h views/ActivityView.cpp
     views/AddTracksDialog.h views/AddTracksDialog.cpp
     views/CollectionView.h views/CollectionView.cpp
+    views/EditTagsDialog.h views/EditTagsDialog.cpp
     views/EmptyStateView.h views/EmptyStateView.cpp
     views/GetTracksInspector.h views/GetTracksInspector.cpp
     views/GetTracksView.h views/GetTracksView.cpp
     views/HistoryView.h views/HistoryView.cpp
+    views/InboxInspector.h views/InboxInspector.cpp
     views/InboxView.h views/InboxView.cpp
+    views/ReleasePickerDialog.h views/ReleasePickerDialog.cpp
     views/SearchInspector.h views/SearchInspector.cpp
     views/SearchView.h views/SearchView.cpp
     views/SettingsView.h views/SettingsView.cpp)

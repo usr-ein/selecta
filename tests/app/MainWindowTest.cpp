@@ -3,6 +3,7 @@
 
 #include "app/AppSettings.h"
 #include "app/Preview.h"
+#include "convert/TagWriter.h"
 #include "core/EngineHost.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
@@ -459,5 +460,84 @@ TEST_F(MainWindowTest, ASearchOpensInTheSidebarAndClosesFromIt)
     for (int row = 0; row < list->model()->rowCount(); ++row) {
         EXPECT_NE(list->model()->index(row, 0).data(Qt::UserRole + 1).toString(), id);
     }
+    engine->stop();
+}
+
+TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
+{
+    selecta::core::LibraryConfig library;
+    library.inboxRoot = dir.filePath(u"Inbox"_s);
+    ASSERT_TRUE(QDir().mkpath(library.inboxRoot + u"/Singles"_s));
+    const QString file = library.inboxRoot + u"/Singles/Okuma_Drift_-_Neon_Rain.wav"_s;
+    {
+        QFile song(file);
+        const QByteArray wav = toneWav(1.0);
+        ASSERT_TRUE(song.open(QIODevice::WriteOnly) && song.write(wav) == wav.size());
+    }
+    selecta::convert::MetadataModel tags;
+    tags.set(selecta::convert::keys::Artist, u"Okuma Drift"_s, selecta::convert::Provenance::Release);
+    tags.set(selecta::convert::keys::Title, u"Neon Rain"_s, selecta::convert::Provenance::Release);
+    tags.set(selecta::convert::keys::Label, u"Nightfall Records"_s, selecta::convert::Provenance::Release);
+    ASSERT_TRUE(selecta::convert::writeTags(file, tags).ok());
+    settings->setLibraryConfig(library);
+    const QString engineDb = dir.filePath(u"engine.sqlite3"_s);
+    qint64 id = 0;
+    {
+        selecta::storage::Database setup;
+        ASSERT_TRUE(setup.open(engineDb));
+        ASSERT_TRUE(selecta::storage::migrate(setup, selecta::storage::selectaMigrations()).ok());
+        selecta::library::InboxItem item;
+        item.relativePath = u"Singles/Okuma_Drift_-_Neon_Rain.wav"_s;
+        item.state = selecta::library::InboxItem::State::Ready;
+        item.artist = u"Okuma Drift"_s;
+        item.title = u"Neon Rain"_s;
+        item.format = u"WAV"_s;
+        item.tagSource = u"spotify"_s;
+        item.peer = u"vinyl_ghost"_s;
+        item.sourceFormat = u"FLAC 16/44.1"_s;
+        item.createdAt = 1000;
+        id = selecta::library::InboxStore(setup).add(item).value_or(0);
+        ASSERT_GT(id, 0);
+    }
+    selecta::core::EngineOptions options;
+    options.databasePath = engineDb;
+    options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy changed(engine.get(), &selecta::core::EngineHost::inboxChanged);
+    engine->start();
+    ASSERT_TRUE(changed.wait(5000));
+
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"inbox"_s));
+    auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
+    ASSERT_NE(table, nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    const QModelIndex row = table->model()->index(0, 0, table->model()->index(0, 0));
+    table->setCurrentIndex(row);
+    table->selectionModel()->select(row, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+
+    auto *title = window->findChild<QLabel *>(u"inspector.inbox.title"_s);
+    auto *tagList = window->findChild<QLabel *>(u"inspector.inbox.tags"_s);
+    auto *provenance = window->findChild<QLabel *>(u"inspector.inbox.provenance"_s);
+    auto *source = window->findChild<QLabel *>(u"inspector.inbox.source"_s);
+    ASSERT_TRUE(title && tagList && provenance && source);
+    EXPECT_EQ(title->text(), u"Neon Rain"_s);
+    QTRY_VERIFY_WITH_TIMEOUT(tagList->text().contains(u"Nightfall Records"_s), 5000);
+    EXPECT_TRUE(provenance->text().contains(u"Spotify"_s));
+    EXPECT_TRUE(source->text().contains(u"vinyl_ghost"_s));
+    EXPECT_TRUE(source->text().contains(u"FLAC 16/44.1"_s));
+
+    // An edit is written into the file; the list and the inspector follow.
+    selecta::convert::MetadataModel edit;
+    edit.set(selecta::convert::keys::Title, u"Neon Rain (Dub)"_s, selecta::convert::Provenance::User);
+    QSignalSpy finished(engine.get(), &selecta::core::EngineHost::inboxOperationFinished);
+    engine->editInboxTags(id, edit, {selecta::convert::keys::Label.toString()});
+    ASSERT_TRUE(finished.wait(5000));
+    EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
+    QTRY_COMPARE_WITH_TIMEOUT(title->text(), u"Neon Rain (Dub)"_s, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !tagList->text().contains(u"Nightfall Records"_s) && tagList->text().contains(u"Neon Rain (Dub)"_s), 5000);
+    EXPECT_TRUE(provenance->text().contains(u"edited by you"_s));
     engine->stop();
 }

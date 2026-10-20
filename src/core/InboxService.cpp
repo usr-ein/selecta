@@ -185,18 +185,90 @@ void InboxService::trash(const QList<qint64> &ids)
     publish();
 }
 
+void InboxService::retag(qint64 id, const convert::MetadataModel &changes, const QStringList &cleared,
+                         const QString &tagSource, const QString &releaseJson)
+{
+    const auto item = m_inbox.find(id);
+    if (!item) {
+        return;
+    }
+    if (m_busy.contains(id) || item->state == InboxItem::State::Processing) {
+        Q_EMIT finished(id, false, tr("%1 is busy; try again in a moment.").arg(item->relativePath));
+        return;
+    }
+    if (item->kind != InboxItem::Kind::Single) {
+        Q_EMIT finished(id, false, tr("Albums can't be re-tagged as a whole."));
+        return;
+    }
+    RetagRequest request;
+    request.path = absolutePath(*item);
+    request.inboxRoot = m_config.inboxRoot;
+    request.templates = m_config.templates;
+    request.cleaner = m_config.cleaner;
+    request.changes = changes;
+    request.cleared = cleared;
+    m_busy.insert(id);
+    m_pool.start([this, id, request = std::move(request), ops = m_fileOps, tagSource, releaseJson] {
+        post(Outcome{.id = id,
+                     .work = Work::Retag,
+                     .result = {},
+                     .retag = retagInboxFile(request, *ops),
+                     .tagSource = tagSource,
+                     .releaseJson = releaseJson});
+    });
+    publish();
+}
+
 void InboxService::start(qint64 id, Work work, std::function<FileResult()> job)
 {
     m_busy.insert(id);
     m_pool.start([this, id, work, job = std::move(job)] {
-        Outcome outcome{.id = id, .work = work, .result = job()};
-        {
-            const std::scoped_lock lock(m_outcomesMutex);
-            m_outcomes.append(std::move(outcome));
-        }
-        // The destructor waits for the pool before `this` goes, and drains whatever this call doesn't get to.
-        QMetaObject::invokeMethod(this, &InboxService::drain, Qt::QueuedConnection);
+        post(Outcome{.id = id, .work = work, .result = job(), .retag = {}, .tagSource = {}, .releaseJson = {}});
     });
+}
+
+void InboxService::post(Outcome outcome)
+{
+    {
+        const std::scoped_lock lock(m_outcomesMutex);
+        m_outcomes.append(std::move(outcome));
+    }
+    // The destructor waits for the pool before `this` goes, and drains whatever this call doesn't get to.
+    QMetaObject::invokeMethod(this, &InboxService::drain, Qt::QueuedConnection);
+}
+
+void InboxService::retagged(const Outcome &outcome)
+{
+    std::optional<InboxItem> item = m_inbox.find(outcome.id);
+    if (!outcome.retag.ok || !item) {
+        qCWarning(lcInbox).noquote() << "couldn't re-tag" << outcome.id << ':' << outcome.retag.error;
+        Q_EMIT finished(outcome.id, false, outcome.retag.error);
+        return;
+    }
+    namespace keys = convert::keys;
+    const convert::MetadataModel &tags = outcome.retag.tags;
+    const QString inboxRoot = QFileInfo(m_config.inboxRoot).canonicalFilePath();
+    item->relativePath = QDir(inboxRoot.isEmpty() ? m_config.inboxRoot : inboxRoot)
+                             .relativeFilePath(QFileInfo(outcome.retag.path).canonicalFilePath());
+    item->artist = tags.values(keys::Artist).join(u", "_s);
+    item->title = tags.value(keys::Title);
+    item->album = tags.value(keys::Album);
+    bool yearOk = false;
+    const int year = tags.value(keys::Date).left(4).toInt(&yearOk);
+    item->year = yearOk && year > 0 ? std::optional<int>(year) : std::nullopt;
+    item->sizeBytes = outcome.retag.sizeBytes;
+    if (!outcome.tagSource.isEmpty()) {
+        item->tagSource = outcome.tagSource;
+    }
+    if (!outcome.releaseJson.isEmpty()) {
+        item->releaseJson = outcome.releaseJson;
+    }
+    if (!m_inbox.update(*item)) {
+        // The file has its new tags; the list catches up at the next reconcile().
+        qCWarning(lcInbox) << "re-tagged" << item->relativePath << "but couldn't update the Inbox:" << m_db.lastError();
+    }
+    qCInfo(lcInbox).noquote() << "re-tagged" << item->relativePath;
+    Q_EMIT finished(outcome.id, true, tr("Saved the tags of %1").arg(QFileInfo(item->relativePath).fileName()));
 }
 
 void InboxService::drain()
@@ -212,6 +284,10 @@ void InboxService::drain()
     }
     for (const Outcome &outcome : std::as_const(outcomes)) {
         m_busy.remove(outcome.id);
+        if (outcome.work == Work::Retag) {
+            retagged(outcome);
+            continue;
+        }
         const auto item = m_inbox.find(outcome.id);
         const QString name = item ? item->relativePath : QString::number(outcome.id);
         if (!outcome.result.ok) {

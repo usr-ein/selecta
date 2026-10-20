@@ -12,6 +12,8 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 
 #ifdef Q_OS_LINUX
 #include <fcntl.h>
@@ -345,6 +347,24 @@ FileResult FileOps::trashFromInbox(const QString &path) const
         return FileResult::failure(u"couldn't move %1 to the Trash"_s.arg(path));
     }
     return FileResult::success(trashed);
+}
+
+FileResult FileOps::replaceInInbox(const QString &newFile, const QString &inboxFile) const
+{
+    if (!isInside(newFile, m_inboxRoot) || !isInside(inboxFile, m_inboxRoot)) {
+        return FileResult::failure(u"only Inbox files can be replaced by Selecta: %1"_s.arg(inboxFile));
+    }
+    if (!QFileInfo(newFile).isFile() || !QFileInfo(inboxFile).isFile()) {
+        return FileResult::failure(u"nothing to replace at %1"_s.arg(inboxFile));
+    }
+    std::error_code error;
+    std::filesystem::rename(std::filesystem::path(newFile.toStdU16String()),
+                            std::filesystem::path(inboxFile.toStdU16String()), error); // rename(2): atomic
+    if (error) {
+        return FileResult::failure(
+            u"couldn't replace %1: %2"_s.arg(inboxFile, QString::fromLocal8Bit(error.message())));
+    }
+    return FileResult::success(inboxFile);
 }
 
 } // namespace selecta::library

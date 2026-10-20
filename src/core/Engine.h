@@ -109,6 +109,13 @@ public:
     // `request` with its id.
     void openSearch(quint64 request, const QString &text);
 
+    // The Inbox inspector (DL-4, META-2, META-4). Edits write the user's tags over a single's own; another release
+    // re-tags it from that release (label and genre from MusicBrainz, its cover), as an arrival would.
+    // inboxOperationFinished() reports both.
+    void editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared);
+    void findInboxReleases(qint64 itemId);
+    void applyInboxRelease(qint64 itemId, const meta::Release &release);
+
     // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
     void setLibraryConfig(const LibraryConfig &config);
 
@@ -160,6 +167,8 @@ Q_SIGNALS:
     void searchResultsAdded(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsReset(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsChanged(qint64 searchId, const QList<selecta::core::SearchResult> &results);
+    // Release candidates for an Inbox item (findInboxReleases()), or why there are none.
+    void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
 
 private:
     bool fail(const QString &error);

@@ -3,6 +3,7 @@
 
 #include "app/Icons.h"
 #include "app/views/EmptyStateView.h"
+#include "app/views/InboxInspector.h"
 #include "core/EngineHost.h"
 
 #include <QDir>
@@ -105,6 +106,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     , m_result(new QLabel(this))
     , m_file(new QPushButton(tr("File"), this))
     , m_trash(new QPushButton(tr("Move to Trash"), this))
+    , m_inspector(new InboxInspector(engine))
 {
     setObjectName(u"view.inbox"_s);
     m_summary->setObjectName(u"inbox.summary"_s);
@@ -138,6 +140,9 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     m_table->header()->setSectionResizeMode(StatusColumn, QHeaderView::ResizeToContents);
     m_table->setColumnWidth(NameColumn, 260);
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &InboxView::refreshActions);
+    connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &InboxView::showSelection);
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &InboxView::showSelection);
+    connect(m_inspector, &InboxInspector::previewRequested, this, &InboxView::previewRequested);
     connect(m_table, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
         if (selectedIds().isEmpty()) {
             return;
@@ -323,7 +328,31 @@ void InboxView::rebuild(const QList<core::InboxEntry> &entries)
     }
     m_pages->setCurrentIndex(m_entries.isEmpty() ? 0 : 1);
     refreshActions();
+    showSelection(); // the item may have new tags or a new name
     Q_EMIT summaryChanged();
+}
+
+void InboxView::showSelection()
+{
+    const QModelIndex current = m_table->currentIndex().siblingAtColumn(ItemColumn);
+    const QList<qint64> selected = selectedIds();
+    qint64 id = current.data(kIdRole).isValid() ? current.data(kIdRole).toLongLong() : 0;
+    if (id == 0 || !selected.contains(id)) {
+        id = selected.isEmpty() ? 0 : selected.constFirst();
+    }
+    std::optional<InboxItem> item;
+    for (const core::InboxEntry &entry : std::as_const(m_entries)) {
+        if (entry.item.id == id) {
+            item = entry.item;
+            break;
+        }
+    }
+    // The same item, unchanged: keep what the inspector shows (and its read in flight).
+    if (item && m_inspector->itemId() == item->id && m_shownItem && *m_shownItem == *item) {
+        return;
+    }
+    m_shownItem = item;
+    m_inspector->showItem(item, m_config.inboxRoot);
 }
 
 void InboxView::refreshActions()

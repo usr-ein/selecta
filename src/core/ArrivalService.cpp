@@ -43,6 +43,25 @@ QString numberOfTotal(std::optional<int> number, std::optional<int> total)
     return total && *total >= *number ? u"%1/%2"_s.arg(*number).arg(*total) : QString::number(*number);
 }
 
+// "FLAC 16/44.1", "MP3 320", "MP3 VBR 245".
+QString qualityText(const convert::SourceQuality &quality)
+{
+    QString codec = audio::codecName(quality.codec);
+    if (quality.codec == audio::Codec::Pcm) {
+        codec = audio::containerName(quality.container); // "WAV", "AIFF"
+    }
+    if (quality.lossless && quality.bitDepth > 0 && quality.sampleRate > 0) {
+        return u"%1 %2/%3"_s.arg(codec).arg(quality.bitDepth).arg(quality.sampleRate / 1000.0, 0, 'g', 3);
+    }
+    if (quality.bitrateKbps > 0) {
+        return quality.constantBitrate ? u"%1 %2"_s.arg(codec).arg(quality.bitrateKbps)
+                                       : u"%1 VBR %2"_s.arg(codec).arg(quality.bitrateKbps);
+    }
+    return codec;
+}
+
+} // namespace
+
 QString tagSourceOf(const std::optional<meta::Release> &release)
 {
     if (!release) {
@@ -62,24 +81,7 @@ QString tagSourceOf(const std::optional<meta::Release> &release)
     return u"file"_s;
 }
 
-// "FLAC 16/44.1", "MP3 320", "MP3 VBR 245".
-QString qualityText(const convert::SourceQuality &quality)
-{
-    QString codec = audio::codecName(quality.codec);
-    if (quality.codec == audio::Codec::Pcm) {
-        codec = audio::containerName(quality.container); // "WAV", "AIFF"
-    }
-    if (quality.lossless && quality.bitDepth > 0 && quality.sampleRate > 0) {
-        return u"%1 %2/%3"_s.arg(codec).arg(quality.bitDepth).arg(quality.sampleRate / 1000.0, 0, 'g', 3);
-    }
-    if (quality.bitrateKbps > 0) {
-        return quality.constantBitrate ? u"%1 %2"_s.arg(codec).arg(quality.bitrateKbps)
-                                       : u"%1 VBR %2"_s.arg(codec).arg(quality.bitrateKbps);
-    }
-    return codec;
-}
-
-library::naming::Fields fieldsFrom(const convert::MetadataModel &tags)
+library::naming::Fields namingFieldsOf(const convert::MetadataModel &tags)
 {
     library::naming::Fields fields;
     fields.artist = tags.values(keys::Artist).join(u", "_s);
@@ -96,8 +98,6 @@ library::naming::Fields fieldsFrom(const convert::MetadataModel &tags)
     fields.bpm = tags.value(keys::Bpm);
     return fields;
 }
-
-} // namespace
 
 convert::MetadataModel tagsFromRelease(const meta::Release &release)
 {
@@ -348,8 +348,8 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     const QString extension = settings.format == convert::OutputFormat::KeepAudio
                                   ? QFileInfo(source).suffix().toLower()
                                   : convert::fileExtension(settings.format);
-    const QString name =
-        library::naming::componentName(job.library.templates.single, fieldsFrom(tags), job.library.cleaner, extension);
+    const QString name = library::naming::componentName(job.library.templates.single, namingFieldsOf(tags),
+                                                        job.library.cleaner, extension);
     cleanUp();
     if (!QDir().mkpath(stagingFolder)) {
         outcome.error = tr("Selecta can't write to %1.").arg(QDir::toNativeSeparators(stagingFolder));
