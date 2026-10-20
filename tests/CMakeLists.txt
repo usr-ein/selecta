@@ -67,6 +67,7 @@ if(SELECTA_WITH_MEDIA)
             core/AlbumServiceTest.cpp
             core/ArrivalServiceTest.cpp
             core/CollectionServiceTest.cpp
+            core/ConverterServiceTest.cpp
             core/DownloadsTest.cpp
             core/EngineTest.cpp
             core/FileRankingTest.cpp

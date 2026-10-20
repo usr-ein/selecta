@@ -274,6 +274,13 @@ bool Engine::start()
     m_peerStatsTimer->setInterval(1s);
     connect(m_peerStatsTimer, &QTimer::timeout, this, &Engine::refreshPeerStats);
     connect(m_transfers.get(), &TransferService::changed, m_peerStatsTimer, qOverload<>(&QTimer::start));
+    // The manual converter (CONV-3): new files next to the originals or in a chosen folder.
+    ConverterService::Options converterOptions;
+    converterOptions.stagingDir = m_options.stagingDir;
+    converterOptions.encodedBy = u"Selecta "_s + QString(base::kVersion);
+    m_converter = std::make_unique<ConverterService>(std::move(converterOptions));
+    connect(m_converter.get(), &ConverterService::itemsChanged, this, &Engine::converterChanged);
+    connect(m_converter.get(), &ConverterService::finished, this, &Engine::conversionsFinished);
     m_youtube = std::make_unique<YouTubePreviews>(
         m_meta->ytDlp(), m_options.previewDir.isEmpty() ? QString() : m_options.previewDir + u"/YouTube"_s);
     connect(m_youtube.get(), &YouTubePreviews::started, this, &Engine::previewStarted);
@@ -329,6 +336,7 @@ void Engine::stop()
     m_getTracks.reset();
     m_shares.reset();     // stops uploads under way (their downloaders queue again later)
     m_collection.reset(); // cancels a scan in flight; what it read is read again next time
+    m_converter.reset();  // cancels conversions in flight: nothing half-made is left
     m_albums.reset();     // cancels albums being made (they are made again at the next launch)
     m_arrival.reset();    // cancels conversions in flight (they run again at the next launch) and records finished ones
     m_search.reset();

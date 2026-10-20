@@ -113,6 +113,17 @@ public:
     QList<PeerStats> peerStats() const { return m_peerStats; }
     void refreshPeerStats();
 
+    // --- the converter (CONV-1…7) ---
+    void addToConverter(const QStringList &paths);
+    void removeFromConverter(const QList<qint64> &ids);
+    void clearFinishedConversions();
+    void setConverterOptions(const ConverterOptions &options);
+    void confirmConversion(qint64 id, bool yes);
+    // Converts these items (every convertible one when empty).
+    void startConversions(const QList<qint64> &ids = {});
+    void cancelConversions();
+    QList<ConverterItem> converterItems() const { return m_converterItems; }
+
     // --- album downloads (DL-1, DL-3, DL-7, DL-8) ---
     void cancelAlbum(qint64 albumId);
     // Puts back the Inbox singles an album sent to the Trash.
@@ -182,6 +193,8 @@ Q_SIGNALS:
     void downloadChanged(const selecta::core::Download &download);
     void downloadProgress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
+    void converterChanged(const QList<selecta::core::ConverterItem> &items);
+    void conversionsFinished(int done, int failed);
     void albumReported(const selecta::core::AlbumReport &report);
 
 private:
@@ -201,6 +214,7 @@ private:
     QMap<qint64, Download> m_downloads;                  // by id: oldest first
     QHash<qint64, std::pair<qint64, qint64>> m_progress; // bytes on disk, file size
     QList<PeerStats> m_peerStats;
+    QList<ConverterItem> m_converterItems;
     QList<ManualSearch> m_searches; // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;

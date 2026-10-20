@@ -64,6 +64,11 @@ public:
     // album is in place.
     FileResult publishFolderIntoInbox(const QString &sourceFolder, const QString &relativeFolder) const;
 
+    // Puts a file Selecta made (a conversion, in its staging folder) at `targetPath`, in a folder the user chose: a new
+    // file only (CONV-3). A name already taken gets " (2)", " (3)"…; nothing is ever replaced. Moved on one volume,
+    // else copied, verified and renamed into place; the staged file goes either way. The folder must exist.
+    FileResult placeNewFile(const QString &stagedFile, const QString &targetPath) const;
+
     // Puts `newFile` (a verified copy, next to it) in the place of `inboxFile` in one atomic rename, so the name only
     // ever holds the old file or the new one (re-tagging, DL-4). Both must be inside the Inbox, on one volume.
     FileResult replaceInInbox(const QString &newFile, const QString &inboxFile) const;

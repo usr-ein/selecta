@@ -9,6 +9,7 @@ qt_add_library(selecta_core STATIC
     ClipPreviews.h ClipPreviews.cpp
     CollectionService.h CollectionService.cpp
     CollectionStore.h CollectionStore.cpp
+    ConverterService.h ConverterService.cpp
     Downloads.h Downloads.cpp
     Engine.h Engine.cpp
     FileRanking.h FileRanking.cpp

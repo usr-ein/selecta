@@ -222,6 +222,33 @@ FileResult FileOps::publishIntoInbox(const QString &sourceFile, const QString &r
     return FileResult::failure(u"too many files named like %1 in the Inbox"_s.arg(target));
 }
 
+FileResult FileOps::placeNewFile(const QString &stagedFile, const QString &targetPath) const
+{
+    if (!QFileInfo(stagedFile).isFile()) {
+        return FileResult::failure(u"nothing to place at %1"_s.arg(stagedFile));
+    }
+    if (targetPath.isEmpty() || !QDir::isAbsolutePath(targetPath)) {
+        return FileResult::failure(u"the new file's path must be absolute: %1"_s.arg(targetPath));
+    }
+    const QString target = QDir::cleanPath(targetPath);
+    if (!QFileInfo(QFileInfo(target).absolutePath()).isDir()) {
+        return FileResult::failure(u"there's no folder %1"_s.arg(QFileInfo(target).absolutePath()));
+    }
+    for (int n = 1; n <= kMaxNameVariants; ++n) {
+        const QString candidate = n == 1 ? target : variant(target, n);
+        if (QFileInfo::exists(candidate)) {
+            continue;
+        }
+        FileResult result = moveExclusive(stagedFile, candidate);
+        // Lost a race for this name (it appeared meanwhile): try the next one. Anything else is a real failure.
+        if (!result.ok && QFileInfo::exists(candidate) && QFileInfo::exists(stagedFile)) {
+            continue;
+        }
+        return result;
+    }
+    return FileResult::failure(u"too many files named like %1"_s.arg(target));
+}
+
 FileResult FileOps::collectionTarget(const QString &collectionRoot, const QString &relativePath) const
 {
     const QString root = resolved(collectionRoot);

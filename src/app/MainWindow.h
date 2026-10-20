@@ -31,6 +31,7 @@ namespace selecta::app {
 
 class ActivityView;
 class AppSettings;
+class ConverterView;
 class GetTracksView;
 class InboxView;
 class Inspector;
@@ -155,6 +156,7 @@ private:
     InboxView *m_inboxView = nullptr;
     GetTracksView *m_getTracksView = nullptr;
     SearchView *m_searchView = nullptr;
+    ConverterView *m_converterView = nullptr;
     quint64 m_searchRequest = 0; // the search the user asked for last, to show it when it opens
     QActionGroup *m_appearanceGroup = nullptr;
     QList<QAction *> m_goActions;

@@ -4,6 +4,8 @@
 #include "app/AppSettings.h"
 #include "app/Preview.h"
 #include "app/Toasts.h"
+#include "app/models/ConverterModel.h"
+#include "app/views/ConverterView.h"
 #include "convert/TagWriter.h"
 #include "core/EngineHost.h"
 #include "library/HistoryStore.h"
@@ -655,4 +657,48 @@ TEST_F(MainWindowTest, ItemsMovedToTheTrashTogetherAreOneNotificationWithUndo)
     ASSERT_TRUE(QTest::qWaitFor([&] { return toasts->count() == 1; }, 2000));
     EXPECT_EQ(toasts->texts().constFirst(), u"Moved 2 items to the Trash"_s);
     EXPECT_NE(toasts->findChild<QPushButton *>(u"toast.1.action.0"_s), nullptr);
+}
+
+TEST_F(MainWindowTest, TheConverterMakesANewFileNextToTheOriginal)
+{
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"converter"_s));
+    auto *view = window->findChild<selecta::app::ConverterView *>(u"view.converter"_s);
+    ASSERT_NE(view, nullptr);
+    EXPECT_EQ(window->currentSubtitle(), u"Drop files to convert"_s);
+
+    // A WAV in a folder named like an album: converted to MP3 320, tagged from the names.
+    const QString folder = dir.filePath(u"Okuma Drift - Night Signals (2024)"_s);
+    ASSERT_TRUE(QDir().mkpath(folder));
+    QFile wav(folder + u"/01 - Neon Rain.wav"_s);
+    const QByteArray bytes = toneWav(2.0);
+    ASSERT_TRUE(wav.open(QIODevice::WriteOnly) && wav.write(bytes) == bytes.size());
+    wav.close();
+    view->addPaths({folder});
+    selecta::app::ConverterModel *model = view->model();
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] {
+            return model->rowCount() == 1 &&
+                   model->items().constFirst().state == selecta::core::ConverterItem::State::Ready;
+        },
+        10'000));
+    EXPECT_EQ(window->currentSubtitle(), u"1 file → MP3 320 kbps CBR"_s);
+    EXPECT_EQ(model->items().constFirst().tags.value(u"TITLE"_s), u"Neon Rain"_s);
+
+    auto *convert = window->findChild<QPushButton *>(u"converter.convert"_s);
+    ASSERT_NE(convert, nullptr);
+    ASSERT_TRUE(convert->isEnabled());
+    convert->click();
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] { return model->items().constFirst().state == selecta::core::ConverterItem::State::Done; }, 30'000))
+        << model->items().constFirst().message.toStdString();
+    EXPECT_TRUE(QFileInfo::exists(folder + u"/01 - Neon Rain.mp3"_s));
+    EXPECT_TRUE(QFileInfo::exists(folder + u"/01 - Neon Rain.wav"_s)); // the original stays
+    auto *status = window->findChild<QLabel *>(u"converter.status"_s);
+    ASSERT_NE(status, nullptr);
+    EXPECT_EQ(status->text(), u"1 file converted."_s);
+    engine->stop();
 }

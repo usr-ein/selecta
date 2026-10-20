@@ -49,6 +49,7 @@ private:
     QJsonValue appearance(const QJsonObject &args, QString *error);
     QJsonValue log(const QJsonObject &args, QString *error);
     QJsonValue select(const QJsonObject &args, QString *error);
+    QJsonValue drop(const QJsonObject &args, QString *error);
     QJsonValue player(const QJsonObject &args, QString *error);
 
     MainWindow &m_window;

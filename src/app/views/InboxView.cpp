@@ -150,6 +150,16 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
         }
         QMenu menu(this);
         menu.addAction(tr("Reveal in Finder"), this, &InboxView::revealSelected);
+        menu.addAction(tr("Convert…"), this, [this] {
+            QStringList paths;
+            const QList<qint64> ids = selectedIds();
+            for (const core::InboxEntry &entry : std::as_const(m_entries)) {
+                if (ids.contains(entry.item.id)) {
+                    paths.append(QDir(m_config.inboxRoot).filePath(entry.item.relativePath));
+                }
+            }
+            Q_EMIT convertRequested(paths);
+        });
         menu.addSeparator();
         menu.addAction(tr("File"), this, &InboxView::fileSelected)->setEnabled(m_file->isEnabled());
         menu.addAction(tr("Move to Trash"), this, &InboxView::trashSelected);

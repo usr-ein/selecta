@@ -22,6 +22,10 @@ const QString kPreviewVolume = u"player/volume"_s;
 const QString kPreviewSource = u"player/source"_s;
 const QString kPreviewFollows = u"player/followSelection"_s;
 const QString kYtDlpPath = u"player/ytDlp"_s;
+const QString kConverterTarget = u"converter/target"_s;
+const QString kConverterId3v24 = u"converter/id3v24"_s;
+const QString kConverterArtwork = u"converter/artworkMax"_s;
+const QString kConverterFolder = u"converter/outputFolder"_s;
 const QString kInboxDir = u"library/inbox"_s;
 const QString kCollectionRoots = u"library/collections"_s;
 const QString kSinglesFolder = u"library/singlesFolder"_s;
@@ -207,6 +211,37 @@ void AppSettings::setPreviewFollowsSelection(bool follows)
 QString AppSettings::ytDlpPath() const
 {
     return m_settings.value(kYtDlpPath).toString().trimmed();
+}
+
+AppSettings::ConverterState AppSettings::converterState() const
+{
+    ConverterState state;
+    static const QStringList kTargets{u"mp3-320"_s, u"mp3-256"_s, u"mp3-192"_s, u"mp3-v0"_s,
+                                      u"mp3-v2"_s,  u"aiff"_s,    u"wav"_s,     u"flac"_s};
+    const QString target = m_settings.value(kConverterTarget).toString();
+    if (kTargets.contains(target)) {
+        state.target = target;
+    }
+    state.id3v24 = m_settings.value(kConverterId3v24, false).toBool();
+    bool ok = false;
+    const int artwork = m_settings.value(kConverterArtwork).toInt(&ok);
+    if (ok && artwork >= 0 && artwork <= 3000) {
+        state.artworkMax = artwork;
+    }
+    state.outputFolder = m_settings.value(kConverterFolder).toString();
+    return state;
+}
+
+void AppSettings::setConverterState(const ConverterState &state)
+{
+    m_settings.setValue(kConverterTarget, state.target);
+    m_settings.setValue(kConverterId3v24, state.id3v24);
+    m_settings.setValue(kConverterArtwork, state.artworkMax);
+    if (state.outputFolder.isEmpty()) {
+        m_settings.remove(kConverterFolder);
+    } else {
+        m_settings.setValue(kConverterFolder, state.outputFolder);
+    }
 }
 
 void AppSettings::setYtDlpPath(const QString &path)

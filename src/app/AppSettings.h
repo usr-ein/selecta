@@ -54,6 +54,19 @@ public:
     QString ytDlpPath() const;
     void setYtDlpPath(const QString &path);
 
+    // The Converter (PRD CONV-1, CONV-3): the format chosen ("mp3-320", "mp3-256", "mp3-192", "mp3-v0", "mp3-v2",
+    // "aiff", "wav", "flac"), ID3v2.4 rather than 2.3, the cover's longest side (0: as it is), and the folder new files
+    // go to (empty: next to each original).
+    struct ConverterState
+    {
+        QString target = QStringLiteral("mp3-320");
+        bool id3v24 = false;
+        int artworkMax = 800;
+        QString outputFolder;
+    };
+    ConverterState converterState() const;
+    void setConverterState(const ConverterState &state);
+
     // Settings → Library and Filing (PRD LIB-1, DL-5, DL-13). Missing or invalid values read as the defaults.
     core::LibraryConfig libraryConfig() const;
     void setLibraryConfig(const core::LibraryConfig &config);

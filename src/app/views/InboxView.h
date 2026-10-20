@@ -58,6 +58,8 @@ Q_SIGNALS:
     void selectionMoved();
     void summaryChanged();
     void previewRequested(); // a double-click on an item
+    // "Convert…": the files of the selected items (an album gives its folder), for the Converter.
+    void convertRequested(const QStringList &paths);
 
 protected:
     void showEvent(QShowEvent *event) override;

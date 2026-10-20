@@ -11,6 +11,8 @@
 #include "app/Toasts.h"
 #include "app/views/ActivityView.h"
 #include "app/views/CollectionView.h"
+#include "app/views/ConverterInspector.h"
+#include "app/views/ConverterView.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/GetTracksInspector.h"
 #include "app/views/GetTracksView.h"
@@ -305,6 +307,12 @@ void MainWindow::createViews()
         }
     });
     connect(m_inboxView, &InboxView::previewRequested, this, [this] { previewInboxSelection(false); });
+    connect(m_inboxView, &InboxView::convertRequested, this, [this](const QStringList &paths) {
+        if (m_converterView) {
+            m_converterView->addPaths(paths);
+            navigateTo(u"converter"_s);
+        }
+    });
     connect(m_getTracksView, &GetTracksView::previewRequested, this,
             [this] { previewGetTracksLine(false, m_services.settings.previewSource()); });
     connect(m_getTracksView, &GetTracksView::selectionMoved, this, &MainWindow::selectionMoved);
@@ -391,11 +399,14 @@ void MainWindow::createViews()
             emptyState(u"person.3"_s, u"system-users"_s, tr("No rooms joined"),
                        tr("Join a chat room to read and post."), tr("Not built yet (milestone M8).")),
             fixed(tr("Not connected")));
-    addView(u"converter"_s,
-            emptyState(u"arrow.triangle.2.circlepath"_s, u"view-refresh"_s, tr("Converter"),
-                       tr("Convert between FLAC, MP3, WAV and AIFF, keeping every tag and the cover."),
-                       tr("Not built yet (milestone M6).")),
-            fixed(tr("Not built yet")));
+    m_converterView = new ConverterView(m_services.engine, m_services.settings, m_stack);
+    addView(u"converter"_s, m_converterView, [this] { return m_converterView->summary(); });
+    m_inspector->addPanel(u"converter"_s, m_converterView->inspectorPanel());
+    connect(m_converterView, &ConverterView::summaryChanged, this, [this] {
+        if (m_currentId == u"converter"_s) {
+            refreshTitle();
+        }
+    });
 
     createSettingsView();
     addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));

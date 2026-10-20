@@ -6,6 +6,7 @@
 #include "core/ArrivalService.h"
 #include "core/ClipPreviews.h"
 #include "core/CollectionService.h"
+#include "core/ConverterService.h"
 #include "core/GetTracksService.h"
 #include "core/InboxService.h"
 #include "core/ManualSearchService.h"
@@ -170,6 +171,7 @@ public:
     AlbumService &albums() { return *m_albums; }
     CollectionService &collection() { return *m_collection; }
     ShareService &shares() { return *m_shares; }
+    ConverterService &converter() { return *m_converter; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -214,6 +216,9 @@ Q_SIGNALS:
     void downloadChanged(const selecta::core::Download &download);
     void downloadProgress(qint64 id, qint64 bytesDone, qint64 bytesTotal);
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
+    // The converter (ConverterService's signals, forwarded).
+    void converterChanged(const QList<selecta::core::ConverterItem> &items);
+    void conversionsFinished(int done, int failed);
     // Album downloads (AlbumService's signals, forwarded).
     void albumChanged(const selecta::core::AlbumDownload &album);
     void albumReported(const selecta::core::AlbumReport &report);
@@ -258,6 +263,7 @@ private:
     std::unique_ptr<AlbumService> m_albums;
     std::unique_ptr<CollectionService> m_collection;
     std::unique_ptr<ShareService> m_shares;
+    std::unique_ptr<ConverterService> m_converter;
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;             // the preview playing

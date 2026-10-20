@@ -12,6 +12,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QDir>
+#include <QDropEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -22,11 +23,13 @@
 #include <QLocalSocket>
 #include <QLoggingCategory>
 #include <QMetaEnum>
+#include <QMimeData>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QStyleHints>
 #include <QTabWidget>
 #include <QTimer>
+#include <QUrl>
 
 #include <algorithm>
 
@@ -249,6 +252,8 @@ QJsonObject DebugServer::handle(const QJsonObject &request)
         }
     } else if (command == u"select") {
         result = select(args, &error);
+    } else if (command == u"drop") {
+        result = drop(args, &error);
     } else if (command == u"play-pause") {
         m_window.playOrPause();
         result = true;
@@ -459,6 +464,38 @@ QJsonValue DebugServer::select(const QJsonObject &args, QString *error)
     view->setCurrentIndex(index);
     view->selectionModel()->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     return index.data().toString();
+}
+
+// drop name=<widget> paths=<file>[;<file>…]: drops these local files on the widget, as from the Finder.
+QJsonValue DebugServer::drop(const QJsonObject &args, QString *error)
+{
+    const QString name = args.value("name"_L1).toString();
+    auto *widget = m_window.findChild<QWidget *>(name);
+    if (!widget) {
+        *error = u"no widget named "_s + name;
+        return {};
+    }
+    QList<QUrl> urls;
+    const QStringList paths = args.value("paths"_L1).toString().split(u';', Qt::SkipEmptyParts);
+    for (const QString &path : paths) {
+        urls.append(QUrl::fromLocalFile(path));
+    }
+    if (urls.isEmpty()) {
+        *error = u"missing \"paths\""_s;
+        return {};
+    }
+    QMimeData data;
+    data.setUrls(urls);
+    const QPoint centre = widget->rect().center();
+    QDragEnterEvent enter(centre, Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(widget, &enter);
+    if (!enter.isAccepted()) {
+        *error = u"the widget doesn't take dropped files: "_s + name;
+        return {};
+    }
+    QDropEvent dropped(QPointF(centre), Qt::CopyAction, &data, Qt::LeftButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(widget, &dropped);
+    return static_cast<int>(urls.size());
 }
 
 // player [action=toggle|stop|seek|skip|play] [seconds=<s>] [path=<file>]: drives the preview, then reports its state.

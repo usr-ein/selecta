@@ -41,6 +41,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<Download>();
     qRegisterMetaType<QList<Download>>();
     qRegisterMetaType<PeerStats>();
+    qRegisterMetaType<ConverterItem>();
+    qRegisterMetaType<QList<ConverterItem>>();
     qRegisterMetaType<QList<PeerStats>>();
     qRegisterMetaType<TrashedItem>();
     qRegisterMetaType<AlbumReport>();
@@ -155,6 +157,11 @@ void EngineHost::start()
         m_progress.insert(id, {done, total});
         Q_EMIT downloadProgress(id, done, total);
     });
+    connect(engine, &Engine::converterChanged, this, [this](const QList<ConverterItem> &items) {
+        m_converterItems = items;
+        Q_EMIT converterChanged(items);
+    });
+    connect(engine, &Engine::conversionsFinished, this, &EngineHost::conversionsFinished);
     connect(engine, &Engine::peerStatsChanged, this, [this](const QList<PeerStats> &peers) {
         m_peerStats = peers;
         Q_EMIT peerStatsChanged(peers);
@@ -459,6 +466,69 @@ void EngineHost::refreshPeerStats()
     post([](Engine &engine) {
         if (engine.isStarted()) {
             engine.refreshPeerStats();
+        }
+    });
+}
+
+void EngineHost::addToConverter(const QStringList &paths)
+{
+    post([paths](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.converter().add(paths);
+        }
+    });
+}
+
+void EngineHost::removeFromConverter(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.converter().remove(ids);
+        }
+    });
+}
+
+void EngineHost::clearFinishedConversions()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.converter().clearFinished();
+        }
+    });
+}
+
+void EngineHost::setConverterOptions(const ConverterOptions &options)
+{
+    post([options](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.converter().setOptions(options);
+        }
+    });
+}
+
+void EngineHost::confirmConversion(qint64 id, bool yes)
+{
+    post([id, yes](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.converter().confirm(id, yes);
+        }
+    });
+}
+
+void EngineHost::startConversions(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.converter().start(ids);
+        }
+    });
+}
+
+void EngineHost::cancelConversions()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.converter().cancel();
         }
     });
 }
