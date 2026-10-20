@@ -40,6 +40,7 @@ The coordinator is the session named **selecta-nightman**.
 - **Network safety:** the governor isn't weakened or bypassed, nothing can reach the live server, and secrets are
   neither in the code nor in the logs.
 - **The user's side:** UI text says plainly what happens, in the project's style, and nothing is half-built.
+- **Screenshots:** if the pitch changes the UI, the PR shows the changed screens from `docs/screens/`. Open them with Read and check them against the pitch. A UI change with no screenshot is BLOCKING. A pitch that doesn't change the UI needs none.
 - **Lint and CI:**
   - the PR states the full suite and lint ran;
   - CI isn't red on a gating job (Windows and TSan don't gate).
