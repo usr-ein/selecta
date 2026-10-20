@@ -194,8 +194,13 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
 
 ## Progress
 
-- **Done:** public headers and this design (S1–S5 API, `Client`).
-- **Next:** S1 codec implementation and tests (golden vectors, round trips, truncation and garbage), fuzz targets
-  and their build configuration.
-- **Open questions:** none blocking. Reported to main: `ConnectFailed`/`ProtocolViolation` have no
-  `ReconnectPolicy::Event`; decisions 1–2 above.
+- **Done:**
+  - Public headers and this design (S1–S5 API, `Client`).
+  - S1 codec: `Codec`, `Zlib`, `Types`, the three message families, `Frame`; 125 tests; five libFuzzer targets
+    (`tests/fuzz/slsk/`, 60 s smoke clean). Merged into main as `9f95706`.
+  - S2 `ServerSession` with `FakeServer` (`tests/slsk/fixtures/`): login, burst, keepalive, every end reason, notices,
+    PM acks, rooms, budgeted sends; 34 tests (the connect-timeout one skips on macOS, which completes connections
+    past a full backlog).
+- **Next:** S3 `PeerNetwork` (implementation written, kept out of the build until its tests with `FakePeer` pass),
+  then S4 transfers, S5 distributed, S6 devenv, S7 CLI.
+- **Open questions:** none blocking.
