@@ -118,9 +118,10 @@ protected:
 
         selecta::core::LibraryConfig library;
         library.inboxRoot = dir.filePath(u"Inbox"_s);
-        library.collectionRoots = {dir.filePath(u"Collection"_s)};
+        library.tracksRoot = dir.filePath(u"Collection/Tracks"_s);
+        library.albumsRoot = dir.filePath(u"Collection/Albums"_s);
         ASSERT_TRUE(QDir().mkpath(library.inboxRoot));
-        ASSERT_TRUE(QDir().mkpath(library.collectionRoots.constFirst()));
+        ASSERT_TRUE(QDir().mkpath(library.tracksRoot) && QDir().mkpath(library.albumsRoot));
         inbox = std::make_unique<selecta::core::InboxService>(db, library, trash());
         startAlbums();
     }
@@ -473,8 +474,8 @@ TEST_F(AlbumServiceTest, ManySinglesAtOnceWaitForAYes)
 
 TEST_F(AlbumServiceTest, ASingleFiledInTheCollectionIsOnlyFlagged)
 {
-    // The collection's Singles folder holds the same track.
-    const QString filed = QDir(dir.filePath(u"Collection/Singles"_s)).filePath(u"Okuma Drift - Neon Rain.mp3"_s);
+    // The collection's tracks folder holds the same track.
+    const QString filed = QDir(dir.filePath(u"Collection/Tracks"_s)).filePath(u"Okuma Drift - Neon Rain.mp3"_s);
     ASSERT_TRUE(writeFile(filed, "filed"));
     selecta::collection::ScannedFile file;
     file.file.path = filed;
@@ -505,6 +506,29 @@ TEST_F(AlbumServiceTest, ASingleFiledInTheCollectionIsOnlyFlagged)
     EXPECT_FALSE(flags.constFirst().singleItem.has_value());
     EXPECT_EQ(flags.constFirst().album, u"Night Signals"_s);
     EXPECT_EQ(flags.constFirst().single, u"Okuma Drift – Neon Rain"_s);
+}
+
+TEST_F(AlbumServiceTest, AnAlbumsTrackInTheCollectionIsNoSingle)
+{
+    // The same track, in an album folder of the collection: one album's track is no single to flag (DL-8).
+    const QString owned = dir.filePath(u"Collection/Albums/Okuma Drift - Best Of/03 Neon Rain.mp3"_s);
+    ASSERT_TRUE(writeFile(owned, "owned"));
+    selecta::collection::ScannedFile file;
+    file.file.path = owned;
+    file.file.size = 5;
+    file.artist = u"Okuma Drift"_s;
+    file.title = u"Neon Rain"_s;
+    file.durationMs = 3000;
+    file.quality.codec = selecta::match::Codec::Mp3;
+    file.quality.bitrateKbps = 320;
+    ASSERT_TRUE(selecta::core::CollectionStore(db).apply({file}, {}, {}));
+    auto peer = ghost();
+    const std::optional<AlbumReport> report = arriveAlbum(*peer);
+    ASSERT_TRUE(report.has_value());
+    EXPECT_TRUE(report->flagged.isEmpty());
+    EXPECT_TRUE(report->trashed.isEmpty());
+    EXPECT_TRUE(selecta::core::SupersedeFlagStore(db).all().isEmpty());
+    EXPECT_TRUE(QFileInfo::exists(owned));
 }
 
 TEST_F(AlbumServiceTest, CancellingStopsTheAlbumAndItsDownloads)
@@ -617,7 +641,7 @@ TEST(SupersedeFlagStore, KeepsOneFlagPerPairAndDropsItWithTheSingle)
 // pair is never flagged again.
 TEST_F(AlbumServiceTest, NotTheSameTrackIsNeverFlaggedAgain)
 {
-    const QString filed = QDir(dir.filePath(u"Collection/Singles"_s)).filePath(u"Okuma Drift - Neon Rain.mp3"_s);
+    const QString filed = QDir(dir.filePath(u"Collection/Tracks"_s)).filePath(u"Okuma Drift - Neon Rain.mp3"_s);
     ASSERT_TRUE(writeFile(filed, "filed"));
     selecta::collection::ScannedFile file;
     file.file.path = filed;

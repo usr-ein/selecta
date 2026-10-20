@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "collection/FolderRoles.h"
 #include "core/InboxRetag.h"
 #include "library/FileOps.h"
 #include "library/HistoryStore.h"
@@ -13,6 +14,7 @@
 #include <QSet>
 #include <QString>
 #include <QStringList>
+#include <QStringView>
 #include <QThreadPool>
 
 #include <functional>
@@ -26,19 +28,26 @@ class Database;
 
 namespace selecta::core {
 
-// Where the library lives and how files are named (Settings → Library and Filing). Paths are absolute.
+// Where the library lives and how files are named (Settings → Library and File names). Paths are absolute.
 struct LibraryConfig
 {
-    QString inboxRoot;
-    QStringList collectionRoots; // filing goes into the first one
-    QString singlesFolder = QStringLiteral("Singles");
-    QString albumsFolder = QStringLiteral("Albums");
+    QString inboxRoot;  // Selecta's own Inbox, in its data folder: never the user's choice
+    QString tracksRoot; // the tracks folder, of loose tracks: filed singles go there; empty until chosen
+    QString albumsRoot; // the albums folder, one album per subfolder: filed albums go there; empty until chosen
     library::naming::Templates templates;
     library::naming::Cleaner cleaner;
+
+    // The collection's folders, with their roles.
+    collection::FolderRoles folderRoles() const { return {tracksRoot, albumsRoot}; }
 };
 
-// Why a library configuration can't be used, or an empty string when it can: the Inbox and every collection folder
-// must be absolute, distinct and not inside one another (filing would otherwise move files within one tree).
+// Selecta's layout inside the Inbox (PRD DL-3): singles in one flat folder, albums in a folder each.
+inline constexpr QStringView kInboxSinglesFolder = u"Singles";
+inline constexpr QStringView kInboxAlbumsFolder = u"Albums";
+
+// Why a library configuration can't be used, or an empty string when it can. The Inbox must be an absolute path. The
+// tracks and albums folders may be unset; a folder that is set must be an absolute path, and the two must stay apart
+// from each other and from the Inbox: not the same folder, neither inside the other.
 QString checkLibraryConfig(const LibraryConfig &config);
 
 // One Inbox row as the UI sees it.
@@ -85,8 +94,9 @@ public:
     void reconcile();
     // Records an item the arrival pipeline just published into the Inbox, and publishes the list. Returns its id.
     std::optional<qint64> add(const library::InboxItem &item);
-    // Files these items into the first collection folder: singles into the Singles folder, albums into the Albums
-    // folder, keeping the names they got on arrival. Busy, unknown or still-processing items are skipped.
+    // Files these items into the collection: singles into the tracks folder, albums into the albums folder, keeping
+    // the names they got on arrival. Busy, unknown or still-processing items are skipped; an item whose folder isn't
+    // chosen yet stays, and finished() says so.
     void file(const QList<qint64> &ids);
     // Moves these items to the macOS Trash. trashed() reports each one that went.
     void trash(const QList<qint64> &ids);

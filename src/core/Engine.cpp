@@ -654,8 +654,9 @@ void Engine::setLibraryConfig(const LibraryConfig &config)
             excluded.append(own);
         }
     }
-    m_collection->setRoots(config.collectionRoots, excluded);
-    m_shares->setRoots(config.collectionRoots, excluded);
+    const collection::FolderRoles folders = config.folderRoles();
+    m_collection->setFolders(folders, excluded);
+    m_shares->setRoots(folders.roots(), excluded); // shared whole, whatever their roles
 }
 
 namespace {

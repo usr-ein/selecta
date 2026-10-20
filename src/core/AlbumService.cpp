@@ -15,7 +15,6 @@
 #include "storage/Database.h"
 
 #include <QDateTime>
-#include <QDir>
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <QPointer>
@@ -552,14 +551,12 @@ void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResul
     }
     // Singles filed in the collection are only ever flagged (DL-8, D3): rekordbox links to them.
     QHash<quint64, QString> collectionPaths;
-    const LibraryConfig config = m_inbox.config();
-    if (!config.collectionRoots.isEmpty()) {
-        const QString singlesRoot =
-            QDir(QDir(config.collectionRoots.constFirst()).filePath(config.singlesFolder)).absolutePath() + u'/';
+    const collection::FolderRoles folders = m_inbox.config().folderRoles();
+    if (!folders.tracks().isEmpty()) {
         const QList<CollectionFile> files = CollectionStore(m_db).all();
         for (const CollectionFile &file : files) {
-            if (!file.file.file.path.startsWith(singlesRoot)) {
-                continue;
+            if (folders.roleOf(file.file.file.path) != collection::FolderRoles::Role::Track) {
+                continue; // the collection's singles are the loose tracks of the tracks folder
             }
             const quint64 id = static_cast<quint64>(file.id) | kCollectionIdBit;
             names.insert(id, displayName(file.file.artist, file.file.title));

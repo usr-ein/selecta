@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "collection/FolderRoles.h"
 #include "collection/Scanner.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
@@ -33,12 +34,12 @@ namespace selecta::core {
 // What the Collection view shows.
 struct CollectionStatus
 {
-    QStringList roots;
+    QStringList roots; // the tracks folder and the albums folder (those chosen)
     bool scanning = false;
     int done = 0;  // files read so far in this scan
     int total = 0; // files this scan reads (new or changed ones)
     int tracks = 0;
-    int albums = 0;
+    int albums = 0; // the albums folder's subfolders that hold audio (collection::albumsOf)
     qint64 bytes = 0;                   // the files' total size
     QList<QPair<QString, int>> formats; // "MP3 320", "FLAC"… with how many tracks, the most first (LIB-5)
     int unreadable = 0;
@@ -47,10 +48,11 @@ struct CollectionStatus
     QString message;                                 // a problem worth saying, in words
 };
 
-// The collection index (PRD LIB-1…LIB-4, DL-11) on the engine thread: every audio file under the collection folders,
-// kept in the database (collection_files), from scans that read only new or changed files (collection::scan), kept
-// current by watching the folders (collection::Watcher). From it, the Inbox and the download history, it builds the
-// match::MatchIndex snapshot that Get tracks lines and search results are checked against ("you have it").
+// The collection index (PRD LIB-1…LIB-4, DL-11) on the engine thread: the loose tracks of the tracks folder and the
+// albums of the albums folder (collection::FolderRoles), kept in the database (collection_files), from scans that read
+// only new or changed files (collection::scan), kept current by watching the folders (collection::Watcher). From it,
+// the Inbox and the download history, it builds the match::MatchIndex snapshot that Get tracks lines and search
+// results are checked against ("you have it"), with one album per album folder (collection::albumsOf).
 //
 // Read-only on the user's files, always. Scans and index builds run one at a time on a worker; their results come back
 // through a mutex-guarded mailbox. A folder that isn't there (an unplugged drive) is reported, and the files known
@@ -79,9 +81,10 @@ public:
     CollectionService(CollectionService &&) = delete;
     CollectionService &operator=(CollectionService &&) = delete;
 
-    // The collection folders, and folders under them that aren't part of the collection (Selecta's Inbox). Files
-    // outside the new roots are forgotten; a scan follows when the roots changed (or at the first call).
-    void setRoots(const QStringList &roots, const QStringList &excluded);
+    // The collection folders with their roles, and folders under them that aren't part of the collection (Selecta's
+    // own). Files outside the folders are forgotten; when the folders or their roles changed (or at the first call) a
+    // full scan follows, which forgets the files the roles leave out, and the index is rebuilt.
+    void setFolders(const collection::FolderRoles &folders, const QStringList &excluded);
     // Scans every root again (new and changed files are read).
     void scanNow();
     // What the index knows besides the collection: Inbox items and past downloads (from their own stores).
@@ -130,7 +133,8 @@ private:
     storage::Database &m_db;
     Options m_options;
     WallClock m_now;
-    QStringList m_roots;
+    collection::FolderRoles m_folders;
+    QStringList m_roots; // m_folders.roots()
     QStringList m_excluded;
     bool m_rootsSet = false;
     QList<library::InboxItem> m_inboxItems;

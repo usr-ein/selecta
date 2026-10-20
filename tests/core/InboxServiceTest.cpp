@@ -40,8 +40,10 @@ protected:
         ASSERT_TRUE(db.open(u":memory:"_s));
         ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
         config.inboxRoot = dir.filePath(u"Inbox"_s);
-        config.collectionRoots = {dir.filePath(u"Music"_s)};
-        ASSERT_TRUE(QDir().mkpath(config.inboxRoot) && QDir().mkpath(config.collectionRoots.first()));
+        config.tracksRoot = dir.filePath(u"Music/Tracks"_s);
+        config.albumsRoot = dir.filePath(u"Music/Albums"_s);
+        ASSERT_TRUE(QDir().mkpath(config.inboxRoot) && QDir().mkpath(config.tracksRoot) &&
+                    QDir().mkpath(config.albumsRoot));
         service = std::make_unique<InboxService>(db, config, [this](const QString &path, QString *trashedPath) {
             const QString target = dir.filePath(u"Trash/"_s) + QFileInfo(path).fileName();
             QDir().mkpath(QFileInfo(target).absolutePath());
@@ -91,7 +93,7 @@ protected:
 
 } // namespace
 
-TEST_F(InboxServiceTest, FilesASingleIntoTheSinglesFolder)
+TEST_F(InboxServiceTest, FilesASingleIntoTheTracksFolder)
 {
     const qint64 id = arrive(u"Singles/Okuma_Drift_-_Neon_Rain.mp3"_s);
     const QSignalSpy finished(service.get(), &InboxService::finished);
@@ -101,7 +103,7 @@ TEST_F(InboxServiceTest, FilesASingleIntoTheSinglesFolder)
 
     ASSERT_EQ(finished.size(), 1);
     EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
-    const QString filed = config.collectionRoots.first() + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s;
+    const QString filed = config.tracksRoot + u"/Okuma_Drift_-_Neon_Rain.mp3"_s; // loose, as the tracks folder holds them
     EXPECT_TRUE(QFileInfo::exists(filed));
     EXPECT_EQ(inbox.count(), 0);
     EXPECT_EQ(whereabouts(), HistoryEntry::Whereabouts::Filed);
@@ -113,8 +115,7 @@ TEST_F(InboxServiceTest, FilesAnAlbumIntoTheAlbumsFolder)
     const qint64 id = arrive(u"Albums/Okuma Drift - Nightfall (2024)"_s, InboxItem::Kind::Album);
     service->file({id});
     service->waitForIdle();
-    EXPECT_TRUE(
-        QFileInfo::exists(config.collectionRoots.first() + u"/Albums/Okuma Drift - Nightfall (2024)/02 - Two.mp3"_s));
+    EXPECT_TRUE(QFileInfo::exists(config.albumsRoot + u"/Okuma Drift - Nightfall (2024)/02 - Two.mp3"_s));
     EXPECT_EQ(inbox.count(), 0);
 }
 
@@ -131,10 +132,9 @@ TEST_F(InboxServiceTest, QuarantinedItemsAreFiledWithTheirAttribute)
     service->file({single, album});
     service->waitForIdle();
     EXPECT_EQ(inbox.count(), 0);
-    const QString music = config.collectionRoots.first();
-    const QStringList filedPaths{music + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s,
-                                 music + u"/Albums/Okuma Drift - Nightfall (2024)"_s,
-                                 music + u"/Albums/Okuma Drift - Nightfall (2024)/01 - One.mp3"_s};
+    const QStringList filedPaths{config.tracksRoot + u"/Okuma_Drift_-_Neon_Rain.mp3"_s,
+                                 config.albumsRoot + u"/Okuma Drift - Nightfall (2024)"_s,
+                                 config.albumsRoot + u"/Okuma Drift - Nightfall (2024)/01 - One.mp3"_s};
     for (const QString &filed : filedPaths) {
         EXPECT_EQ(selecta::library::quarantine::agentOf(filed), u"Selecta"_s) << filed.toStdString();
     }
@@ -143,7 +143,7 @@ TEST_F(InboxServiceTest, QuarantinedItemsAreFiledWithTheirAttribute)
 TEST_F(InboxServiceTest, ACollisionKeepsTheItemAndSaysWhy)
 {
     const qint64 id = arrive(u"Singles/Song.mp3"_s);
-    ASSERT_TRUE(writeFile(config.collectionRoots.first() + u"/Singles/Song.mp3"_s, "precious"));
+    ASSERT_TRUE(writeFile(config.tracksRoot + u"/Song.mp3"_s, "precious"));
     const QSignalSpy finished(service.get(), &InboxService::finished);
     service->file({id});
     service->waitForIdle();
@@ -156,7 +156,8 @@ TEST_F(InboxServiceTest, ACollisionKeepsTheItemAndSaysWhy)
 
 TEST_F(InboxServiceTest, NoCollectionFolderMeansNothingMoves)
 {
-    config.collectionRoots.clear();
+    config.tracksRoot.clear();
+    config.albumsRoot.clear();
     service->setConfig(config);
     const qint64 id = arrive(u"Singles/Song.mp3"_s);
     const QSignalSpy finished(service.get(), &InboxService::finished);
@@ -164,7 +165,69 @@ TEST_F(InboxServiceTest, NoCollectionFolderMeansNothingMoves)
     service->waitForIdle();
     ASSERT_EQ(finished.size(), 1);
     EXPECT_FALSE(finished.at(0).at(1).toBool());
+    EXPECT_EQ(finished.at(0).at(2).toString(), u"Choose your tracks folder in Settings first."_s);
     EXPECT_EQ(inbox.count(), 1);
+}
+
+TEST_F(InboxServiceTest, EachKindNeedsItsOwnFolder)
+{
+    // Only the tracks folder chosen: singles are filed, albums wait for their folder.
+    config.albumsRoot.clear();
+    service->setConfig(config);
+    const qint64 single = arrive(u"Singles/Song.mp3"_s);
+    const qint64 album = arrive(u"Albums/Okuma Drift - Nightfall (2024)"_s, InboxItem::Kind::Album);
+    const QSignalSpy finished(service.get(), &InboxService::finished);
+    service->file({single, album});
+    service->waitForIdle();
+    ASSERT_EQ(finished.size(), 2);
+    EXPECT_EQ(finished.at(0).at(0).toLongLong(), album); // refused at once, before the single's move finished
+    EXPECT_FALSE(finished.at(0).at(1).toBool());
+    EXPECT_EQ(finished.at(0).at(2).toString(), u"Choose your albums folder in Settings first."_s);
+    EXPECT_TRUE(finished.at(1).at(1).toBool()) << finished.at(1).at(2).toString().toStdString();
+    EXPECT_TRUE(QFileInfo::exists(config.tracksRoot + u"/Song.mp3"_s));
+    ASSERT_EQ(inbox.count(), 1);
+    EXPECT_EQ(inbox.all().constFirst().id, album);
+}
+
+TEST(LibraryConfigCheck, TheTwoFoldersStayApartFromEachOtherAndFromTheInbox)
+{
+    using selecta::core::checkLibraryConfig;
+    LibraryConfig config;
+    config.inboxRoot = u"/Data/Selecta/Inbox"_s;
+    EXPECT_EQ(checkLibraryConfig(config), QString()); // nothing chosen yet: Settings asks, nothing is wrong
+    config.tracksRoot = u"/Music/Tracks"_s;
+    EXPECT_EQ(checkLibraryConfig(config), QString());
+    config.albumsRoot = u"/Music/Albums"_s;
+    EXPECT_EQ(checkLibraryConfig(config), QString());
+    config.albumsRoot = u"/Music/Tracks2"_s; // a name prefix isn't nesting
+    EXPECT_EQ(checkLibraryConfig(config), QString());
+
+    const auto refused = [&](const QString &tracks, const QString &albums) {
+        LibraryConfig changed = config;
+        changed.tracksRoot = tracks;
+        changed.albumsRoot = albums;
+        return checkLibraryConfig(changed);
+    };
+    EXPECT_EQ(refused(u"/Music"_s, u"/Music/"_s),
+              u"The tracks folder and the albums folder must be two different folders."_s);
+    EXPECT_EQ(refused(u"/Music/Bj\u00F6rk"_s, u"/Music/Bjo\u0308rk"_s), // NFC and NFD spellings of one folder
+              u"The tracks folder and the albums folder must be two different folders."_s);
+    EXPECT_EQ(refused(u"/Music"_s, u"/Music/Albums"_s),
+              u"The tracks folder and the albums folder can't be inside one another."_s);
+    EXPECT_EQ(refused(u"/Music/Albums/Tracks"_s, u"/Music/Albums"_s),
+              u"The tracks folder and the albums folder can't be inside one another."_s);
+    EXPECT_FALSE(refused(u"Music/Tracks"_s, {}).isEmpty()); // not a full path
+    EXPECT_FALSE(refused({}, u"Albums"_s).isEmpty());
+    // Selecta's own Inbox: neither inside a collection folder nor holding one.
+    EXPECT_FALSE(refused(u"/Data/Selecta/Inbox/Singles"_s, {}).isEmpty());
+    EXPECT_FALSE(refused({}, u"/Data/Selecta/Inbox"_s).isEmpty());
+    EXPECT_FALSE(refused(u"/Data"_s, {}).isEmpty());
+    EXPECT_FALSE(refused({}, u"/"_s).isEmpty());
+    EXPECT_EQ(refused(u"/Data/Selecta/Inbox2"_s, {}), QString());
+
+    LibraryConfig noInbox = config;
+    noInbox.inboxRoot.clear();
+    EXPECT_FALSE(checkLibraryConfig(noInbox).isEmpty());
 }
 
 TEST_F(InboxServiceTest, TrashesAndRecordsIt)

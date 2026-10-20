@@ -73,7 +73,7 @@ bool coveredBy(const QString &path, const QStringList &folders)
     const QString key = collection::comparisonKey(path);
     return std::ranges::any_of(folders, [&key](const QString &folder) {
         const QString folderKey = collection::comparisonKey(folder);
-        return key == folderKey || key.startsWith(folderKey + u'/');
+        return key == folderKey || key.startsWith(folderKey.endsWith(u'/') ? folderKey : folderKey + u'/');
     });
 }
 
@@ -121,16 +121,11 @@ CollectionService::~CollectionService()
     m_pool.waitForDone(); // results still in the mailbox are dropped with it
 }
 
-void CollectionService::setRoots(const QStringList &roots, const QStringList &excluded)
+void CollectionService::setFolders(const collection::FolderRoles &folders, const QStringList &excluded)
 {
-    QStringList cleaned;
-    for (const QString &root : roots) {
-        if (!root.isEmpty()) {
-            cleaned.append(QDir::cleanPath(QDir(root).absolutePath()));
-        }
-    }
-    const bool changed = !m_rootsSet || cleaned != m_roots || excluded != m_excluded;
-    m_roots = cleaned;
+    const bool changed = !m_rootsSet || folders != m_folders || excluded != m_excluded;
+    m_folders = folders;
+    m_roots = folders.roots();
     m_excluded = excluded;
     m_rootsSet = true;
     m_status.roots = m_roots;
@@ -156,6 +151,7 @@ void CollectionService::setRoots(const QStringList &roots, const QStringList &ex
         return;
     }
     scanNow();
+    scheduleRebuild(); // the albums follow the roles, even when the scan finds no file to add or remove
 }
 
 void CollectionService::scanNow()
@@ -195,11 +191,15 @@ void CollectionService::startScan(const QStringList &folders, bool full)
         scanned = m_roots;
     } else {
         for (const QString &folder : folders) {
-            if (!coveredBy(folder, m_roots) || coveredBy(folder, m_excluded)) {
-                continue; // outside the collection, or in the Inbox
+            // Outside the collection, or where the roles leave everything out (a subfolder of the tracks folder):
+            // nothing to rescan. A collection folder inside the changed one is rescanned with its own role.
+            for (const QString &target : m_folders.rescanFor(folder)) {
+                if (coveredBy(target, m_excluded) || scanned.contains(target)) {
+                    continue; // Selecta's own folders are never part of the collection
+                }
+                scanned.append(target);
+                known.insert(store.signaturesUnder(target));
             }
-            scanned.append(folder);
-            known.insert(store.signaturesUnder(folder));
         }
         if (scanned.isEmpty()) {
             return;
@@ -215,6 +215,7 @@ void CollectionService::startScan(const QStringList &folders, bool full)
     collection::ScanOptions options;
     options.readers = m_options.readers;
     options.excludedFolders = m_excluded;
+    m_folders.applyTo(options);
     m_pool.start([this, scanned, known = std::move(known), options, cancel, full] {
         QElapsedTimer sinceReport;
         sinceReport.start();
@@ -334,9 +335,9 @@ void CollectionService::rebuild()
     }
     const quint64 generation = ++m_generation;
     m_pool.start([this, files = std::move(files), ids = std::move(ids), inbox = std::move(inbox),
-                  history = std::move(history), generation] {
+                  history = std::move(history), folders = m_folders, generation] {
         QHash<QString, quint64> albumOf;
-        const QList<match::LibraryAlbum> albums = collection::groupAlbums(files, &albumOf);
+        const QList<match::LibraryAlbum> albums = collection::albumsOf(files, folders, &albumOf);
         match::MatchIndexInput input;
         input.tracks.reserve(files.size() + inbox.size());
         for (qsizetype i = 0; i < files.size(); ++i) {
