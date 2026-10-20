@@ -316,7 +316,7 @@ bool GetTracksInspector::eventFilter(QObject *watched, QEvent *event)
     if (event->type() == QEvent::MouseButtonRelease) {
         // A file's words: the radio button beside them, the only one in their row.
         const auto *label = qobject_cast<QLabel *>(watched);
-        QWidget *row = label != nullptr ? label->parentWidget() : nullptr;
+        const QWidget *row = label != nullptr ? label->parentWidget() : nullptr;
         if (auto *radio =
                 row != nullptr ? row->findChild<QRadioButton *>(QString(), Qt::FindDirectChildrenOnly) : nullptr) {
             radio->setChecked(true);
