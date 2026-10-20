@@ -62,6 +62,8 @@ public:
     QString identity() const { return m_identity; }
     // The waveform cache (Settings shows its size and can empty it); null when there is none.
     audio::AnalysisCache *analysisCache() const { return m_cache.get(); }
+    // The same, for owners that outlive this controller or hand it to workers (the Inbox inspector).
+    std::shared_ptr<audio::AnalysisCache> sharedAnalysisCache() const { return m_cache; }
 
     // Plays `request` from the start, replacing the current preview.
     void preview(const PreviewRequest &request);

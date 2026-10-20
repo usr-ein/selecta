@@ -108,6 +108,7 @@ if(SELECTA_WITH_MEDIA)
             app/NotifierTest.cpp
             app/PresetsTest.cpp
             app/SearchResultsModelTest.cpp
+            app/SpectrogramViewTest.cpp
             app/SpotifyTermsTest.cpp
             app/TickDelegateTest.cpp
             app/TransfersModelTest.cpp

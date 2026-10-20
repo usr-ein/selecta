@@ -16,6 +16,7 @@ qt_add_library(selecta_app STATIC
     Preview.h Preview.cpp
     Sidebar.h Sidebar.cpp
     SourceListView.h SourceListView.cpp
+    SpectrogramView.h SpectrogramView.cpp
     TickDelegate.h TickDelegate.cpp
     Toasts.h Toasts.cpp
     TwoLineDelegate.h TwoLineDelegate.cpp
