@@ -12,11 +12,10 @@
 #include <QNetworkRequest>
 #include <QSaveFile>
 
-#include <zlib.h>
-
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <zlib.h>
 
 using namespace Qt::StringLiterals;
 
@@ -45,7 +44,8 @@ QList<QUrl> dbIpCountryLiteSources(QDate today)
         return {};
     }
     const auto source = [](QDate month) {
-        return QUrl(u"https://download.db-ip.com/free/dbip-country-lite-%1.mmdb.gz"_s.arg(month.toString(u"yyyy-MM"_s)));
+        return QUrl(
+            u"https://download.db-ip.com/free/dbip-country-lite-%1.mmdb.gz"_s.arg(month.toString(u"yyyy-MM"_s)));
     };
     return {source(today), source(today.addMonths(-1))};
 }
@@ -174,7 +174,10 @@ void CountryDatabaseFetcher::downloaded(const QByteArray &compressed)
             QSaveFile file(part);
             if (!file.open(QIODevice::WriteOnly) || file.write(raw) != raw.size() || !file.commit()) {
                 error = u"can't write %1: %2"_s.arg(part, file.errorString());
-            } else if ((database = CountryDatabase::open(part, &error))) {
+            } else {
+                database = CountryDatabase::open(part, &error);
+            }
+            if (database) {
                 // The mapping follows the file through the rename.
                 QFile::remove(path);
                 if (!QFile::rename(part, path)) {
@@ -234,7 +237,7 @@ QByteArray CountryDatabaseFetcher::gunzip(const QByteArray &compressed, qint64 m
     stream.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(compressed.constData()));
     stream.avail_in = static_cast<uInt>(compressed.size());
     QByteArray out;
-    std::array<char, 64 * 1024> chunk{};
+    std::array<char, std::size_t{64} * 1024> chunk{};
     int status = Z_OK;
     while (status != Z_STREAM_END) {
         stream.next_out = reinterpret_cast<Bytef *>(chunk.data());

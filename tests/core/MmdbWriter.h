@@ -14,12 +14,11 @@
 #include <QTcpSocket>
 #include <QUrl>
 
-#include <zlib.h>
-
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <vector>
+#include <zlib.h>
 
 namespace selecta::core::testing {
 
@@ -37,7 +36,10 @@ public:
 
     // `network`/`prefix` in the country `iso` ("FR"); `iso` is written as given, so tests can write bad codes. An
     // IPv4 network goes under ::/96 in an IPv6 database, where libmaxminddb looks IPv4 addresses up.
-    void add(const QString &network, int prefix, const QByteArray &iso) { addRecord(network, prefix, countryRecord(iso)); }
+    void add(const QString &network, int prefix, const QByteArray &iso)
+    {
+        addRecord(network, prefix, countryRecord(iso));
+    }
     // A network whose record has no country (a continent only).
     void addWithoutCountry(const QString &network, int prefix) { addRecord(network, prefix, continentRecord()); }
     // A network whose record points past the end of the data section: a damaged file.
@@ -166,7 +168,7 @@ private:
             const Q_IPV6ADDR v6 = address.toIPv6Address();
             for (const quint8 byte : v6.c) {
                 for (int i = 7; i >= 0; --i) {
-                    bits.push_back(((byte >> static_cast<unsigned>(i)) & 1U) != 0);
+                    bits.push_back(((static_cast<unsigned>(byte) >> static_cast<unsigned>(i)) & 1U) != 0);
                 }
             }
         }
@@ -186,7 +188,8 @@ private:
             }
             if (m_nodes.at(node).at(side).kind != Kind::Node) {
                 m_nodes.emplace_back();
-                m_nodes.at(node).at(side) = {.kind = Kind::Node, .value = static_cast<std::uint32_t>(m_nodes.size() - 1)};
+                m_nodes.at(node).at(side) = {.kind = Kind::Node,
+                                             .value = static_cast<std::uint32_t>(m_nodes.size() - 1)};
             }
             node = m_nodes.at(node).at(side).value;
         }
@@ -254,7 +257,8 @@ private:
             return;
         }
         socket->write("HTTP/1.1 " + QByteArray::number(answer.status) + " X\r\nContent-Length: " +
-                      QByteArray::number(answer.claimedLength >= 0 ? answer.claimedLength : answer.body.size()) + "\r\nConnection: close\r\n\r\n" + answer.body);
+                      QByteArray::number(answer.claimedLength >= 0 ? answer.claimedLength : answer.body.size()) +
+                      "\r\nConnection: close\r\n\r\n" + answer.body);
         socket->disconnectFromHost();
     }
 

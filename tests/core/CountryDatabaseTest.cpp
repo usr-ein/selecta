@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/CountryDatabase.h"
-#include "core/CountryDatabaseFetcher.h"
 
 #include "MmdbWriter.h"
+#include "core/CountryDatabaseFetcher.h"
 
 #include <QDir>
 #include <QFile>
@@ -145,20 +145,23 @@ TEST(CountryDatabaseTest, SourcesAreThisMonthAndTheMonthBefore)
     EXPECT_TRUE(selecta::core::dbIpCountryLiteSources(QDate()).isEmpty());
 }
 
+namespace {
+
 class CountryDatabaseFetcherTest : public ::testing::Test
 {
 protected:
     CountryDatabaseOptions options(const QList<QUrl> &sources) const
     {
-        return {.path = m_dir.filePath(u"GeoIP/countries.mmdb"_s), .sources = sources, .stallMs = 2'000, .totalMs = 10'000};
+        return {
+            .path = m_dir.filePath(u"GeoIP/countries.mmdb"_s), .sources = sources, .stallMs = 2'000, .totalMs = 10'000};
     }
 
     // Runs a fetcher to its end; the database when it was ready, null when it failed.
     std::shared_ptr<const CountryDatabase> run(const CountryDatabaseOptions &options, QString *why = nullptr)
     {
         CountryDatabaseFetcher fetcher(options, m_network);
-        QSignalSpy ready(&fetcher, &CountryDatabaseFetcher::ready);
-        QSignalSpy failed(&fetcher, &CountryDatabaseFetcher::failed);
+        const QSignalSpy ready(&fetcher, &CountryDatabaseFetcher::ready);
+        const QSignalSpy failed(&fetcher, &CountryDatabaseFetcher::failed);
         fetcher.start();
         fetcher.start(); // once only
         EXPECT_TRUE(QTest::qWaitFor([&] { return !ready.isEmpty() || !failed.isEmpty(); }, 15'000));
@@ -175,6 +178,8 @@ protected:
     QNetworkAccessManager m_network;
     FakeHttpServer m_server;
 };
+
+} // namespace
 
 TEST_F(CountryDatabaseFetcherTest, DownloadsOnceWhenMissingThenOpensFromDisk)
 {
@@ -205,8 +210,8 @@ TEST_F(CountryDatabaseFetcherTest, AFailureMeansNoFlagsAndNoRetry)
     m_server.answer(u"/junk.gz"_s, {.status = 200, .body = MmdbWriter::gzip("not a database")});
     m_server.answer(u"/raw"_s, {.status = 200, .body = sampleDatabase()}); // not gzip
     QString why;
-    EXPECT_FALSE(run(options({m_server.url(u"/missing.gz"_s), m_server.url(u"/junk.gz"_s), m_server.url(u"/raw"_s)}),
-                     &why));
+    EXPECT_FALSE(
+        run(options({m_server.url(u"/missing.gz"_s), m_server.url(u"/junk.gz"_s), m_server.url(u"/raw"_s)}), &why));
     EXPECT_FALSE(why.isEmpty());
     EXPECT_EQ(m_server.totalRequests(), 3); // each source once
     EXPECT_FALSE(QFile::exists(m_dir.filePath(u"GeoIP/countries.mmdb"_s)));
@@ -242,8 +247,8 @@ TEST_F(CountryDatabaseFetcherTest, OnlyHttpsOrLoopback)
 {
     QString why;
     // Refused before any request: nothing leaves the machine.
-    EXPECT_FALSE(run(options({QUrl(u"http://download.db-ip.com/free/x.mmdb.gz"_s), QUrl(u"ftp://127.0.0.1/x"_s)}),
-                     &why));
+    EXPECT_FALSE(
+        run(options({QUrl(u"http://download.db-ip.com/free/x.mmdb.gz"_s), QUrl(u"ftp://127.0.0.1/x"_s)}), &why));
     EXPECT_TRUE(why.contains(u"refused"_s)) << why.toStdString();
     EXPECT_FALSE(run(options({}), &why));
 }
@@ -262,8 +267,8 @@ TEST_F(CountryDatabaseFetcherTest, ReplacesADamagedFileOnce)
 TEST_F(CountryDatabaseFetcherTest, NoPathDoesNothing)
 {
     CountryDatabaseFetcher fetcher({}, m_network);
-    QSignalSpy ready(&fetcher, &CountryDatabaseFetcher::ready);
-    QSignalSpy failed(&fetcher, &CountryDatabaseFetcher::failed);
+    const QSignalSpy ready(&fetcher, &CountryDatabaseFetcher::ready);
+    const QSignalSpy failed(&fetcher, &CountryDatabaseFetcher::failed);
     fetcher.start();
     QTest::qWait(50);
     EXPECT_TRUE(ready.isEmpty() && failed.isEmpty());

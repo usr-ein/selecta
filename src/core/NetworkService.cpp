@@ -149,13 +149,13 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
         m_status.peersReachedUs = static_cast<int>(m_reachedBy.size());
         Q_EMIT statusChanged(m_status);
     });
-    connect(m_peers.get(), &slsk::PeerNetwork::searchResponseReceived, this,
-            [this](const QString &username, const slsk::peer::FileSearchResponse &response,
-                   const QHostAddress &address) {
-                if (m_openSearches.contains(response.token)) {
-                    Q_EMIT searchResponseReceived(response.token, username, response, address);
-                }
-            });
+    connect(
+        m_peers.get(), &slsk::PeerNetwork::searchResponseReceived, this,
+        [this](const QString &username, const slsk::peer::FileSearchResponse &response, const QHostAddress &address) {
+            if (m_openSearches.contains(response.token)) {
+                Q_EMIT searchResponseReceived(response.token, username, response, address);
+            }
+        });
 }
 
 bool NetworkService::answerSearch(const slsk::IncomingSearch &search, const QList<slsk::FileEntry> &results,

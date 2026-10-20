@@ -24,8 +24,8 @@ namespace selecta::core {
 // runs, which point `sources` at a local fake instead).
 struct CountryDatabaseOptions
 {
-    QString path;         // the database on disk: <data>/GeoIP/dbip-country-lite.mmdb
-    QList<QUrl> sources;  // tried in order, once each, while the file is missing: https, or http on loopback only
+    QString path;          // the database on disk: <data>/GeoIP/dbip-country-lite.mmdb
+    QList<QUrl> sources;   // tried in order, once each, while the file is missing: https, or http on loopback only
     int stallMs = 30'000;  // a download that makes no progress for this long fails
     int totalMs = 180'000; // the whole fetch, every source included
 };
@@ -36,10 +36,10 @@ QList<QUrl> dbIpCountryLiteSources(QDate today);
 
 // Opens the country database, downloading it first when it isn't on disk yet: the first run's one download (P-002).
 // Bounded: kMaxDownloadBytes compressed, CountryDatabase::kMaxBytes inflated, the options' stallMs without progress
-// and totalMs overall. The file is untrusted: it is inflated on a worker, written next to its place and opened as a database
-// (CountryDatabase validates it) before it takes that place. A file on disk that fails to open is removed and fetched
-// again, once. Any failure means no flags for this run: one attempt per source, no retry loop; the next launch tries
-// again only while the file is still missing.
+// and totalMs overall. The file is untrusted: it is inflated on a worker, written next to its place and opened as a
+// database (CountryDatabase validates it) before it takes that place. A file on disk that fails to open is removed and
+// fetched again, once. Any failure means no flags for this run: one attempt per source, no retry loop; the next launch
+// tries again only while the file is still missing.
 //
 // Threading: lives on the engine thread; the inflating and the validation run on its own worker. Ownership: the
 // network manager outlives it. Failure: failed() once, with the reason, for the log.
@@ -74,6 +74,7 @@ private:
     void fail(const QString &why);
 
     CountryDatabaseOptions m_options;
+    // cppcheck-suppress uninitMemberVarNoCtor ; bound by the constructor, which cppcheck misses here
     QNetworkAccessManager &m_network;
     bool m_started = false;
     bool m_finished = false;

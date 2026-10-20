@@ -8,7 +8,6 @@
 #include <QSet>
 
 #include <gtest/gtest.h>
-
 #include <limits>
 
 using namespace Qt::StringLiterals;
@@ -233,7 +232,7 @@ TEST(SearchResultsModelTest, ExpectedWaitCombinesSpeedSlotAndQueue)
     EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 40)), 10.0);
     // Each queued file counts as a typical track ahead of ours.
     EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 3)),
-                     (3.0 * selecta::core::kTypicalQueuedFileBytes + 10'000'000) / 1'000'000);
+                     ((3.0 * selecta::core::kTypicalQueuedFileBytes) + 10'000'000) / 1'000'000);
     // No free slot and no queue: still one file ahead.
     EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 0)),
                      expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 1)));
@@ -241,8 +240,8 @@ TEST(SearchResultsModelTest, ExpectedWaitCombinesSpeedSlotAndQueue)
     EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 0, true, 0)),
                      10'000'000.0 / selecta::core::kUnknownSpeedBytesPerSecond);
     // The largest values stay finite.
-    EXPECT_GT(expectedWaitSeconds(peerHit(u"a"_s, 1, false, std::numeric_limits<quint32>::max(),
-                                          std::numeric_limits<quint64>::max())),
+    EXPECT_GT(expectedWaitSeconds(
+                  peerHit(u"a"_s, 1, false, std::numeric_limits<quint32>::max(), std::numeric_limits<quint64>::max())),
               0.0);
 }
 
@@ -251,10 +250,10 @@ TEST(SearchResultsModelTest, DefaultOrderIsTheShortestWaitFirst)
     SearchResultsModel model;
     model.reset(selecta::core::analyzeHits(
         {
-            peerHit(u"slow_free"_s, 50'000, true, 0),     // 200 s
+            peerHit(u"slow_free"_s, 50'000, true, 0),        // 200 s
             peerHit(u"fast_queued"_s, 5'000'000, false, 20), // 42 s
-            peerHit(u"fast_free"_s, 2'000'000, true, 0),  // 5 s
-            peerHit(u"silent"_s, 0, true, 0),             // unknown speed: 500 s
+            peerHit(u"fast_free"_s, 2'000'000, true, 0),     // 5 s
+            peerHit(u"silent"_s, 0, true, 0),                // unknown speed: 500 s
             peerHit(u"long_queue"_s, 1'000'000, false, 300), // 3010 s
         },
         0, {}, {}));
@@ -349,7 +348,9 @@ TEST(SearchResultsModelTest, FolderRowsShowTheirPeersQueueAndSpeed)
 {
     SearchResultsModel model;
     const QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Fatal);
-    model.reset(selecta::core::analyzeHits({peerHit(u"busy"_s, 1'200'000, false, 30)}, 0, {}, {}));
+    SearchHit busy = peerHit(u"busy"_s, 1'200'000, false, 30);
+    busy.country = u"JP"_s;
+    model.reset(selecta::core::analyzeHits({busy}, 0, {}, {}));
     model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
     model.setGrouped(true);
     ASSERT_EQ(model.rowCount(), 1);
@@ -358,7 +359,9 @@ TEST(SearchResultsModelTest, FolderRowsShowTheirPeersQueueAndSpeed)
     EXPECT_EQ(queue.data(Qt::ForegroundRole).value<QColor>(),
               SearchResultsModel::queueColour(SearchResultsModel::QueueLevel::Long));
     EXPECT_TRUE(queue.data(Qt::ToolTipRole).toString().contains(u"30"_s));
-    EXPECT_EQ(model.index(0, SearchResultsModel::SpeedColumn).data().toString(), selecta::app::format::speed(1'200'000));
+    EXPECT_EQ(model.index(0, SearchResultsModel::SpeedColumn).data().toString(),
+              selecta::app::format::speed(1'200'000));
+    EXPECT_EQ(model.index(0, SearchResultsModel::PeerColumn).data().toString(), u"🇯🇵 busy"_s);
 }
 
 TEST(SearchResultsModelTest, PeersShowTheirCountrysFlag)

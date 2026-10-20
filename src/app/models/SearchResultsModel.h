@@ -12,8 +12,9 @@
 namespace selecta::app {
 
 // One search's results for the Search view (PRD SRCH-9…11, SRCH-18): filtered with a core::SearchFilter, sorted by
-// default (files that fit the release first, then the shortest expected wait) or by a column, flat or grouped by remote folder. Mirrors the engine's list: reset() when every result
-// changes, append() as they stream in (then refresh(), which the view paces), update() when some change.
+// default (files that fit the release first, then the shortest expected wait) or by a column, flat or grouped by remote
+// folder. Mirrors the engine's list: reset() when every result changes, append() as they stream in (then refresh(),
+// which the view paces), update() when some change.
 //
 // Every change rebuilds the visible rows with a model reset; the view keeps its selection by result index. Main thread
 // only.
@@ -41,9 +42,9 @@ public:
 
     // How long a peer's queue is, for the Queue column's colour.
     enum class QueueLevel : quint8 {
-        None,  // a free slot: no queue ("NQ", green)
-        Short, // up to kShortQueue files ahead (yellow)
-        Long,  // up to kLongQueue (orange)
+        None,     // a free slot: no queue ("NQ", green)
+        Short,    // up to kShortQueue files ahead (yellow)
+        Long,     // up to kLongQueue (orange)
         VeryLong, // more (red)
     };
     static constexpr quint32 kShortQueue = 10;
@@ -107,6 +108,8 @@ private:
     void rebuild();
     bool lessThan(int a, int b) const;
     QVariant resultData(const core::SearchResult &result, int column, int role) const;
+    QVariant displayText(const core::SearchResult &result, int column) const;
+    QVariant toolTip(const core::SearchResult &result, int column) const;
     // What VoiceOver reads for a cell: the display text with its symbols in words (UI-5).
     QString accessibleText(const core::SearchResult &result, int column) const;
     QVariant folderData(const Folder &folder, int column, int role) const;

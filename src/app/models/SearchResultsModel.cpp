@@ -560,59 +560,24 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         return column == StatusColumn ? QVariant(ownershipIcon(result.ownership)) : QVariant();
     case Qt::TextAlignmentRole:
         if (column == LengthColumn || column == SpeedColumn) {
-            return QVariant(Qt::AlignRight | Qt::AlignVCenter);
+            return {Qt::AlignRight | Qt::AlignVCenter};
         }
         return column == QueueColumn ? QVariant(Qt::AlignCenter) : QVariant();
     case Qt::ToolTipRole:
-        switch (column) {
-        case StatusColumn:
-            if (result.ownership == core::Ownership::None) {
-                return {};
-            }
-            return result.ownershipDetail.isEmpty()
-                       ? core::ownershipLabel(result.ownership)
-                       : core::ownershipLabel(result.ownership) + u": "_s + result.ownershipDetail;
-        case TitleColumn:
-            return result.path;
-        case QualityColumn:
-            if (!result.quality.plausible) {
-                return tr("The size suggests about %1 kbps, not what the peer says")
-                    .arg(result.quality.estimatedBitrateKbps);
-            }
-            if (!result.quality.established) {
-                return tr("The peer didn't say what quality this is; ≈ is estimated from its size and length");
-            }
-            return {};
-        case PeerColumn: {
-            QString tip;
-            if (result.peerBackoffMs > 0) {
-                tip = tr("Selecta is holding off %1 after a refusal").arg(result.hit.peer);
-            } else {
-                tip = result.peerFilesToday == 1
-                          ? tr("1 download from %1 today").arg(result.hit.peer)
-                          : tr("%1 downloads from %2 today").arg(result.peerFilesToday).arg(result.hit.peer);
-            }
-            if (const QString country = countryName(result.hit.country); !country.isEmpty()) {
-                tip += u'\n' + tr("In %1, by its address (IP Geolocation by DB-IP)").arg(country);
-            }
-            return tip;
-        }
-        case QueueColumn:
-            return queueToolTip(result.hit);
-        case SpeedColumn:
-            return speedToolTip(result.hit);
-        default:
-            return {};
-        }
+        return toolTip(result, column);
     case Qt::AccessibleTextRole:
         return accessibleText(result, column);
     case Qt::AccessibleDescriptionRole:
         return resultData(result, column, Qt::ToolTipRole);
     case Qt::DisplayRole:
-        break;
+        return displayText(result, column);
     default:
         return {};
     }
+}
+
+QVariant SearchResultsModel::displayText(const core::SearchResult &result, int column) const
+{
     switch (column) {
     case StatusColumn:
         return statusText(result.ownership);
@@ -652,6 +617,50 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
     }
 }
 
+QVariant SearchResultsModel::toolTip(const core::SearchResult &result, int column) const
+{
+    switch (column) {
+    case StatusColumn:
+        if (result.ownership == core::Ownership::None) {
+            return {};
+        }
+        return result.ownershipDetail.isEmpty()
+                   ? core::ownershipLabel(result.ownership)
+                   : core::ownershipLabel(result.ownership) + u": "_s + result.ownershipDetail;
+    case TitleColumn:
+        return result.path;
+    case QualityColumn:
+        if (!result.quality.plausible) {
+            return tr("The size suggests about %1 kbps, not what the peer says")
+                .arg(result.quality.estimatedBitrateKbps);
+        }
+        if (!result.quality.established) {
+            return tr("The peer didn't say what quality this is; ≈ is estimated from its size and length");
+        }
+        return {};
+    case PeerColumn: {
+        QString tip;
+        if (result.peerBackoffMs > 0) {
+            tip = tr("Selecta is holding off %1 after a refusal").arg(result.hit.peer);
+        } else {
+            tip = result.peerFilesToday == 1
+                      ? tr("1 download from %1 today").arg(result.hit.peer)
+                      : tr("%1 downloads from %2 today").arg(result.peerFilesToday).arg(result.hit.peer);
+        }
+        if (const QString country = countryName(result.hit.country); !country.isEmpty()) {
+            tip += u'\n' + tr("In %1, by its address (IP Geolocation by DB-IP)").arg(country);
+        }
+        return tip;
+    }
+    case QueueColumn:
+        return queueToolTip(result.hit);
+    case SpeedColumn:
+        return speedToolTip(result.hit);
+    default:
+        return {};
+    }
+}
+
 QString SearchResultsModel::accessibleText(const core::SearchResult &result, int column) const
 {
     switch (column) {
@@ -675,7 +684,7 @@ QString SearchResultsModel::accessibleText(const core::SearchResult &result, int
     }
     case PeerColumn: {
         const QString country = countryName(result.hit.country);
-        const QString peer = country.isEmpty() ? result.hit.peer : tr("%1, %2").arg(result.hit.peer, country);
+        QString peer = country.isEmpty() ? result.hit.peer : tr("%1, %2").arg(result.hit.peer, country);
         if (result.peerFilesToday > 0) {
             return result.peerFilesToday == 1 ? tr("%1, 1 download today").arg(peer)
                                               : tr("%1, %2 downloads today").arg(peer).arg(result.peerFilesToday);
@@ -736,8 +745,10 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
         }
         return first;
     }
-    case PeerColumn:
-        return folder.peer;
+    case PeerColumn: {
+        const QString flag = lead != nullptr ? flagText(lead->hit.country) : QString();
+        return flag.isEmpty() ? folder.peer : flag + u' ' + folder.peer;
+    }
     case QueueColumn:
         return lead ? queueText(lead->hit) : QVariant();
     case SpeedColumn:

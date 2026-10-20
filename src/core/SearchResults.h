@@ -81,8 +81,8 @@ struct SearchResult
 // files queued ahead of it (none with a free slot; at least one without), each taken as kTypicalQueuedFileBytes, plus
 // the file itself, at the peer's upload speed (kUnknownSpeedBytesPerSecond when the peer didn't say). An estimate to
 // rank by, not a promise: peers share their bandwidth over several slots. Pure; any thread.
-inline constexpr qint64 kTypicalQueuedFileBytes = 10'000'000;   // about a 320 kbps track of four minutes
-inline constexpr qint64 kUnknownSpeedBytesPerSecond = 20'000;    // pessimistic: a peer that says nothing is slow
+inline constexpr qint64 kTypicalQueuedFileBytes = 10'000'000; // about a 320 kbps track of four minutes
+inline constexpr qint64 kUnknownSpeedBytesPerSecond = 20'000; // pessimistic: a peer that says nothing is slow
 double expectedWaitSeconds(const SearchHit &hit);
 
 // The folder part of a virtual path, and its last component, with either separator. Pure.

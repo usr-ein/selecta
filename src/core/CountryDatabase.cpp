@@ -5,12 +5,10 @@
 #include <QFileInfo>
 #include <QLocale>
 
+#include <cstring>
 #include <maxminddb.h>
-
 #include <netinet/in.h>
 #include <sys/socket.h>
-
-#include <cstring>
 
 using namespace Qt::StringLiterals;
 
@@ -57,8 +55,7 @@ std::shared_ptr<const CountryDatabase> CountryDatabase::open(const QString &path
     }
     std::shared_ptr<CountryDatabase> database(new CountryDatabase());
     const QByteArray name = QFile::encodeName(path);
-    if (const int status = MMDB_open(name.constData(), MMDB_MODE_MMAP, database->m_db.get());
-        status != MMDB_SUCCESS) {
+    if (const int status = MMDB_open(name.constData(), MMDB_MODE_MMAP, database->m_db.get()); status != MMDB_SUCCESS) {
         return fail(u"the country database can't be read: %1"_s.arg(QString::fromUtf8(MMDB_strerror(status))));
     }
     database->m_open = true;
@@ -127,6 +124,7 @@ std::optional<QString> CountryDatabase::find(const QHostAddress &address) const
     if (!data.has_data || data.type != MMDB_DATA_TYPE_UTF8_STRING || data.data_size != 2) {
         return QString();
     }
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-union-access): libmaxminddb's tagged union, type checked above
     const QString code = QString::fromLatin1(data.utf8_string, 2);
     return isCountryCode(code) ? code : QString();
 }

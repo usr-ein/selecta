@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/SearchService.h"
 
-#include "base/Clock.h"
 #include "MmdbWriter.h"
+#include "base/Clock.h"
 #include "core/CountryDatabase.h"
 #include "core/SearchCache.h"
 #include "governor/Governor.h"

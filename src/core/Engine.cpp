@@ -433,7 +433,7 @@ void Engine::stop()
     m_converter.reset();  // cancels conversions in flight: nothing half-made is left
     m_albums.reset();     // cancels albums being made (they are made again at the next launch)
     m_arrival.reset();    // cancels conversions in flight (they run again at the next launch) and records finished ones
-    m_countries.reset(); // waits for its worker; before the network manager it uses (owned by m_meta)
+    m_countries.reset();  // waits for its worker; before the network manager it uses (owned by m_meta)
     m_search.reset();
     m_searchCache.reset();
     m_searchNetwork.reset();

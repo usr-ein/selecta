@@ -53,8 +53,8 @@ double expectedWaitSeconds(const SearchHit &hit)
 {
     const qint64 queued = hit.freeSlot ? 0 : std::max<qint64>(hit.queueLength, 1);
     const qint64 speed = hit.averageSpeed > 0 ? qint64{hit.averageSpeed} : kUnknownSpeedBytesPerSecond;
-    const double bytes = (static_cast<double>(queued) * static_cast<double>(kTypicalQueuedFileBytes)) +
-                         static_cast<double>(hit.size);
+    const double bytes =
+        (static_cast<double>(queued) * static_cast<double>(kTypicalQueuedFileBytes)) + static_cast<double>(hit.size);
     return bytes / static_cast<double>(speed);
 }
 
