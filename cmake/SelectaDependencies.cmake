@@ -33,11 +33,19 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if(SELECTA_BUILD_TESTS)
+    # Sanitizer builds compile GoogleTest from source with the same instrumentation (SelectaSanitizers.cmake applies
+    # to every target defined after it). A prebuilt, uninstrumented GoogleTest makes libc++'s container annotations
+    # disagree between the two sides, and ASan then reports false overflows inside GoogleTest's own registration.
+    if(SELECTA_SANITIZE)
+        set(_selecta_gtest_find_args "")
+    else()
+        set(_selecta_gtest_find_args FIND_PACKAGE_ARGS NAMES GTest)
+    endif()
     FetchContent_Declare(googletest
         URL https://github.com/google/googletest/archive/refs/tags/v1.17.0.tar.gz
         URL_HASH SHA256=65fab701d9829d38cb77c14acdc431d2108bfdbf8979e40eb8ae567edf10b27c
         DOWNLOAD_EXTRACT_TIMESTAMP ON
-        FIND_PACKAGE_ARGS NAMES GTest)
+        ${_selecta_gtest_find_args})
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     set(BUILD_GMOCK ON CACHE BOOL "" FORCE)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
