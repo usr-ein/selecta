@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SettingsView.h"
 
+#include "library/Naming.h"
+
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -50,11 +56,18 @@ QWidget *folderRow(const QString &path, const QString &objectName, QWidget *pare
     return row;
 }
 
+QChar separatorOf(const QComboBox *box)
+{
+    const QString value = box->currentData().toString();
+    return value.isEmpty() ? QChar(u'_') : value.at(0);
+}
+
 } // namespace
 
-SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, QWidget *parent)
+SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::LibraryConfig library, QWidget *parent)
     : QWidget(parent)
     , m_appearance(new QComboBox(this))
+    , m_library(std::move(library))
 {
     setObjectName(u"view.settings"_s);
 
@@ -103,6 +116,8 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, QWidget
     columnLayout->setContentsMargins(24, 20, 24, 24);
     columnLayout->setSpacing(16);
     columnLayout->addWidget(appearanceBox);
+    columnLayout->addWidget(createLibraryBox(column));
+    columnLayout->addWidget(createFilingBox(column));
     columnLayout->addWidget(dataBox);
     columnLayout->addWidget(aboutBox);
     columnLayout->addStretch(1);
@@ -123,6 +138,246 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, QWidget
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(scroll);
+    showLibrary();
+}
+
+QWidget *SettingsView::createLibraryBox(QWidget *parent)
+{
+    auto *box = new QGroupBox(tr("Library"), parent);
+    auto *form = new QFormLayout(box);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    auto *inboxRow = new QWidget(box);
+    auto *inboxLayout = new QHBoxLayout(inboxRow);
+    inboxLayout->setContentsMargins(0, 0, 0, 0);
+    m_inbox = new QLineEdit(inboxRow);
+    m_inbox->setObjectName(u"settings.inbox"_s);
+    m_inbox->setReadOnly(true);
+    auto *chooseInbox = new QPushButton(tr("Choose…"), inboxRow);
+    chooseInbox->setObjectName(u"settings.inbox.choose"_s);
+    connect(chooseInbox, &QPushButton::clicked, this, &SettingsView::chooseInbox);
+    inboxLayout->addWidget(m_inbox, 1);
+    inboxLayout->addWidget(chooseInbox);
+    form->addRow(tr("Inbox:"), inboxRow);
+
+    auto *collectionRow = new QWidget(box);
+    auto *collectionLayout = new QVBoxLayout(collectionRow);
+    collectionLayout->setContentsMargins(0, 0, 0, 0);
+    m_collections = new QListWidget(collectionRow);
+    m_collections->setObjectName(u"settings.collections"_s);
+    m_collections->setMaximumHeight(72);
+    m_collections->setTextElideMode(Qt::ElideMiddle);
+    m_collections->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_collections->setUniformItemSizes(true);
+    auto *buttons = new QHBoxLayout;
+    auto *add = new QPushButton(tr("Add…"), collectionRow);
+    add->setObjectName(u"settings.collections.add"_s);
+    auto *remove = new QPushButton(tr("Remove"), collectionRow);
+    remove->setObjectName(u"settings.collections.remove"_s);
+    connect(add, &QPushButton::clicked, this, &SettingsView::addCollection);
+    connect(remove, &QPushButton::clicked, this, &SettingsView::removeCollection);
+    buttons->addWidget(add);
+    buttons->addWidget(remove);
+    buttons->addStretch(1);
+    auto *note = new QLabel(tr("Filing adds new files to the first folder. Selecta never changes, moves or deletes "
+                               "files already in your collection."),
+                            collectionRow);
+    note->setWordWrap(true);
+    note->setForegroundRole(QPalette::PlaceholderText);
+    collectionLayout->addWidget(m_collections);
+    collectionLayout->addLayout(buttons);
+    collectionLayout->addWidget(note);
+    form->addRow(tr("Collection:"), collectionRow);
+
+    m_singlesFolder = new QLineEdit(box);
+    m_singlesFolder->setObjectName(u"settings.singlesFolder"_s);
+    m_albumsFolder = new QLineEdit(box);
+    m_albumsFolder->setObjectName(u"settings.albumsFolder"_s);
+    connect(m_singlesFolder, &QLineEdit::editingFinished, this, &SettingsView::editsFinished);
+    connect(m_albumsFolder, &QLineEdit::editingFinished, this, &SettingsView::editsFinished);
+    form->addRow(tr("Singles folder:"), m_singlesFolder);
+    form->addRow(tr("Albums folder:"), m_albumsFolder);
+
+    m_libraryError = new QLabel(box);
+    m_libraryError->setObjectName(u"settings.libraryError"_s);
+    m_libraryError->setWordWrap(true);
+    m_libraryError->hide();
+    form->addRow(m_libraryError);
+    return box;
+}
+
+QWidget *SettingsView::createFilingBox(QWidget *parent)
+{
+    auto *box = new QGroupBox(tr("File names"), parent);
+    auto *form = new QFormLayout(box);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    const QString tokens = tr("Tokens: {artist} {albumartist} {title} {album} {year} {track} {disc} {label} {key} "
+                              "{bpm}. Text in [brackets] disappears when a token inside it is empty.");
+    const auto templateField = [&](const QString &objectName) {
+        auto *field = new QLineEdit(box);
+        field->setObjectName(objectName);
+        field->setToolTip(tokens);
+        connect(field, &QLineEdit::editingFinished, this, &SettingsView::editsFinished);
+        connect(field, &QLineEdit::textEdited, this, &SettingsView::refreshPreview);
+        return field;
+    };
+    m_singleTemplate = templateField(u"settings.template.single"_s);
+    m_albumFolderTemplate = templateField(u"settings.template.albumFolder"_s);
+    m_albumTrackTemplate = templateField(u"settings.template.albumTrack"_s);
+    form->addRow(tr("Singles:"), m_singleTemplate);
+    form->addRow(tr("Album folders:"), m_albumFolderTemplate);
+    form->addRow(tr("Album tracks:"), m_albumTrackTemplate);
+
+    m_clean = new QCheckBox(tr("Make names path-safe"), box);
+    m_clean->setObjectName(u"settings.clean"_s);
+    m_clean->setToolTip(tr("Keeps letters in every language; replaces spaces, quotes, brackets and symbols such as "
+                           "% $ / : with the separator; \"&\" becomes \"and\"."));
+    form->addRow(QString(), m_clean);
+    m_separator = new QComboBox(box);
+    m_separator->setObjectName(u"settings.separator"_s);
+    m_separator->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_separator->addItem(tr("_ (underscore)"), u"_"_s);
+    m_separator->addItem(tr("- (dash)"), u"-"_s);
+    m_separator->addItem(tr(". (dot)"), u"."_s);
+    m_separator->addItem(tr("space"), u" "_s);
+    connect(m_clean, &QCheckBox::toggled, this, &SettingsView::editsFinished);
+    connect(m_separator, &QComboBox::activated, this, &SettingsView::editsFinished);
+    form->addRow(tr("Separator:"), m_separator);
+
+    m_preview = new QLabel(box);
+    m_preview->setObjectName(u"settings.preview"_s);
+    m_preview->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_preview->setWordWrap(true);
+    form->addRow(tr("Example:"), m_preview);
+    return box;
+}
+
+void SettingsView::showLibrary()
+{
+    m_inbox->setText(QDir::toNativeSeparators(m_library.inboxRoot));
+    m_inbox->setToolTip(m_library.inboxRoot);
+    m_collections->clear();
+    for (const QString &root : std::as_const(m_library.collectionRoots)) {
+        auto *item = new QListWidgetItem(QDir::toNativeSeparators(root));
+        item->setToolTip(root);
+        m_collections->addItem(item);
+    }
+    if (m_library.collectionRoots.isEmpty()) {
+        auto *placeholder = new QListWidgetItem(tr("No collection folder yet: add one to file downloads."));
+        placeholder->setFlags(Qt::NoItemFlags);
+        m_collections->addItem(placeholder);
+    }
+    m_singlesFolder->setText(m_library.singlesFolder);
+    m_albumsFolder->setText(m_library.albumsFolder);
+    m_singleTemplate->setText(m_library.templates.single);
+    m_albumFolderTemplate->setText(m_library.templates.albumFolder);
+    m_albumTrackTemplate->setText(m_library.templates.albumTrack);
+    {
+        const QSignalBlocker blocker(m_clean);
+        m_clean->setChecked(m_library.cleaner.enabled);
+    }
+    const int separator = m_separator->findData(QString(m_library.cleaner.separator));
+    m_separator->setCurrentIndex(std::max(0, separator));
+    m_separator->setEnabled(m_library.cleaner.enabled);
+    refreshPreview();
+}
+
+void SettingsView::refreshPreview()
+{
+    library::naming::Fields single;
+    single.artist = u"Halden & Rue"_s;
+    single.title = u"Tidewater (Original Mix)"_s;
+    library::naming::Fields album;
+    album.artist = u"Okuma Drift"_s;
+    album.albumArtist = u"Okuma Drift"_s;
+    album.album = u"Nightfall"_s;
+    album.year = u"2024"_s;
+    album.title = u"Neon Rain"_s;
+    album.track = u"3"_s;
+    library::naming::Cleaner cleaner;
+    cleaner.enabled = m_clean->isChecked();
+    cleaner.separator = separatorOf(m_separator);
+    const QString singleName = library::naming::componentName(m_singleTemplate->text(), single, cleaner, u"mp3"_s);
+    const QString folder = library::naming::componentName(m_albumFolderTemplate->text(), album, cleaner);
+    const QString track = library::naming::componentName(m_albumTrackTemplate->text(), album, cleaner, u"mp3"_s);
+    m_preview->setText(m_singlesFolder->text() + u'/' + singleName + u'\n' + m_albumsFolder->text() + u'/' + folder +
+                       u'/' + track);
+}
+
+QString SettingsView::applyLibraryConfig(const core::LibraryConfig &config)
+{
+    QString problem = core::checkLibraryConfig(config);
+    if (!problem.isEmpty()) {
+        m_libraryError->setText(problem);
+        m_libraryError->show();
+        showLibrary(); // back to the last good values
+        return problem;
+    }
+    m_libraryError->hide();
+    m_library = config;
+    showLibrary();
+    Q_EMIT libraryConfigChanged(m_library);
+    return {};
+}
+
+void SettingsView::chooseInbox()
+{
+    const QString folder = QFileDialog::getExistingDirectory(this, tr("Choose the Inbox folder"), m_library.inboxRoot);
+    if (folder.isEmpty()) {
+        return;
+    }
+    core::LibraryConfig config = m_library;
+    config.inboxRoot = QDir::cleanPath(folder);
+    applyLibraryConfig(config);
+}
+
+void SettingsView::addCollection()
+{
+    const QString folder = QFileDialog::getExistingDirectory(this, tr("Add a collection folder"), QDir::homePath());
+    if (folder.isEmpty()) {
+        return;
+    }
+    core::LibraryConfig config = m_library;
+    if (!config.collectionRoots.contains(QDir::cleanPath(folder))) {
+        config.collectionRoots.append(QDir::cleanPath(folder));
+    }
+    applyLibraryConfig(config);
+}
+
+void SettingsView::removeCollection()
+{
+    const int row = m_collections->currentRow();
+    if (row < 0 || row >= m_library.collectionRoots.size()) {
+        return;
+    }
+    core::LibraryConfig config = m_library;
+    config.collectionRoots.removeAt(row);
+    applyLibraryConfig(config);
+}
+
+void SettingsView::editsFinished()
+{
+    core::LibraryConfig config = m_library;
+    config.singlesFolder = m_singlesFolder->text().trimmed();
+    config.albumsFolder = m_albumsFolder->text().trimmed();
+    const auto templ = [](const QLineEdit *field, const QString &fallback) {
+        const QString text = field->text().trimmed();
+        return text.isEmpty() ? fallback : text;
+    };
+    config.templates.single = templ(m_singleTemplate, m_library.templates.single);
+    config.templates.albumFolder = templ(m_albumFolderTemplate, m_library.templates.albumFolder);
+    config.templates.albumTrack = templ(m_albumTrackTemplate, m_library.templates.albumTrack);
+    config.cleaner.enabled = m_clean->isChecked();
+    config.cleaner.separator = separatorOf(m_separator);
+    const bool changed =
+        config.singlesFolder != m_library.singlesFolder || config.albumsFolder != m_library.albumsFolder ||
+        config.templates.single != m_library.templates.single ||
+        config.templates.albumFolder != m_library.templates.albumFolder ||
+        config.templates.albumTrack != m_library.templates.albumTrack ||
+        config.cleaner.enabled != m_library.cleaner.enabled || config.cleaner.separator != m_library.cleaner.separator;
+    if (changed) {
+        applyLibraryConfig(config);
+    }
 }
 
 void SettingsView::setAppearance(Appearance appearance)

@@ -10,6 +10,8 @@
 #include "app/views/ActivityView.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/HistoryView.h"
+#include "app/views/InboxView.h"
+#include "base/Paths.h"
 #include "core/EngineHost.h"
 #include "governor/Limits.h"
 
@@ -171,11 +173,14 @@ void MainWindow::createViews()
                           "files in your Inbox."),
                        tr("Not built yet: arrives with the Soulseek connection (milestone M8).")),
             fixed(tr("Not built yet")));
-    addView(u"inbox"_s,
-            emptyState(u"tray.and.arrow.down"_s, u"mail-folder-inbox"_s, tr("Your Inbox is empty"),
-                       tr("Downloads land here, converted and tagged, until you file them into your collection."),
-                       tr("Downloading isn't built yet (milestone M4).")),
-            fixed(tr("Nothing waiting")));
+    m_inboxView = new InboxView(m_services.engine, m_stack);
+    m_inboxView->setLibraryConfig(m_services.settings.libraryConfig());
+    addView(u"inbox"_s, m_inboxView, [this] { return m_inboxView->summary(); });
+    connect(m_inboxView, &InboxView::summaryChanged, this, [this] {
+        if (m_currentId == u"inbox"_s) {
+            refreshTitle();
+        }
+    });
     addView(u"wishlist"_s,
             emptyState(u"star"_s, u"starred"_s, tr("No saved searches"),
                        tr("Searches saved here run again on their own and tell you when something new turns up."),
@@ -220,8 +225,19 @@ void MainWindow::createViews()
                        tr("Not built yet (milestone M6).")),
             fixed(tr("Not built yet")));
 
-    m_settingsView = new SettingsView(m_services.build, m_appearance, m_stack);
+    m_settingsView = new SettingsView(m_services.build, m_appearance, m_services.settings.libraryConfig(), m_stack);
     connect(m_settingsView, &SettingsView::appearanceRequested, this, &MainWindow::setAppearance);
+    connect(m_settingsView, &SettingsView::libraryConfigChanged, this, [this](const core::LibraryConfig &config) {
+        if (!base::paths::ensureDir(config.inboxRoot)) {
+            qCWarning(lcUi) << "can't create the Inbox folder" << config.inboxRoot;
+        }
+        m_services.settings.setLibraryConfig(config);
+        if (!m_services.settings.sync()) {
+            qCWarning(lcUi) << "couldn't write settings to" << m_services.settings.fileName();
+        }
+        m_services.engine.setLibraryConfig(config);
+        m_inboxView->setLibraryConfig(config);
+    });
     addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));
 
 #ifndef QT_NO_DEBUG

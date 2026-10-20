@@ -32,6 +32,7 @@ selecta_add_test_suite(selecta_unit_tests
         core/ActivityLogTest.cpp
         core/EngineTest.cpp
         core/GovernorStoreTest.cpp
+        core/InboxServiceTest.cpp
         governor/GovernorTest.cpp
         governor/PeerLedgerTest.cpp
         governor/QueryHygieneTest.cpp

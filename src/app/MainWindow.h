@@ -28,6 +28,7 @@ namespace selecta::app {
 
 class ActivityView;
 class AppSettings;
+class InboxView;
 class Inspector;
 class NavModel;
 class PlayerBar;
@@ -116,6 +117,7 @@ private:
     QAction *m_togglePause = nullptr;
     QAction *m_budget = nullptr;
     ActivityView *m_activityView = nullptr;
+    InboxView *m_inboxView = nullptr;
     QActionGroup *m_appearanceGroup = nullptr;
     QList<QAction *> m_goActions;
     QList<View> m_views;

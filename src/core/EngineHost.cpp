@@ -21,6 +21,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     , m_searchesAvailable(governor::limits::kSearchBurst)
 {
     qRegisterMetaType<ActivityEntry>();
+    qRegisterMetaType<InboxEntry>();
+    qRegisterMetaType<QList<InboxEntry>>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -55,6 +57,11 @@ void EngineHost::start()
         Q_EMIT searchBudgetChanged(available);
     });
     connect(engine, &Engine::activityRecorded, this, &EngineHost::activityRecorded);
+    connect(engine, &Engine::inboxChanged, this, [this](const QList<InboxEntry> &entries) {
+        m_inboxEntries = entries;
+        Q_EMIT inboxChanged(entries);
+    });
+    connect(engine, &Engine::inboxOperationFinished, this, &EngineHost::inboxOperationFinished);
 
     m_thread.start();
     QMetaObject::invokeMethod(engine, &Engine::start, Qt::QueuedConnection);
@@ -76,6 +83,43 @@ void EngineHost::stop()
 void EngineHost::setPaused(bool paused)
 {
     post([paused](Engine &engine) { engine.setPaused(paused); });
+}
+
+void EngineHost::setLibraryConfig(const LibraryConfig &config)
+{
+    m_options.library = config; // used if the engine (re)starts
+    post([config](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.inbox().setConfig(config);
+        }
+    });
+}
+
+void EngineHost::refreshInbox()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.inbox().reconcile();
+        }
+    });
+}
+
+void EngineHost::fileInboxItems(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.inbox().file(ids);
+        }
+    });
+}
+
+void EngineHost::trashInboxItems(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.inbox().trash(ids);
+        }
+    });
 }
 
 } // namespace selecta::core

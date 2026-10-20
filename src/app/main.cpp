@@ -182,6 +182,10 @@ int main(int argc, char *argv[])
     selecta::core::EngineOptions engineOptions;
     engineOptions.databasePath = paths::databaseFile();
     engineOptions.startPaused = settings.networkPaused();
+    engineOptions.library = settings.libraryConfig();
+    if (!paths::ensureDir(engineOptions.library.inboxRoot)) {
+        qCWarning(lcApp) << "can't create the Inbox folder" << engineOptions.library.inboxRoot;
+    }
     selecta::core::EngineHost engine(engineOptions);
     QObject::connect(&engine, &selecta::core::EngineHost::started, &engine,
                      [headless = options.headless](bool ok, const QString &error) {

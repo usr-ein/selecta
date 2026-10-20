@@ -86,6 +86,10 @@ bool Engine::start()
         qCWarning(lcEngine) << "couldn't restore the governor's saved state:" << m_db->lastError();
     }
 
+    m_inbox = std::make_unique<InboxService>(*m_db, m_options.library, m_options.trash);
+    connect(m_inbox.get(), &InboxService::changed, this, &Engine::inboxChanged);
+    connect(m_inbox.get(), &InboxService::finished, this, &Engine::inboxOperationFinished);
+
     pruneActivity();
     m_pruneTimer = new QTimer(this);
     m_pruneTimer->setInterval(kActivityPruneInterval);
@@ -99,6 +103,7 @@ bool Engine::start()
     if (m_options.startPaused) {
         setPaused(true);
     }
+    m_inbox->reconcile();
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
     return true;
@@ -111,6 +116,7 @@ void Engine::stop()
     m_pruneTimer = nullptr;
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
+    m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();
     m_activity.reset();
     m_governor.reset();

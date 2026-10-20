@@ -14,6 +14,7 @@ qt_add_library(selecta_app STATIC
     views/ActivityView.h views/ActivityView.cpp
     views/EmptyStateView.h views/EmptyStateView.cpp
     views/HistoryView.h views/HistoryView.cpp
+    views/InboxView.h views/InboxView.cpp
     views/SettingsView.h views/SettingsView.cpp)
 add_library(Selecta::App ALIAS selecta_app)
 if(SELECTA_DEVTOOLS)

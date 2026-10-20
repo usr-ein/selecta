@@ -2,6 +2,7 @@
 #pragma once
 
 #include "core/ActivityLog.h"
+#include "core/InboxService.h"
 #include "governor/Governor.h"
 
 #include <QObject>
@@ -30,6 +31,8 @@ struct EngineOptions
     const base::Clock *clock = nullptr; // default: a steady clock owned by the engine
     std::function<qint64()> wallClock;  // Unix time, ms; default: the system clock
     governor::Governor::Options governor;
+    LibraryConfig library;
+    library::FileOps::TrashFunction trash; // default: the macOS Trash; tests inject their own
 };
 
 // The services on the engine thread (PLAN §2.3, the network thread): the governor and its saved state and the
@@ -65,6 +68,7 @@ public:
     // For services and tests on the engine thread. Valid between start() and stop().
     governor::Governor &governor() { return *m_governor; }
     ActivityLog &activity() { return *m_activity; }
+    InboxService &inbox() { return *m_inbox; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -72,6 +76,8 @@ Q_SIGNALS:
     void pausedChanged(bool paused);
     void searchBudgetChanged(int available);
     void activityRecorded(const selecta::core::ActivityEntry &entry);
+    void inboxChanged(const QList<selecta::core::InboxEntry> &entries);
+    void inboxOperationFinished(qint64 id, bool ok, const QString &message);
 
 private:
     bool fail(const QString &error);
@@ -86,6 +92,7 @@ private:
     std::unique_ptr<governor::Governor> m_governor;
     std::unique_ptr<GovernorStore> m_governorStore;
     std::unique_ptr<ActivityLog> m_activity;
+    std::unique_ptr<InboxService> m_inbox;
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     bool m_started = false;

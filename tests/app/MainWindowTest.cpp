@@ -3,6 +3,7 @@
 
 #include "app/AppSettings.h"
 #include "core/EngineHost.h"
+#include "library/InboxStore.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
@@ -11,11 +12,17 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QLabel>
 #include <QListView>
+#include <QPushButton>
 #include <QSignalSpy>
 #include <QStackedWidget>
 #include <QTemporaryDir>
+#include <QTest>
+#include <QTreeView>
 
 #include <gtest/gtest.h>
 #include <memory>
@@ -175,5 +182,62 @@ TEST_F(MainWindowTest, PauseActionDrivesTheEngineAndIsRemembered)
 
     ASSERT_TRUE(window->navigateTo(u"activity"_s));
     EXPECT_EQ(window->currentSubtitle(), u"Network paused"_s);
+    engine->stop();
+}
+
+TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
+{
+    selecta::core::LibraryConfig library;
+    library.inboxRoot = dir.filePath(u"Inbox"_s);
+    library.collectionRoots = {dir.filePath(u"Music"_s)};
+    ASSERT_TRUE(QDir().mkpath(library.inboxRoot + u"/Singles"_s) && QDir().mkpath(library.collectionRoots.first()));
+    {
+        QFile song(library.inboxRoot + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s);
+        ASSERT_TRUE(song.open(QIODevice::WriteOnly) && song.write("audio") == 5);
+    }
+    settings->setLibraryConfig(library);
+    const QString engineDb = dir.filePath(u"engine.sqlite3"_s);
+    {
+        selecta::storage::Database setup;
+        ASSERT_TRUE(setup.open(engineDb));
+        ASSERT_TRUE(selecta::storage::migrate(setup, selecta::storage::selectaMigrations()).ok());
+        selecta::library::InboxItem item;
+        item.relativePath = u"Singles/Okuma_Drift_-_Neon_Rain.mp3"_s;
+        item.state = selecta::library::InboxItem::State::Ready;
+        item.artist = u"Okuma Drift"_s;
+        item.title = u"Neon Rain"_s;
+        item.format = u"MP3"_s;
+        item.bitrate = 320;
+        item.createdAt = 1000;
+        ASSERT_TRUE(selecta::library::InboxStore(setup).add(item).has_value());
+    }
+    selecta::core::EngineOptions options;
+    options.databasePath = engineDb;
+    options.library = library;
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy changed(engine.get(), &selecta::core::EngineHost::inboxChanged);
+    engine->start();
+    ASSERT_TRUE(changed.wait(5000));
+
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"inbox"_s));
+    EXPECT_EQ(window->currentSubtitle(), u"1 item waiting"_s);
+    auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
+    ASSERT_NE(table, nullptr);
+    ASSERT_EQ(table->model()->rowCount(), 1); // the Singles group
+    const QModelIndex group = table->model()->index(0, 0);
+    ASSERT_EQ(table->model()->rowCount(group), 1);
+    table->selectionModel()->select(table->model()->index(0, 0, group),
+                                    QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    auto *file = window->findChild<QPushButton *>(u"inbox.file"_s);
+    ASSERT_NE(file, nullptr);
+    ASSERT_TRUE(file->isEnabled());
+
+    QSignalSpy finished(engine.get(), &selecta::core::EngineHost::inboxOperationFinished);
+    file->click();
+    ASSERT_TRUE(finished.wait(5000));
+    EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
+    EXPECT_TRUE(QFileInfo::exists(library.collectionRoots.first() + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s));
+    QTRY_COMPARE_WITH_TIMEOUT(window->currentSubtitle(), u"Nothing waiting"_s, 5000);
     engine->stop();
 }
