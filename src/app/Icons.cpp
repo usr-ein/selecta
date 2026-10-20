@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/Icons.h"
 
+#include <QDir>
 #include <QPainter>
+
+using namespace Qt::StringLiterals;
 
 namespace selecta::app::icons {
 
@@ -31,6 +34,18 @@ QPixmap tinted(const QIcon &icon, QSize size, qreal devicePixelRatio, const QCol
     painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
     painter.fillRect(QRectF(QPointF(0, 0), result.deviceIndependentSize()), color);
     return result;
+}
+
+QIcon applicationIcon()
+{
+    // One file per size (selecta-16.png …); QIcon picks the closest one and reads each file's size from it.
+    QIcon icon;
+    const QDir dir(u":/icons"_s);
+    const QStringList names = dir.entryList({u"selecta-*.png"_s}, QDir::Files);
+    for (const QString &name : names) {
+        icon.addFile(dir.filePath(name));
+    }
+    return icon;
 }
 
 } // namespace selecta::app::icons

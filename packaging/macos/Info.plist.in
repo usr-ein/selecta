@@ -6,6 +6,10 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>Selecta</string>
+    <key>CFBundleIconFile</key>
+    <string>${MACOSX_BUNDLE_ICON_FILE}</string>
+    <!-- CFBundleIconName: the Icon Composer icon in Assets.car, in builds made with Xcode 26 or later -->
+    @SELECTA_BUNDLE_ICON_NAME@
     <key>CFBundleIdentifier</key>
     <string>io.github.usr-ein.Selecta</string>
     <key>CFBundleInfoDictionaryVersion</key>
