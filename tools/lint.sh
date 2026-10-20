@@ -54,7 +54,7 @@ done
 if [[ -s "$clazy_out" ]]; then cat "$clazy_out"; exit 1; fi
 
 echo "== cppcheck"
-cppcheck --project="$build/compile_commands.json" --library=qt --enable=warning,performance,portability --inline-suppr \
+cppcheck --project="$build/compile_commands.json" --library=qt --library=googletest --enable=warning,performance,portability --inline-suppr \
     --suppress=missingIncludeSystem --suppress=returnByReference --suppress='*:*/vcpkg_installed/*' --suppress='*:*/_deps/*' \
     --suppress='*:*_autogen/*' --error-exitcode=1 --quiet \
     $(for path in "${paths[@]}"; do printf -- "--file-filter=%s/%s/* " "$root" "$path"; done)

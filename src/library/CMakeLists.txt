@@ -3,7 +3,8 @@
 qt_add_library(selecta_library STATIC
     FileOps.h FileOps.cpp
     HistoryStore.h HistoryStore.cpp
-    InboxStore.h InboxStore.cpp)
+    InboxStore.h InboxStore.cpp
+    Naming.h Naming.cpp)
 add_library(Selecta::Library ALIAS selecta_library)
 target_link_libraries(selecta_library PUBLIC selecta_base selecta_storage Qt6::Core)
 selecta_set_warnings(selecta_library)

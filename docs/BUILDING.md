@@ -29,7 +29,8 @@ open build/dev/src/app/Selecta.app
 | `lint` | clang-tidy on every compiled file |
 | `release` | Optimised, no tests, no developer tools |
 
-Add `-DSELECTA_WITH_MEDIA=ON` to include the audio and conversion libraries.
+The audio and conversion libraries (FFmpeg, LAME, soxr, TagLib) are built by default; `-DSELECTA_WITH_MEDIA=OFF`
+leaves them out for a quicker build of the rest.
 
 ## Quality checks
 
@@ -37,6 +38,7 @@ Add `-DSELECTA_WITH_MEDIA=ON` to include the audio and conversion libraries.
 tools/lint.sh [paths…]                     # clang-format check, clang-tidy, clazy, cppcheck
 tools/lint.sh --fix [paths…]               # apply formatting and automatic clang-tidy fixes
 ctest --preset asan                        # after building the asan preset; likewise tsan
+tests/fuzz/slsk/fuzz.sh [seconds] [target…] # libFuzzer on the protocol decoders (needs `brew install llvm`)
 ```
 
 ## Inspecting a running Selecta

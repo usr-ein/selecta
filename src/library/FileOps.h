@@ -47,6 +47,14 @@ public:
     FileResult fileIntoCollection(const QString &inboxFile, const QString &collectionRoot,
                                   const QString &relativePath) const;
 
+    // Files an Inbox folder (an album) into a collection root as `relativeFolder`, with everything in it. On one volume
+    // the folder is renamed atomically. Across volumes every file is copied and verified into a hidden staging folder
+    // next to the target, which is then renamed into place, so the target name only ever holds a complete album; the
+    // Inbox folder goes only after that. Refuses if the target exists, or if the folder holds anything but plain files
+    // and folders (symbolic links, for instance).
+    FileResult fileFolderIntoCollection(const QString &inboxFolder, const QString &collectionRoot,
+                                        const QString &relativeFolder) const;
+
     // Moves a file or folder inside the Inbox to the Trash. Anything outside the Inbox is refused.
     FileResult trashFromInbox(const QString &path) const;
 
@@ -59,6 +67,9 @@ public:
 private:
     FileResult moveExclusive(const QString &from, const QString &to) const;
     FileResult copyVerifyRename(const QString &from, const QString &to) const;
+    // Checks that `collectionRoot` is configured and `relativePath` stays inside it; returns the absolute target.
+    FileResult collectionTarget(const QString &collectionRoot, const QString &relativePath) const;
+    FileResult copyFolderVerified(const QString &from, const QString &to) const;
 
     QString m_inboxRoot;
     QStringList m_collectionRoots;

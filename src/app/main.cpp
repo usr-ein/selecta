@@ -5,7 +5,10 @@
 #include "base/Logging.h"
 #include "base/Paths.h"
 #include "base/Version.h"
+#include "core/EngineHost.h"
 #include "governor/ServerGuard.h"
+#include "meta/KeychainTokenStore.h"
+#include "meta/TokenStore.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
@@ -17,6 +20,8 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QImageReader>
 #include <QLockFile>
 #include <QLoggingCategory>
 #include <QMessageBox>
@@ -35,6 +40,7 @@ namespace {
 
 struct Options
 {
+    bool isolated = false; // --data-dir: nothing outside that folder, not even the Keychain
     bool headless = false;
     bool debugServer = false;
     QString debugSocket;
@@ -63,7 +69,7 @@ Options parseOptions(const QApplication &app)
     if (parser.isSet(dataDir)) {
         paths::setRootOverride(parser.value(dataDir));
     }
-    return {parser.isSet(headless), parser.isSet(debugServer), parser.value(debugSocket)};
+    return {parser.isSet(dataDir), parser.isSet(headless), parser.isSet(debugServer), parser.value(debugSocket)};
 }
 
 // Tells the user why Selecta can't start: a dialog normally, stderr when headless.
@@ -109,6 +115,9 @@ QString buildType()
 int main(int argc, char *argv[])
 {
     const QApplication app(argc, argv);
+    // Cover art comes from untrusted files and services: cap what any single image decode may allocate (process-wide;
+    // the artwork code also checks dimensions before decoding).
+    QImageReader::setAllocationLimit(256);
     QApplication::setApplicationName(u"Selecta"_s);
     QApplication::setApplicationDisplayName(u"Selecta"_s);
     QApplication::setOrganizationDomain(u"usr-ein.github.io"_s);
@@ -173,7 +182,35 @@ int main(int argc, char *argv[])
         .dataDir = dataDir,
         .logDir = paths::logDir(),
     };
-    selecta::app::MainWindow window({sessions, settings, build, startedAt});
+    // The engine thread: governor, network, metadata and the arrival pipeline. It opens its own database connection.
+    selecta::core::EngineOptions engineOptions;
+    engineOptions.databasePath = paths::databaseFile();
+    engineOptions.startPaused = settings.networkPaused();
+    engineOptions.library = settings.libraryConfig();
+    if (!options.isolated) {
+        engineOptions.tokenStore = [] {
+            return std::make_unique<selecta::meta::KeychainTokenStore>(u"io.github.usr-ein.Selecta"_s);
+        };
+    } // isolated runs keep secrets in memory only
+    engineOptions.openUrl = [](const QUrl &url) {
+        // Called on the engine thread; the browser is opened from the UI thread.
+        QMetaObject::invokeMethod(qApp, [url] { QDesktopServices::openUrl(url); }, Qt::QueuedConnection);
+        return true;
+    };
+    if (!paths::ensureDir(engineOptions.library.inboxRoot)) {
+        qCWarning(lcApp) << "can't create the Inbox folder" << engineOptions.library.inboxRoot;
+    }
+    selecta::core::EngineHost engine(engineOptions);
+    QObject::connect(&engine, &selecta::core::EngineHost::started, &engine,
+                     [headless = options.headless](bool ok, const QString &error) {
+                         if (!ok) {
+                             reportFatal(QApplication::translate("main", "Selecta's network engine didn't start"),
+                                         error, headless);
+                         }
+                     });
+    engine.start();
+
+    selecta::app::MainWindow window({database, sessions, settings, engine, build, startedAt});
     if (options.headless) {
         window.setAttribute(Qt::WA_DontShowOnScreen);
     }
@@ -193,6 +230,7 @@ int main(int argc, char *argv[])
 #endif
 
     const int exitCode = QApplication::exec();
+    engine.stop();
 
     if (session > 0 && !sessions.end(session, QDateTime::currentMSecsSinceEpoch())) {
         qCWarning(lcApp) << "couldn't close session" << session << ':' << database.lastError();

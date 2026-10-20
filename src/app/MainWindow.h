@@ -16,13 +16,19 @@ class QLabel;
 class QSplitter;
 class QStackedWidget;
 
-namespace selecta::storage {
-class SessionLog;
+namespace selecta::core {
+class EngineHost;
 }
+namespace selecta::storage {
+class Database;
+class SessionLog;
+} // namespace selecta::storage
 
 namespace selecta::app {
 
+class ActivityView;
 class AppSettings;
+class InboxView;
 class Inspector;
 class NavModel;
 class PlayerBar;
@@ -32,9 +38,13 @@ class Sidebar;
 struct AppServices
 {
     // cppcheck-suppress uninitMemberVarNoCtor ; references are bound by aggregate initialisation
+    storage::Database &database; // the main thread's connection
+    // cppcheck-suppress uninitMemberVarNoCtor
     storage::SessionLog &sessions;
     // cppcheck-suppress uninitMemberVarNoCtor
     AppSettings &settings;
+    // cppcheck-suppress uninitMemberVarNoCtor
+    core::EngineHost &engine;
     BuildInfo build;
     qint64 sessionStartedAtMs = 0;
 };
@@ -88,6 +98,7 @@ private:
     void addView(const QString &id, QWidget *widget, std::function<QString()> subtitle);
     void restoreSavedState();
     void refreshTitle();
+    void refreshNetworkState();
 
     AppServices m_services;
     Appearance m_appearance;
@@ -103,6 +114,10 @@ private:
     QLabel *m_subtitle = nullptr;
     QAction *m_toggleSidebar = nullptr;
     QAction *m_toggleInspector = nullptr;
+    QAction *m_togglePause = nullptr;
+    QAction *m_budget = nullptr;
+    ActivityView *m_activityView = nullptr;
+    InboxView *m_inboxView = nullptr;
     QActionGroup *m_appearanceGroup = nullptr;
     QList<QAction *> m_goActions;
     QList<View> m_views;

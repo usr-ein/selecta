@@ -1,0 +1,20 @@
+{
+  "href": "https://api.spotify.com/v1/me/playlists?offset=2&limit=50",
+  "items": [
+    {
+      "collaborative": false,
+      "external_urls": { "spotify": "https://open.spotify.com/playlist/fDPrAJ71fTquWoGsbeKXgz" },
+      "id": "fDPrAJ71fTquWoGsbeKXgz",
+      "name": "Closing Set",
+      "owner": { "display_name": "Test Listener", "id": "testlistener", "type": "user" },
+      "items": { "total": 9 },
+      "type": "playlist"
+    },
+    { "id": "not-a-valid-id", "name": "Broken" }
+  ],
+  "limit": 50,
+  "next": null,
+  "offset": 2,
+  "previous": "https://api.spotify.com/v1/me/playlists?offset=0&limit=50",
+  "total": 3
+}

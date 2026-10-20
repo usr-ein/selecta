@@ -8,28 +8,28 @@ class QStandardItemModel;
 class QTreeView;
 
 namespace selecta::storage {
-class SessionLog;
+class Database;
 }
 
 namespace selecta::app {
 
-// Sessions (launch to quit, PRD D8) and, once downloads exist, what was downloaded in each. Reads the database on the
-// main thread.
+// Sessions (launch to quit, PRD D8) with what was downloaded in each, from whom, in what quality, and where each file
+// is now (PRD DL-9). Reads the database through the main thread's connection.
 class HistoryView : public QWidget
 {
     Q_OBJECT
 
 public:
-    HistoryView(storage::SessionLog &sessions, int currentSession, QWidget *parent = nullptr);
+    HistoryView(storage::Database &db, int currentSession, QWidget *parent = nullptr);
 
-    // Reloads the session list from the database.
+    // Reloads sessions and downloads from the database.
     void refresh();
 
 protected:
     void showEvent(QShowEvent *event) override;
 
 private:
-    storage::SessionLog &m_sessions;
+    storage::Database &m_db;
     int m_currentSession;
     QStandardItemModel *m_model;
     QTreeView *m_table;

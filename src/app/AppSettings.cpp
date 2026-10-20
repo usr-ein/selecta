@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/AppSettings.h"
 
+#include "base/Paths.h"
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
@@ -12,6 +14,26 @@ const QString kSplitterPrefix = u"window/splitter/"_s;
 const QString kSidebar = u"window/sidebarShown"_s;
 const QString kInspector = u"window/inspectorShown"_s;
 const QString kLastView = u"window/lastView"_s;
+const QString kNetworkPaused = u"network/paused"_s;
+const QString kInboxDir = u"library/inbox"_s;
+const QString kCollectionRoots = u"library/collections"_s;
+const QString kSinglesFolder = u"library/singlesFolder"_s;
+const QString kAlbumsFolder = u"library/albumsFolder"_s;
+const QString kSingleTemplate = u"filing/single"_s;
+const QString kAlbumFolderTemplate = u"filing/albumFolder"_s;
+const QString kAlbumTrackTemplate = u"filing/albumTrack"_s;
+const QString kCleanNames = u"filing/clean"_s;
+const QString kSeparator = u"filing/separator"_s;
+
+// A folder name typed in Settings: one plain component, or the default.
+QString folderName(const QString &value, const QString &fallback)
+{
+    QString name = value.trimmed();
+    if (name.isEmpty() || name == u"." || name == u".." || name.contains(u'/') || name.contains(u'\\')) {
+        return fallback;
+    }
+    return name;
+}
 
 } // namespace
 
@@ -77,6 +99,53 @@ QString AppSettings::lastView() const
 void AppSettings::setLastView(const QString &id)
 {
     m_settings.setValue(kLastView, id);
+}
+
+bool AppSettings::networkPaused() const
+{
+    return m_settings.value(kNetworkPaused, false).toBool();
+}
+
+void AppSettings::setNetworkPaused(bool paused)
+{
+    m_settings.setValue(kNetworkPaused, paused);
+}
+
+core::LibraryConfig AppSettings::libraryConfig() const
+{
+    core::LibraryConfig config;
+    const QString inbox = m_settings.value(kInboxDir).toString();
+    config.inboxRoot = inbox.isEmpty() ? base::paths::defaultInboxDir() : inbox;
+    config.collectionRoots = m_settings.value(kCollectionRoots).toStringList();
+    config.collectionRoots.removeAll(QString());
+    config.singlesFolder = folderName(m_settings.value(kSinglesFolder).toString(), config.singlesFolder);
+    config.albumsFolder = folderName(m_settings.value(kAlbumsFolder).toString(), config.albumsFolder);
+    const auto templ = [this](const QString &key, const QString &fallback) {
+        const QString value = m_settings.value(key).toString().trimmed();
+        return value.isEmpty() ? fallback : value;
+    };
+    config.templates.single = templ(kSingleTemplate, config.templates.single);
+    config.templates.albumFolder = templ(kAlbumFolderTemplate, config.templates.albumFolder);
+    config.templates.albumTrack = templ(kAlbumTrackTemplate, config.templates.albumTrack);
+    config.cleaner.enabled = m_settings.value(kCleanNames, true).toBool();
+    const QString separator = m_settings.value(kSeparator).toString();
+    if (separator.size() == 1 && !separator.at(0).isLetterOrNumber() && separator != u"/" && separator != u"\\") {
+        config.cleaner.separator = separator.at(0);
+    }
+    return config;
+}
+
+void AppSettings::setLibraryConfig(const core::LibraryConfig &config)
+{
+    m_settings.setValue(kInboxDir, config.inboxRoot);
+    m_settings.setValue(kCollectionRoots, config.collectionRoots);
+    m_settings.setValue(kSinglesFolder, config.singlesFolder);
+    m_settings.setValue(kAlbumsFolder, config.albumsFolder);
+    m_settings.setValue(kSingleTemplate, config.templates.single);
+    m_settings.setValue(kAlbumFolderTemplate, config.templates.albumFolder);
+    m_settings.setValue(kAlbumTrackTemplate, config.templates.albumTrack);
+    m_settings.setValue(kCleanNames, config.cleaner.enabled);
+    m_settings.setValue(kSeparator, QString(config.cleaner.separator));
 }
 
 bool AppSettings::sync()

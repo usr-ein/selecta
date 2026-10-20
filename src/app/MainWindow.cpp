@@ -7,8 +7,13 @@
 #include "app/NavModel.h"
 #include "app/PlayerBar.h"
 #include "app/Sidebar.h"
+#include "app/views/ActivityView.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/HistoryView.h"
+#include "app/views/InboxView.h"
+#include "base/Paths.h"
+#include "core/EngineHost.h"
+#include "governor/Limits.h"
 
 #include <QAction>
 #include <QActionGroup>
@@ -27,6 +32,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
@@ -81,6 +87,13 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     createMenus();
     createToolBar();
     restoreSavedState();
+
+    connect(&m_services.engine, &core::EngineHost::pausedChanged, this, [this](bool paused) {
+        m_services.settings.setNetworkPaused(paused);
+        refreshNetworkState();
+    });
+    connect(&m_services.engine, &core::EngineHost::searchBudgetChanged, this, &MainWindow::refreshNetworkState);
+    refreshNetworkState();
 
     // QCoreApplication::quit() doesn't close windows, so closeEvent isn't enough to keep the window state.
     connect(qApp, &QCoreApplication::aboutToQuit, this, &MainWindow::saveState);
@@ -160,11 +173,14 @@ void MainWindow::createViews()
                           "files in your Inbox."),
                        tr("Not built yet: arrives with the Soulseek connection (milestone M8).")),
             fixed(tr("Not built yet")));
-    addView(u"inbox"_s,
-            emptyState(u"tray.and.arrow.down"_s, u"mail-folder-inbox"_s, tr("Your Inbox is empty"),
-                       tr("Downloads land here, converted and tagged, until you file them into your collection."),
-                       tr("Downloading isn't built yet (milestone M4).")),
-            fixed(tr("Nothing waiting")));
+    m_inboxView = new InboxView(m_services.engine, m_stack);
+    m_inboxView->setLibraryConfig(m_services.settings.libraryConfig());
+    addView(u"inbox"_s, m_inboxView, [this] { return m_inboxView->summary(); });
+    connect(m_inboxView, &InboxView::summaryChanged, this, [this] {
+        if (m_currentId == u"inbox"_s) {
+            refreshTitle();
+        }
+    });
     addView(u"wishlist"_s,
             emptyState(u"star"_s, u"starred"_s, tr("No saved searches"),
                        tr("Searches saved here run again on their own and tell you when something new turns up."),
@@ -177,16 +193,24 @@ void MainWindow::createViews()
                        tr("Not built yet (milestone M4).")),
             fixed(tr("No folders indexed")));
 
-    auto *history = new HistoryView(m_services.sessions, m_services.build.session, m_stack);
+    auto *history = new HistoryView(m_services.database, m_services.build.session, m_stack);
+    // Filing and trashing change where downloads are; arrivals add new ones.
+    connect(&m_services.engine, &core::EngineHost::inboxChanged, history, [history] {
+        if (history->isVisible()) {
+            history->refresh();
+        }
+    });
     const QString started =
         QLocale().toString(QDateTime::fromMSecsSinceEpoch(m_services.sessionStartedAtMs).time(), QLocale::ShortFormat);
     addView(u"history"_s, history, fixed(tr("Session %1 started at %2").arg(m_services.build.session).arg(started)));
 
-    addView(u"activity"_s,
-            emptyState(u"arrow.up.arrow.down"_s, u"network-transmit-receive"_s, tr("Nothing is transferring"),
-                       tr("Downloads, uploads, your ratio and how much you took from each peer today appear here."),
-                       tr("Not built yet (milestones M2 and M7).")),
-            fixed(tr("Not connected")));
+    m_activityView = new ActivityView(m_services.engine, m_services.database, m_stack);
+    addView(u"activity"_s, m_activityView, [this] { return m_activityView->summary(); });
+    connect(m_activityView, &ActivityView::summaryChanged, this, [this] {
+        if (m_currentId == u"activity"_s) {
+            refreshTitle();
+        }
+    });
     addView(u"shares"_s,
             emptyState(u"dot.radiowaves.left.and.right"_s, u"folder-publicshare"_s, tr("Nothing shared yet"),
                        tr("Selecta shares your collection, read-only, with other Soulseek users."),
@@ -207,8 +231,28 @@ void MainWindow::createViews()
                        tr("Not built yet (milestone M6).")),
             fixed(tr("Not built yet")));
 
-    m_settingsView = new SettingsView(m_services.build, m_appearance, m_stack);
+    m_settingsView = new SettingsView(m_services.build, m_appearance, m_services.settings.libraryConfig(), m_stack);
     connect(m_settingsView, &SettingsView::appearanceRequested, this, &MainWindow::setAppearance);
+    connect(m_settingsView, &SettingsView::libraryConfigChanged, this, [this](const core::LibraryConfig &config) {
+        if (!base::paths::ensureDir(config.inboxRoot)) {
+            qCWarning(lcUi) << "can't create the Inbox folder" << config.inboxRoot;
+        }
+        m_services.settings.setLibraryConfig(config);
+        if (!m_services.settings.sync()) {
+            qCWarning(lcUi) << "couldn't write settings to" << m_services.settings.fileName();
+        }
+        m_services.engine.setLibraryConfig(config);
+        m_inboxView->setLibraryConfig(config);
+    });
+    connect(m_settingsView, &SettingsView::spotifyCredentialsSubmitted, &m_services.engine,
+            &core::EngineHost::setSpotifyCredentials);
+    connect(m_settingsView, &SettingsView::spotifySignInRequested, &m_services.engine,
+            &core::EngineHost::signInToSpotify);
+    connect(m_settingsView, &SettingsView::spotifySignOutRequested, &m_services.engine,
+            &core::EngineHost::signOutOfSpotify);
+    connect(&m_services.engine, &core::EngineHost::spotifyStatusChanged, m_settingsView,
+            &SettingsView::setSpotifyStatus);
+    m_settingsView->setSpotifyStatus(m_services.engine.spotifyStatus());
     addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));
 
 #ifndef QT_NO_DEBUG
@@ -233,6 +277,17 @@ void MainWindow::createActions()
     m_toggleInspector->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     m_toggleInspector->setToolTip(tr("Show or hide the inspector"));
     connect(m_toggleInspector, &QAction::triggered, this, [this] { setInspectorShown(!isInspectorShown()); });
+
+    // "Pause network activity" (SAFE-5). Checked means paused; the engine confirms through pausedChanged.
+    m_togglePause = new QAction(tr("Pause Network Activity"), this);
+    m_togglePause->setObjectName(u"action.togglePause"_s);
+    m_togglePause->setCheckable(true);
+    m_togglePause->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
+    connect(m_togglePause, &QAction::triggered, this, [this](bool paused) { m_services.engine.setPaused(paused); });
+
+    m_budget = new QAction(icons::symbol(u"magnifyingglass"_s, u"edit-find"_s), QString(), this);
+    m_budget->setObjectName(u"action.searchBudget"_s);
+    connect(m_budget, &QAction::triggered, this, [this] { navigateTo(u"activity"_s); });
 
     m_appearanceGroup = new QActionGroup(this);
     m_appearanceGroup->setExclusive(true);
@@ -314,6 +369,9 @@ void MainWindow::createMenus()
     QMenu *goMenu = menuBar()->addMenu(tr("&Go"));
     goMenu->addActions(m_goActions);
 
+    QMenu *network = menuBar()->addMenu(tr("&Network"));
+    network->addAction(m_togglePause);
+
     QMenu *window = menuBar()->addMenu(tr("&Window"));
     window->addAction(minimize);
     window->addAction(zoom);
@@ -355,6 +413,14 @@ void MainWindow::createToolBar()
     spacer->setObjectName(u"toolbar.spacer"_s);
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     bar->addWidget(spacer);
+
+    auto *budgetButton = new QToolButton(bar);
+    budgetButton->setObjectName(u"toolbar.budget"_s);
+    budgetButton->setDefaultAction(m_budget);
+    budgetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    budgetButton->setAutoRaise(true);
+    bar->addWidget(budgetButton);
+    bar->addAction(m_togglePause);
 
     auto *cycleAppearance =
         new QAction(icons::symbol(u"circle.lefthalf.filled"_s, u"weather-clear-night"_s), tr("Appearance"), this);
@@ -457,6 +523,28 @@ void MainWindow::refreshTitle()
     const View &view = m_views.at(found.value());
     m_title->setText(m_navModel->titleOf(view.id));
     m_subtitle->setText(view.subtitle ? view.subtitle() : QString());
+}
+
+void MainWindow::refreshNetworkState()
+{
+    const bool paused = m_services.engine.isPaused();
+    {
+        const QSignalBlocker blocker(m_togglePause);
+        m_togglePause->setChecked(paused);
+    }
+    m_togglePause->setIcon(paused ? icons::symbol(u"play.circle"_s, u"media-playback-start"_s)
+                                  : icons::symbol(u"pause.circle"_s, u"media-playback-pause"_s));
+    m_togglePause->setToolTip(paused ? tr("Resume network activity")
+                                     : tr("Pause network activity (no new searches or transfers)"));
+
+    const int available = m_services.engine.searchesAvailable();
+    m_budget->setText(QString::number(available));
+    m_budget->setToolTip(tr("Searches you can run now: %1 of %2, one more every %3 s")
+                             .arg(available)
+                             .arg(governor::limits::kSearchBurst)
+                             .arg(governor::limits::kSearchRefill.count()));
+
+    m_sidebar->setConnectionStatus(paused ? tr("Network paused") : tr("Not connected"), false);
 }
 
 bool MainWindow::isSidebarShown() const

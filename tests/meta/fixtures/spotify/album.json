@@ -1,0 +1,67 @@
+{
+  "album_type": "album",
+  "artists": [
+    {
+      "external_urls": { "spotify": "https://open.spotify.com/artist/fKtHF4vUCsMehGAkWvj7FA" },
+      "id": "fKtHF4vUCsMehGAkWvj7FA",
+      "name": "Kestrel Moon",
+      "type": "artist"
+    }
+  ],
+  "copyrights": [
+    { "text": "© 2025 Lantern Grove Records", "type": "C" },
+    { "text": "℗ 2025 Lantern Grove Records", "type": "P" }
+  ],
+  "external_ids": { "upc": "5056000000017" },
+  "external_urls": { "spotify": "https://open.spotify.com/album/8rESQedUStPKR0CsTy4Qwb" },
+  "genres": [],
+  "href": "https://api.spotify.com/v1/albums/8rESQedUStPKR0CsTy4Qwb",
+  "id": "8rESQedUStPKR0CsTy4Qwb",
+  "images": [
+    { "height": 640, "url": "https://i.scdn.co/image/test-tidal-lines-640", "width": 640 },
+    { "height": 300, "url": "https://i.scdn.co/image/test-tidal-lines-300", "width": 300 }
+  ],
+  "name": "Tidal Lines",
+  "release_date": "2025-11",
+  "release_date_precision": "month",
+  "total_tracks": 4,
+  "tracks": {
+    "href": "https://api.spotify.com/v1/albums/8rESQedUStPKR0CsTy4Qwb/tracks?offset=0&limit=2",
+    "items": [
+      {
+        "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" }],
+        "disc_number": 1,
+        "duration_ms": 312000,
+        "explicit": false,
+        "external_urls": { "spotify": "https://open.spotify.com/track/8DwkNhFdnXsiVpzz63FfkC" },
+        "id": "8DwkNhFdnXsiVpzz63FfkC",
+        "is_local": false,
+        "name": "Low Water",
+        "track_number": 1,
+        "type": "track"
+      },
+      {
+        "artists": [
+          { "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" },
+          { "id": "c9QeWJKY40uvSwMFLZDe1f", "name": "Night Tram", "type": "artist" }
+        ],
+        "disc_number": 1,
+        "duration_ms": 288500,
+        "explicit": false,
+        "external_urls": { "spotify": "https://open.spotify.com/track/zJr4i0B3JrTAwR4y9ojflj" },
+        "id": "zJr4i0B3JrTAwR4y9ojflj",
+        "is_local": false,
+        "name": "Undertow",
+        "track_number": 2,
+        "type": "track"
+      }
+    ],
+    "limit": 2,
+    "next": "https://api.spotify.com/v1/albums/8rESQedUStPKR0CsTy4Qwb/tracks?offset=2&limit=2",
+    "offset": 0,
+    "previous": null,
+    "total": 4
+  },
+  "type": "album",
+  "uri": "spotify:album:8rESQedUStPKR0CsTy4Qwb"
+}

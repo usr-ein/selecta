@@ -30,7 +30,11 @@ selecta_add_test_suite(selecta_unit_tests
         base/LoggingTest.cpp
         base/PathsTest.cpp
         core/ActivityLogTest.cpp
+        core/EngineTest.cpp
+        core/GovernorPacerTest.cpp
         core/GovernorStoreTest.cpp
+        core/InboxServiceTest.cpp
+        core/MetaServicesTest.cpp
         governor/GovernorTest.cpp
         governor/PeerLedgerTest.cpp
         governor/QueryHygieneTest.cpp
@@ -40,6 +44,7 @@ selecta_add_test_suite(selecta_unit_tests
         library/FileOpsTest.cpp
         library/HistoryStoreTest.cpp
         library/InboxStoreTest.cpp
+        library/NamingTest.cpp
         storage/DatabaseTest.cpp
         storage/MigrationsTest.cpp
         storage/SessionLogTest.cpp

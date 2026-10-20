@@ -1,0 +1,59 @@
+{
+  "href": "https://api.spotify.com/v1/playlists/OzdmenCkhvMdgaKjIg8xNb/items?offset=0&limit=50&additional_types=track",
+  "items": [
+    {
+      "added_at": "2026-09-01T10:00:00Z",
+      "is_local": false,
+      "track": {
+        "album": {
+          "album_type": "single",
+          "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon" }],
+          "id": "KdNnFRIBXuDL7DxtpYlSXp",
+          "images": [{ "height": 640, "url": "https://i.scdn.co/image/test-glass-harbour-640", "width": 640 }],
+          "name": "Glass Harbour",
+          "release_date": "2026-03-13",
+          "release_date_precision": "day",
+          "total_tracks": 3
+        },
+        "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon" }],
+        "disc_number": 1,
+        "duration_ms": 391000,
+        "external_ids": { "isrc": "GBXYZ2600101" },
+        "id": "u8jzPde0IgxLd6GncfBAep",
+        "is_local": false,
+        "name": "Glass Harbour - Extended Mix",
+        "track_number": 2,
+        "type": "track"
+      }
+    },
+    {
+      "added_at": "2026-09-02T10:00:00Z",
+      "is_local": true,
+      "track": {
+        "album": { "name": "", "images": [] },
+        "artists": [{ "name": "Dubplate Special" }],
+        "duration_ms": 333000,
+        "id": null,
+        "is_local": true,
+        "name": "Unreleased VIP",
+        "type": "track",
+        "uri": "spotify:local:Dubplate+Special::Unreleased+VIP:333"
+      }
+    },
+    {
+      "added_at": "2026-09-03T10:00:00Z",
+      "is_local": false,
+      "track": {
+        "id": "g2sye9b2Rann76dEyTzAeK",
+        "name": "A Podcast Episode",
+        "type": "episode"
+      }
+    },
+    { "added_at": "2026-09-04T10:00:00Z", "is_local": false, "track": null }
+  ],
+  "limit": 50,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total": 4
+}
