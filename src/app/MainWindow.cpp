@@ -608,10 +608,14 @@ void MainWindow::refreshUnread()
 
 void MainWindow::showNotificationTarget(const NotificationTarget &target)
 {
-    // Selecta came forward (the sink made it the active app); its window follows, even from the Dock.
-    setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
-    raise();
-    activateWindow();
+    // Selecta came forward (the sink made it the active app); its window follows, even from the Dock. A window kept off
+    // the screen (headless runs) stays where it is: coming forward would take the keyboard from whatever the user is
+    // doing, for a window nobody can see.
+    if (!testAttribute(Qt::WA_DontShowOnScreen)) {
+        setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+        raise();
+        activateWindow();
+    }
     if (target.view == u"messages"_s && !target.argument.isEmpty()) {
         messagePeer(target.argument);
     } else if (target.view == u"rooms"_s && !target.argument.isEmpty()) {

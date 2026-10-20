@@ -1046,3 +1046,47 @@ TEST_F(MainWindowTest, ShowNotificationsCanBeTurnedOffInSettings)
     ASSERT_NE(box, nullptr);
     EXPECT_FALSE(box->isChecked());
 }
+
+TEST_F(MainWindowTest, AClickBringsTheWindowForwardUnlessItIsKeptOffTheScreen)
+{
+    auto window = makeWindow();
+    // The test platform makes each new window the active one: this one takes over, as if the user were elsewhere.
+    QWidget elsewhere;
+    elsewhere.setAttribute(Qt::WA_DontShowOnScreen);
+    elsewhere.show();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return elsewhere.isActiveWindow(); }, 5000));
+    ASSERT_TRUE(window->notifier()->isAway());
+    selecta::core::AlbumReport report;
+    report.albumId = 4;
+    report.album = u"Night Signals"_s;
+    report.arrival = true;
+    report.complete = true;
+    report.tracks = 9;
+    report.where = u"Albums/Okuma_Drift_-_Night_Signals_(2024)"_s;
+    Q_EMIT engine->albumReported(report);
+    ASSERT_EQ(notifications.posted.size(), 1);
+    ASSERT_EQ(window->notifier()->arrivalsWhileAway(), 1);
+
+    // Kept off the screen (headless runs): the click shows what it was about and takes no focus, which would leave
+    // the keyboard with a window nobody can see.
+    notifications.click(notifications.posted.constFirst().target);
+    EXPECT_EQ(window->currentViewId(), u"inbox"_s);
+    EXPECT_FALSE(QTest::qWaitFor([&] { return window->isActiveWindow(); }, 200));
+    EXPECT_EQ(window->notifier()->arrivalsWhileAway(), 1);
+
+    // On the screen, the window comes forward: the user is back, and what arrived while away has been seen.
+    window->hide();
+    window->setAttribute(Qt::WA_DontShowOnScreen, false);
+    window->show();
+    QCoreApplication::processEvents(); // whatever showing it again asked for
+    elsewhere.activateWindow();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return elsewhere.isActiveWindow(); }, 5000));
+    ASSERT_TRUE(window->notifier()->isAway());
+    ASSERT_TRUE(window->navigateTo(u"get"_s));
+    notifications.click(notifications.posted.constFirst().target);
+    EXPECT_EQ(window->currentViewId(), u"inbox"_s);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->isActiveWindow(); }, 5000));
+    EXPECT_FALSE(window->notifier()->isAway());
+    EXPECT_EQ(window->notifier()->arrivalsWhileAway(), 0);
+    EXPECT_EQ(window->notifier()->badge(), 0);
+}
