@@ -5,6 +5,7 @@
 
 #include <QList>
 #include <QStringView>
+#include <QVarLengthArray>
 
 #include <span>
 
@@ -47,8 +48,28 @@ double tokenWeight(QStringView token);
 // the result's similarity is symmetric. At most kMaxFieldTokens tokens of each side are used.
 Alignment align(std::span<const AlignToken> a, std::span<const AlignToken> b, FieldMatchOptions options);
 
-// Tokens of a normalised key as AlignTokens of one segment (views into `key`).
-QList<AlignToken> alignTokens(QStringView key, int segment = 0);
+// Tokens kept inline for the common case: fields rarely have more than 16 words.
+using AlignTokens = QVarLengthArray<AlignToken, 16>;
+
+// Appends the tokens of a normalised key as AlignTokens of one segment (views into `key`).
+void appendAlignTokens(AlignTokens &out, QStringView key, int segment = 0, bool ignorable = false);
+
+// A field as views into storage that outlives the comparison: its tokens and its squashed and leet keys. MatchIndex
+// records give views into the index's vocabulary, so scoring a candidate allocates nothing.
+struct FieldView
+{
+    AlignTokens tokens;
+    QStringView squashed;
+    QStringView leet; // empty: the same as squashed
+
+    bool isEmpty() const { return tokens.isEmpty(); }
+};
+
+// Views into a FieldKey (which must outlive the view).
+FieldView fieldView(const FieldKey &key);
+
+// FieldMatcher's comparison on views (see FieldMatcher::compare).
+FieldMatch compareFields(const FieldView &a, const FieldView &b, FieldMatchOptions options);
 
 // The digits of a string in order ("blink182" → "182"): the squashed route requires equal digits.
 QString digitsOf(QStringView text);

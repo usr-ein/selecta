@@ -26,6 +26,7 @@ struct TokenIndexData
     std::vector<quint32> deleteTerms;
     std::vector<quint64> leetHashes; // leet-folded forms of terms that mix letters and digits
     std::vector<quint32> leetTerms;
+    bool fuzzy = true;
 };
 
 } // namespace detail
@@ -105,18 +106,20 @@ void collect(const std::vector<quint64> &hashes, const std::vector<quint32> &ter
 
 } // namespace
 
-TokenIndex::Builder::Builder()
+TokenIndex::Builder::Builder(bool fuzzy)
     : m_data(std::make_unique<detail::TokenIndexData>())
-{}
+{
+    m_data->fuzzy = fuzzy;
+}
 
 TokenIndex::Builder::~Builder() = default;
 TokenIndex::Builder::Builder(Builder &&) noexcept = default;
 TokenIndex::Builder &TokenIndex::Builder::operator=(Builder &&) noexcept = default;
 
-void TokenIndex::Builder::add(QStringView term, quint32 document)
+quint32 TokenIndex::Builder::add(QStringView term, quint32 document)
 {
     if (term.isEmpty() || !m_data) {
-        return;
+        return kNoTerm;
     }
     const auto [it, inserted] =
         m_data->ids.try_emplace(std::u16string(toView(term)), static_cast<quint32>(m_data->terms.size()));
@@ -124,11 +127,14 @@ void TokenIndex::Builder::add(QStringView term, quint32 document)
         m_data->terms.push_back(it->first);
     }
     m_data->pending.emplace_back(it->second, document);
+    return it->second;
 }
 
 TokenIndex TokenIndex::Builder::build()
 {
+    const bool fuzzy = m_data ? m_data->fuzzy : true;
     auto data = std::exchange(m_data, std::make_unique<detail::TokenIndexData>());
+    m_data->fuzzy = fuzzy;
     auto &pending = data->pending;
     std::ranges::sort(pending);
     const auto [first, last] = std::ranges::unique(pending);
@@ -154,13 +160,13 @@ TokenIndex TokenIndex::Builder::build()
     for (std::size_t t = 0; t < termCount; ++t) {
         const std::u16string_view term = data->terms[t];
         const QStringView qtTerm = toQt(term);
-        if (const int budget = TokenRules::editBudget(qtTerm); budget > 0) {
+        if (const int budget = TokenRules::editBudget(qtTerm); budget > 0 && data->fuzzy) {
             for (const std::u16string &variant : deletes(deletePrefix(term), budget)) {
                 deletePairs.emplace_back(hashOf(variant), static_cast<quint32>(t));
             }
         }
         const QString folded = TokenRules::leetFold(qtTerm);
-        if (folded != qtTerm) {
+        if (data->fuzzy && folded != qtTerm) {
             leetPairs.emplace_back(hashOf(toView(folded)), static_cast<quint32>(t));
         }
     }

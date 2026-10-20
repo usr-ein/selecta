@@ -12,6 +12,7 @@ qt_add_library(selecta_match STATIC
     TokenIndex.h TokenIndex.cpp
     ArtistDictionary.h ArtistDictionary.cpp
     RemotePathParser.h RemotePathParser.cpp
+    Tracklist.h Tracklist.cpp
     detail/Alignment.h detail/Alignment.cpp
     detail/RemoteName.h detail/RemoteName.cpp
     detail/Text.h detail/Text.cpp)
