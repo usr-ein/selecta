@@ -113,6 +113,13 @@ public:
     QList<PeerStats> peerStats() const { return m_peerStats; }
     void refreshPeerStats();
 
+    // --- the wishlist (SRCH-14) ---
+    void addToWishlist(const QString &text);
+    void removeFromWishlist(qint64 id);
+    // The user looked at what an entry found.
+    void markWishlistSeen(qint64 id);
+    QList<WishlistItem> wishlist() const { return m_wishlist; }
+
     // --- caches (CACHE-2) ---
     void refreshCaches();
     void clearSearchCache();
@@ -206,6 +213,8 @@ Q_SIGNALS:
     void converterChanged(const QList<selecta::core::ConverterItem> &items);
     void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
     void cachesChanged(const selecta::core::CacheStatus &status);
+    void wishlistChanged(const QList<selecta::core::WishlistItem> &items);
+    void wishlistFound(const selecta::core::WishlistItem &item, int newFiles);
     void conversionsFinished(int done, int failed);
     void albumReported(const selecta::core::AlbumReport &report);
 
@@ -229,6 +238,7 @@ private:
     QList<ConverterItem> m_converterItems;
     QList<SupersedeFlag> m_supersedeFlags;
     CacheStatus m_cacheStatus;
+    QList<WishlistItem> m_wishlist;
     QList<ManualSearch> m_searches; // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;

@@ -43,6 +43,10 @@ public:
     {
         return m_network.search(query, std::move(permit));
     }
+    quint32 searchWishlist(const QString &query, governor::Permit permit) override
+    {
+        return m_network.searchWishlist(query, std::move(permit));
+    }
     void stopSearch(quint32 token) override { m_network.stopSearch(token); }
 
 private:
@@ -280,6 +284,13 @@ bool Engine::start()
     m_peerStatsTimer->setInterval(1s);
     connect(m_peerStatsTimer, &QTimer::timeout, this, &Engine::refreshPeerStats);
     connect(m_transfers.get(), &TransferService::changed, m_peerStatsTimer, qOverload<>(&QTimer::start));
+    // The wishlist (SRCH-14): saved searches run again at the server's interval.
+    m_wishlist = std::make_unique<WishlistService>(*m_db, *m_search, m_options.wallClock);
+    connect(m_wishlist.get(), &WishlistService::itemsChanged, this, &Engine::wishlistChanged);
+    connect(m_wishlist.get(), &WishlistService::found, this, &Engine::wishlistFound);
+    connect(m_network.get(), &NetworkService::wishlistIntervalChanged, m_wishlist.get(),
+            [wishlist = m_wishlist.get()](std::chrono::seconds interval) { wishlist->setInterval(interval); });
+
     // The manual converter (CONV-3): new files next to the originals or in a chosen folder.
     ConverterService::Options converterOptions;
     converterOptions.stagingDir = m_options.stagingDir;
@@ -322,6 +333,7 @@ bool Engine::start()
     Q_EMIT downloadsReset(m_transfers->unfinished());
     refreshPeerStats();
     refreshSupersedeFlags();
+    Q_EMIT wishlistChanged(m_wishlist->items());
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -339,6 +351,7 @@ void Engine::stop()
     m_annotateTimer = nullptr;
     delete m_peerStatsTimer;
     m_peerStatsTimer = nullptr;
+    m_wishlist.reset();     // cancels its search in flight
     m_manualSearch.reset(); // before the search and transfer services it uses
     m_getTracks.reset();
     m_shares.reset();     // stops uploads under way (their downloaders queue again later)

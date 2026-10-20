@@ -244,6 +244,18 @@ constexpr std::array kMigrations{
     Migration{10, R"sql(
         ALTER TABLE inbox_items ADD COLUMN warning TEXT NOT NULL DEFAULT '';
     )sql"},
+    // The wishlist (PRD SRCH-14): searches that run again in the background, at the server's interval.
+    Migration{11, R"sql(
+        CREATE TABLE wishlist (
+            id          INTEGER PRIMARY KEY,
+            text        TEXT NOT NULL,              -- what the user wants, as typed
+            query_key   TEXT NOT NULL UNIQUE,       -- governor::queryKey() of it: one entry per search
+            created_at  INTEGER NOT NULL,           -- Unix time, ms
+            last_run_ms INTEGER NOT NULL DEFAULT 0, -- 0: not run yet
+            found       INTEGER NOT NULL DEFAULT 0, -- files the runs found that the user hasn't looked at yet
+            seen        BLOB                        -- the files found so far (a compressed list of hashes)
+        ) STRICT;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

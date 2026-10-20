@@ -39,7 +39,8 @@ qt_add_library(selecta_app STATIC
     views/SearchInspector.h views/SearchInspector.cpp
     views/SearchView.h views/SearchView.cpp
     views/SettingsView.h views/SettingsView.cpp
-    views/SharesView.h views/SharesView.cpp)
+    views/SharesView.h views/SharesView.cpp
+    views/WishlistView.h views/WishlistView.cpp)
 add_library(Selecta::App ALIAS selecta_app)
 if(SELECTA_DEVTOOLS)
     target_sources(selecta_app PRIVATE devtools/DebugServer.h devtools/DebugServer.cpp)

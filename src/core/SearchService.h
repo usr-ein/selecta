@@ -37,6 +37,11 @@ public:
     virtual bool isOnline() const = 0;
     // Sends the search and opens its token for results; 0 when it couldn't (the permit is dropped).
     virtual quint32 search(const QString &query, governor::Permit permit) = 0;
+    // The same for a wishlist search (the server's WishlistSearch message); a plain search where there is none.
+    virtual quint32 searchWishlist(const QString &query, governor::Permit permit)
+    {
+        return search(query, std::move(permit));
+    }
     virtual void stopSearch(quint32 token) = 0;
 };
 

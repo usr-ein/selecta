@@ -17,6 +17,7 @@
 #include "core/SearchService.h"
 #include "core/ShareService.h"
 #include "core/TransferService.h"
+#include "core/WishlistService.h"
 #include "core/YouTubePreviews.h"
 #include "governor/Governor.h"
 
@@ -187,6 +188,7 @@ public:
     CollectionService &collection() { return *m_collection; }
     ShareService &shares() { return *m_shares; }
     ConverterService &converter() { return *m_converter; }
+    WishlistService &wishlist() { return *m_wishlist; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -233,6 +235,9 @@ Q_SIGNALS:
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
     void cachesChanged(const selecta::core::CacheStatus &status);
+    // The wishlist (WishlistService's signals, forwarded).
+    void wishlistChanged(const QList<selecta::core::WishlistItem> &items);
+    void wishlistFound(const selecta::core::WishlistItem &item, int newFiles);
     // The converter (ConverterService's signals, forwarded).
     void converterChanged(const QList<selecta::core::ConverterItem> &items);
     void conversionsFinished(int done, int failed);
@@ -281,6 +286,7 @@ private:
     std::unique_ptr<CollectionService> m_collection;
     std::unique_ptr<ShareService> m_shares;
     std::unique_ptr<ConverterService> m_converter;
+    std::unique_ptr<WishlistService> m_wishlist;
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;             // the preview playing

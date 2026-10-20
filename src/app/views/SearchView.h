@@ -83,6 +83,7 @@ private:
     void filtersEdited();
     void loadFilterControls();
     void refreshHeader();
+    void refreshWishlistButton();
     void refreshSummary();
     void refreshInspector();
     void keepSelection(const std::function<void()> &change);
@@ -105,6 +106,7 @@ private:
     QCheckBox *m_grouped;
     QToolButton *m_filtersButton;
     QPushButton *m_download;
+    QPushButton *m_watch;               // Add to Wishlist (SRCH-14)
     QList<QCheckBox *> m_formatButtons; // by core::SearchFormat
     QComboBox *m_bitrateRule;
     QComboBox *m_bitrate;

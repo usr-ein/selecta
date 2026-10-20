@@ -119,6 +119,11 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
             });
     connect(m_server.get(), &slsk::ServerSession::privilegedUsersReceived, this,
             &NetworkService::privilegedUsersReceived);
+    connect(m_server.get(), &slsk::ServerSession::wishlistIntervalReceived, this, [this](quint32 seconds) {
+        // At least two minutes, whatever the server says: a background search is never urgent.
+        m_wishlistInterval = std::chrono::seconds(std::max<quint32>(seconds, 120));
+        Q_EMIT wishlistIntervalChanged(m_wishlistInterval);
+    });
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &NetworkService::attempt);
     connect(m_server.get(), &slsk::ServerSession::loggedIn, this, &NetworkService::loggedIn);
@@ -424,6 +429,20 @@ quint32 NetworkService::search(const QString &query, governor::Permit permit)
     }
     const quint32 token = m_searchTokens.next([this](quint32 candidate) { return m_openSearches.contains(candidate); });
     if (token == 0 || !m_server->fileSearch(token, query, std::move(permit))) {
+        return 0;
+    }
+    m_openSearches.insert(token);
+    m_peers->openSearch(token);
+    return token;
+}
+
+quint32 NetworkService::searchWishlist(const QString &query, governor::Permit permit)
+{
+    if (!m_server->isLoggedIn()) {
+        return 0;
+    }
+    const quint32 token = m_searchTokens.next([this](quint32 candidate) { return m_openSearches.contains(candidate); });
+    if (token == 0 || !m_server->wishlistSearch(token, query, std::move(permit))) {
         return 0;
     }
     m_openSearches.insert(token);

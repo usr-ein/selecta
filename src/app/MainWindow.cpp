@@ -22,6 +22,7 @@
 #include "app/views/SearchInspector.h"
 #include "app/views/SearchView.h"
 #include "app/views/SharesView.h"
+#include "app/views/WishlistView.h"
 #include "base/Paths.h"
 #include "core/EngineHost.h"
 #include "governor/Limits.h"
@@ -183,6 +184,20 @@ void MainWindow::createCentralArea()
 
 void MainWindow::createNotifications()
 {
+    // The wishlist found files it hadn't seen (SRCH-14).
+    connect(&m_services.engine, &core::EngineHost::wishlistFound, this,
+            [this](const core::WishlistItem &item, int newFiles) {
+                const QString title = newFiles == 1
+                                          ? tr("Wishlist: 1 new file for “%1”").arg(item.text)
+                                          : tr("Wishlist: %1 new files for “%2”").arg(newFiles).arg(item.text);
+                m_toasts->show(title, {}, Toasts::Kind::Good,
+                               {{tr("Show"),
+                                 [this, item] {
+                                     m_services.engine.markWishlistSeen(item.id);
+                                     m_searchRequest = m_services.engine.openSearch(item.text);
+                                 }}},
+                               14s);
+            });
     connect(&m_services.engine, &core::EngineHost::albumChanged, this, &MainWindow::albumChanged);
     connect(&m_services.engine, &core::EngineHost::albumReported, this, &MainWindow::albumReported);
 
@@ -354,11 +369,17 @@ void MainWindow::createViews()
             m_player->showMessage(preview.message);
         }
     });
-    addView(u"wishlist"_s,
-            emptyState(u"star"_s, u"starred"_s, tr("No saved searches"),
-                       tr("Searches saved here run again on their own and tell you when something new turns up."),
-                       tr("Not built yet (milestone M8).")),
-            fixed(tr("No saved searches")));
+    auto *wishlistView = new WishlistView(m_services.engine, m_stack);
+    addView(u"wishlist"_s, wishlistView, [wishlistView] { return wishlistView->summary(); });
+    connect(wishlistView, &WishlistView::summaryChanged, this, [this, wishlistView] {
+        m_navModel->setCount(u"wishlist"_s, wishlistView->foundCount());
+        if (m_currentId == u"wishlist"_s) {
+            refreshTitle();
+        }
+    });
+    connect(wishlistView, &WishlistView::searchRequested, this,
+            [this](const QString &text) { m_searchRequest = m_services.engine.openSearch(text); });
+    m_navModel->setCount(u"wishlist"_s, wishlistView->foundCount());
     auto *collectionView = new CollectionView(m_services.engine, m_services.database, m_stack);
     addView(u"collection"_s, collectionView, [collectionView] { return collectionView->summary(); });
     connect(collectionView, &CollectionView::summaryChanged, this, [this] {

@@ -67,6 +67,7 @@ private:
     void showSelection();
     void showAdded(int added, int duplicates, int unidentified, const QString &note);
     void refreshProgress();
+    void contextMenu(QPoint position);
     // BATCH-8: saves the lines nothing was found for (or no sure release), one per line, as pasted.
     void exportUnresolved();
     QStringList unresolvedLines() const;

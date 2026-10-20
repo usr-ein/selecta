@@ -33,6 +33,7 @@ qt_add_library(selecta_core STATIC
     SearchService.h SearchService.cpp
     ShareService.h ShareService.cpp
     TransferService.h TransferService.cpp
+    WishlistService.h WishlistService.cpp
     YouTubePreviews.h YouTubePreviews.cpp)
 add_library(Selecta::Core ALIAS selecta_core)
 target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match

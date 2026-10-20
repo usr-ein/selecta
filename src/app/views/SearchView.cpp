@@ -92,6 +92,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
     , m_grouped(new QCheckBox(tr("Group by folder"), this))
     , m_filtersButton(new QToolButton(this))
     , m_download(new QPushButton(tr("Download"), this))
+    , m_watch(new QPushButton(tr("Add to Wishlist"), this))
     , m_bitrateRule(new QComboBox(this))
     , m_bitrate(new QComboBox(this))
     , m_cbrOnly(new QCheckBox(tr("Constant bitrate only"), this))
@@ -261,6 +262,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
     connect(m_clockTimer, &QTimer::timeout, this, &SearchView::refreshSummary);
     m_clockTimer->start();
 
+    connect(&m_engine, &core::EngineHost::wishlistChanged, this, &SearchView::refreshWishlistButton);
     connect(&m_engine, &core::EngineHost::manualSearchChanged, this, [this](const core::ManualSearch &search) {
         if (search.id == m_searchId) {
             refreshHeader();
@@ -359,6 +361,15 @@ QWidget *SearchView::createFilterBar()
         m_settings.setSearchViewState(m_state);
     });
     layout->addWidget(m_filtersButton);
+    // SRCH-14: watch for this search in the background.
+    m_watch->setObjectName(u"search.wishlist"_s);
+    m_watch->setToolTip(tr("Run this search again in the background and say when new files turn up"));
+    connect(m_watch, &QPushButton::clicked, this, [this] {
+        if (const std::optional<core::ManualSearch> search = m_engine.search(m_searchId)) {
+            m_engine.addToWishlist(search->text);
+        }
+    });
+    layout->addWidget(m_watch);
     m_download->setObjectName(u"search.download"_s);
     m_download->setToolTip(tr("Download the selected files to the Inbox, converted and tagged (Return)"));
     connect(m_download, &QPushButton::clicked, this, &SearchView::downloadSelected);
@@ -648,8 +659,20 @@ QString SearchView::summary() const
     return tr("%1 of %2 results shown").arg(counts.shown).arg(counts.total);
 }
 
+void SearchView::refreshWishlistButton()
+{
+    const std::optional<core::ManualSearch> search = m_engine.search(m_searchId);
+    const QString text = search ? search->text.simplified().toCaseFolded() : QString();
+    const QList<core::WishlistItem> wishlist = m_engine.wishlist();
+    const bool watched = std::ranges::any_of(
+        wishlist, [&text](const core::WishlistItem &item) { return item.text.simplified().toCaseFolded() == text; });
+    m_watch->setEnabled(search.has_value() && !watched);
+    m_watch->setText(watched ? tr("In Wishlist") : tr("Add to Wishlist"));
+}
+
 void SearchView::refreshHeader()
 {
+    refreshWishlistButton();
     const std::optional<core::ManualSearch> search = m_engine.search(m_searchId);
     if (!search) {
         m_releaseRow->hide();

@@ -44,6 +44,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<ConverterItem>();
     qRegisterMetaType<SupersedeFlag>();
     qRegisterMetaType<CacheStatus>();
+    qRegisterMetaType<WishlistItem>();
+    qRegisterMetaType<QList<WishlistItem>>();
     qRegisterMetaType<QList<SupersedeFlag>>();
     qRegisterMetaType<QList<ConverterItem>>();
     qRegisterMetaType<QList<PeerStats>>();
@@ -165,6 +167,11 @@ void EngineHost::start()
         Q_EMIT converterChanged(items);
     });
     connect(engine, &Engine::conversionsFinished, this, &EngineHost::conversionsFinished);
+    connect(engine, &Engine::wishlistChanged, this, [this](const QList<WishlistItem> &items) {
+        m_wishlist = items;
+        Q_EMIT wishlistChanged(items);
+    });
+    connect(engine, &Engine::wishlistFound, this, &EngineHost::wishlistFound);
     connect(engine, &Engine::cachesChanged, this, [this](const CacheStatus &status) {
         m_cacheStatus = status;
         Q_EMIT cachesChanged(status);
@@ -477,6 +484,33 @@ void EngineHost::refreshPeerStats()
     post([](Engine &engine) {
         if (engine.isStarted()) {
             engine.refreshPeerStats();
+        }
+    });
+}
+
+void EngineHost::addToWishlist(const QString &text)
+{
+    post([text](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.wishlist().add(text);
+        }
+    });
+}
+
+void EngineHost::removeFromWishlist(qint64 id)
+{
+    post([id](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.wishlist().remove(id);
+        }
+    });
+}
+
+void EngineHost::markWishlistSeen(qint64 id)
+{
+    post([id](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.wishlist().markSeen(id);
         }
     });
 }

@@ -19,6 +19,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QCompleter>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -750,4 +751,41 @@ TEST_F(MainWindowTest, SearchesTypedAreOfferedAgain)
     EXPECT_EQ(settings->recentSearches(), (QStringList{u"okuma drift - neon rain"_s, u"Kassia Moreau"_s}));
     ASSERT_NE(field->completer(), nullptr);
     EXPECT_EQ(field->completer()->model()->rowCount(), 2);
+}
+
+TEST_F(MainWindowTest, TheWishlistListsSavedSearchesAndSaysWhenOneFindsSomething)
+{
+    auto window = makeWindow();
+    selecta::core::WishlistItem item;
+    item.id = 3;
+    item.text = u"Okuma Drift Neon Rain"_s;
+    item.lastRunMs = QDateTime::currentMSecsSinceEpoch() - 120'000;
+    item.found = 4;
+    Q_EMIT engine->wishlistChanged({item});
+    ASSERT_TRUE(window->navigateTo(u"wishlist"_s));
+    EXPECT_EQ(window->currentSubtitle(), u"1 saved search · 4 new files"_s);
+    auto *items = window->findChild<QTreeView *>(u"wishlist.items"_s);
+    ASSERT_NE(items, nullptr);
+    ASSERT_EQ(items->model()->rowCount(), 1);
+    EXPECT_EQ(items->model()->index(0, 0).data().toString(), u"Okuma Drift Neon Rain"_s);
+    EXPECT_EQ(items->model()->index(0, 1).data().toString(), u"2 min ago"_s);
+    EXPECT_EQ(items->model()->index(0, 2).data().toString(), u"4 new"_s);
+    // The sidebar shows how many new files wait.
+    auto *list = window->findChild<QListView *>(u"sidebar.list"_s);
+    ASSERT_NE(list, nullptr);
+    int count = 0;
+    for (int row = 0; row < list->model()->rowCount(); ++row) {
+        if (list->model()->index(row, 0).data(Qt::UserRole + 1).toString() == u"wishlist"_s) {
+            count = list->model()->index(row, 0).data(Qt::UserRole + 3).toInt();
+        }
+    }
+    EXPECT_EQ(count, 4);
+
+    // A background run found something: a notification with Show.
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    Q_EMIT engine->wishlistFound(item, 2);
+    ASSERT_EQ(toasts->count(), 1);
+    EXPECT_EQ(toasts->texts().constFirst(), u"Wishlist: 2 new files for “Okuma Drift Neon Rain”"_s);
+    EXPECT_NE(toasts->findChild<QPushButton *>(u"toast.1.action.0"_s), nullptr);
 }

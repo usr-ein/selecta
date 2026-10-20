@@ -245,8 +245,9 @@ Decision Governor::decideSearch(const Request &request)
         return decision;
     }
 
-    // Get tracks leaves part of the bucket for searches typed by hand.
-    const int reserve = request.source == SearchSource::GetTracks ? limits::kGetTracksReservedSearches : 0;
+    // Get tracks and the wishlist leave part of the bucket for searches typed by hand.
+    const bool background = request.source == SearchSource::GetTracks || request.source == SearchSource::Wishlist;
+    const int reserve = background ? limits::kGetTracksReservedSearches : 0;
     if (m_searches.available() <= reserve) {
         decision.refusal = Refusal::RateLimited;
         decision.retryAfter = m_searches.timeUntilAvailable(reserve + 1);

@@ -162,7 +162,9 @@ bool SearchService::sendFront(std::deque<Pending> &queue)
         m_governor.request(governor::Operation::Search, {.query = front.request.query, .source = front.request.source});
     if (decision.permit) {
         const QString query = decision.cleanedQuery;
-        const quint32 token = m_network.search(query, std::move(*decision.permit));
+        const quint32 token = front.request.source == governor::SearchSource::Wishlist
+                                  ? m_network.searchWishlist(query, std::move(*decision.permit))
+                                  : m_network.search(query, std::move(*decision.permit));
         if (token == 0) {
             return false; // went offline meanwhile: networkChanged() resumes
         }

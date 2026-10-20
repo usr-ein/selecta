@@ -128,49 +128,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &GetTracksView::showSelection);
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &GetTracksView::showSelection);
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &GetTracksView::selectionMoved);
-    connect(m_table, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
-        const QList<qint64> ids = selectedIds();
-        if (ids.isEmpty()) {
-            return;
-        }
-        QMenu menu(this);
-        bool canGet = false;
-        bool downloading = false;
-        for (const qint64 id : ids) {
-            const int row = m_model->rowOf(id);
-            if (row < 0) {
-                continue;
-            }
-            const core::GetLine &line = m_model->lines().at(row);
-            using DownloadState = core::GetLine::DownloadState;
-            canGet = canGet || (line.best && (line.downloadState == DownloadState::None ||
-                                              line.downloadState == DownloadState::Failed));
-            downloading = downloading || line.downloadState == DownloadState::Queued ||
-                          line.downloadState == DownloadState::Transferring ||
-                          line.downloadState == DownloadState::Converting;
-        }
-        if (canGet) {
-            menu.addAction(tr("Get"), this, [this, ids] { m_engine.downloadTracks(ids); });
-        }
-        if (downloading) {
-            menu.addAction(tr("Cancel Download"), this, [this, ids] { m_engine.cancelTrackDownloads(ids); });
-        }
-        if (canGet || downloading) {
-            menu.addSeparator();
-        }
-        menu.addAction(tr("Look Up Again"), this, [this, ids] { m_engine.retryTracks(ids); });
-        menu.addAction(tr("Copy"), this, [this] {
-            QStringList lines;
-            const QModelIndexList rows = m_table->selectionModel()->selectedRows(GetTracksModel::TrackColumn);
-            for (const QModelIndex &row : rows) {
-                lines.append(row.data().toString());
-            }
-            QApplication::clipboard()->setText(lines.join(u'\n'));
-        });
-        menu.addSeparator();
-        menu.addAction(tr("Remove from List"), this, &GetTracksView::removeSelected);
-        menu.exec(m_table->viewport()->mapToGlobal(position));
-    });
+    connect(m_table, &QTreeView::customContextMenuRequested, this, &GetTracksView::contextMenu);
     m_table->installEventFilter(this); // ⌫ and ⌦ remove the selected lines
     connect(m_table, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
         if (index.isValid() && index.column() != GetTracksModel::TickColumn) {
@@ -445,6 +403,63 @@ void GetTracksView::refreshProgress()
     if (!m_countdown->isActive()) {
         m_countdown->start();
     }
+}
+
+void GetTracksView::contextMenu(QPoint position)
+{
+    const QList<qint64> ids = selectedIds();
+    if (ids.isEmpty()) {
+        return;
+    }
+    QMenu menu(this);
+    bool canGet = false;
+    bool downloading = false;
+    for (const qint64 id : ids) {
+        const int row = m_model->rowOf(id);
+        if (row < 0) {
+            continue;
+        }
+        const core::GetLine &line = m_model->lines().at(row);
+        using DownloadState = core::GetLine::DownloadState;
+        canGet = canGet || (line.best &&
+                            (line.downloadState == DownloadState::None || line.downloadState == DownloadState::Failed));
+        downloading = downloading || line.downloadState == DownloadState::Queued ||
+                      line.downloadState == DownloadState::Transferring ||
+                      line.downloadState == DownloadState::Converting;
+    }
+    if (canGet) {
+        menu.addAction(tr("Get"), this, [this, ids] { m_engine.downloadTracks(ids); });
+    }
+    if (downloading) {
+        menu.addAction(tr("Cancel Download"), this, [this, ids] { m_engine.cancelTrackDownloads(ids); });
+    }
+    if (canGet || downloading) {
+        menu.addSeparator();
+    }
+    menu.addAction(tr("Look Up Again"), this, [this, ids] { m_engine.retryTracks(ids); });
+    // SRCH-14: watch for lines nothing was found for.
+    menu.addAction(tr("Add to Wishlist"), this, [this, ids] {
+        for (const qint64 id : ids) {
+            const int row = m_model->rowOf(id);
+            if (row < 0) {
+                continue;
+            }
+            const core::GetLine &line = m_model->lines().at(row);
+            const QString text = line.artist.isEmpty() ? line.raw : line.artist + u' ' + line.title;
+            m_engine.addToWishlist(text);
+        }
+    });
+    menu.addAction(tr("Copy"), this, [this] {
+        QStringList lines;
+        const QModelIndexList rows = m_table->selectionModel()->selectedRows(GetTracksModel::TrackColumn);
+        for (const QModelIndex &row : rows) {
+            lines.append(row.data().toString());
+        }
+        QApplication::clipboard()->setText(lines.join(u'\n'));
+    });
+    menu.addSeparator();
+    menu.addAction(tr("Remove from List"), this, &GetTracksView::removeSelected);
+    menu.exec(m_table->viewport()->mapToGlobal(position));
 }
 
 QStringList GetTracksView::unresolvedLines() const

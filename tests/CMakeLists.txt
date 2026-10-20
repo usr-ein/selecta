@@ -85,6 +85,7 @@ if(SELECTA_WITH_MEDIA)
             core/SearchServiceTest.cpp
             core/ShareServiceTest.cpp
             core/TransferServiceTest.cpp
+            core/WishlistServiceTest.cpp
             core/YouTubePreviewsTest.cpp
         LIBRARIES selecta_core selecta_media_test_support selecta_slsk_testing Qt6::Gui)
     # The fake yt-dlp and its fixtures live with meta's tests.

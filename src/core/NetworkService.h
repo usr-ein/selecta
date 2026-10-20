@@ -18,6 +18,7 @@
 #include <QSet>
 #include <QString>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 
@@ -125,8 +126,12 @@ public:
     // Sends a search with a Search permit from the governor and opens its token for results; returns the token, or 0
     // when offline (the permit is dropped).
     quint32 search(const QString &query, governor::Permit permit);
+    // The same for a wishlist search (SRCH-14): the server's own message for searches that repeat in the background.
+    quint32 searchWishlist(const QString &query, governor::Permit permit);
     // Stops accepting results for this search.
     void stopSearch(quint32 token);
+    // How often the server wants wishlist searches to run (NET-6); 12 minutes until it says.
+    std::chrono::seconds wishlistInterval() const { return m_wishlistInterval; }
 
     // The PeerLookup permits behind every new outbound peer connection.
     slsk::PermitSource &permits() { return *m_permits; }
@@ -150,6 +155,7 @@ Q_SIGNALS:
     void searchRequestReceived(const selecta::slsk::IncomingSearch &search);
     // The server's list of privileged users (they go first in the upload queue).
     void privilegedUsersReceived(const QStringList &users);
+    void wishlistIntervalChanged(std::chrono::seconds interval);
 
 private Q_SLOTS:
     void hostLookedUp(const QHostInfo &info);
@@ -167,6 +173,7 @@ private:
 
     governor::Governor &m_governor;
     ActivityLog &m_activity;
+    std::chrono::seconds m_wishlistInterval{720};
     meta::TokenStore &m_tokens;
     WallClock m_now;
     std::unique_ptr<slsk::ServerSession> m_server;
