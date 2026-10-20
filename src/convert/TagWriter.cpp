@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "convert/TagWriter.h"
 
+#include "convert/TagReader.h"
 #include "convert/detail/TagLibUtil.h"
 
 #include <QBuffer>
 #include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QRegularExpression>
 
 #include <array>
+#include <limits>
 #include <taglib/aifffile.h>
 #include <taglib/attachedpictureframe.h>
 #include <taglib/commentsframe.h>
@@ -19,6 +22,7 @@
 #include <taglib/mp4coverart.h>
 #include <taglib/mp4file.h>
 #include <taglib/mp4item.h>
+#include <taglib/mp4itemfactory.h>
 #include <taglib/mp4tag.h>
 #include <taglib/mpegfile.h>
 #include <taglib/textidentificationframe.h>
@@ -41,6 +45,8 @@ constexpr std::array<QStringView, 5> kV24OnlyKeys = {keys::Mood, keys::DiscSubti
 constexpr std::array<QStringView, 7> kArtistKeys = {keys::Artist,  keys::AlbumArtist, keys::Composer,   keys::Lyricist,
                                                     keys::Remixer, keys::Conductor,   u"ORIGINALARTIST"};
 constexpr auto kMp4KeyAtom = "----:com.apple.iTunes:KEY";
+// MP4 stores track, disc and BPM numbers as 16-bit integers.
+constexpr int kMp4MaxNumber = std::numeric_limits<qint16>::max();
 
 bool isV24Only(QStringView key)
 {
@@ -73,12 +79,18 @@ TagLib::PropertyMap toProperties(const MetadataModel &model, bool skipV24Only)
 
 void logRejected(const TagLib::PropertyMap &rejected, const QString &path)
 {
+    if (path.isEmpty()) {
+        return; // a prediction (tagsAsWritten), not a file
+    }
     for (const auto &[key, values] : rejected) {
         qCDebug(lcConvert) << "TagLib can't store" << detail::fromTagLib(key) << "in" << path;
     }
 }
 
-void fillId3v2(TagLib::ID3v2::Tag *tag, const MetadataModel &model, const TagWriteOptions &options, const QString &path)
+// The text frames of the ID3v2 tag writeTags() builds: the v2.3 view and TXXX compensation for v2.3, explicit text
+// encodings.
+void fillId3v2Text(TagLib::ID3v2::Tag *tag, const MetadataModel &model, const TagWriteOptions &options,
+                   const QString &path)
 {
     const bool v23 = options.id3Version == Id3Version::V23;
     const MetadataModel view = v23 ? id3v23View(model, options) : model;
@@ -107,6 +119,11 @@ void fillId3v2(TagLib::ID3v2::Tag *tag, const MetadataModel &model, const TagWri
             url->setTextEncoding(encoding);
         }
     }
+}
+
+void fillId3v2(TagLib::ID3v2::Tag *tag, const MetadataModel &model, const TagWriteOptions &options, const QString &path)
+{
+    fillId3v2Text(tag, model, options, path);
     if (const std::optional<Picture> cover = model.frontCover()) {
         // One front cover, empty description in Latin-1 (conversion §3: what Engine DJ and older readers need).
         auto *apic = new TagLib::ID3v2::AttachedPictureFrame;
@@ -119,10 +136,94 @@ void fillId3v2(TagLib::ID3v2::Tag *tag, const MetadataModel &model, const TagWri
     }
 }
 
+// "n" or "n/N" with whole numbers MP4's 16-bit fields hold, normalised as TagLib reads it back ("03/12" → "3/12",
+// "3/0" → "3"); empty for anything else ("A1", "1-2", "").
+QString mp4NumberPair(const QString &value)
+{
+    static const QRegularExpression pattern(uR"(^\s*(\d{1,5})\s*(?:/\s*(\d{1,5})\s*)?$)"_s);
+    const QRegularExpressionMatch match = pattern.match(value);
+    if (!match.hasMatch()) {
+        return {};
+    }
+    const int number = match.captured(1).toInt();
+    const int total = match.hasCaptured(2) ? match.captured(2).toInt() : 0;
+    if (number > kMp4MaxNumber || total > kMp4MaxNumber) {
+        return {};
+    }
+    return total > 0 ? u"%1/%2"_s.arg(number).arg(total) : QString::number(number);
+}
+
+// A BPM as the whole number MP4's `tmpo` atom holds (rounded, where TagLib would truncate); empty when it isn't one.
+QString mp4Bpm(const QString &value)
+{
+    bool ok = false;
+    const double bpm = value.trimmed().toDouble(&ok);
+    if (!ok || !(bpm >= 0.5) || bpm >= kMp4MaxNumber + 0.5) {
+        return {};
+    }
+    return QString::number(qRound(bpm));
+}
+
+struct Mp4Fields
+{
+    TagLib::PropertyMap properties; // for MP4::Tag::setProperties()
+    QStringList musicalKey;         // for the ----:com.apple.iTunes:KEY atom
+};
+
+// The field as MP4 stores it, or nothing: track and disc numbers that MP4's integer pairs can't hold are left out, BPM
+// is rounded, and keys TagLib can't render as an atom (not starting with A–Z, or with a ':' that a free-form atom name
+// can't carry) are dropped.
+std::optional<QStringList> mp4Values(const QString &key, const QStringList &values)
+{
+    QStringList stored = values;
+    if (key == keys::TrackNumber || key == keys::DiscNumber || key == keys::Bpm) {
+        const QString number = key == keys::Bpm ? mp4Bpm(values.first()) : mp4NumberPair(values.first());
+        if (number.isEmpty()) {
+            return std::nullopt;
+        }
+        stored = QStringList{number};
+    }
+    const TagLib::MP4::ItemFactory *factory = TagLib::MP4::ItemFactory::instance();
+    const auto [name, item] = factory->itemFromProperty(detail::toTagLib(key), detail::toTagLib(stored));
+    if (name.isEmpty() || !item.isValid() || factory->renderItem(name, item).isEmpty()) {
+        return std::nullopt;
+    }
+    return stored;
+}
+
+// What writeMp4() stores: INITIALKEY goes to the KEY atom rekordbox reads, the rest as mp4Values() allows.
+Mp4Fields mp4Fields(const MetadataModel &model, const QString &path)
+{
+    Mp4Fields out;
+    const QMap<QString, MetadataModel::Field> &fields = model.fields();
+    for (auto it = fields.cbegin(); it != fields.cend(); ++it) {
+        const QString &key = it.key();
+        const QStringList &values = it.value().values;
+        if (key == keys::InitialKey) {
+            out.musicalKey = values;
+            continue;
+        }
+        const std::optional<QStringList> stored = mp4Values(key, values);
+        if (!stored) {
+            if (!path.isEmpty()) {
+                qCDebug(lcConvert) << "MP4 can't store" << key << values.first() << "in" << path;
+            }
+            continue;
+        }
+        out.properties.insert(detail::toTagLib(key), detail::toTagLib(*stored));
+    }
+    return out;
+}
+
 Result<void> saveFailed(const QString &path)
 {
     return makeError(ErrorCode::TagError,
                      u"TagLib couldn't save the tags of %1 (disk full or not writable?)"_s.arg(path));
+}
+
+TagLib::ID3v2::Version id3Version(const TagWriteOptions &options)
+{
+    return options.id3Version == Id3Version::V23 ? TagLib::ID3v2::v3 : TagLib::ID3v2::v4;
 }
 
 Result<void> writeMpeg(TagLib::IOStream &stream, const QString &path, const MetadataModel &model,
@@ -134,9 +235,8 @@ Result<void> writeMpeg(TagLib::IOStream &stream, const QString &path, const Meta
     }
     file.strip(TagLib::MPEG::File::AllTags); // ID3v1, APE and the old ID3v2 go: the tag is rebuilt from the model
     fillId3v2(file.ID3v2Tag(true), model, options, path);
-    const TagLib::ID3v2::Version version =
-        options.id3Version == Id3Version::V23 ? TagLib::ID3v2::v3 : TagLib::ID3v2::v4;
-    if (!file.save(TagLib::MPEG::File::ID3v2, TagLib::File::StripOthers, version, TagLib::File::DoNotDuplicate)) {
+    if (!file.save(TagLib::MPEG::File::ID3v2, TagLib::File::StripOthers, id3Version(options),
+                   TagLib::File::DoNotDuplicate)) {
         return saveFailed(path);
     }
     return {};
@@ -159,7 +259,7 @@ Result<void> writeAiff(TagLib::IOStream &stream, const QString &path, const Meta
     }
     clearId3v2(file.tag());
     fillId3v2(file.tag(), model, options, path);
-    if (!file.save(options.id3Version == Id3Version::V23 ? TagLib::ID3v2::v3 : TagLib::ID3v2::v4)) {
+    if (!file.save(id3Version(options))) {
         return saveFailed(path);
     }
     return {};
@@ -177,9 +277,7 @@ Result<void> writeWav(TagLib::IOStream &stream, const QString &path, const Metad
     fillId3v2(file.ID3v2Tag(), model, options, path);
     // RIFF INFO is all rekordbox reads from WAV: single values, so the joined view.
     logRejected(file.InfoTag()->setProperties(toProperties(id3v23View(model, options), false)), path);
-    const TagLib::ID3v2::Version version =
-        options.id3Version == Id3Version::V23 ? TagLib::ID3v2::v3 : TagLib::ID3v2::v4;
-    if (!file.save(TagLib::RIFF::WAV::File::AllTags, TagLib::File::StripOthers, version)) {
+    if (!file.save(TagLib::RIFF::WAV::File::AllTags, TagLib::File::StripOthers, id3Version(options))) {
         return saveFailed(path);
     }
     return {};
@@ -229,13 +327,11 @@ Result<void> writeMp4(TagLib::IOStream &stream, const QString &path, const Metad
     for (const auto &[name, item] : items) {
         tag->removeItem(name);
     }
-    MetadataModel rest = model;
-    const QStringList key = rest.values(keys::InitialKey);
-    rest.remove(keys::InitialKey);
-    logRejected(tag->setProperties(toProperties(rest, false)), path);
-    if (!key.isEmpty()) {
+    const Mp4Fields fields = mp4Fields(model, path);
+    logRejected(tag->setProperties(fields.properties), path);
+    if (!fields.musicalKey.isEmpty()) {
         // rekordbox reads the key from this atom; TagLib's own mapping writes a lower-case one it ignores.
-        tag->setItem(kMp4KeyAtom, TagLib::MP4::Item(detail::toTagLib(key)));
+        tag->setItem(kMp4KeyAtom, TagLib::MP4::Item(detail::toTagLib(fields.musicalKey)));
     }
     if (const std::optional<Picture> cover = model.frontCover()) {
         const TagLib::MP4::CoverArt::Format format =
@@ -248,6 +344,27 @@ Result<void> writeMp4(TagLib::IOStream &stream, const QString &path, const Metad
         return saveFailed(path);
     }
     return {};
+}
+
+// What TagLib's MP4 item factory stores for each property and gives back when the item is read.
+TagLib::PropertyMap mp4RoundTrip(const Mp4Fields &fields)
+{
+    const TagLib::MP4::ItemFactory *factory = TagLib::MP4::ItemFactory::instance();
+    TagLib::PropertyMap read;
+    for (const auto &[key, values] : fields.properties) {
+        const auto [name, item] = factory->itemFromProperty(key, values);
+        if (name.isEmpty() || !item.isValid()) {
+            continue; // setProperties() rejects it as well
+        }
+        const auto [readKey, readValues] = factory->itemToProperty(name, item);
+        if (!readKey.isEmpty()) {
+            read.insert(readKey, readValues);
+        }
+    }
+    if (!fields.musicalKey.isEmpty()) {
+        read.insert("KEY", detail::toTagLib(fields.musicalKey)); // read back from the freeform atom's name
+    }
+    return read;
 }
 
 } // namespace
@@ -274,6 +391,48 @@ MetadataModel id3v23View(const MetadataModel &model, const TagWriteOptions &opti
     }
     view.setPictures(model.pictures());
     return view;
+}
+
+MetadataModel tagsAsWritten(const MetadataModel &model, audio::Container container, const TagWriteOptions &options)
+{
+    TagLib::PropertyMap written;
+    switch (container) {
+    case audio::Container::MpegAudio:
+    case audio::Container::Aiff:
+    case audio::Container::Wav: {
+        TagLib::ID3v2::Tag tag;
+        fillId3v2Text(&tag, model, options, QString());
+        written = tag.properties();
+        break;
+    }
+    case audio::Container::Flac: {
+        TagLib::Ogg::XiphComment comment;
+        comment.setProperties(toProperties(model, false));
+        written = comment.properties();
+        break;
+    }
+    case audio::Container::Mp4:
+        written = mp4RoundTrip(mp4Fields(model, QString()));
+        break;
+    case audio::Container::Ogg:
+    case audio::Container::Other:
+    case audio::Container::Unknown: {
+        MetadataModel unchanged = model;
+        unchanged.clearPictures();
+        return unchanged;
+    }
+    }
+    TagReadOptions unbounded;
+    unbounded.maxValueChars = std::numeric_limits<qint64>::max();
+    unbounded.maxLyricsChars = std::numeric_limits<qint64>::max();
+    const MetadataModel read = detail::modelFromProperties(written, unbounded, Provenance::Unknown, QString());
+    // Same values as a file would give back, with the provenance the model had for each key.
+    MetadataModel predicted;
+    const QMap<QString, MetadataModel::Field> &fields = read.fields();
+    for (auto it = fields.cbegin(); it != fields.cend(); ++it) {
+        predicted.set(it.key(), it.value().values, model.provenance(it.key()));
+    }
+    return predicted;
 }
 
 Result<void> writeTags(const QString &path, const MetadataModel &model, const TagWriteOptions &options)

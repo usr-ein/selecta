@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "audio/StreamInfo.h"
 #include "convert/MetadataModel.h"
 
 #include <QString>
@@ -44,5 +45,16 @@ Result<void> writeTags(const QString &path, const MetadataModel &model, const Ta
 // back (MOOD, DISCSUBTITLE, RELEASEDATE, TAGGINGDATE, PRODUCEDNOTICE stay as keys but are stored as TXXX), multi-value
 // fields are joined with the separators. Pure; the verifier compares a re-read file against this.
 MetadataModel id3v23View(const MetadataModel &model, const TagWriteOptions &options = {});
+
+// The text fields readTags() returns once writeTags() has written `model` into a file of `container`, predicted with
+// TagLib in memory: the same frames, atoms or comments writeTags() builds, read back through TagLib's property map and
+// readTags()'s aliases and totals. What the format can't hold is left out (MP4 track and disc numbers that aren't
+// numbers; Vorbis field names with characters Vorbis forbids), and what TagLib converts is converted (ID3 numeric
+// genres become names, MP4 BPM becomes a whole number). Values are not truncated, and pictures are not included.
+// OutputVerifier compares a re-read file against this. Containers writeTags() refuses give the model unchanged.
+//
+// Threading: reentrant.
+MetadataModel tagsAsWritten(const MetadataModel &model, audio::Container container,
+                            const TagWriteOptions &options = {});
 
 } // namespace selecta::convert
