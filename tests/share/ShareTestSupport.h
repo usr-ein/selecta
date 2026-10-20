@@ -10,6 +10,8 @@
 #include <QStringList>
 #include <QTemporaryDir>
 
+#include <sys/stat.h>
+
 // Helpers for the share tests: a temporary folder tree (tests never touch anything outside it), synthetic audio, and
 // what an index looks like through slsk's own decoders.
 namespace selecta::share::test {
@@ -37,9 +39,11 @@ private:
     QTemporaryDir m_dir;
 };
 
-// chflags(2) on the entry itself.
+// chflags(2) on the entry itself. The hidden flag is macOS's: elsewhere this returns false.
 bool setHidden(const QString &path);
 bool setMode(const QString &path, int mode);
+// A stat's modification time in milliseconds, as the collection records it (st_mtimespec on macOS, st_mtim elsewhere).
+qint64 modifiedMs(const struct stat &status);
 
 // Real audio, generated (tests/audio/support), cached per kind.
 QByteArray mp3Cbr320();

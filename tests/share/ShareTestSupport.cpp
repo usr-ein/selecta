@@ -68,14 +68,28 @@ bool Tree::symlink(const QString &target, const QString &relative) const
     return ::symlink(QFile::encodeName(target).constData(), QFile::encodeName(link).constData()) == 0;
 }
 
-bool setHidden(const QString &path)
+bool setHidden([[maybe_unused]] const QString &path)
 {
+#ifdef UF_HIDDEN
     struct stat status{};
     const QByteArray native = QFile::encodeName(path);
     if (::lstat(native.constData(), &status) != 0) {
         return false;
     }
     return ::lchflags(native.constData(), status.st_flags | UF_HIDDEN) == 0;
+#else
+    return false;
+#endif
+}
+
+qint64 modifiedMs(const struct stat &status)
+{
+#ifdef Q_OS_DARWIN
+    const struct timespec &time = status.st_mtimespec;
+#else
+    const struct timespec &time = status.st_mtim;
+#endif
+    return (static_cast<qint64>(time.tv_sec) * 1000) + (static_cast<qint64>(time.tv_nsec) / 1'000'000);
 }
 
 bool setMode(const QString &path, int mode)
@@ -110,8 +124,7 @@ collection::ScannedFile scanned(const QString &path, const match::AudioQuality &
     collection::ScannedFile file;
     struct stat status{};
     EXPECT_EQ(::stat(QFile::encodeName(path).constData(), &status), 0) << path.toStdString();
-    file.file = {path, static_cast<qint64>(status.st_size),
-                 (static_cast<qint64>(status.st_mtimespec.tv_sec) * 1000) + (status.st_mtimespec.tv_nsec / 1'000'000)};
+    file.file = {path, static_cast<qint64>(status.st_size), modifiedMs(status)};
     file.quality = quality;
     file.durationMs = durationMs;
     return file;

@@ -97,6 +97,9 @@ TEST(ShareBuild, SkipsHiddenAppleDoubleAndTemporaryFiles)
 
 TEST(ShareBuild, SkipsWhatTheHiddenFlagHides)
 {
+#ifndef UF_HIDDEN
+    GTEST_SKIP() << "no hidden flag on this platform (macOS's chflags hidden)";
+#else
     Tree tree;
     tree.file(u"Album/01.mp3"_s);
     ASSERT_TRUE(test::setHidden(tree.file(u"Album/02.mp3"_s)));
@@ -104,6 +107,7 @@ TEST(ShareBuild, SkipsWhatTheHiddenFlagHides)
     ASSERT_TRUE(test::setHidden(tree.path(u"Secret"_s)));
     const BuildResult result = buildTree(tree);
     EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Album\\01.mp3"_s}));
+#endif
 }
 
 TEST(ShareBuild, SkipsEmptyFiles)
@@ -455,6 +459,9 @@ TEST(ShareBuild, TheWalkStopsAtTheStringLimit)
 
 TEST(ShareBuild, ICloudPlaceholdersAreReportedAndNeverShared)
 {
+#ifndef SF_DATALESS
+    GTEST_SKIP() << "no dataless files (iCloud placeholders) on this platform";
+#else
     Tree tree;
     tree.file(u"a.mp3"_s);
     tree.file(u"b.mp3"_s, test::mp3Cbr320());
@@ -471,6 +478,7 @@ TEST(ShareBuild, ICloudPlaceholdersAreReportedAndNeverShared)
     ASSERT_EQ(walk.unreadable.size(), 1);
     EXPECT_TRUE(walk.unreadable.at(0).first.endsWith(u"/b.mp3"_s));
     EXPECT_TRUE(walk.unreadable.at(0).second.contains(u"iCloud"_s));
+#endif
 }
 
 TEST(ShareBuild, ACancelledBuildSharesNothing)
