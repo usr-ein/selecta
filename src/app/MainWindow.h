@@ -19,7 +19,8 @@ class QStackedWidget;
 
 namespace selecta::core {
 class EngineHost;
-}
+struct ManualSearch;
+} // namespace selecta::core
 namespace selecta::storage {
 class Database;
 class SessionLog;
@@ -35,6 +36,7 @@ class Inspector;
 class NavModel;
 class PlayerBar;
 class PreviewController;
+class SearchView;
 class Sidebar;
 
 // What the main window needs from the rest of the app. The referenced objects outlive the window.
@@ -110,6 +112,9 @@ private:
     void refreshNetworkState();
     void previewInboxSelection(bool toggleIfLoaded);
     void previewGetTracksLine(bool toggleIfLoaded);
+    void previewSearchResult(bool toggleIfLoaded);
+    // Keeps the sidebar's search items in step with the engine's open searches.
+    void showSearchInSidebar(const core::ManualSearch &search);
 
     AppServices m_services;
     Appearance m_appearance;
@@ -127,15 +132,18 @@ private:
     QAction *m_toggleInspector = nullptr;
     QAction *m_togglePause = nullptr;
     QAction *m_budget = nullptr;
+    QAction *m_findAction = nullptr;
     ActivityView *m_activityView = nullptr;
     InboxView *m_inboxView = nullptr;
     GetTracksView *m_getTracksView = nullptr;
+    SearchView *m_searchView = nullptr;
+    quint64 m_searchRequest = 0; // the search the user asked for last, to show it when it opens
     QActionGroup *m_appearanceGroup = nullptr;
     QList<QAction *> m_goActions;
     QList<QAction *> m_playbackActions;
     std::optional<bool> m_shownPaused; // what the pause action shows
-    qint64 m_askedPreviewLine = 0;     // the Get tracks line a preview was asked for
-    qint64 m_playingLine = 0;          // the Get tracks line whose preview is loaded
+    QString m_askedPreviewKey;         // what a preview was asked for (core::previewKeyForLine() and the like)
+    QString m_playingKey;              // what the loaded preview belongs to
     qint64 m_previewId = 0;            // the engine's preview playing, if any
     QList<View> m_views;
     QHash<QString, qsizetype> m_viewIndex;

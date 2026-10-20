@@ -17,6 +17,7 @@ qt_add_library(selecta_app STATIC
     WaveformView.h WaveformView.cpp
     models/ActivityModel.h models/ActivityModel.cpp
     models/GetTracksModel.h models/GetTracksModel.cpp
+    models/SearchResultsModel.h models/SearchResultsModel.cpp
     views/ActivityView.h views/ActivityView.cpp
     views/AddTracksDialog.h views/AddTracksDialog.cpp
     views/CollectionView.h views/CollectionView.cpp
@@ -25,6 +26,8 @@ qt_add_library(selecta_app STATIC
     views/GetTracksView.h views/GetTracksView.cpp
     views/HistoryView.h views/HistoryView.cpp
     views/InboxView.h views/InboxView.cpp
+    views/SearchInspector.h views/SearchInspector.cpp
+    views/SearchView.h views/SearchView.cpp
     views/SettingsView.h views/SettingsView.cpp)
 add_library(Selecta::App ALIAS selecta_app)
 if(SELECTA_DEVTOOLS)

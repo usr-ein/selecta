@@ -176,6 +176,19 @@ constexpr std::array kMigrations{
             names_from_file_name INTEGER NOT NULL DEFAULT 0 CHECK (names_from_file_name IN (0, 1))
         ) STRICT;
     )sql"},
+    // Finished searches kept for reuse (PRD SRCH-12, CACHE-1): a query run again within a day opens these instead of
+    // searching the network again.
+    Migration{6, R"sql(
+        CREATE TABLE search_cache (
+            query_key   TEXT PRIMARY KEY,           -- governor::queryKey() of the query as sent
+            query       TEXT NOT NULL,
+            searched_ms INTEGER NOT NULL,           -- when the search ran, ms since the epoch
+            peers       INTEGER NOT NULL DEFAULT 0 CHECK (peers >= 0),
+            files       INTEGER NOT NULL DEFAULT 0 CHECK (files >= 0),
+            hits        BLOB NOT NULL               -- SearchCacheStore's encoding, compressed
+        ) STRICT;
+        CREATE INDEX search_cache_searched ON search_cache (searched_ms);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

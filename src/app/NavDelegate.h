@@ -19,6 +19,17 @@ public:
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
 
+    // Where a closable item's close button is.
+    static QRect closeRect(QRect itemRect);
+
+Q_SIGNALS:
+    // The close button of a closable item (a search) was clicked.
+    void closeRequested(const QString &id);
+
+protected:
+    bool editorEvent(QEvent *event, QAbstractItemModel *model, const QStyleOptionViewItem &option,
+                     const QModelIndex &index) override;
+
 private:
     QPixmap symbolPixmap(const QModelIndex &index, const QColor &color, qreal devicePixelRatio) const;
 

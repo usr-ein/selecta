@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/SearchService.h"
 
+#include "core/SearchCache.h"
 #include "governor/Limits.h"
 #include "governor/QueryHygiene.h"
 
@@ -60,11 +61,16 @@ SearchService::~SearchService()
     }
 }
 
-quint64 SearchService::enqueue(const QString &query, governor::SearchSource source, Done done, Started started)
+quint64 SearchService::enqueue(const Request &request, Done done, Started started, Progress progress)
 {
     const quint64 id = m_nextId++;
-    Pending pending{.id = id, .query = query, .source = source, .done = std::move(done), .started = std::move(started)};
-    (source == governor::SearchSource::Manual ? m_manual : m_batch).push_back(std::move(pending));
+    const bool manual = request.source == governor::SearchSource::Manual;
+    Pending pending{.id = id,
+                    .request = request,
+                    .done = std::move(done),
+                    .started = std::move(started),
+                    .progress = std::move(progress)};
+    (manual ? m_manual : m_batch).push_back(std::move(pending));
     // Sent on the next turn, so a caller queueing many searches never sees `done` run inside enqueue().
     QMetaObject::invokeMethod(this, &SearchService::pump, Qt::QueuedConnection);
     publish();
@@ -119,29 +125,41 @@ void SearchService::pump()
     publish();
 }
 
+std::optional<SearchOutcome> SearchService::cached(const QString &key)
+{
+    if (const auto found = m_cache.constFind(key); found != m_cache.cend()) {
+        if (m_clock.now() - found->at < kCacheLifetime) {
+            SearchOutcome outcome = found->outcome;
+            outcome.fromCache = true;
+            return outcome;
+        }
+        m_cache.erase(found);
+    }
+    if (m_store) {
+        if (std::optional<SearchCacheStore::Entry> entry = m_store->find(key)) {
+            return std::move(entry->outcome);
+        }
+    }
+    return std::nullopt;
+}
+
 bool SearchService::sendFront(std::deque<Pending> &queue)
 {
     Pending &front = queue.front();
-    const governor::CleanQuery clean = governor::cleanQuery(front.query, m_governor.excludedPhrases());
-    if (clean.refusal == governor::Refusal::None) {
+    const governor::CleanQuery clean = governor::cleanQuery(front.request.query, m_governor.excludedPhrases());
+    if (clean.refusal == governor::Refusal::None && !front.request.refresh) {
         // A repeat within the cache lifetime costs nothing.
-        const QString key = governor::queryKey(clean.query);
-        if (const auto cached = m_cache.constFind(key); cached != m_cache.cend()) {
-            if (m_clock.now() - cached->at < kCacheLifetime) {
-                SearchOutcome outcome = cached->outcome;
-                outcome.fromCache = true;
-                deliver(std::move(front.done), std::move(outcome));
-                queue.pop_front();
-                return true;
-            }
-            m_cache.erase(cached);
+        if (std::optional<SearchOutcome> outcome = cached(governor::queryKey(clean.query))) {
+            deliver(std::move(front.done), std::move(*outcome));
+            queue.pop_front();
+            return true;
         }
     }
     if (m_governor.isPaused() || !m_network.isOnline()) {
         return false; // networkChanged() resumes
     }
     governor::Decision decision =
-        m_governor.request(governor::Operation::Search, {.query = front.query, .source = front.source});
+        m_governor.request(governor::Operation::Search, {.query = front.request.query, .source = front.request.source});
     if (decision.permit) {
         const QString query = decision.cleanedQuery;
         const quint32 token = m_network.search(query, std::move(*decision.permit));
@@ -155,6 +173,7 @@ bool SearchService::sendFront(std::deque<Pending> &queue)
                         .query = query,
                         .key = governor::queryKey(query),
                         .done = std::move(front.done),
+                        .progress = std::move(front.progress),
                         .hits = {},
                         .peers = {},
                         .idle = std::make_unique<QTimer>(),
@@ -181,9 +200,12 @@ bool SearchService::sendFront(std::deque<Pending> &queue)
     }
     default:
         // Too short, excluded by the server, or a repeat whose results were evicted: nothing to send.
-        deliver(std::move(front.done),
-                SearchOutcome{
-                    .query = clean.query, .hits = {}, .peers = 0, .fromCache = false, .error = decision.explanation});
+        deliver(std::move(front.done), SearchOutcome{.query = clean.query,
+                                                     .hits = {},
+                                                     .peers = 0,
+                                                     .fromCache = false,
+                                                     .searchedAtMs = 0,
+                                                     .error = decision.explanation});
         queue.pop_front();
         return true;
     }
@@ -197,6 +219,7 @@ void SearchService::received(quint32 token, const QString &username, const slsk:
     }
     Running &running = found->second;
     running.peers.insert(username);
+    const qsizetype before = running.hits.size();
     const auto add = [&](const QList<slsk::FileEntry> &files) {
         for (const slsk::FileEntry &file : files) {
             if (running.hits.size() >= limits::kResultsFiles) {
@@ -213,6 +236,14 @@ void SearchService::received(quint32 token, const QString &username, const slsk:
         }
     };
     add(response.results); // private results are shared with some users only: not offered for download
+    if (running.progress && running.hits.size() > before) {
+        // On the next turn, like `done`: queued in order, so every progress call comes before `done`.
+        QMetaObject::invokeMethod(
+            this,
+            [progress = running.progress, added = running.hits.mid(before),
+             peers = static_cast<int>(running.peers.size())] { progress(added, peers); },
+            Qt::QueuedConnection);
+    }
     if (running.peers.size() >= limits::kResultsPeers || running.hits.size() >= limits::kResultsFiles) {
         finish(token);
         return;
@@ -233,8 +264,12 @@ void SearchService::finish(quint32 token)
                           .hits = std::move(running.hits),
                           .peers = static_cast<int>(running.peers.size()),
                           .fromCache = false,
+                          .searchedAtMs = 0,
                           .error = {}};
     m_cache.insert(running.key, Cached{.outcome = outcome, .at = m_clock.now()});
+    if (m_store && !m_store->store(running.key, outcome)) {
+        qCWarning(lcSearch) << "couldn't keep the results of" << running.query << "for later";
+    }
     qCDebug(lcSearch) << "search" << running.query << "collected" << outcome.hits.size() << "files from"
                       << outcome.peers << "peers";
     deliver(std::move(running.done), std::move(outcome));

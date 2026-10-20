@@ -34,6 +34,24 @@ const QString kUsername = u"soulseek/username"_s;
 const QString kListenPort = u"soulseek/listenPort"_s;
 const QString kConnectAtLaunch = u"soulseek/connectAtLaunch"_s;
 const QString kLiveAllowed = u"soulseek/liveAllowed"_s;
+const QString kSearchPreset = u"search/preset"_s;
+const QString kSearchCustomised = u"search/customised"_s;
+const QString kSearchGrouped = u"search/grouped"_s;
+const QString kSearchFiltersShown = u"search/filtersShown"_s;
+const QString kSearchFormats = u"search/formats"_s;
+const QString kSearchBitrateRule = u"search/bitrateRule"_s;
+const QString kSearchBitrate = u"search/bitrate"_s;
+const QString kSearchCbrOnly = u"search/cbrOnly"_s;
+const QString kSearchBitDepth = u"search/minBitDepth"_s;
+const QString kSearchSampleRates = u"search/sampleRates"_s;
+const QString kSearchMinLength = u"search/minLength"_s;
+const QString kSearchMaxLength = u"search/maxLength"_s;
+const QString kSearchFreeSlot = u"search/freeSlotOnly"_s;
+const QString kSearchMaxQueue = u"search/maxQueue"_s;
+const QString kSearchExcluded = u"search/excludedWords"_s;
+const QString kSearchStrict = u"search/strict"_s;
+const QString kSearchOwned = u"search/owned"_s;
+const QString kSearchOnlyRelease = u"search/onlyThisRelease"_s;
 
 quint16 portFrom(const QVariant &value, quint16 fallback)
 {
@@ -200,6 +218,84 @@ void AppSettings::setNetworkConfig(const core::NetworkConfig &config)
     m_settings.setValue(kListenPort, config.listenPort);
     m_settings.setValue(kConnectAtLaunch, config.connectAtLaunch);
     m_settings.setValue(kLiveAllowed, config.liveAllowedByUser);
+}
+
+AppSettings::SearchViewState AppSettings::searchViewState() const
+{
+    SearchViewState state;
+    const int preset = m_settings.value(kSearchPreset, 0).toInt();
+    if (preset >= 0 && preset <= static_cast<int>(core::QualityWanted::Any)) {
+        state.preset = static_cast<core::QualityWanted>(preset);
+    }
+    state.filter = core::presetFilter(state.preset);
+    state.grouped = m_settings.value(kSearchGrouped, false).toBool();
+    state.filtersShown = m_settings.value(kSearchFiltersShown, false).toBool();
+    state.customised = m_settings.value(kSearchCustomised, false).toBool();
+    core::SearchFilter &filter = state.filter;
+    filter.onlyThisRelease = m_settings.value(kSearchOnlyRelease, true).toBool();
+    const int owned = m_settings.value(kSearchOwned, 0).toInt();
+    if (owned >= 0 && owned <= static_cast<int>(core::SearchFilter::OwnedResults::Hide)) {
+        filter.owned = static_cast<core::SearchFilter::OwnedResults>(owned);
+    }
+    if (!state.customised) {
+        return state;
+    }
+    // Values out of range read as the preset's.
+    const auto number = [this](const QString &key, int fallback, int low, int high) {
+        bool ok = false;
+        const int value = m_settings.value(key, fallback).toInt(&ok);
+        return ok && value >= low && value <= high ? value : fallback;
+    };
+    filter.formats = static_cast<quint16>(number(kSearchFormats, filter.formats, 0, 0xFFFF));
+    filter.bitrateRule =
+        static_cast<core::SearchFilter::BitrateRule>(number(kSearchBitrateRule, static_cast<int>(filter.bitrateRule), 0,
+                                                            static_cast<int>(core::SearchFilter::BitrateRule::AtMost)));
+    filter.bitrateKbps = number(kSearchBitrate, filter.bitrateKbps, 8, 2000);
+    filter.cbrOnly = m_settings.value(kSearchCbrOnly, filter.cbrOnly).toBool();
+    filter.minBitDepth = number(kSearchBitDepth, filter.minBitDepth, 0, 32);
+    filter.sampleRates.clear();
+    const QStringList rates = m_settings.value(kSearchSampleRates).toStringList();
+    for (const QString &rate : rates) {
+        bool ok = false;
+        const int hz = rate.toInt(&ok);
+        if (ok && hz > 0 && hz <= 768'000) {
+            filter.sampleRates.append(hz);
+        }
+    }
+    filter.minDurationSec = number(kSearchMinLength, 0, 0, 24 * 3600);
+    filter.maxDurationSec = number(kSearchMaxLength, 0, 0, 24 * 3600);
+    filter.freeSlotOnly = m_settings.value(kSearchFreeSlot, false).toBool();
+    filter.maxQueue = number(kSearchMaxQueue, 0, 0, 100'000);
+    filter.excludedWords = m_settings.value(kSearchExcluded).toStringList();
+    filter.strict = m_settings.value(kSearchStrict, filter.strict).toBool();
+    return state;
+}
+
+void AppSettings::setSearchViewState(const SearchViewState &state)
+{
+    const core::SearchFilter &filter = state.filter;
+    m_settings.setValue(kSearchPreset, static_cast<int>(state.preset));
+    m_settings.setValue(kSearchCustomised, state.customised);
+    m_settings.setValue(kSearchGrouped, state.grouped);
+    m_settings.setValue(kSearchFiltersShown, state.filtersShown);
+    m_settings.setValue(kSearchOnlyRelease, filter.onlyThisRelease);
+    m_settings.setValue(kSearchOwned, static_cast<int>(filter.owned));
+    m_settings.setValue(kSearchFormats, static_cast<int>(filter.formats));
+    m_settings.setValue(kSearchBitrateRule, static_cast<int>(filter.bitrateRule));
+    m_settings.setValue(kSearchBitrate, filter.bitrateKbps);
+    m_settings.setValue(kSearchCbrOnly, filter.cbrOnly);
+    m_settings.setValue(kSearchBitDepth, filter.minBitDepth);
+    QStringList rates;
+    for (const int rate : filter.sampleRates) {
+        rates.append(QString::number(rate));
+    }
+    m_settings.setValue(kSearchSampleRates, rates);
+    m_settings.setValue(kSearchMinLength, filter.minDurationSec);
+    m_settings.setValue(kSearchMaxLength, filter.maxDurationSec);
+    m_settings.setValue(kSearchFreeSlot, filter.freeSlotOnly);
+    m_settings.setValue(kSearchMaxQueue, filter.maxQueue);
+    m_settings.setValue(kSearchExcluded, filter.excludedWords);
+    m_settings.setValue(kSearchStrict, filter.strict);
 }
 
 bool AppSettings::sync()

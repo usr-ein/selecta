@@ -28,7 +28,10 @@ using selecta::core::YouTubePreviews;
 // The fake yt-dlp from meta's tests; the real one never runs in tests (CLAUDE.md).
 namespace {
 
-const QString kFixtures = QStringLiteral(SELECTA_META_FIXTURES);
+QString fixtures()
+{
+    return QStringLiteral(SELECTA_META_FIXTURES);
+}
 
 bool writeExecutable(const QString &path, const QByteArray &content)
 {
@@ -63,8 +66,8 @@ protected:
             u"FAKE_YTDLP_MODE=\"$(cat '%1/mode' 2>/dev/null || echo ok)\"\n"
             u"FAKE_YTDLP_SEARCH='%2'\n"
             u"export FAKE_YTDLP_MODE FAKE_YTDLP_SEARCH\n"
-            u"exec /bin/sh '%3' \"$@\"\n"_s.arg(dir.path(), kFixtures + u"/youtube/search_glass_harbour.json"_s,
-                                                kFixtures + u"/fake-yt-dlp"_s);
+            u"exec /bin/sh '%3' \"$@\"\n"_s.arg(dir.path(), fixtures() + u"/youtube/search_glass_harbour.json"_s,
+                                                fixtures() + u"/fake-yt-dlp"_s);
         ASSERT_TRUE(writeExecutable(dir.filePath(u"bin/yt-dlp"_s), wrapper.toUtf8()));
         ASSERT_TRUE(writeExecutable(dir.filePath(u"bin/deno"_s), "#!/bin/sh\nexit 0\n"));
         config.executable = dir.filePath(u"bin/yt-dlp"_s);

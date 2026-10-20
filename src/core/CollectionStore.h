@@ -8,6 +8,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <optional>
+
 namespace selecta::storage {
 class Database;
 }
@@ -39,6 +41,8 @@ public:
     QHash<QString, collection::FileSignature> signaturesUnder(const QString &folder);
     QList<CollectionFile> all();
     int count();
+    // The file with this id (CollectionFile::id, the MatchIndex track id).
+    std::optional<CollectionFile> find(qint64 id);
     // Forgets every file outside `roots` (folders removed from Settings). Returns how many went, or -1 on failure.
     int removeOutside(const QStringList &roots);
 

@@ -1,0 +1,91 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "core/GetTracks.h"
+#include "core/SearchService.h"
+#include "match/MatchIndex.h"
+#include "match/Quality.h"
+#include "match/ReleaseScorer.h"
+#include "match/RemotePathParser.h"
+#include "meta/Release.h"
+
+#include <QList>
+#include <QMetaType>
+#include <QString>
+
+#include <memory>
+#include <optional>
+
+namespace selecta::core {
+
+// What the user already has of a search result (PRD SRCH-11, LIB-3, LIB-4), in badge precedence.
+enum class Ownership : quint8 {
+    None,
+    InCollection,       // the same track is in the collection (exact)
+    Upgrade,            // in the collection, and this file's quality is established and better
+    LikelyInCollection, // probably in the collection (a fuzzy match)
+    InInbox,            // in the Inbox, not filed yet
+    Queued,             // in the transfers
+    DownloadedThisSession,
+    DownloadedBefore,
+    OtherVersion, // another version of it is owned (another mix or edit)
+};
+
+// "In collection", "Upgrade"… for badges. Thread-safe (pure).
+QString ownershipLabel(Ownership ownership);
+// Whether the user has this result (the "Already have" filter, the duplicate guard): every state except None, Upgrade
+// and OtherVersion.
+bool isOwned(Ownership ownership);
+
+// One file of a search, with what Selecta worked out about it.
+struct SearchResult
+{
+    int index = 0; // its position in the search: stable while the search is open
+    SearchHit hit;
+    QString path;   // the virtual path, decoded
+    QString folder; // the path without the file name
+    QString name;   // the file name
+    match::ParsedRemote parsed;
+    match::RemoteQuality quality;         // declared and estimated quality, plausibility (SRCH-6, SRCH-7)
+    std::optional<match::ReleaseFit> fit; // against the chosen release (SRCH-18); unset for "Any (name only)"
+    Ownership ownership = Ownership::None;
+    QString ownershipDetail;   // the owned file, or where the download is now (set on the engine thread)
+    QList<quint64> historyIds; // past downloads that are this very file
+    quint64 ownedId = 0;       // the collection file or Inbox item behind the ownership (ownedSource says which)
+    match::Source ownedSource = match::Source::Collection;
+    int peerFilesToday = 0;   // downloads from this peer today (FAIR-1)
+    qint64 peerBackoffMs = 0; // > 0: Selecta holds off this peer after a denial (FAIR-4)
+
+    bool isAudio() const { return parsed.kind == match::FileKind::Audio; }
+    int durationSec() const { return static_cast<int>(hit.attributes.duration.value_or(0)); }
+    // Whether this file fits the chosen release: its length and name agree, and it's the same version (SRCH-18).
+    bool fitsRelease() const;
+};
+
+// The folder part of a virtual path, and its last component, with either separator. Pure.
+QString remoteFolderOf(const QString &path);
+QString remoteNameOf(const QString &path);
+// A peer's path bytes as text: UTF-8 when valid, Latin-1 otherwise. Pure.
+QString decodeRemotePath(const QByteArray &raw);
+match::RemoteAttributes remoteAttributesOf(const SearchHit &hit);
+// The chosen release as the scorer's reference.
+match::ReleaseReference referenceOf(const meta::Release &release);
+// A result as a download's file (what the transfer and the arrival pipeline record).
+FileChoice fileChoiceOf(const SearchResult &result);
+
+// Turns hits into results (PRD SRCH-6, SRCH-7, SRCH-11, SRCH-18): each remote folder is parsed once with its siblings,
+// quality is assessed from the attributes and the size, files are scored against the release when there is one, and
+// audio files are looked up in the collection, the Inbox and the history. `firstIndex` numbers the results.
+//
+// Threading: pure; call it from a worker. The index is an immutable snapshot.
+QList<SearchResult> analyzeHits(const QList<SearchHit> &hits, int firstIndex,
+                                const std::shared_ptr<const match::MatchIndex> &index,
+                                const std::optional<match::ReleaseReference> &release);
+// Scores results against another release, or clears their fit for none. Pure.
+void scoreResults(QList<SearchResult> &results, const std::optional<match::ReleaseReference> &release);
+// Looks results up again in a new snapshot (Queued and the engine's details are left to the caller). Pure.
+void matchResults(QList<SearchResult> &results, const std::shared_ptr<const match::MatchIndex> &index);
+
+} // namespace selecta::core
+
+Q_DECLARE_METATYPE(selecta::core::SearchResult)

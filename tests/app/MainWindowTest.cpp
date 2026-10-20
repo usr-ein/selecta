@@ -18,6 +18,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListView>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -420,5 +421,43 @@ TEST_F(MainWindowTest, GetTracksListsPastedLinesAndSaysWhatHappened)
     QTest::keyClick(table, Qt::Key_Backspace);
     ASSERT_TRUE(reset.wait(5000));
     QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    engine->stop();
+}
+
+TEST_F(MainWindowTest, ASearchOpensInTheSidebarAndClosesFromIt)
+{
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    auto *field = window->findChild<QLineEdit *>(u"sidebar.search"_s);
+    ASSERT_NE(field, nullptr);
+    field->setText(u"Okuma Drift - Neon Rain"_s);
+    QTest::keyClick(field, Qt::Key_Return);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->currentViewId().startsWith(u"search:"_s); }, 5000));
+    EXPECT_TRUE(field->text().isEmpty());
+    EXPECT_EQ(window->currentTitle(), u"Okuma Drift - Neon Rain"_s);
+    const QString id = window->currentViewId();
+    auto *list = window->findChild<QListView *>(u"sidebar.list"_s);
+    ASSERT_NE(list, nullptr);
+    bool listed = false;
+    for (int row = 0; row < list->model()->rowCount(); ++row) {
+        listed = listed || list->model()->index(row, 0).data(Qt::UserRole + 1).toString() == id;
+    }
+    EXPECT_TRUE(listed);
+    // Offline here: the search waits for the network, and says so.
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !window->currentSubtitle().isEmpty(); }, 5000));
+
+    // The same text again opens the same search.
+    field->setText(u"okuma drift - neon rain"_s);
+    QTest::keyClick(field, Qt::Key_Return);
+    QTest::qWait(200);
+    EXPECT_EQ(window->currentViewId(), id);
+
+    engine->closeSearch(id.mid(7).toLongLong());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->currentViewId() == u"get"_s; }, 5000));
+    for (int row = 0; row < list->model()->rowCount(); ++row) {
+        EXPECT_NE(list->model()->index(row, 0).data(Qt::UserRole + 1).toString(), id);
+    }
     engine->stop();
 }

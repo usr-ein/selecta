@@ -30,6 +30,9 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<Preview>();
     qRegisterMetaType<CollectionStatus>();
     qRegisterMetaType<std::shared_ptr<audio::ByteSource>>();
+    qRegisterMetaType<ManualSearch>();
+    qRegisterMetaType<SearchResult>();
+    qRegisterMetaType<QList<SearchResult>>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -77,6 +80,38 @@ void EngineHost::start()
     connect(engine, &Engine::collectionStatusChanged, this, [this](const CollectionStatus &status) {
         m_collectionStatus = status;
         Q_EMIT collectionStatusChanged(status);
+    });
+    connect(engine, &Engine::searchOpened, this, &EngineHost::searchOpened);
+    connect(engine, &Engine::manualSearchChanged, this, [this](const ManualSearch &search) {
+        const auto known = std::ranges::find(m_searches, search.id, &ManualSearch::id);
+        if (known == m_searches.end()) {
+            m_searches.append(search);
+        } else {
+            *known = search;
+        }
+        Q_EMIT manualSearchChanged(search);
+    });
+    connect(engine, &Engine::manualSearchClosed, this, [this](qint64 searchId) {
+        m_searches.removeIf([searchId](const ManualSearch &search) { return search.id == searchId; });
+        m_searchResults.remove(searchId);
+        Q_EMIT manualSearchClosed(searchId);
+    });
+    connect(engine, &Engine::searchResultsAdded, this, [this](qint64 searchId, const QList<SearchResult> &results) {
+        m_searchResults[searchId].append(results);
+        Q_EMIT searchResultsAdded(searchId, results);
+    });
+    connect(engine, &Engine::searchResultsReset, this, [this](qint64 searchId, const QList<SearchResult> &results) {
+        m_searchResults.insert(searchId, results);
+        Q_EMIT searchResultsReset(searchId, results);
+    });
+    connect(engine, &Engine::searchResultsChanged, this, [this](qint64 searchId, const QList<SearchResult> &results) {
+        QList<SearchResult> &known = m_searchResults[searchId];
+        for (const SearchResult &result : results) {
+            if (result.index >= 0 && result.index < known.size()) {
+                known[result.index] = result;
+            }
+        }
+        Q_EMIT searchResultsChanged(searchId, results);
     });
     connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
         m_networkStatus = status;
@@ -244,6 +279,69 @@ void EngineHost::previewTrack(qint64 lineId)
 void EngineHost::stopPreview()
 {
     post([](Engine &engine) { engine.stopPreview(); });
+}
+
+quint64 EngineHost::openSearch(const QString &text)
+{
+    const quint64 request = m_nextSearchRequest++;
+    post([request, text](Engine &engine) { engine.openSearch(request, text); });
+    return request;
+}
+
+void EngineHost::closeSearch(qint64 searchId)
+{
+    post([searchId](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.manualSearch().close(searchId);
+        }
+    });
+}
+
+void EngineHost::chooseSearchRelease(qint64 searchId, int candidate)
+{
+    post([searchId, candidate](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.manualSearch().chooseRelease(searchId, candidate);
+        }
+    });
+}
+
+void EngineHost::refreshSearch(qint64 searchId)
+{
+    post([searchId](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.manualSearch().refresh(searchId);
+        }
+    });
+}
+
+void EngineHost::widenSearch(qint64 searchId)
+{
+    post([searchId](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.manualSearch().widen(searchId);
+        }
+    });
+}
+
+void EngineHost::downloadResults(qint64 searchId, const QList<int> &indexes)
+{
+    post([searchId, indexes](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.manualSearch().download(searchId, indexes);
+        }
+    });
+}
+
+void EngineHost::previewResult(qint64 searchId, int index)
+{
+    post([searchId, index](Engine &engine) { engine.previewResult(searchId, index); });
+}
+
+std::optional<ManualSearch> EngineHost::search(qint64 searchId) const
+{
+    const auto found = std::ranges::find(m_searches, searchId, &ManualSearch::id);
+    return found == m_searches.end() ? std::nullopt : std::optional<ManualSearch>(*found);
 }
 
 void EngineHost::downloadTracks(const QList<qint64> &ids)

@@ -4,6 +4,7 @@
 #include <QWidget>
 
 class QLabel;
+class QLineEdit;
 
 namespace selecta::app {
 
@@ -24,13 +25,20 @@ public:
     QString currentId() const;
 
     void setConnectionStatus(const QString &text, bool online);
+    // Puts the keyboard in the search field (⌘F).
+    void focusSearch();
 
 Q_SIGNALS:
     // The user picked an item (click or keyboard).
     void navigationRequested(const QString &id);
+    // Return in the search field (SRCH-1).
+    void searchRequested(const QString &text);
+    // A closable item's close button or its "Close" menu item.
+    void closeRequested(const QString &id);
 
 private:
     NavModel *m_model;
+    QLineEdit *m_search;
     SourceListView *m_list;
     StatusDot *m_statusDot;
     QLabel *m_statusText;

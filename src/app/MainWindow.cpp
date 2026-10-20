@@ -15,6 +15,8 @@
 #include "app/views/GetTracksView.h"
 #include "app/views/HistoryView.h"
 #include "app/views/InboxView.h"
+#include "app/views/SearchInspector.h"
+#include "app/views/SearchView.h"
 #include "base/Paths.h"
 #include "core/EngineHost.h"
 #include "governor/Limits.h"
@@ -155,6 +157,13 @@ void MainWindow::createCentralArea()
     setCentralWidget(m_mainSplitter);
 
     connect(m_sidebar, &Sidebar::navigationRequested, this, [this](const QString &id) { navigateTo(id); });
+    connect(m_sidebar, &Sidebar::searchRequested, this,
+            [this](const QString &text) { m_searchRequest = m_services.engine.openSearch(text); });
+    connect(m_sidebar, &Sidebar::closeRequested, this, [this](const QString &id) {
+        if (const qint64 searchId = NavModel::searchOfItem(id); searchId > 0) {
+            m_services.engine.closeSearch(searchId);
+        }
+    });
 }
 
 void MainWindow::addView(const QString &id, QWidget *widget, std::function<QString()> subtitle)
@@ -176,6 +185,35 @@ void MainWindow::createViews()
     };
     const auto fixed = [](const QString &text) { return [text] { return text; }; };
 
+    // Searches typed by hand: one view shows whichever search is picked in the sidebar.
+    m_searchView = new SearchView(m_services.engine, m_services.settings, m_stack);
+    addView(u"search"_s, m_searchView, [this] { return m_searchView->summary(); });
+    m_inspector->addPanel(u"search"_s, m_searchView->inspectorPanel());
+    connect(m_searchView, &SearchView::summaryChanged, this, [this] {
+        if (NavModel::searchOfItem(m_currentId) > 0) {
+            refreshTitle();
+        }
+    });
+    connect(m_searchView, &SearchView::previewRequested, this, [this] { previewSearchResult(false); });
+    connect(&m_services.engine, &core::EngineHost::searchOpened, this, [this](quint64 request, qint64 searchId) {
+        if (request == m_searchRequest && searchId > 0) {
+            if (const std::optional<core::ManualSearch> search = m_services.engine.search(searchId)) {
+                showSearchInSidebar(*search);
+            }
+            navigateTo(NavModel::searchItemId(searchId));
+        }
+    });
+    connect(&m_services.engine, &core::EngineHost::manualSearchChanged, this, &MainWindow::showSearchInSidebar);
+    connect(&m_services.engine, &core::EngineHost::manualSearchClosed, this, [this](qint64 searchId) {
+        const bool current = NavModel::searchOfItem(m_currentId) == searchId;
+        m_navModel->removeSearch(searchId);
+        if (current) {
+            // Another open search, or the home screen.
+            const QList<core::ManualSearch> searches = m_services.engine.searches();
+            navigateTo(searches.isEmpty() ? kDefaultView : NavModel::searchItemId(searches.constLast().id));
+        }
+    });
+
     m_getTracksView = new GetTracksView(m_services.engine, m_stack);
     addView(u"get"_s, m_getTracksView, [this] { return m_getTracksView->summary(); });
     m_inspector->addPanel(u"get"_s, m_getTracksView->inspectorPanel());
@@ -195,21 +233,22 @@ void MainWindow::createViews()
     connect(m_inboxView, &InboxView::previewRequested, this, [this] { previewInboxSelection(false); });
     connect(m_getTracksView, &GetTracksView::previewRequested, this, [this] { previewGetTracksLine(false); });
     connect(&m_services.engine, &core::EngineHost::previewStarted, this,
-            [this](qint64 lineId, qint64 previewId, const std::shared_ptr<audio::ByteSource> &source,
+            [this](const QString &key, qint64 previewId, const std::shared_ptr<audio::ByteSource> &source,
                    const QString &identity, const QString &title, const QString &artist, const QString &label) {
-                if (lineId != m_askedPreviewLine) {
+                if (key != m_askedPreviewKey) {
                     return; // the user asked for something else meanwhile
                 }
                 m_previewId = previewId;
-                m_playingLine = lineId;
+                m_playingKey = key;
                 m_services.preview.preview({source, {title, artist, label}, identity});
             });
-    connect(&m_services.engine, &core::EngineHost::previewRefused, this, [this](qint64 lineId, const QString &why) {
-        if (lineId == m_askedPreviewLine) {
-            m_askedPreviewLine = 0;
-            m_player->showMessage(why);
-        }
-    });
+    connect(&m_services.engine, &core::EngineHost::previewRefused, this,
+            [this](const QString &key, const QString &why) {
+                if (key == m_askedPreviewKey) {
+                    m_askedPreviewKey.clear();
+                    m_player->showMessage(why);
+                }
+            });
     connect(&m_services.engine, &core::EngineHost::previewChanged, this, [this](const core::Preview &preview) {
         if (preview.id != m_previewId) {
             return;
@@ -342,6 +381,15 @@ void MainWindow::createActions()
     m_togglePause->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P));
     connect(m_togglePause, &QAction::triggered, this, [this](bool paused) { m_services.engine.setPaused(paused); });
 
+    auto *find = new QAction(tr("Search Soulseek…"), this);
+    find->setObjectName(u"action.find"_s);
+    find->setShortcut(QKeySequence::Find);
+    connect(find, &QAction::triggered, this, [this] {
+        setSidebarShown(true);
+        m_sidebar->focusSearch();
+    });
+    m_findAction = find;
+
     m_budget = new QAction(icons::symbol(u"magnifyingglass"_s, u"edit-find"_s), QString(), this);
     m_budget->setObjectName(u"action.searchBudget"_s);
     connect(m_budget, &QAction::triggered, this, [this] { navigateTo(u"activity"_s); });
@@ -392,8 +440,8 @@ void MainWindow::createActions()
     stop->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Period));
     connect(stop, &QAction::triggered, this, [this] {
         m_services.preview.stop();
-        m_askedPreviewLine = 0;
-        m_playingLine = 0;
+        m_askedPreviewKey.clear();
+        m_playingKey.clear();
         if (m_previewId != 0) {
             m_services.engine.stopPreview(); // a nearly complete preview still finishes, for a Get to reuse
             m_previewId = 0;
@@ -457,6 +505,9 @@ void MainWindow::createMenus()
     file->addAction(settings); // moved to the application menu on macOS, by its role
     file->addAction(about);
     file->addAction(quit);
+
+    QMenu *edit = menuBar()->addMenu(tr("&Edit"));
+    edit->addAction(m_findAction);
 
     QMenu *view = menuBar()->addMenu(tr("&View"));
     view->addAction(m_toggleSidebar);
@@ -588,7 +639,30 @@ void MainWindow::playOrPause()
         previewGetTracksLine(true);
         return;
     }
+    if (NavModel::searchOfItem(m_currentId) > 0 && m_searchView->previewTarget()) {
+        previewSearchResult(true);
+        return;
+    }
     m_services.preview.toggle();
+}
+
+void MainWindow::previewSearchResult(bool toggleIfLoaded)
+{
+    const std::optional<SearchView::PreviewTarget> target = m_searchView->previewTarget();
+    if (!target) {
+        return;
+    }
+    PreviewController &preview = m_services.preview;
+    const playback::Player::State state = preview.player().state();
+    const bool loaded = preview.player().isActive() || state == playback::Player::State::Ended;
+    const QString key = core::previewKeyForResult(target->searchId, target->index);
+    if (toggleIfLoaded && loaded && key == m_playingKey) {
+        preview.toggle();
+        return;
+    }
+    m_askedPreviewKey = key;
+    m_player->showMessage(tr("Asking %1 for a preview…").arg(target->peer));
+    m_services.engine.previewResult(target->searchId, target->index);
 }
 
 void MainWindow::previewGetTracksLine(bool toggleIfLoaded)
@@ -600,11 +674,12 @@ void MainWindow::previewGetTracksLine(bool toggleIfLoaded)
     PreviewController &preview = m_services.preview;
     const playback::Player::State state = preview.player().state();
     const bool loaded = preview.player().isActive() || state == playback::Player::State::Ended;
-    if (toggleIfLoaded && loaded && target->lineId == m_playingLine) {
+    const QString key = core::previewKeyForLine(target->lineId);
+    if (toggleIfLoaded && loaded && key == m_playingKey) {
         preview.toggle();
         return;
     }
-    m_askedPreviewLine = target->lineId;
+    m_askedPreviewKey = key;
     // A line with a file previews it from its peer; one without, from YouTube (the user's own yt-dlp).
     m_player->showMessage(target->peer.isEmpty() ? tr("Looking for it on YouTube…")
                                                  : tr("Asking %1 for a preview…").arg(target->peer));
@@ -629,8 +704,8 @@ void MainWindow::previewInboxSelection(bool toggleIfLoaded)
         preview.toggle();
         return;
     }
-    m_askedPreviewLine = 0; // a peer preview playing gives way
-    m_playingLine = 0;
+    m_askedPreviewKey.clear(); // a peer preview playing gives way
+    m_playingKey.clear();
     if (m_previewId != 0) {
         m_services.engine.stopPreview();
         m_previewId = 0;
@@ -644,8 +719,29 @@ void MainWindow::closeEvent(QCloseEvent *event)
     event->accept();
 }
 
+void MainWindow::showSearchInSidebar(const core::ManualSearch &search)
+{
+    using State = core::ManualSearch::State;
+    const bool busy =
+        search.state == State::LookingUp || search.state == State::Waiting || search.state == State::Searching;
+    m_navModel->setSearch(search.id, search.text, search.files, busy);
+}
+
 bool MainWindow::navigateTo(const QString &id)
 {
+    if (const qint64 searchId = NavModel::searchOfItem(id); searchId > 0) {
+        if (!m_services.engine.search(searchId)) {
+            return false; // closed, or from an earlier run
+        }
+        m_searchView->showSearch(searchId);
+        m_stack->setCurrentWidget(m_searchView);
+        m_inspector->showPanelFor(u"search"_s);
+        m_currentId = id;
+        m_sidebar->select(id);
+        refreshTitle();
+        Q_EMIT viewChanged(id);
+        return true;
+    }
     const auto found = m_viewIndex.constFind(id);
     if (found == m_viewIndex.cend()) {
         if (!id.isEmpty()) {
@@ -684,6 +780,11 @@ QString MainWindow::currentSubtitle() const
 
 void MainWindow::refreshTitle()
 {
+    if ((m_currentId == u"search"_s || NavModel::searchOfItem(m_currentId) > 0) && m_title) {
+        m_title->setText(m_searchView->title());
+        m_subtitle->setText(m_searchView->summary());
+        return;
+    }
     const auto found = m_viewIndex.constFind(m_currentId);
     if (found == m_viewIndex.cend() || !m_title) {
         return;

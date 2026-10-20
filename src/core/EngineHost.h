@@ -4,9 +4,12 @@
 #include "core/ActivityLog.h"
 #include "core/Engine.h"
 
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QThread>
+
+#include <optional>
 
 namespace selecta::core {
 
@@ -67,6 +70,22 @@ public:
     void previewTrack(qint64 lineId);
     void stopPreview();
 
+    // --- searches typed by hand (SRCH-1) ---
+    // Opens a search, or finds the open one with the same text: searchOpened() answers with the returned request
+    // number.
+    quint64 openSearch(const QString &text);
+    void closeSearch(qint64 searchId);
+    // Ranks the results against another release candidate (-1: "Any (name only)").
+    void chooseSearchRelease(qint64 searchId, int candidate);
+    void refreshSearch(qint64 searchId);
+    void widenSearch(qint64 searchId);
+    void downloadResults(qint64 searchId, const QList<int> &indexes);
+    void previewResult(qint64 searchId, int index);
+    // Open searches and their results, as last reported.
+    QList<ManualSearch> searches() const { return m_searches; }
+    std::optional<ManualSearch> search(qint64 searchId) const;
+    QList<SearchResult> searchResults(qint64 searchId) const { return m_searchResults.value(searchId); }
+
     // --- the collection ---
     void scanCollection();
     CollectionStatus collectionStatus() const { return m_collectionStatus; }
@@ -105,11 +124,18 @@ Q_SIGNALS:
     void tracksAdded(int added, int duplicates, int unidentified, const QString &note);
     void networkStatusChanged(const selecta::core::NetworkStatus &status);
     void searchQueueChanged(int waiting, int collecting, qint64 nextInMs);
-    void previewStarted(qint64 lineId, qint64 previewId, const std::shared_ptr<selecta::audio::ByteSource> &source,
+    // `key` names what the preview belongs to (previewKeyForLine(), previewKeyForResult()).
+    void previewStarted(const QString &key, qint64 previewId, const std::shared_ptr<selecta::audio::ByteSource> &source,
                         const QString &identity, const QString &title, const QString &artist, const QString &label);
-    void previewRefused(qint64 lineId, const QString &why);
+    void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    void searchOpened(quint64 request, qint64 searchId);
+    void manualSearchChanged(const selecta::core::ManualSearch &search);
+    void manualSearchClosed(qint64 searchId);
+    void searchResultsAdded(qint64 searchId, const QList<selecta::core::SearchResult> &results);
+    void searchResultsReset(qint64 searchId, const QList<selecta::core::SearchResult> &results);
+    void searchResultsChanged(qint64 searchId, const QList<selecta::core::SearchResult> &results);
 
 private:
     EngineOptions m_options;
@@ -122,6 +148,9 @@ private:
     QList<GetLine> m_getLines;
     NetworkStatus m_networkStatus;
     CollectionStatus m_collectionStatus;
+    QList<ManualSearch> m_searches; // in opening order
+    QHash<qint64, QList<SearchResult>> m_searchResults;
+    quint64 m_nextSearchRequest = 1;
 };
 
 } // namespace selecta::core

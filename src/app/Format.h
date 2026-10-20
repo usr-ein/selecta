@@ -25,5 +25,11 @@ QString quality(const core::FileChoice &file);
 QString release(const meta::Release &release);
 // "+2 s", "−5 s": a file's length against the release.
 QString lengthDelta(qint64 deltaSeconds);
+// "9.4 MB", "820 KB", "1.2 GB" (decimal units, as the Finder shows them).
+QString size(qint64 bytes);
+// "1.2 MB/s", "340 KB/s"; an empty string for an unknown speed.
+QString speed(qint64 bytesPerSecond);
+// "just now", "12 min ago", "3 h ago", "2 days ago": how long ago `thenMs` was, at `nowMs` (Unix time, ms).
+QString ago(qint64 thenMs, qint64 nowMs);
 
 } // namespace selecta::app::format

@@ -91,6 +91,11 @@ public:
     PeerDay peerToday(const QString &peer) const { return m_ledger.today(peer); }
     int peerQueued(const QString &peer) const { return m_ledger.queuedAt(peer); }
     int peerActive(const QString &peer) const { return m_ledger.activeAt(peer); }
+    // How long Selecta still holds off this peer after a denial (FAIR-4); nullopt when it doesn't.
+    std::optional<base::Clock::Duration> peerBackoff(const QString &peer) const
+    {
+        return m_ledger.backoffRemaining(peer);
+    }
     bool loginNeedsUser() const { return m_reconnect.needsUser(); }
 
 Q_SIGNALS:

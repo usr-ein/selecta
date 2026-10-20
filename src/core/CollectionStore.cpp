@@ -153,6 +153,15 @@ QList<CollectionFile> CollectionStore::all()
     return files;
 }
 
+std::optional<CollectionFile> CollectionStore::find(qint64 id)
+{
+    Statement query = m_db.prepare(u"SELECT %1 FROM collection_files WHERE id = ?1;"_s.arg(kColumns));
+    if (!query.isValid() || query.bind(1, id).step() != Statement::Step::Row) {
+        return std::nullopt;
+    }
+    return readFile(query);
+}
+
 int CollectionStore::count()
 {
     Statement query = m_db.prepare(u"SELECT COUNT(*) FROM collection_files;");

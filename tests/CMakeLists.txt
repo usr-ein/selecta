@@ -72,8 +72,12 @@ if(SELECTA_WITH_MEDIA)
             core/GovernorPacerTest.cpp
             core/GovernorStoreTest.cpp
             core/InboxServiceTest.cpp
+            core/ManualSearchServiceTest.cpp
             core/MetaServicesTest.cpp
             core/NetworkServiceTest.cpp
+            core/ResultAnnotatorTest.cpp
+            core/SearchCacheTest.cpp
+            core/SearchFilterTest.cpp
             core/SearchServiceTest.cpp
             core/TransferServiceTest.cpp
             core/YouTubePreviewsTest.cpp
@@ -90,6 +94,7 @@ if(SELECTA_WITH_MEDIA)
             app/FormatTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp
+            app/SearchResultsModelTest.cpp
             app/TickDelegateTest.cpp
             app/WaveformViewTest.cpp
         LIBRARIES selecta_app)

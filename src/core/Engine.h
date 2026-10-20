@@ -6,8 +6,10 @@
 #include "core/CollectionService.h"
 #include "core/GetTracksService.h"
 #include "core/InboxService.h"
+#include "core/ManualSearchService.h"
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
+#include "core/SearchCache.h"
 #include "core/SearchService.h"
 #include "core/TransferService.h"
 #include "core/YouTubePreviews.h"
@@ -56,6 +58,16 @@ struct EngineOptions
     std::optional<int> session;  // this run's session number, recorded with downloads
 };
 
+// What a preview belongs to, as previewStarted() and previewRefused() name it: a Get tracks line or a search result.
+inline QString previewKeyForLine(qint64 lineId)
+{
+    return QStringLiteral("line:%1").arg(lineId);
+}
+inline QString previewKeyForResult(qint64 searchId, int index)
+{
+    return QStringLiteral("search:%1:%2").arg(searchId).arg(index);
+}
+
 // The services on the engine thread (PLAN §2.3, the network thread): the governor and its saved state and the
 // activity log, then the Soulseek client, metadata services, searches, transfers and the arrival pipeline as they land.
 //
@@ -89,7 +101,13 @@ public:
     // Previews a Get tracks line's chosen file (PREV-1): previewStarted() hands over the source to play while the
     // file arrives, or previewRefused() says why it can't. The preview playing before stops.
     void previewLine(qint64 lineId);
+    // Previews a search result's file from its peer, likewise.
+    void previewResult(qint64 searchId, int index);
     void stopPreview();
+
+    // Searches typed by hand (SRCH-1): opens one, or finds the open search for the same text; searchOpened() answers
+    // `request` with its id.
+    void openSearch(quint64 request, const QString &text);
 
     // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
     void setLibraryConfig(const LibraryConfig &config);
@@ -106,6 +124,8 @@ public:
     GetTracksService &getTracks() { return *m_getTracks; }
     NetworkService &network() { return *m_network; }
     SearchService &search() { return *m_search; }
+    ManualSearchService &manualSearch() { return *m_manualSearch; }
+    SearchCacheStore &searchCache() { return *m_searchCache; }
     TransferService &transfers() { return *m_transfers; }
     ArrivalService &arrival() { return *m_arrival; }
     CollectionService &collection() { return *m_collection; }
@@ -128,17 +148,26 @@ Q_SIGNALS:
     void searchQueueChanged(int waiting, int collecting, qint64 nextInMs);
     // A preview started: the source to play (it grows while the file arrives), a stable identity for the analysis
     // cache, and what to call it.
-    void previewStarted(qint64 lineId, qint64 previewId, const std::shared_ptr<selecta::audio::ByteSource> &source,
+    void previewStarted(const QString &key, qint64 previewId, const std::shared_ptr<selecta::audio::ByteSource> &source,
                         const QString &identity, const QString &title, const QString &artist, const QString &label);
-    void previewRefused(qint64 lineId, const QString &why);
+    void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    // Searches typed by hand (ManualSearchService's signals, forwarded).
+    void searchOpened(quint64 request, qint64 searchId);
+    void manualSearchChanged(const selecta::core::ManualSearch &search);
+    void manualSearchClosed(qint64 searchId);
+    void searchResultsAdded(qint64 searchId, const QList<selecta::core::SearchResult> &results);
+    void searchResultsReset(qint64 searchId, const QList<selecta::core::SearchResult> &results);
+    void searchResultsChanged(qint64 searchId, const QList<selecta::core::SearchResult> &results);
 
 private:
     bool fail(const QString &error);
     void pruneActivity();
     // Reports the search budget now and again whenever it refills, until it's full.
     void reportSearchBudget();
+    // What only the engine knows about search results: queued downloads, this session's, owned files, peer counters.
+    void annotate(QList<SearchResult> &results);
 
     EngineOptions m_options;
     std::unique_ptr<base::Clock> m_ownClock;
@@ -152,7 +181,9 @@ private:
     std::unique_ptr<GetTracksService> m_getTracks;
     std::unique_ptr<NetworkService> m_network;
     std::unique_ptr<SearchNetwork> m_searchNetwork;
+    std::unique_ptr<SearchCacheStore> m_searchCache;
     std::unique_ptr<SearchService> m_search;
+    std::unique_ptr<ManualSearchService> m_manualSearch;
     std::unique_ptr<TransferService> m_transfers;
     std::unique_ptr<ArrivalService> m_arrival;
     std::unique_ptr<CollectionService> m_collection;
@@ -160,6 +191,7 @@ private:
     qint64 m_previewId = 0; // the preview playing
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
+    QTimer *m_annotateTimer = nullptr; // coalesces transfer changes before search results are annotated again
     bool m_started = false;
     QString m_error;
 };

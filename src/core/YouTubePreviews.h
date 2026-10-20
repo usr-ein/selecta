@@ -56,7 +56,7 @@ private:
     QString m_cacheDir;
     qint64 m_current = 0; // the preview id, 0 when none
     qint64 m_lineId = 0;
-    qint64 m_nextId = qint64{1} << 40; // apart from the transfer service's preview ids
+    qint64 m_nextId = static_cast<qint64>(1ULL << 40U); // apart from the transfer service's preview ids
     QPointer<meta::YtDlpFetch> m_fetch;
     QString m_path;                                // the file yt-dlp writes
     std::shared_ptr<audio::GrowingFile> m_growing; // once its size is known

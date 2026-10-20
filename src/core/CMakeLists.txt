@@ -14,9 +14,14 @@ qt_add_library(selecta_core STATIC
     GovernorPacer.h GovernorPacer.cpp
     GovernorStore.h GovernorStore.cpp
     InboxService.h InboxService.cpp
+    ManualSearchService.h ManualSearchService.cpp
     MetaServices.h MetaServices.cpp
     NetworkService.h NetworkService.cpp
     ReleaseJson.h ReleaseJson.cpp
+    ResultAnnotator.h ResultAnnotator.cpp
+    SearchCache.h SearchCache.cpp
+    SearchFilter.h SearchFilter.cpp
+    SearchResults.h SearchResults.cpp
     SearchService.h SearchService.cpp
     TransferService.h TransferService.cpp
     YouTubePreviews.h YouTubePreviews.cpp)

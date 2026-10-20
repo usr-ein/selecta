@@ -4,7 +4,9 @@
 #include "base/Clock.h"
 #include "base/Version.h"
 #include "core/GovernorStore.h"
+#include "core/ResultAnnotator.h"
 #include "governor/Limits.h"
+#include "library/HistoryStore.h"
 #include "meta/SpotifyLinks.h"
 #include "meta/TokenStore.h"
 #include "storage/Database.h"
@@ -120,6 +122,8 @@ bool Engine::start()
 
     m_searchNetwork = std::make_unique<NetworkSearch>(*m_network);
     m_search = std::make_unique<SearchService>(*m_governor, *m_searchNetwork, *m_clock);
+    m_searchCache = std::make_unique<SearchCacheStore>(*m_db, m_options.wallClock);
+    m_search->setStore(m_searchCache.get());
     connect(m_network.get(), &NetworkService::searchResponseReceived, m_search.get(), &SearchService::received);
     connect(m_network.get(), &NetworkService::statusChanged, m_search.get(), &SearchService::networkChanged);
     connect(m_governor.get(), &governor::Governor::pausedChanged, m_search.get(), &SearchService::networkChanged);
@@ -167,14 +171,35 @@ bool Engine::start()
     });
     m_getTracks->setTransfers(m_transfers.get());
 
+    // Searches typed by hand: the release first, then one search, ranked against it (SRCH-1, SRCH-17).
+    m_manualSearch = std::make_unique<ManualSearchService>(*m_search);
+    m_manualSearch->setResolver([resolver = &m_meta->resolver()](const meta::ResolveQuery &query) {
+        return resolver->resolve(query, meta::Priority::Interactive);
+    });
+    m_manualSearch->setExcludedPhrases([this] { return m_governor->excludedPhrases(); });
+    m_manualSearch->setDownloads(
+        [transfers = m_transfers.get()](const DownloadSpec &spec) { return transfers->enqueue(spec).has_value(); });
+    m_manualSearch->setAnnotate([this](QList<SearchResult> &results) { annotate(results); });
+    connect(m_manualSearch.get(), &ManualSearchService::searchChanged, this, &Engine::manualSearchChanged);
+    connect(m_manualSearch.get(), &ManualSearchService::searchClosed, this, &Engine::manualSearchClosed);
+    connect(m_manualSearch.get(), &ManualSearchService::resultsAdded, this, &Engine::searchResultsAdded);
+    connect(m_manualSearch.get(), &ManualSearchService::resultsReset, this, &Engine::searchResultsReset);
+    connect(m_manualSearch.get(), &ManualSearchService::resultsChanged, this, &Engine::searchResultsChanged);
+    m_annotateTimer = new QTimer(this);
+    m_annotateTimer->setSingleShot(true);
+    m_annotateTimer->setInterval(300ms);
+    connect(m_annotateTimer, &QTimer::timeout, m_manualSearch.get(), &ManualSearchService::refreshAnnotations);
+    connect(m_transfers.get(), &TransferService::changed, m_annotateTimer, qOverload<>(&QTimer::start));
+
     // What the user owns: the collection index, with the Inbox and the history, for "you have it".
     CollectionService::Options collectionOptions;
     collectionOptions.watch = m_options.watchCollection;
     m_collection = std::make_unique<CollectionService>(*m_db, collectionOptions, m_options.wallClock);
     connect(m_collection.get(), &CollectionService::statusChanged, this, &Engine::collectionStatusChanged);
-    connect(m_collection.get(), &CollectionService::indexChanged, m_getTracks.get(),
-            [getTracks = m_getTracks.get()](const std::shared_ptr<const match::MatchIndex> &index) {
-                getTracks->setLibraryIndex(index);
+    connect(m_collection.get(), &CollectionService::indexChanged, this,
+            [this](const std::shared_ptr<const match::MatchIndex> &index) {
+                m_getTracks->setLibraryIndex(index);
+                m_manualSearch->setLibraryIndex(index);
             });
     connect(m_inbox.get(), &InboxService::changed, m_collection.get(),
             [collection = m_collection.get()](const QList<InboxEntry> &entries) {
@@ -196,7 +221,11 @@ bool Engine::start()
     connect(m_transfers.get(), &TransferService::previewChanged, this, &Engine::previewChanged);
     m_youtube = std::make_unique<YouTubePreviews>(
         m_meta->ytDlp(), m_options.previewDir.isEmpty() ? QString() : m_options.previewDir + u"/YouTube"_s);
-    connect(m_youtube.get(), &YouTubePreviews::started, this, &Engine::previewStarted);
+    connect(m_youtube.get(), &YouTubePreviews::started, this,
+            [this](qint64 lineId, qint64 previewId, const std::shared_ptr<audio::ByteSource> &source,
+                   const QString &identity, const QString &title, const QString &artist, const QString &label) {
+                Q_EMIT previewStarted(previewKeyForLine(lineId), previewId, source, identity, title, artist, label);
+            });
     connect(m_youtube.get(), &YouTubePreviews::changed, this, &Engine::previewChanged);
 
     pruneActivity();
@@ -232,10 +261,14 @@ void Engine::stop()
     m_pruneTimer = nullptr;
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
+    delete m_annotateTimer;
+    m_annotateTimer = nullptr;
+    m_manualSearch.reset(); // before the search and transfer services it uses
     m_getTracks.reset();
     m_collection.reset(); // cancels a scan in flight; what it read is read again next time
     m_arrival.reset();    // cancels conversions in flight (they run again at the next launch) and records finished ones
     m_search.reset();
+    m_searchCache.reset();
     m_searchNetwork.reset();
     if (m_transfers) {
         m_transfers->shutdown(); // unfinished downloads stay saved; the manager closes their files as it goes
@@ -299,7 +332,7 @@ void Engine::previewLine(qint64 lineId)
             release.durationMs = line->durationHintMs;
         }
         if (release.title.isEmpty()) {
-            Q_EMIT previewRefused(lineId, tr("There's nothing to look for in this line."));
+            Q_EMIT previewRefused(previewKeyForLine(lineId), tr("There's nothing to look for in this line."));
             return;
         }
         m_previewId = m_youtube->start(lineId, release);
@@ -317,7 +350,7 @@ void Engine::previewLine(qint64 lineId)
     QString why;
     const std::optional<TransferService::PreviewStart> started = m_transfers->startPreview(spec, &why);
     if (!started) {
-        Q_EMIT previewRefused(lineId, why);
+        Q_EMIT previewRefused(previewKeyForLine(lineId), why);
         return;
     }
     m_previewId = started->id;
@@ -331,8 +364,78 @@ void Engine::previewLine(qint64 lineId)
     } else if (file.bitrate) {
         quality += u' ' + QString::number(*file.bitrate);
     }
-    Q_EMIT previewStarted(lineId, started->id, started->source, identity, title, artist,
+    Q_EMIT previewStarted(previewKeyForLine(lineId), started->id, started->source, identity, title, artist,
                           tr("%1 from %2").arg(quality, file.peer));
+}
+
+void Engine::previewResult(qint64 searchId, int index)
+{
+    if (!m_started) {
+        return;
+    }
+    const QString key = previewKeyForResult(searchId, index);
+    const std::optional<SearchResult> result = m_manualSearch->result(searchId, index);
+    if (!result || !result->isAudio()) {
+        Q_EMIT previewRefused(key, tr("Only audio files can be previewed."));
+        return;
+    }
+    m_youtube->stop();
+    const std::optional<ManualSearch> search = m_manualSearch->search(searchId);
+    const meta::Release *release = search ? search->chosenRelease() : nullptr;
+    DownloadSpec spec;
+    spec.peer = result->hit.peer;
+    spec.remotePath = result->hit.path;
+    spec.size = static_cast<qint64>(result->hit.size);
+    spec.file = fileChoiceOf(*result);
+    if (release && result->fitsRelease()) {
+        spec.release = *release;
+    }
+    QString why;
+    const std::optional<TransferService::PreviewStart> started = m_transfers->startPreview(spec, &why);
+    if (!started) {
+        Q_EMIT previewRefused(key, why);
+        return;
+    }
+    m_previewId = started->id;
+    const QString identity =
+        u"peer|%1|%2|%3"_s.arg(spec.peer, QString::fromLatin1(spec.remotePath.toBase64())).arg(spec.size);
+    QString title = result->parsed.title.value.isEmpty() ? result->name : result->parsed.title.value;
+    QString artist = result->parsed.artist.value;
+    if (spec.release) {
+        title = spec.release->title;
+        artist = spec.release->artist();
+    }
+    QString quality = result->hit.extension.toUpper();
+    const match::AudioQuality &declared = result->quality.quality;
+    if (declared.bitDepth > 0 && declared.sampleRateHz > 0) {
+        quality += u" %1/%2"_s.arg(declared.bitDepth).arg(declared.sampleRateHz / 1000.0, 0, 'g', 3);
+    } else if (declared.bitrateKbps > 0) {
+        quality += u' ' + QString::number(declared.bitrateKbps);
+    }
+    Q_EMIT previewStarted(key, started->id, started->source, identity, title, artist,
+                          tr("%1 from %2").arg(quality, spec.peer));
+}
+
+void Engine::openSearch(quint64 request, const QString &text)
+{
+    const qint64 id = m_started ? m_manualSearch->open(text) : 0;
+    Q_EMIT searchOpened(request, id);
+}
+
+void Engine::annotate(QList<SearchResult> &results)
+{
+    if (!m_started) {
+        return;
+    }
+    QSet<std::pair<QString, QByteArray>> queued;
+    const QList<Download> unfinished = m_transfers->unfinished();
+    for (const Download &download : unfinished) {
+        queued.insert({download.peer, download.remotePath});
+    }
+    ResultAnnotator annotator(*m_db, *m_governor, std::move(queued), m_options.session);
+    for (SearchResult &result : results) {
+        annotator.annotate(result);
+    }
 }
 
 void Engine::stopPreview()

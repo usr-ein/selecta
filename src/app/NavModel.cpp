@@ -70,6 +70,10 @@ QVariant NavModel::data(const QModelIndex &index, int role) const
         return entry.isHeader;
     case CountRole:
         return entry.isHeader ? 0 : m_counts.value(entry.id, 0);
+    case ClosableRole:
+        return entry.closable;
+    case BusyRole:
+        return m_busy.contains(entry.id);
     default:
         return {};
     }
@@ -140,6 +144,71 @@ void NavModel::setCount(const QString &id, int count)
     }
     const QModelIndex changed = index(row);
     Q_EMIT dataChanged(changed, changed, {CountRole});
+}
+
+QString NavModel::searchItemId(qint64 searchId)
+{
+    return u"search:%1"_s.arg(searchId);
+}
+
+qint64 NavModel::searchOfItem(const QString &id)
+{
+    if (!id.startsWith(u"search:"_s)) {
+        return 0;
+    }
+    bool ok = false;
+    const qint64 searchId = id.mid(7).toLongLong(&ok);
+    return ok && searchId > 0 ? searchId : 0;
+}
+
+void NavModel::setSearch(qint64 searchId, const QString &title, int count, bool busy)
+{
+    const QString id = searchItemId(searchId);
+    int row = rowOf(id);
+    if (row < 0) {
+        // Newest first, right under the "Digging" header.
+        const int wishlist = rowOf(u"wishlist"_s);
+        int at = wishlist >= 0 ? wishlist : static_cast<int>(m_items.size());
+        while (at > 0 && !m_items.at(at - 1).isHeader && m_items.at(at - 1).closable) {
+            --at;
+        }
+        beginInsertRows({}, at, at);
+        m_items.insert(at, Item{.id = id,
+                                .title = title,
+                                .icon = icons::symbol(u"magnifyingglass"_s, u"edit-find"_s),
+                                .isHeader = false,
+                                .closable = true});
+        endInsertRows();
+        row = at;
+    }
+    Item &entry = m_items[row];
+    entry.title = title;
+    if (count > 0) {
+        m_counts.insert(id, count);
+    } else {
+        m_counts.remove(id);
+    }
+    if (busy) {
+        m_busy.insert(id);
+    } else {
+        m_busy.remove(id);
+    }
+    const QModelIndex changed = index(row);
+    Q_EMIT dataChanged(changed, changed);
+}
+
+void NavModel::removeSearch(qint64 searchId)
+{
+    const QString id = searchItemId(searchId);
+    const int row = rowOf(id);
+    if (row < 0) {
+        return;
+    }
+    beginRemoveRows({}, row, row);
+    m_items.removeAt(row);
+    m_counts.remove(id);
+    m_busy.remove(id);
+    endRemoveRows();
 }
 
 } // namespace selecta::app

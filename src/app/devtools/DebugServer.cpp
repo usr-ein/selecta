@@ -16,6 +16,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocalSocket>
@@ -404,6 +405,13 @@ QJsonValue DebugServer::type(const QJsonObject &args, QString *error)
     const QString text = args.value("text"_L1).toString();
     if (auto *line = m_window.findChild<QLineEdit *>(name)) {
         line->setText(text);
+        if (args.value("submit"_L1).toBool()) {
+            // As if Return was pressed in it (the sidebar's search field searches on Return).
+            QKeyEvent press(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+            QKeyEvent release(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
+            QCoreApplication::sendEvent(line, &press);
+            QCoreApplication::sendEvent(line, &release);
+        }
         return true;
     }
     if (auto *plain = m_window.findChild<QPlainTextEdit *>(name)) {

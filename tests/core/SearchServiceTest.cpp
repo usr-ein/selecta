@@ -2,8 +2,11 @@
 #include "core/SearchService.h"
 
 #include "base/Clock.h"
+#include "core/SearchCache.h"
 #include "governor/Governor.h"
 #include "governor/Limits.h"
+#include "storage/Database.h"
+#include "storage/Migrations.h"
 
 #include <QTest>
 
@@ -184,4 +187,79 @@ TEST_F(SearchServiceTest, QueriesTheGovernorRefusesSayWhy)
     ASSERT_TRUE(settle([&excluded] { return excluded->has_value(); }));
     EXPECT_FALSE((*excluded)->error.isEmpty());
     EXPECT_TRUE(network.sent.isEmpty());
+}
+
+TEST_F(SearchServiceTest, ResultsArriveAsPeersAnswer)
+{
+    QList<int> batches;
+    QList<int> peers;
+    std::optional<SearchOutcome> done;
+    search.enqueue(
+        SearchService::Request{.query = u"okuma drift neon rain"_s, .source = SearchSource::Manual, .refresh = false},
+        [&done](const SearchOutcome &outcome) { done = outcome; }, {},
+        [&](const QList<selecta::core::SearchHit> &added, int answered) {
+            EXPECT_FALSE(done.has_value()); // every batch comes before the end
+            batches.append(static_cast<int>(added.size()));
+            peers.append(answered);
+        });
+    ASSERT_TRUE(settle([this] { return network.sent.size() == 1; }));
+    search.received(100, u"vinyl_ghost"_s, response(100, u"@@a\\Okuma Drift - Neon Rain.mp3"_s));
+    search.received(100, u"bassbin"_s, response(100, u"@@b\\Okuma Drift - Neon Rain.flac"_s));
+    ASSERT_TRUE(settle([&done] { return done.has_value(); }));
+    EXPECT_EQ(batches, (QList<int>{1, 1}));
+    EXPECT_EQ(peers, (QList<int>{1, 2}));
+    EXPECT_EQ(done->hits.size(), 2);
+}
+
+TEST_F(SearchServiceTest, RefreshAsksTheNetworkDespiteTheCache)
+{
+    auto first = queue(u"okuma drift neon rain"_s);
+    ASSERT_TRUE(settle([this] { return network.sent.size() == 1; }));
+    search.received(100, u"vinyl_ghost"_s, response(100, u"@@a\\Okuma Drift - Neon Rain.mp3"_s));
+    ASSERT_TRUE(settle([&first] { return first->has_value(); }));
+
+    clock.advance(limits::kSameQueryQuiet + 1s); // the governor keeps a repeat quiet for a while
+    std::optional<SearchOutcome> again;
+    search.enqueue(
+        SearchService::Request{.query = u"okuma drift neon rain"_s, .source = SearchSource::Manual, .refresh = true},
+        [&again](const SearchOutcome &outcome) { again = outcome; });
+    ASSERT_TRUE(settle([this] { return network.sent.size() == 2; }));
+    search.received(101, u"bassbin"_s, response(101, u"@@b\\Okuma Drift - Neon Rain.flac"_s));
+    ASSERT_TRUE(settle([&again] { return again.has_value(); }));
+    EXPECT_FALSE(again->fromCache);
+    ASSERT_EQ(again->hits.size(), 1);
+    EXPECT_EQ(again->hits.constFirst().peer, u"bassbin"_s);
+}
+
+TEST_F(SearchServiceTest, KeptSearchesOutliveTheService)
+{
+    selecta::storage::Database db;
+    ASSERT_TRUE(db.open(u":memory:"_s));
+    ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
+    qint64 now = 1'800'000'000'000;
+    selecta::core::SearchCacheStore store(db, [&now] { return now; });
+    search.setStore(&store);
+    auto first = queue(u"okuma drift neon rain"_s);
+    ASSERT_TRUE(settle([this] { return network.sent.size() == 1; }));
+    search.received(100, u"vinyl_ghost"_s, response(100, u"@@a\\Okuma Drift - Neon Rain.mp3"_s));
+    ASSERT_TRUE(settle([&first] { return first->has_value(); }));
+    EXPECT_EQ(store.count(), 1);
+
+    // A new service (the next launch), hours later: the answer comes from the database, labelled with its age.
+    now += qint64{3} * 60 * 60 * 1000;
+    const selecta::base::ManualClock laterClock;
+    selecta::governor::Governor laterGovernor{laterClock};
+    FakeNetwork laterNetwork;
+    SearchService later(laterGovernor, laterNetwork, laterClock, {.idle = 50ms, .total = 1000ms});
+    later.setStore(&store);
+    std::optional<SearchOutcome> cached;
+    later.enqueue(u"okuma drift neon rain"_s, SearchSource::Manual,
+                  [&cached](const SearchOutcome &outcome) { cached = outcome; });
+    ASSERT_TRUE(settle([&cached] { return cached.has_value(); }));
+    EXPECT_TRUE(cached->fromCache);
+    EXPECT_EQ(cached->searchedAtMs, 1'800'000'000'000);
+    EXPECT_EQ(cached->hits.size(), 1);
+    EXPECT_TRUE(laterNetwork.sent.isEmpty());
+    later.setStore(nullptr);
+    search.setStore(nullptr);
 }

@@ -63,3 +63,32 @@ TEST(NavModel, CountsSignalOnlyOnChange)
     EXPECT_EQ(changed.count(), 2);
     EXPECT_EQ(model.index(model.rowOf(u"inbox"_s)).data(NavModel::CountRole).toInt(), 0);
 }
+
+TEST(NavModel, SearchesSitUnderDiggingNewestFirst)
+{
+    NavModel model;
+    const QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Fatal);
+    const int wishlist = model.rowOf(u"wishlist"_s);
+    model.setSearch(1, u"okuma drift"_s, 0, true);
+    model.setSearch(2, u"halden rue"_s, 0, true);
+    EXPECT_EQ(model.rowOf(u"search:2"_s), wishlist);
+    EXPECT_EQ(model.rowOf(u"search:1"_s), wishlist + 1);
+    EXPECT_EQ(model.rowOf(u"wishlist"_s), wishlist + 2);
+    const QModelIndex first = model.index(model.rowOf(u"search:1"_s));
+    EXPECT_TRUE(first.data(NavModel::ClosableRole).toBool());
+    EXPECT_TRUE(first.data(NavModel::BusyRole).toBool());
+
+    model.setSearch(1, u"okuma drift"_s, 12, false);
+    const QModelIndex updated = model.index(model.rowOf(u"search:1"_s));
+    EXPECT_EQ(updated.data(NavModel::CountRole).toInt(), 12);
+    EXPECT_FALSE(updated.data(NavModel::BusyRole).toBool());
+    EXPECT_FALSE(model.index(model.rowOf(u"get"_s)).data(NavModel::ClosableRole).toBool());
+
+    model.removeSearch(2);
+    EXPECT_EQ(model.rowOf(u"search:2"_s), -1);
+    EXPECT_EQ(model.rowOf(u"search:1"_s), wishlist);
+    model.removeSearch(99); // unknown: nothing happens
+    EXPECT_EQ(NavModel::searchOfItem(u"search:7"_s), 7);
+    EXPECT_EQ(NavModel::searchOfItem(u"search:x"_s), 0);
+    EXPECT_EQ(NavModel::searchOfItem(u"inbox"_s), 0);
+}

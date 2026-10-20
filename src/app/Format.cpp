@@ -4,6 +4,7 @@
 #include "core/GetTracks.h"
 #include "meta/Release.h"
 
+#include <QCoreApplication>
 #include <QStringList>
 
 #include <algorithm>
@@ -79,6 +80,46 @@ QString lengthDelta(qint64 deltaSeconds)
         return u"±0 s"_s;
     }
     return deltaSeconds > 0 ? u"+%1 s"_s.arg(deltaSeconds) : u"−%1 s"_s.arg(-deltaSeconds);
+}
+
+QString size(qint64 bytes)
+{
+    constexpr double kKilo = 1000.0;
+    const auto value = static_cast<double>(std::max<qint64>(bytes, 0));
+    if (value < kKilo) {
+        return u"%1 B"_s.arg(bytes);
+    }
+    if (value < kKilo * kKilo) {
+        return u"%1 KB"_s.arg(std::round(value / kKilo), 0, 'f', 0);
+    }
+    if (value < kKilo * kKilo * kKilo) {
+        return u"%1 MB"_s.arg(value / (kKilo * kKilo), 0, 'f', 1);
+    }
+    return u"%1 GB"_s.arg(value / (kKilo * kKilo * kKilo), 0, 'f', 2);
+}
+
+QString speed(qint64 bytesPerSecond)
+{
+    if (bytesPerSecond <= 0) {
+        return {};
+    }
+    return size(bytesPerSecond) + u"/s"_s;
+}
+
+QString ago(qint64 thenMs, qint64 nowMs)
+{
+    const qint64 minutes = std::max<qint64>(0, nowMs - thenMs) / 60'000;
+    if (minutes < 1) {
+        return QCoreApplication::translate("selecta::app::format", "just now");
+    }
+    if (minutes < 60) {
+        return QCoreApplication::translate("selecta::app::format", "%1 min ago").arg(minutes);
+    }
+    const qint64 hours = minutes / 60;
+    if (hours < 48) {
+        return QCoreApplication::translate("selecta::app::format", "%1 h ago").arg(hours);
+    }
+    return QCoreApplication::translate("selecta::app::format", "%1 days ago").arg(hours / 24);
 }
 
 } // namespace selecta::app::format

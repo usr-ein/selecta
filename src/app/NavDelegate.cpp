@@ -5,6 +5,7 @@
 #include "app/NavModel.h"
 
 #include <QApplication>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 
@@ -113,8 +114,31 @@ void NavDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, c
     }
 
     int right = rect.right() - kSideInset - 8;
+    const bool hovered = option.state.testFlag(QStyle::State_MouseOver);
+    if (index.data(NavModel::ClosableRole).toBool() && (hovered || selected)) {
+        // A close button instead of the count, as Safari's sidebar tabs do.
+        const QRect close = closeRect(rect);
+        QColor mark = textColor;
+        mark.setAlphaF(0.7F);
+        QPen pen(mark, 1.4);
+        pen.setCapStyle(Qt::RoundCap);
+        painter->setPen(pen);
+        const QRectF cross = QRectF(close).adjusted(4.5, 4.5, -4.5, -4.5);
+        painter->drawLine(cross.topLeft(), cross.bottomRight());
+        painter->drawLine(cross.topRight(), cross.bottomLeft());
+        right = close.left() - 6;
+    } else if (index.data(NavModel::BusyRole).toBool()) {
+        QColor busy = textColor;
+        busy.setAlphaF(0.55F);
+        painter->setPen(busy);
+        const QString dots = u"…"_s;
+        const int width = option.fontMetrics.horizontalAdvance(dots);
+        painter->drawText(QRect(right - width, rect.top(), width, rect.height()), Qt::AlignRight | Qt::AlignVCenter,
+                          dots);
+        right -= width + 8;
+    }
     const int count = index.data(NavModel::CountRole).toInt();
-    if (count > 0) {
+    if (count > 0 && !(index.data(NavModel::ClosableRole).toBool() && (hovered || selected))) {
         QFont countFont = option.font;
         countFont.setPointSizeF(option.font.pointSizeF() - 1.0);
         painter->setFont(countFont);
@@ -136,6 +160,27 @@ void NavDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, c
         option.fontMetrics.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, textRect.width());
     painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, label);
     painter->restore();
+}
+
+QRect NavDelegate::closeRect(QRect itemRect)
+{
+    constexpr int kCloseSize = 16;
+    return {itemRect.right() - kSideInset - 6 - kCloseSize, itemRect.top() + ((itemRect.height() - kCloseSize) / 2),
+            kCloseSize, kCloseSize};
+}
+
+bool NavDelegate::editorEvent(QEvent *event, QAbstractItemModel *model, const QStyleOptionViewItem &option,
+                              const QModelIndex &index)
+{
+    if (event->type() == QEvent::MouseButtonRelease && index.data(NavModel::ClosableRole).toBool()) {
+        const auto *mouse = dynamic_cast<const QMouseEvent *>(event);
+        if (mouse && mouse->button() == Qt::LeftButton &&
+            closeRect(option.rect).contains(mouse->position().toPoint())) {
+            Q_EMIT closeRequested(index.data(NavModel::IdRole).toString());
+            return true;
+        }
+    }
+    return QStyledItemDelegate::editorEvent(event, model, option, index);
 }
 
 } // namespace selecta::app

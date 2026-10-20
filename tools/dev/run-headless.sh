@@ -14,6 +14,11 @@ data="${1:-$(mktemp -d "${TMPDIR:-/tmp}/selecta-run.XXXXXX")}"
 app="$build/src/app/Selecta.app/Contents/MacOS/Selecta"
 
 [[ -x "$app" ]] || { echo "not built: $app (run: cmake --build --preset dev)" >&2; exit 1; }
+# Another instance on the socket would answer the pings below in place of the new one.
+if SELECTA_BUILD="$build" SELECTA_DEBUG_SOCKET="$socket" "$root/tools/dev/app.sh" ping >/dev/null 2>&1; then
+    echo "a Selecta already answers on socket $socket: quit it first (tools/dev/app.sh quit)" >&2
+    exit 1
+fi
 mkdir -p "$data"
 "$app" --headless --debug-server --debug-socket "$socket" --data-dir "$data" >"$data/stdout.log" 2>&1 &
 pid=$!

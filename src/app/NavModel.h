@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QIcon>
 #include <QList>
+#include <QSet>
 #include <QString>
 
 namespace selecta::app {
@@ -19,6 +20,8 @@ public:
         IdRole = Qt::UserRole + 1, // QString; empty for headers
         IsHeaderRole,              // bool
         CountRole,                 // int; 0 hides the count
+        ClosableRole,              // bool: the item can be closed (a search)
+        BusyRole,                  // bool: work in progress (a search collecting results)
     };
 
     struct Item
@@ -27,6 +30,7 @@ public:
         QString title; // empty for a spacer header
         QIcon icon;
         bool isHeader = false;
+        bool closable = false;
     };
 
     explicit NavModel(QObject *parent = nullptr);
@@ -45,11 +49,19 @@ public:
     // Sets the count shown next to an item (0 hides it). Unknown ids are ignored.
     void setCount(const QString &id, int count);
 
+    // Searches typed by hand, under "Digging" before the Wishlist (PRD SRCH-1): added or updated, and removed.
+    void setSearch(qint64 searchId, const QString &title, int count, bool busy);
+    void removeSearch(qint64 searchId);
+    static QString searchItemId(qint64 searchId);
+    // The search behind an item id, or 0.
+    static qint64 searchOfItem(const QString &id);
+
 private:
     static QList<Item> defaultItems();
 
     QList<Item> m_items;
     QHash<QString, int> m_counts;
+    QSet<QString> m_busy;
 };
 
 } // namespace selecta::app

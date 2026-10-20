@@ -2,8 +2,10 @@
 #pragma once
 
 #include "app/Appearance.h"
+#include "core/FileRanking.h"
 #include "core/InboxService.h"
 #include "core/NetworkService.h"
+#include "core/SearchFilter.h"
 
 #include <QByteArray>
 #include <QSettings>
@@ -49,6 +51,19 @@ public:
     // Settings → Soulseek. The password isn't here: it lives in the Keychain.
     core::NetworkConfig networkConfig() const;
     void setNetworkConfig(const core::NetworkConfig &config);
+
+    // The Search view: the quality preset and the filters (PRD SRCH-8), the folder grouping (SRCH-10), and whether the
+    // filters are shown. `customised`: the filters were changed from the preset's.
+    struct SearchViewState
+    {
+        core::QualityWanted preset = core::QualityWanted::Mp3_320OrLossless;
+        core::SearchFilter filter = core::presetFilter(core::QualityWanted::Mp3_320OrLossless);
+        bool customised = false;
+        bool grouped = false;
+        bool filtersShown = false;
+    };
+    SearchViewState searchViewState() const;
+    void setSearchViewState(const SearchViewState &state);
 
     // Writes pending changes to disk. Returns false if the file can't be written.
     bool sync();

@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/Sidebar.h"
 
+#include "app/Icons.h"
 #include "app/NavDelegate.h"
 #include "app/NavModel.h"
 #include "app/SourceListView.h"
 
+#include <QAction>
 #include <QHBoxLayout>
 #include <QItemSelectionModel>
 #include <QLabel>
+#include <QLineEdit>
+#include <QMenu>
 #include <QPainter>
 #include <QVBoxLayout>
 
@@ -50,6 +54,7 @@ void StatusDot::paintEvent(QPaintEvent * /*event*/)
 Sidebar::Sidebar(NavModel *model, QWidget *parent)
     : QWidget(parent)
     , m_model(model)
+    , m_search(new QLineEdit(this))
     , m_list(new SourceListView(this))
     , m_statusDot(new StatusDot(this))
     , m_statusText(new QLabel(this))
@@ -59,10 +64,39 @@ Sidebar::Sidebar(NavModel *model, QWidget *parent)
     setBackgroundRole(QPalette::Window);
     setMinimumWidth(180);
 
+    // Searches typed by hand start here (SRCH-1); each stays open in the list below.
+    m_search->setObjectName(u"sidebar.search"_s);
+    m_search->setPlaceholderText(tr("Search Soulseek"));
+    m_search->setClearButtonEnabled(true);
+    m_search->setAttribute(Qt::WA_MacShowFocusRect, true);
+    m_search->addAction(icons::symbol(u"magnifyingglass"_s, u"edit-find"_s), QLineEdit::LeadingPosition);
+    m_search->setToolTip(tr("Search the Soulseek network (⌘F). Use -word to leave a word out."));
+    connect(m_search, &QLineEdit::returnPressed, this, [this] {
+        const QString text = m_search->text().simplified();
+        if (!text.isEmpty()) {
+            Q_EMIT searchRequested(text);
+            m_search->clear();
+        }
+    });
+
     m_list->setObjectName(u"sidebar.list"_s);
     m_list->setModel(m_model);
-    m_list->setItemDelegate(new NavDelegate(m_list));
+    auto *delegate = new NavDelegate(m_list);
+    m_list->setItemDelegate(delegate);
     m_list->setAccessibleName(tr("Sidebar"));
+    m_list->setMouseTracking(true); // hover shows the close buttons
+    connect(delegate, &NavDelegate::closeRequested, this, &Sidebar::closeRequested);
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_list, &QWidget::customContextMenuRequested, this, [this](QPoint position) {
+        const QModelIndex index = m_list->indexAt(position);
+        if (!index.data(NavModel::ClosableRole).toBool()) {
+            return;
+        }
+        const QString id = index.data(NavModel::IdRole).toString();
+        QMenu menu(this);
+        menu.addAction(tr("Close Search"), this, [this, id] { Q_EMIT closeRequested(id); });
+        menu.exec(m_list->viewport()->mapToGlobal(position));
+    });
 
     m_statusDot->setObjectName(u"sidebar.statusDot"_s);
     m_statusText->setObjectName(u"sidebar.status"_s);
@@ -74,9 +108,14 @@ Sidebar::Sidebar(NavModel *model, QWidget *parent)
     status->addWidget(m_statusDot);
     status->addWidget(m_statusText, 1);
 
+    auto *searchRow = new QHBoxLayout;
+    searchRow->setContentsMargins(10, 0, 10, 6);
+    searchRow->addWidget(m_search);
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 8, 0, 0);
     layout->setSpacing(0);
+    layout->addLayout(searchRow);
     layout->addWidget(m_list, 1);
     layout->addLayout(status);
 
@@ -109,6 +148,12 @@ QString Sidebar::currentId() const
 {
     const QModelIndex current = m_list->currentIndex();
     return current.isValid() ? m_model->idAt(current.row()) : QString();
+}
+
+void Sidebar::focusSearch()
+{
+    m_search->setFocus(Qt::ShortcutFocusReason);
+    m_search->selectAll();
 }
 
 void Sidebar::setConnectionStatus(const QString &text, bool online)
