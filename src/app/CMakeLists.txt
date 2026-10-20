@@ -2,6 +2,7 @@
 qt_add_library(selecta_app STATIC
     AppSettings.h AppSettings.cpp
     Appearance.h Appearance.cpp
+    Format.h Format.cpp
     Icons.h Icons.cpp
     Inspector.h Inspector.cpp
     MainWindow.h MainWindow.cpp
@@ -10,9 +11,14 @@ qt_add_library(selecta_app STATIC
     PlayerBar.h PlayerBar.cpp
     Sidebar.h Sidebar.cpp
     SourceListView.h SourceListView.cpp
+    TwoLineDelegate.h TwoLineDelegate.cpp
     models/ActivityModel.h models/ActivityModel.cpp
+    models/GetTracksModel.h models/GetTracksModel.cpp
     views/ActivityView.h views/ActivityView.cpp
+    views/AddTracksDialog.h views/AddTracksDialog.cpp
     views/EmptyStateView.h views/EmptyStateView.cpp
+    views/GetTracksInspector.h views/GetTracksInspector.cpp
+    views/GetTracksView.h views/GetTracksView.cpp
     views/HistoryView.h views/HistoryView.cpp
     views/InboxView.h views/InboxView.cpp
     views/SettingsView.h views/SettingsView.cpp)

@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "core/GetTracksService.h"
+
+#include "core/ReleaseJson.h"
+#include "storage/Database.h"
+#include "storage/Migrations.h"
+
+#include <QPromise>
+#include <QSignalSpy>
+#include <QTest>
+
+#include <gtest/gtest.h>
+#include <memory>
+#include <vector>
+
+using namespace Qt::StringLiterals;
+using selecta::core::GetLine;
+using selecta::core::GetTracksService;
+using ReleaseState = GetLine::ReleaseState;
+using ResolutionResult = selecta::meta::Result<selecta::meta::Resolution>;
+
+namespace {
+
+selecta::meta::Release release(const QString &artist, const QString &title, qint64 durationMs)
+{
+    selecta::meta::Release r;
+    r.artists = {artist};
+    r.title = title;
+    r.album = u"Nightfall"_s;
+    r.durationMs = durationMs;
+    r.isrc = u"GBXXX2400001"_s;
+    return r;
+}
+
+// A resolver whose answers the test hands out by hand.
+struct FakeResolver
+{
+    std::vector<std::unique_ptr<QPromise<ResolutionResult>>> pending;
+    QList<selecta::meta::ResolveQuery> queries;
+
+    GetTracksService::ResolveFunction function()
+    {
+        return [this](const selecta::meta::ResolveQuery &query) {
+            queries.append(query);
+            auto promise = std::make_unique<QPromise<ResolutionResult>>();
+            promise->start();
+            QFuture<ResolutionResult> future = promise->future();
+            pending.push_back(std::move(promise));
+            return future;
+        };
+    }
+
+    void answer(std::size_t index, ResolutionResult result)
+    {
+        pending.at(index)->addResult(std::move(result));
+        pending.at(index)->finish();
+    }
+};
+
+selecta::meta::Resolution resolution(const selecta::meta::Release &best, selecta::meta::Confidence confidence)
+{
+    selecta::meta::Resolution r;
+    r.candidates.append(selecta::meta::Candidate{.release = best,
+                                                 .score = 0.95,
+                                                 .confidence = confidence,
+                                                 .version = selecta::meta::VersionRelation::Same,
+                                                 .reasons = {}});
+    r.confidence = confidence;
+    return r;
+}
+
+class GetTracksServiceTest : public ::testing::Test
+{
+protected:
+    void SetUp() override
+    {
+        ASSERT_TRUE(db.open(u":memory:"_s));
+        ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
+        service = std::make_unique<GetTracksService>(db, [] { return qint64{1'800'000'000'000}; });
+    }
+
+    // Lets queued continuations run.
+    static void settle() { QTest::qWait(5); }
+
+    selecta::storage::Database db;
+    std::unique_ptr<GetTracksService> service;
+    FakeResolver resolver;
+};
+
+} // namespace
+
+TEST_F(GetTracksServiceTest, AddParsesDeduplicatesAndSkipsUnidentified)
+{
+    const auto result = service->add(u"1. Okuma Drift - Neon Rain\n"
+                                     u"OKUMA DRIFT - neon rain\n"
+                                     u"ID - ID\n"
+                                     u"\n"
+                                     u"Halden & Rue - Tidewater (Original Mix) 6:12\n"_s);
+    EXPECT_EQ(result.added, 2);
+    EXPECT_EQ(result.unidentified, 1);
+    const auto lines = service->lines();
+    ASSERT_EQ(lines.size(), 2);
+    EXPECT_EQ(lines[0].artist, u"Okuma Drift"_s);
+    EXPECT_EQ(lines[0].title, u"Neon Rain"_s);
+    EXPECT_EQ(lines[1].title, u"Tidewater (Original Mix)"_s);
+    EXPECT_EQ(lines[1].durationHintMs, 372'000);
+    EXPECT_EQ(lines[0].releaseState, ReleaseState::Pending);
+
+    const auto again = service->add(u"Okuma Drift - Neon Rain\nHalden & Rue - Tidewater (Original Mix)"_s);
+    EXPECT_EQ(again.added, 0);
+    EXPECT_EQ(again.duplicates, 2);
+}
+
+TEST_F(GetTracksServiceTest, TheListSurvivesARestart)
+{
+    service->add(u"A - One\nB - Two\nC - Three"_s);
+    service.reset();
+    GetTracksService restarted(db);
+    const auto lines = restarted.lines();
+    ASSERT_EQ(lines.size(), 3);
+    EXPECT_EQ(lines[2].artist, u"C"_s);
+    EXPECT_LT(lines[0].position, lines[1].position);
+}
+
+TEST_F(GetTracksServiceTest, AResolutionGivesTheLineItsRelease)
+{
+    service->add(u"Okuma Drift - Neon Rain"_s);
+    service->setResolver(resolver.function());
+    ASSERT_EQ(resolver.queries.size(), 1);
+    EXPECT_EQ(resolver.queries[0].artist, u"Okuma Drift"_s);
+    const QSignalSpy changed(service.get(), &GetTracksService::lineChanged);
+
+    resolver.answer(
+        0, resolution(release(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000), selecta::meta::Confidence::Confident));
+    settle();
+    ASSERT_EQ(changed.size(), 1);
+    const GetLine line = service->lines().constFirst();
+    EXPECT_EQ(line.releaseState, ReleaseState::Resolved);
+    ASSERT_TRUE(line.release.has_value());
+    EXPECT_EQ(line.release->durationMs, 372'000);
+    EXPECT_EQ(line.releaseConfidence, u"confident"_s);
+
+    // Saved: a new service sees the release without resolving again.
+    service.reset();
+    GetTracksService restarted(db);
+    ASSERT_TRUE(restarted.lines().constFirst().release.has_value());
+    EXPECT_EQ(restarted.lines().constFirst().release->title, u"Neon Rain"_s);
+}
+
+TEST_F(GetTracksServiceTest, AmbiguousNothingAndFailures)
+{
+    service->add(u"A - One\nB - Two\nC - Three"_s);
+    service->setResolver(resolver.function());
+    ASSERT_EQ(resolver.pending.size(), 3U);
+    resolver.answer(0, resolution(release(u"A"_s, u"One"_s, 1000), selecta::meta::Confidence::Ambiguous));
+    resolver.answer(1, selecta::meta::Resolution{});
+    resolver.answer(2, selecta::meta::makeError(selecta::meta::Service::Deezer, selecta::meta::ErrorCode::Network,
+                                                u"no connection"_s));
+    settle();
+    const auto lines = service->lines();
+    EXPECT_EQ(lines[0].releaseState, ReleaseState::Ambiguous);
+    EXPECT_TRUE(lines[0].release.has_value());
+    EXPECT_EQ(lines[1].releaseState, ReleaseState::None);
+    EXPECT_FALSE(lines[1].release.has_value());
+    EXPECT_EQ(lines[2].releaseState, ReleaseState::Failed);
+    EXPECT_EQ(lines[2].message, u"no connection"_s);
+
+    service->retry({lines[2].id});
+    EXPECT_EQ(resolver.pending.size(), 4U);
+    EXPECT_EQ(service->lines().at(2).releaseState, ReleaseState::Pending);
+}
+
+TEST_F(GetTracksServiceTest, AtMostThreeResolveAtOnce)
+{
+    service->add(u"A - 1a\nB - 2b\nC - 3c\nD - 4d\nE - 5e"_s);
+    service->setResolver(resolver.function());
+    EXPECT_EQ(resolver.pending.size(), 3U);
+    EXPECT_EQ(service->resolvingCount(), 3);
+    resolver.answer(0, selecta::meta::Resolution{});
+    settle();
+    EXPECT_EQ(resolver.pending.size(), 4U);
+    EXPECT_EQ(service->resolvingCount(), 3);
+}
+
+TEST_F(GetTracksServiceTest, RemovingALineCancelsItsResolution)
+{
+    service->add(u"A - One\nB - Two"_s);
+    service->setResolver(resolver.function());
+    ASSERT_EQ(resolver.pending.size(), 2U);
+    const qint64 first = service->lines().constFirst().id;
+    service->remove({first});
+    EXPECT_TRUE(resolver.pending.at(0)->isCanceled());
+    EXPECT_EQ(service->lines().size(), 1);
+    EXPECT_EQ(service->resolvingCount(), 1);
+}
+
+TEST_F(GetTracksServiceTest, PlaylistTracksArriveResolved)
+{
+    service->setResolver(resolver.function());
+    const auto result = service->addReleases(
+        {release(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000), release(u"Halden & Rue"_s, u"Tidewater"_s, 401'000)});
+    EXPECT_EQ(result.added, 2);
+    EXPECT_TRUE(resolver.queries.isEmpty());
+    const auto lines = service->lines();
+    EXPECT_EQ(lines[1].releaseState, ReleaseState::Resolved);
+    EXPECT_EQ(lines[1].durationHintMs, 401'000);
+}
+
+TEST_F(GetTracksServiceTest, OnlyLinesWithAFileCanBeTicked)
+{
+    service->add(u"A - One"_s);
+    const qint64 id = service->lines().constFirst().id;
+    service->setTicked({id}, true);
+    EXPECT_FALSE(service->lines().constFirst().ticked);
+}
+
+TEST_F(GetTracksServiceTest, ChoosingAReleaseReplacesTheResolution)
+{
+    service->add(u"A - One"_s);
+    service->setResolver(resolver.function());
+    const qint64 id = service->lines().constFirst().id;
+    service->chooseRelease(id, release(u"A"_s, u"One (Extended Mix)"_s, 420'000));
+    EXPECT_TRUE(resolver.pending.at(0)->isCanceled());
+    EXPECT_EQ(service->lines().constFirst().release->title, u"One (Extended Mix)"_s);
+    EXPECT_EQ(service->lines().constFirst().releaseConfidence, u"chosen"_s);
+}
+
+TEST_F(GetTracksServiceTest, ClearEmptiesTheList)
+{
+    service->add(u"A - One\nB - Two"_s);
+    const QSignalSpy reset(service.get(), &GetTracksService::linesReset);
+    service->clear();
+    EXPECT_TRUE(service->lines().isEmpty());
+    EXPECT_EQ(reset.size(), 1);
+    EXPECT_EQ(selecta::core::GetTracksStore(db).count(), 0);
+}
+
+TEST(ReleaseJson, EveryFieldRoundTrips)
+{
+    selecta::meta::Release r = release(u"Okuma Drift"_s, u"Neon Rain (Extended Mix)"_s, 372'000);
+    r.source = selecta::meta::Source::Deezer;
+    r.artists = {u"Okuma Drift"_s, u"Ines Varga"_s};
+    r.albumArtists = {u"Okuma Drift"_s};
+    r.albumType = u"album"_s;
+    r.releaseDate = u"2024-03"_s;
+    r.releaseDatePrecision = selecta::meta::DatePrecision::Month;
+    r.trackNumber = 3;
+    r.trackTotal = 12;
+    r.discNumber = 1;
+    r.discTotal = 2;
+    r.upc = u"0123456789012"_s;
+    r.covers = {
+        selecta::meta::CoverRef{.url = QUrl(u"https://example.invalid/640.jpg"_s), .width = 640, .height = 640}};
+    r.spotifyId = u"6rqhFgbbKwnb9MLmUQDhG6"_s;
+    r.spotifyUrl = QUrl(u"https://open.spotify.com/track/6rqhFgbbKwnb9MLmUQDhG6"_s);
+    r.deezerId = u"12345"_s;
+    r.musicBrainzRecordingId = u"0f0e0d0c-0000-0000-0000-000000000000"_s;
+    r.label = u"Night Shift Records"_s;
+    r.catalogNumber = u"NSR042"_s;
+    r.genres = {u"house"_s, u"deep house"_s};
+    r.labelSource = selecta::meta::Source::MusicBrainz;
+    r.genreSource = selecta::meta::Source::MusicBrainz;
+    r.copyrightP = u"℗ 2024 Night Shift Records"_s;
+
+    const auto back = selecta::core::releaseFromText(selecta::core::releaseToText(r));
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(*back, r);
+    EXPECT_FALSE(selecta::core::releaseFromText(QByteArray("not json")).has_value());
+    EXPECT_FALSE(selecta::core::releaseFromText(QByteArray()).has_value());
+}

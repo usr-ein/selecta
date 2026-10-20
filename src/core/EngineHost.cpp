@@ -24,6 +24,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<InboxEntry>();
     qRegisterMetaType<QList<InboxEntry>>();
     qRegisterMetaType<SpotifyStatus>();
+    qRegisterMetaType<GetLine>();
+    qRegisterMetaType<QList<GetLine>>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -63,9 +65,23 @@ void EngineHost::start()
         Q_EMIT inboxChanged(entries);
     });
     connect(engine, &Engine::inboxOperationFinished, this, &EngineHost::inboxOperationFinished);
+    connect(engine, &Engine::tracksAdded, this, &EngineHost::tracksAdded);
     connect(engine, &Engine::spotifyStatusChanged, this, [this](const SpotifyStatus &status) {
         m_spotifyStatus = status;
         Q_EMIT spotifyStatusChanged(status);
+    });
+    connect(engine, &Engine::getLinesReset, this, [this](const QList<GetLine> &lines) {
+        m_getLines = lines;
+        Q_EMIT getLinesReset(lines);
+    });
+    connect(engine, &Engine::getLineChanged, this, [this](const GetLine &line) {
+        for (GetLine &known : m_getLines) {
+            if (known.id == line.id) {
+                known = line;
+                break;
+            }
+        }
+        Q_EMIT getLineChanged(line);
     });
 
     m_thread.start();
@@ -150,6 +166,47 @@ void EngineHost::signOutOfSpotify()
     post([](Engine &engine) {
         if (engine.isStarted()) {
             engine.meta().signOutOfSpotify();
+        }
+    });
+}
+
+void EngineHost::addTracks(const QString &text)
+{
+    post([text](Engine &engine) { engine.addTracks(text); });
+}
+
+void EngineHost::removeTracks(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().remove(ids);
+        }
+    });
+}
+
+void EngineHost::clearTracks()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().clear();
+        }
+    });
+}
+
+void EngineHost::tickTracks(const QList<qint64> &ids, bool ticked)
+{
+    post([ids, ticked](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().setTicked(ids, ticked);
+        }
+    });
+}
+
+void EngineHost::retryTracks(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().retry(ids);
         }
     });
 }

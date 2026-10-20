@@ -94,6 +94,35 @@ constexpr std::array kMigrations{
         ) STRICT;
         CREATE INDEX activity_by_time ON activity(at);
     )sql"},
+    Migration{3, R"sql(
+        -- Get tracks (PRD BATCH-1…9, D27): the list the user pasted, one row per line, kept across launches.
+        CREATE TABLE get_lines (
+            id                 INTEGER PRIMARY KEY,
+            position           INTEGER NOT NULL,          -- order in the list
+            raw                TEXT NOT NULL,             -- the line as pasted
+            dedupe_key         TEXT NOT NULL UNIQUE,      -- normalised artist + title: the same track twice is one line
+            artist             TEXT NOT NULL DEFAULT '',
+            title              TEXT NOT NULL DEFAULT '',  -- with its version text
+            duration_hint_ms   INTEGER,                   -- a length written in the line or given by a playlist
+            isrc               TEXT NOT NULL DEFAULT '',
+            label_hint         TEXT NOT NULL DEFAULT '',
+            release_state      TEXT NOT NULL DEFAULT 'pending'
+                               CHECK (release_state IN ('pending', 'resolved', 'ambiguous', 'none', 'failed')),
+            release_json       TEXT,                      -- the chosen release (meta::Release)
+            release_confidence TEXT NOT NULL DEFAULT '',
+            find_state         TEXT NOT NULL DEFAULT 'idle'
+                               CHECK (find_state IN ('idle', 'queued', 'searching', 'ready', 'check', 'notfound',
+                                                     'owned', 'inbox')),
+            best_json          TEXT,                      -- the chosen file on Soulseek
+            ticked             INTEGER NOT NULL DEFAULT 0 CHECK (ticked IN (0, 1)),
+            download_state     TEXT NOT NULL DEFAULT 'none'
+                               CHECK (download_state IN ('none', 'queued', 'transferring', 'converting', 'arrived',
+                                                         'failed')),
+            message            TEXT NOT NULL DEFAULT '',  -- why a step failed, in words
+            added_at           INTEGER NOT NULL           -- Unix time, ms
+        ) STRICT;
+        CREATE INDEX get_lines_by_position ON get_lines(position);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

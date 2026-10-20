@@ -4,6 +4,7 @@
 #include "base/Clock.h"
 #include "core/GovernorStore.h"
 #include "governor/Limits.h"
+#include "meta/SpotifyLinks.h"
 #include "meta/TokenStore.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
@@ -93,6 +94,10 @@ bool Engine::start()
     m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 
+    m_getTracks = std::make_unique<GetTracksService>(*m_db, m_options.wallClock);
+    connect(m_getTracks.get(), &GetTracksService::linesReset, this, &Engine::getLinesReset);
+    connect(m_getTracks.get(), &GetTracksService::lineChanged, this, &Engine::getLineChanged);
+
     m_inbox = std::make_unique<InboxService>(*m_db, m_options.library, m_options.trash);
     connect(m_inbox.get(), &InboxService::changed, this, &Engine::inboxChanged);
     connect(m_inbox.get(), &InboxService::finished, this, &Engine::inboxOperationFinished);
@@ -112,6 +117,7 @@ bool Engine::start()
     }
     m_inbox->reconcile();
     m_meta->restore();
+    Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
     return true;
@@ -124,6 +130,7 @@ void Engine::stop()
     m_pruneTimer = nullptr;
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
+    m_getTracks.reset();
     m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();
@@ -134,6 +141,41 @@ void Engine::stop()
         m_started = false;
         qCInfo(lcEngine) << "engine stopped";
     }
+}
+
+void Engine::addTracks(const QString &text)
+{
+    if (!m_started) {
+        return;
+    }
+    const auto added = m_getTracks->add(text);
+    const meta::spotify::PastedLinks links = meta::spotify::parsePastedLinks(text);
+    QString note;
+    if (!links.links.isEmpty()) {
+        if (m_meta->spotify().isAvailable()) {
+            note = links.links.size() == 1 ? tr("Importing the Spotify link…")
+                                           : tr("Importing %1 Spotify links…").arg(links.links.size());
+            m_meta->spotify().importLinks(links).then(this, [this](const meta::Result<meta::LinkImport> &result) {
+                if (!m_started) {
+                    return;
+                }
+                if (!result.ok()) {
+                    Q_EMIT tracksAdded(0, 0, 0,
+                                       tr("Spotify links couldn't be imported: %1").arg(result.error().message));
+                    return;
+                }
+                const auto imported = m_getTracks->addReleases(result.value().tracks);
+                QString message;
+                if (!result.value().failed.isEmpty()) {
+                    message = tr("%1 Spotify links couldn't be read.").arg(result.value().failed.size());
+                }
+                Q_EMIT tracksAdded(imported.added, imported.duplicates, 0, message);
+            });
+        } else {
+            note = tr("Spotify links need Spotify set up in Settings; the other lines were added.");
+        }
+    }
+    Q_EMIT tracksAdded(added.added, added.duplicates, added.unidentified, note);
 }
 
 void Engine::setPaused(bool paused)

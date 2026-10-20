@@ -9,6 +9,8 @@
 #include "app/Sidebar.h"
 #include "app/views/ActivityView.h"
 #include "app/views/EmptyStateView.h"
+#include "app/views/GetTracksInspector.h"
+#include "app/views/GetTracksView.h"
 #include "app/views/HistoryView.h"
 #include "app/views/InboxView.h"
 #include "base/Paths.h"
@@ -167,12 +169,14 @@ void MainWindow::createViews()
     };
     const auto fixed = [](const QString &text) { return [text] { return text; }; };
 
-    addView(u"get"_s,
-            emptyState(u"list.bullet.rectangle"_s, u"view-list-details"_s, tr("Get tracks"),
-                       tr("Paste a list of tracks, preview each one with its waveform, and get them as tagged MP3 320 "
-                          "files in your Inbox."),
-                       tr("Not built yet: arrives with the Soulseek connection (milestone M8).")),
-            fixed(tr("Not built yet")));
+    m_getTracksView = new GetTracksView(m_services.engine, m_stack);
+    addView(u"get"_s, m_getTracksView, [this] { return m_getTracksView->summary(); });
+    m_inspector->addPanel(u"get"_s, m_getTracksView->inspectorPanel());
+    connect(m_getTracksView, &GetTracksView::summaryChanged, this, [this] {
+        if (m_currentId == u"get"_s) {
+            refreshTitle();
+        }
+    });
     m_inboxView = new InboxView(m_services.engine, m_stack);
     m_inboxView->setLibraryConfig(m_services.settings.libraryConfig());
     addView(u"inbox"_s, m_inboxView, [this] { return m_inboxView->summary(); });
@@ -487,6 +491,7 @@ bool MainWindow::navigateTo(const QString &id)
         return false;
     }
     m_stack->setCurrentIndex(static_cast<int>(found.value()));
+    m_inspector->showPanelFor(id);
     m_currentId = id;
     m_sidebar->select(id);
     refreshTitle();

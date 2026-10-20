@@ -24,6 +24,7 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
     , m_network(std::make_unique<QNetworkAccessManager>())
     , m_pacer(governor, activity, this)
     , m_tokens(std::move(options.tokens))
+    , m_cache(clock)
 {
     Q_ASSERT(m_tokens);
     qRegisterMetaType<SpotifyStatus>();
@@ -33,6 +34,13 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
         config.accountsUrl = options.spotifyAccountsUrl;
     }
     m_spotifyAuth = std::make_unique<meta::SpotifyAuth>(std::move(config), m_network.get(), m_pacer, *m_tokens, clock);
+    m_spotifyClient =
+        options.spotifyApiUrl.isEmpty()
+            ? std::make_unique<meta::SpotifyClient>(*m_spotifyAuth, m_network.get(), m_pacer, &m_cache, clock)
+            : std::make_unique<meta::SpotifyClient>(*m_spotifyAuth, m_network.get(), m_pacer, &m_cache, clock, nullptr,
+                                                    options.spotifyApiUrl);
+    // Spotify data cached for a sign-in goes with it (Developer Policy §I.2).
+    connect(m_spotifyAuth.get(), &meta::SpotifyAuth::signedOut, this, [this] { m_cache.removePrefix(u"spotify"_s); });
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::stateChanged, this, &MetaServices::publish);
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::persistFailed, this, [this](const meta::MetaError &error) {
         m_error = tr("Signed in, but the sign-in couldn't be saved: %1").arg(error.message);
@@ -40,7 +48,12 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
     });
 }
 
-MetaServices::~MetaServices() = default;
+MetaServices::~MetaServices()
+{
+    // The client uses the sign-in; it goes first.
+    m_spotifyClient.reset();
+    m_spotifyAuth.reset();
+}
 
 void MetaServices::restore()
 {

@@ -2,7 +2,9 @@
 #pragma once
 
 #include "core/GovernorPacer.h"
+#include "meta/MetaCache.h"
 #include "meta/SpotifyAuth.h"
+#include "meta/SpotifyClient.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -59,6 +61,7 @@ public:
         // Opens the browser for a Spotify sign-in; called on the engine thread (the app forwards it to the UI thread).
         std::function<bool(const QUrl &)> openUrl;
         QUrl spotifyAccountsUrl; // tests point it at a fake; empty: the real accounts service
+        QUrl spotifyApiUrl;      // likewise for the Web API
     };
 
     // Token-store accounts for the credentials. Spotify Client IDs are 32 hex digits, so these can't collide with the
@@ -86,6 +89,8 @@ public:
 
     SpotifyStatus spotifyStatus() const;
     meta::SpotifyAuth &spotifyAuth() { return *m_spotifyAuth; }
+    meta::SpotifyClient &spotify() { return *m_spotifyClient; }
+    meta::MetaCache &cache() { return m_cache; }
     QNetworkAccessManager &network() { return *m_network; }
     meta::RequestPacer &pacer() { return m_pacer; }
     meta::TokenStore &tokens() { return *m_tokens; }
@@ -101,7 +106,9 @@ private:
     std::unique_ptr<QNetworkAccessManager> m_network;
     GovernorPacer m_pacer;
     std::unique_ptr<meta::TokenStore> m_tokens;
+    meta::MemoryMetaCache m_cache;
     std::unique_ptr<meta::SpotifyAuth> m_spotifyAuth;
+    std::unique_ptr<meta::SpotifyClient> m_spotifyClient;
     QByteArray m_secret; // in memory only while set; never logged
     QString m_error;
 };
