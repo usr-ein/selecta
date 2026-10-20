@@ -192,9 +192,10 @@ QString describePeerLookup(const ActivityEntry &e)
     if (!e.explanation.startsWith(u"Peer lookups"_s)) {
         return e.explanation;
     }
-    return ownRequest(e, ActivityLog::tr("You looked up %1's address to connect to them (this line is older than "
-                                         "Selecta's notes on why).")
-                             .arg(e.subject),
+    return ownRequest(e,
+                      ActivityLog::tr("You looked up %1's address to connect to them (this line is older than "
+                                      "Selecta's notes on why).")
+                          .arg(e.subject),
                       ActivityLog::tr("You wanted to look up %1's address").arg(e.subject));
 }
 
@@ -255,7 +256,7 @@ void ActivityLog::remember(const QString &peer, governor::Operation operation)
     const qint64 now = m_now();
     if (m_lastAsked.size() >= kRequestMemoryPeers && !m_lastAsked.contains(peer)) {
         // Forget what's too old to name a lookup; if every one is recent (a burst), start over.
-        m_lastAsked.removeIf([now](const decltype(m_lastAsked)::iterator &it) { return now - it->atMs > kRequestMemoryMs; });
+        m_lastAsked.removeIf([now](decltype(m_lastAsked)::iterator it) { return now - it->atMs > kRequestMemoryMs; });
         if (m_lastAsked.size() >= kRequestMemoryPeers) {
             m_lastAsked.clear();
         }

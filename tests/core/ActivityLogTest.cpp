@@ -8,6 +8,7 @@
 
 #include <QSignalSpy>
 
+#include <array>
 #include <gtest/gtest.h>
 
 using namespace Qt::StringLiterals;
@@ -182,16 +183,17 @@ TEST_F(ActivityLogTest, ALookupSaysWhyForEachPurpose)
 
 TEST_F(ActivityLogTest, ALookupForOurRequestNamesTheRequest)
 {
-    const struct
+    struct Case
     {
         Operation asked;
         QString reason;
-    } cases[] = {
-        {Operation::Browse, u"browse their shares"_s},
-        {Operation::UserInfo, u"ask for their user info"_s},
-        {Operation::FolderContents, u"ask what's in one of their folders"_s},
-        {Operation::QueueDownload, u"ask them to queue a download for you"_s},
-        {Operation::PlaceInQueue, u"ask where your download stands in their queue"_s},
+    };
+    const std::array cases{
+        Case{Operation::Browse, u"browse their shares"_s},
+        Case{Operation::UserInfo, u"ask for their user info"_s},
+        Case{Operation::FolderContents, u"ask what's in one of their folders"_s},
+        Case{Operation::QueueDownload, u"ask them to queue a download for you"_s},
+        Case{Operation::PlaceInQueue, u"ask where your download stands in their queue"_s},
     };
     for (const auto &c : cases) {
         log.recordDecision(c.asked, u"vinyl_ghost"_s, Refusal::None, u"Allowed."_s);
@@ -262,8 +264,8 @@ TEST_F(ActivityLogTest, TheRequestMemoryIsBounded)
     }
     log.recordPeerLookup(u"first"_s, ConnectPurpose::Request, Refusal::None, QString());
     EXPECT_TRUE(ActivityLog::recent(db, 1).constFirst().explanation.endsWith(u"one of your requests."_s));
-    log.recordPeerLookup(u"peer%1"_s.arg(ActivityLog::kRequestMemoryPeers + 9), ConnectPurpose::Request,
-                         Refusal::None, QString());
+    log.recordPeerLookup(u"peer%1"_s.arg(ActivityLog::kRequestMemoryPeers + 9), ConnectPurpose::Request, Refusal::None,
+                         QString());
     EXPECT_TRUE(ActivityLog::recent(db, 1).constFirst().explanation.endsWith(u"browse their shares."_s));
 }
 
@@ -319,7 +321,8 @@ TEST_F(ActivityLogTest, DownloadsAlbumsAndArrivalsAreOurs)
               u"Your preview of song.flac from x became the download: nothing more to fetch."_s);
     EXPECT_EQ(describe(u"download"_s, u"x"_s, u"kept-preview"_s, u"song.flac"_s),
               u"You kept the preview of song.flac from x: it carries on as a download."_s);
-    EXPECT_EQ(describe(u"album"_s, u"x"_s, u"wanted"_s, u"Album (2001)"_s), u"You want the album Album (2001) from x."_s);
+    EXPECT_EQ(describe(u"album"_s, u"x"_s, u"wanted"_s, u"Album (2001)"_s),
+              u"You want the album Album (2001) from x."_s);
     EXPECT_EQ(describe(u"album"_s, u"x"_s, u"failed"_s, u"No audio."_s), u"Your album from x failed: No audio."_s);
     EXPECT_EQ(describe(u"album"_s, u"x"_s, u"cancelled"_s, u"Album"_s), u"You cancelled the album Album from x."_s);
     EXPECT_EQ(describe(u"album"_s, u"x"_s, u"arrived"_s, u"Inbox/Album"_s),
@@ -356,7 +359,8 @@ TEST_F(ActivityLogTest, UserListChangesAreOurs)
 {
     EXPECT_EQ(describe(u"user-list"_s, u"x"_s, u"buddy"_s), u"You added x to your buddies."_s);
     EXPECT_EQ(describe(u"user-list"_s, u"x"_s, u"ignored"_s), u"You ignore x now: their messages are dropped."_s);
-    EXPECT_EQ(describe(u"user-list"_s, u"x"_s, u"banned"_s), u"You banned x: they can't browse or download from you."_s);
+    EXPECT_EQ(describe(u"user-list"_s, u"x"_s, u"banned"_s),
+              u"You banned x: they can't browse or download from you."_s);
     EXPECT_EQ(describe(u"user-list"_s, u"x"_s, u"unlisted"_s), u"You took x off your lists."_s);
 }
 
