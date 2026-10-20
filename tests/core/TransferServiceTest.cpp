@@ -367,6 +367,24 @@ TEST_F(TransferServiceTest, AConversionAQuitInterruptedRunsAgain)
     EXPECT_EQ(again.at(0).at(0).value<Download>().id, *id);
 }
 
+TEST_F(TransferServiceTest, APeersNameStaysAsItIsInTheQueueMessages)
+{
+    // A name with "%2" in it is put in once: the place doesn't land inside it.
+    auto holder = peer(u"dj%2%3"_s);
+    holder->queueBehaviour = FakePeer::QueueBehaviour::Hold;
+    holder->placeInQueue = 7;
+    const std::optional<qint64> id = service->enqueue(spec(*holder, "held.flac", 1000));
+    ASSERT_TRUE(reaches(*id, State::Queued));
+    ASSERT_TRUE(waitFor([&] { return service->download(*id)->placeInQueue == 7; }));
+    EXPECT_EQ(service->download(*id)->message, u"Queued at dj%2%3, place 7"_s);
+
+    now += 2 * kMinuteMs;
+    ASSERT_TRUE(waitFor([&] { return service->download(*id)->queue.isStuck(); }));
+    const QString stuck = service->download(*id)->message;
+    EXPECT_TRUE(stuck.startsWith(u"No progress in dj%2%3's queue since "_s)) << stuck.toStdString();
+    EXPECT_TRUE(stuck.endsWith(u" (place 7)"_s)) << stuck.toStdString();
+}
+
 TEST_F(TransferServiceTest, AQueuedDownloadSaysItsPlaceAndIsStuckWithoutProgress)
 {
     auto holder = peer(u"slow_lane"_s);

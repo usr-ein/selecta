@@ -848,29 +848,25 @@ QString TransferService::queuedMessage(const Download &download) const
     const QString &peer = download.peer;
     const QueueVerdict &verdict = download.queue;
     const std::optional<int> &place = download.placeInQueue;
+    // One arg() call per message: a peer's name is substituted once, so a "%2" in it stays as it is.
+    const QString placeText = QString::number(place.value_or(0));
     switch (verdict.kind) {
     case QueueVerdict::Kind::Waiting:
         break;
     case QueueVerdict::Kind::Moving:
-        return tr("Queued at %1, place %2: starts around %3")
-            .arg(peer)
-            .arg(place.value_or(0))
-            .arg(clockTime(verdict.startsAtMs));
+        return tr("Queued at %1, place %2: starts around %3").arg(peer, placeText, clockTime(verdict.startsAtMs));
     case QueueVerdict::Kind::NoProgress:
         if (verdict.startsAtMs > 0) {
             return tr("%1's queue stopped moving: it was due to start at %2").arg(peer, clockTime(verdict.startsAtMs));
         }
         return place ? tr("No progress in %1's queue since %2 (place %3)")
-                           .arg(peer, clockTime(verdict.sinceMs))
-                           .arg(*place)
+                           .arg(peer, clockTime(verdict.sinceMs), placeText)
                      : tr("No progress in %1's queue since %2").arg(peer, clockTime(verdict.sinceMs));
     case QueueVerdict::Kind::TooSlow:
         return tr("%1's queue moves slowly: place %2, starts around %3")
-            .arg(peer)
-            .arg(place.value_or(0))
-            .arg(clockTime(verdict.startsAtMs));
+            .arg(peer, placeText, clockTime(verdict.startsAtMs));
     }
-    return place ? tr("Queued at %1, place %2").arg(peer).arg(*place) : tr("Queued at %1").arg(peer);
+    return place ? tr("Queued at %1, place %2").arg(peer, placeText) : tr("Queued at %1").arg(peer);
 }
 
 void TransferService::save(Download &download)
