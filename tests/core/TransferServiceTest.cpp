@@ -23,6 +23,7 @@
 #include <QRandomGenerator>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QTest>
 
 #include <gtest/gtest.h>
 #include <memory>
@@ -37,6 +38,8 @@ using selecta::slsk::testing::FakePeer;
 using selecta::slsk::testing::FakeServer;
 using selecta::slsk::testing::waitFor;
 using State = Download::State;
+using Verdict = selecta::core::QueueVerdict::Kind;
+using selecta::slsk::peer::PlaceInQueueRequest;
 
 namespace {
 
@@ -98,6 +101,7 @@ protected:
         options.previewCache = previewCache.get();
         options.retryDelaysMs = {100, 100, 100};
         options.pacedRetryMs = 100;
+        options.queueCheckMs = 50;
         service = std::make_unique<TransferService>(db, governor, *network, log, options, [this] { return now; });
     }
 
@@ -360,6 +364,98 @@ TEST_F(TransferServiceTest, AConversionAQuitInterruptedRunsAgain)
     service->load();
     ASSERT_EQ(again.size(), 1);
     EXPECT_EQ(again.at(0).at(0).value<Download>().id, *id);
+}
+
+TEST_F(TransferServiceTest, AQueuedDownloadSaysItsPlaceAndIsStuckWithoutProgress)
+{
+    auto holder = peer(u"slow_lane"_s);
+    holder->queueBehaviour = FakePeer::QueueBehaviour::Hold;
+    holder->placeInQueue = 7;
+    const std::optional<qint64> id = service->enqueue(spec(*holder, "held.flac", 1000));
+    ASSERT_TRUE(reaches(*id, State::Queued));
+    // Asked once for its place, through the governor; the answer shows.
+    ASSERT_TRUE(waitFor([&] { return service->download(*id)->placeInQueue == 7; }));
+    EXPECT_EQ(holder->receivedOf<PlaceInQueueRequest>().size(), 1);
+    EXPECT_TRUE(service->download(*id)->message.contains(u"place 7"_s)) << service->download(*id)->message.toStdString();
+    EXPECT_FALSE(service->download(*id)->queue.isStuck());
+
+    // Two minutes on, no better place and no start: stuck, and the message says so plainly.
+    now += 2 * 60'000;
+    ASSERT_TRUE(waitFor([&] { return service->download(*id)->queue.isStuck(); }));
+    EXPECT_EQ(service->download(*id)->queue.kind, Verdict::NoProgress);
+    EXPECT_TRUE(service->download(*id)->message.contains(u"No progress in slow_lane's queue"_s))
+        << service->download(*id)->message.toStdString();
+
+    // One question per peer per 10 minutes (the governor's limit): none more before that.
+    now += 5 * 60'000;
+    clock.advance(7min);
+    QTest::qWait(300);
+    EXPECT_EQ(holder->receivedOf<PlaceInQueueRequest>().size(), 1);
+
+    // Then asked again. Place 1 after place 7, twelve minutes on: it starts in about two minutes, so it isn't stuck.
+    holder->placeInQueue = 1;
+    now += 5 * 60'000;
+    clock.advance(5min);
+    ASSERT_TRUE(waitFor([&] { return holder->receivedOf<PlaceInQueueRequest>().size() == 2; }));
+    ASSERT_TRUE(waitFor([&] { return service->download(*id)->placeInQueue == 1; }));
+    ASSERT_TRUE(waitFor([&] { return service->download(*id)->queue.kind == Verdict::Moving; }));
+    EXPECT_FALSE(service->download(*id)->queue.isStuck());
+    EXPECT_TRUE(service->download(*id)->message.contains(u"starts around"_s))
+        << service->download(*id)->message.toStdString();
+
+    // Its turn: transferring, it is in nobody's queue any more.
+    holder->files.insert("held.flac", FakePeer::Upload{.content = content(1000, 20)});
+    QSignalSpy completed(service.get(), &TransferService::completed);
+    ASSERT_TRUE(holder->startUpload(u"selecta_test"_s, selecta::slsk::RemotePath(QByteArray("held.flac"))));
+    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }));
+    const auto done = completed.at(0).at(0).value<Download>();
+    EXPECT_FALSE(done.placeInQueue.has_value());
+    EXPECT_EQ(done.queue.kind, Verdict::Waiting);
+}
+
+TEST_F(TransferServiceTest, APeerThatNeverSaysItsQueueIsStuckAfterTwoMinutes)
+{
+    auto silent = peer(u"quiet_one"_s);
+    silent->queueBehaviour = FakePeer::QueueBehaviour::Hold; // and no placeInQueue: it never answers
+    const std::optional<qint64> id = service->enqueue(spec(*silent, "held.flac", 1000));
+    ASSERT_TRUE(reaches(*id, State::Queued));
+    ASSERT_TRUE(waitFor([&] { return silent->receivedOf<PlaceInQueueRequest>().size() == 1; }));
+    now += (2 * 60'000) - 1000;
+    QTest::qWait(200);
+    EXPECT_FALSE(service->download(*id)->queue.isStuck());
+    now += 1000;
+    ASSERT_TRUE(waitFor([&] { return service->download(*id)->queue.isStuck(); }));
+    EXPECT_FALSE(service->download(*id)->placeInQueue.has_value());
+    EXPECT_TRUE(service->download(*id)->message.contains(u"No progress in quiet_one's queue since"_s))
+        << service->download(*id)->message.toStdString();
+}
+
+TEST_F(TransferServiceTest, FilesBehindOurOwnTransferJustWaitTheirTurn)
+{
+    auto holder = peer(u"one_at_a_time"_s);
+    holder->queueBehaviour = FakePeer::QueueBehaviour::Hold;
+    holder->files.insert("first.flac", FakePeer::Upload{.content = content(2'000'000, 21)});
+    holder->uploadRate = 100'000; // 20 s for the whole file
+    const std::optional<qint64> first = service->enqueue(spec(*holder, "first.flac", 2'000'000));
+    const std::optional<qint64> second = service->enqueue(spec(*holder, "second.flac", 1000));
+    ASSERT_TRUE(reaches(*first, State::Queued));
+    ASSERT_TRUE(reaches(*second, State::Queued));
+    ASSERT_TRUE(waitFor([&] { return holder->heldCount() == 2; }));
+    ASSERT_TRUE(holder->startUpload(u"selecta_test"_s, selecta::slsk::RemotePath(QByteArray("first.flac"))));
+    ASSERT_TRUE(reaches(*first, State::Transferring));
+
+    // The peer sends us one file at a time: the second waits behind the first, however long that takes.
+    now += 5 * 60'000;
+    QTest::qWait(300);
+    EXPECT_FALSE(service->download(*second)->queue.isStuck());
+
+    // The first ends: from then on, the second has two minutes.
+    service->cancel(*first);
+    now += 60'000;
+    QTest::qWait(200);
+    EXPECT_FALSE(service->download(*second)->queue.isStuck());
+    now += 60'000;
+    ASSERT_TRUE(waitFor([&] { return service->download(*second)->queue.isStuck(); }));
 }
 
 namespace {
