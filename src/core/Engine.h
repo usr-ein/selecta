@@ -42,6 +42,7 @@ struct EngineOptions
     std::function<std::unique_ptr<meta::TokenStore>()> tokenStore;
     // Opens a URL in the browser, for the Spotify sign-in; called on the engine thread.
     std::function<bool(const QUrl &)> openUrl;
+    MetaEndpoints metaEndpoints; // empty: the real services
 };
 
 // The services on the engine thread (PLAN §2.3, the network thread): the governor and its saved state and the

@@ -110,6 +110,7 @@ bool Engine::start()
     MetaServices::Options metaOptions;
     metaOptions.tokens = m_options.tokenStore ? m_options.tokenStore() : std::make_unique<meta::InMemoryTokenStore>();
     metaOptions.openUrl = m_options.openUrl;
+    metaOptions.endpoints = m_options.metaEndpoints;
     m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 
@@ -125,6 +126,10 @@ bool Engine::start()
 
     m_getTracks = std::make_unique<GetTracksService>(*m_db, m_options.wallClock);
     m_getTracks->setSearch(m_search.get(), [this] { return m_governor->excludedPhrases(); });
+    // Release lookups for a whole list go in the background lane: previews the user waits for overtake them.
+    m_getTracks->setResolver([resolver = &m_meta->resolver()](const meta::ResolveQuery &query) {
+        return resolver->resolve(query, meta::Priority::Background);
+    });
     connect(m_getTracks.get(), &GetTracksService::linesReset, this, &Engine::getLinesReset);
     connect(m_getTracks.get(), &GetTracksService::lineChanged, this, &Engine::getLineChanged);
 

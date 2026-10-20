@@ -40,7 +40,8 @@ namespace {
 
 struct Options
 {
-    bool isolated = false; // --data-dir: nothing outside that folder, not even the Keychain
+    bool isolated = false;        // --data-dir: nothing outside that folder, not even the Keychain
+    bool metadataNetwork = false; // --metadata-network: let an isolated run reach Spotify, Deezer and the rest
     bool headless = false;
     bool debugServer = false;
     QString debugSocket;
@@ -63,13 +64,17 @@ Options parseOptions(const QApplication &app)
                                          u"Accept inspection commands from `selecta-cli app` on a local socket."_s);
     const QCommandLineOption debugSocket(u"debug-socket"_s, u"Name of the debug socket."_s, u"name"_s,
                                          QString(selecta::base::debugprotocol::kSocketName));
-    parser.addOptions({dataDir, headless, debugServer, debugSocket});
+    const QCommandLineOption metadataNetwork(
+        u"metadata-network"_s,
+        u"With --data-dir, still look releases up on Spotify, Deezer and MusicBrainz (isolated runs don't)."_s);
+    parser.addOptions({dataDir, headless, debugServer, debugSocket, metadataNetwork});
     parser.process(app);
 
     if (parser.isSet(dataDir)) {
         paths::setRootOverride(parser.value(dataDir));
     }
-    return {parser.isSet(dataDir), parser.isSet(headless), parser.isSet(debugServer), parser.value(debugSocket)};
+    return {parser.isSet(dataDir), parser.isSet(metadataNetwork), parser.isSet(headless), parser.isSet(debugServer),
+            parser.value(debugSocket)};
 }
 
 // Tells the user why Selecta can't start: a dialog normally, stderr when headless.
@@ -192,6 +197,8 @@ int main(int argc, char *argv[])
         engineOptions.tokenStore = [] {
             return std::make_unique<selecta::meta::KeychainTokenStore>(u"io.github.usr-ein.Selecta"_s);
         };
+    } else if (!options.metadataNetwork) {
+        engineOptions.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // nothing leaves the machine
     } // isolated runs keep secrets in memory only
     engineOptions.openUrl = [](const QUrl &url) {
         // Called on the engine thread; the browser is opened from the UI thread.

@@ -47,7 +47,8 @@ protected:
         settings = std::make_unique<AppSettings>(dir.filePath(u"settings.ini"_s));
         selecta::core::EngineOptions options;
         options.databasePath = dir.filePath(u"engine.sqlite3"_s);
-        engine = std::make_unique<selecta::core::EngineHost>(options); // started only by the tests that need it
+        options.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // tests never reach real services
+        engine = std::make_unique<selecta::core::EngineHost>(options);       // started only by the tests that need it
     }
 
     std::unique_ptr<MainWindow> makeWindow()
@@ -239,6 +240,7 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
     selecta::core::EngineOptions options;
     options.databasePath = engineDb;
     options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
     engine = std::make_unique<selecta::core::EngineHost>(options);
     QSignalSpy changed(engine.get(), &selecta::core::EngineHost::inboxChanged);
     engine->start();

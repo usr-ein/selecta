@@ -30,15 +30,20 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
     qRegisterMetaType<SpotifyStatus>();
     meta::SpotifyAuth::Config config;
     config.openUrl = std::move(options.openUrl);
-    if (!options.spotifyAccountsUrl.isEmpty()) {
-        config.accountsUrl = options.spotifyAccountsUrl;
+    if (!options.endpoints.spotifyAccounts.isEmpty()) {
+        config.accountsUrl = options.endpoints.spotifyAccounts;
     }
     m_spotifyAuth = std::make_unique<meta::SpotifyAuth>(std::move(config), m_network.get(), m_pacer, *m_tokens, clock);
     m_spotifyClient =
-        options.spotifyApiUrl.isEmpty()
+        options.endpoints.spotifyApi.isEmpty()
             ? std::make_unique<meta::SpotifyClient>(*m_spotifyAuth, m_network.get(), m_pacer, &m_cache, clock)
             : std::make_unique<meta::SpotifyClient>(*m_spotifyAuth, m_network.get(), m_pacer, &m_cache, clock, nullptr,
-                                                    options.spotifyApiUrl);
+                                                    options.endpoints.spotifyApi);
+    m_deezer = options.endpoints.deezerApi.isEmpty()
+                   ? std::make_unique<meta::DeezerClient>(m_network.get(), m_pacer, &m_cache, clock)
+                   : std::make_unique<meta::DeezerClient>(m_network.get(), m_pacer, &m_cache, clock, nullptr,
+                                                          options.endpoints.deezerApi);
+    m_resolver = std::make_unique<meta::ReleaseResolver>(m_spotifyClient.get(), m_deezer.get());
     // Spotify data cached for a sign-in goes with it (Developer Policy §I.2).
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::signedOut, this, [this] { m_cache.removePrefix(u"spotify"_s); });
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::stateChanged, this, &MetaServices::publish);
@@ -50,7 +55,9 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
 
 MetaServices::~MetaServices()
 {
-    // The client uses the sign-in; it goes first.
+    // The resolver uses the clients, and the clients use the sign-in.
+    m_resolver.reset();
+    m_deezer.reset();
     m_spotifyClient.reset();
     m_spotifyAuth.reset();
 }

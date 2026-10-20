@@ -66,7 +66,7 @@ selecta::meta::Resolution resolution(const selecta::meta::Release &best, selecta
     r.candidates.append(selecta::meta::Candidate{.release = best,
                                                  .score = 0.95,
                                                  .confidence = confidence,
-                                                 .version = selecta::meta::VersionRelation::Same,
+                                                 .version = selecta::match::VersionCompatibility::Same,
                                                  .reasons = {}});
     r.confidence = confidence;
     return r;
