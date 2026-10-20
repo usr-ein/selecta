@@ -8,5 +8,6 @@ selecta_add_test_suite(selecta_match_tests
         RemotePathParserTest.cpp
         SimilarityTest.cpp
         TokenIndexTest.cpp
+        TracklistTest.cpp
         VersionClassifierTest.cpp
     LIBRARIES selecta_match)
