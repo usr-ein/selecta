@@ -37,6 +37,22 @@ Then point Selecta (Settings > server), `selecta-cli` or a reference peer at `12
 creating: Soulfind registers a name with its password at the first login, and refuses other passwords after that.
 `soulsetup -d <database>` (next to `soulfind` in the cache) makes admins and server-side search filters.
 
+## Driving it from the command line
+
+`selecta-cli` has slsk commands that only ever talk to a local server (they refuse public addresses and never resolve
+host names), with permits from the real governor:
+
+```sh
+selecta-cli slsk-share --server 127.0.0.1:2242 --user bob --dir ~/devnet-corpus/cbr_carl   # answer and upload
+selecta-cli slsk-search --server 127.0.0.1:2242 --user alice --wait 5 saffron tide         # one line per result
+selecta-cli slsk-browse --server 127.0.0.1:2242 --user alice bob
+selecta-cli slsk-download --server 127.0.0.1:2242 --user alice bob 'cbr_carl\…\01-….mp3' --to track.mp3
+selecta-cli slsk-login --server 127.0.0.1:2242 --user alice --stay 60
+```
+
+`slsk-share --advertise-port <a closed port>` plays a peer that can't be reached directly, so downloads from it go
+through the server's indirect connection. They work against `selecta-devnet` the same way.
+
 ## The devenv tests
 
 `tests/slsk/devenv/` holds integration tests with the CTest label `devenv`. They are opt-in twice: built only with
@@ -50,9 +66,10 @@ SELECTA_DEVENV=1 ctest --preset dev -L devenv
 ```
 
 Each test starts its own Soulfind on a free port with a database in a temporary folder and stops it afterwards
-(ADR-013). They cover login, relogin and a wrong password, and two client stacks finding and downloading a file over
-the direct path and over the indirect one (the uploader advertises a closed port, so the downloader's direct
-connection fails and the uploader dials back through the server). `SELECTA_SOULFIND=/path/to/soulfind` uses another
+(ADR-013). They cover login, relogin and a wrong password, two client stacks finding and downloading a file over the
+direct path and over the indirect one (the uploader advertises a closed port, so the downloader's direct connection
+fails and the uploader dials back through the server), and the same with two `selecta-cli` processes (`slsk-share`
+against `slsk-search` and `slsk-download`). `SELECTA_SOULFIND=/path/to/soulfind` uses another
 build. A machine with no network at all may fail them: Soulfind looks up the LAN address through the routing table.
 
 ## Updating Soulfind

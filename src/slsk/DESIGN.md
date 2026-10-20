@@ -245,6 +245,17 @@ settings and accepts any login (or only `--user`/`--password`).
   files at their own speed (25–100 % of `--speed`). Every message both ways is logged unless `--quiet`.
 - It is hooked from `tests/slsk/CMakeLists.txt` (it needs the fixtures), so it builds with the tests.
 
+## Command line: `selecta-cli slsk-*`
+
+`tools/selecta-cli/commands/slsk/` adds `slsk-login`, `slsk-search`, `slsk-browse`, `slsk-download` (resumes an
+existing file) and `slsk-share` (answers searches, browses and folder requests from a folder, uploads on request;
+`--advertise-port` plays a peer that can only be reached indirectly). `SlskSession` holds what they share: options for
+the server, account and ports; `governor::ServerGuard` (a public address or a host name is refused, and names are
+never resolved); a real `governor::Governor` on `base::SteadyClock` for the Login, Search, Browse, QueueDownload and
+PeerLookup permits (PeerLookup through a `PermitSource` that delivers on a later turn, as core/ will); one
+`slsk::Client` listening on 127.0.0.1; and an event-loop wait. Output is line by line and flushed, so scripts and
+tests can read it as it comes.
+
 ## Decisions taken here (for review)
 
 | # | Decision | Why |
@@ -294,5 +305,9 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
     notes and the optional reference peers. `tests/slsk/devenv/` (CTest label `devenv`, built only with
     `SELECTA_SOULFIND_TESTS=ON`, run only with `SELECTA_DEVENV=1`): login, relogin and a wrong password, search and
     download over the direct and the indirect path against the real server; 3 tests, green here.
-- **Next:** S7 selecta-cli commands.
+  - S7 `selecta-cli slsk-*` (see above). 6 tests run the commands as processes against the fakes (refusing
+    non-local servers, login and a wrong password, search, browse, download with resume and a refusal, share with a
+    search answered and an upload); 2 devenv tests run two `selecta-cli` processes against Soulfind, sharing and
+    searching and downloading over the direct and the indirect path (contract acceptance 3), green here.
+- **Next:** nothing left in the contract; review feedback.
 - **Open questions:** none blocking.

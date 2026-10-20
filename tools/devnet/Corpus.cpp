@@ -389,13 +389,15 @@ QStringList codecArguments(AudioFormat format)
     return {};
 }
 
-// Two tones a fifth apart, one per channel, pulsing twice a second: easy to tell apart, and a waveform with shape.
+// Two tones a fifth apart, one per channel, pulsing twice a second: easy to tell apart, and a waveform with shape. A
+// little noise makes encoders behave as with music (V0 lands near 210 kbps and FLAC near 650 kbps, where a pure tone
+// would shrink to almost nothing).
 QString toneSource(const PlannedTrack &track)
 {
     const QString left = QString::number(track.frequency, 'f', 2);
     const QString right = QString::number(track.frequency * 1.5, 'f', 2);
-    return u"aevalsrc=exprs=0.35*sin(2*PI*%1*t)*(0.65+0.35*sin(2*PI*2*t))|0.35*sin(2*PI*%2*t)*(0.65+0.35*sin(2*PI*2*t+"
-           u"1.5))"
+    return u"aevalsrc=exprs=0.35*sin(2*PI*%1*t)*(0.65+0.35*sin(2*PI*2*t))+0.02*(2*random(0)-1)|"
+           u"0.35*sin(2*PI*%2*t)*(0.65+0.35*sin(2*PI*2*t+1.5))+0.02*(2*random(1)-1)"
            u":s=%3:d=%4"_s.arg(left, right)
                .arg(sampleRateOf(track.format))
                .arg(track.seconds);

@@ -543,6 +543,7 @@ TEST(DevnetCorpus, WrittenFilesProbeAsPlanned)
             break;
         case AudioFormat::Mp3Vbr0:
             EXPECT_EQ(a.vbr, true);
+            EXPECT_GT(a.bitrate.value_or(0), 150U); // the noise keeps V0 near a real file's rate
             break;
         case AudioFormat::Flac24:
             EXPECT_EQ(a.sampleRate, 96000U);

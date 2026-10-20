@@ -211,7 +211,11 @@ void FakePeer::closeAll()
 
 void FakePeer::identify(quint64 id, Mode mode, const QString &peer)
 {
-    Connection &c = m_connections.at(id);
+    const auto it = m_connections.find(id);
+    if (it == m_connections.end()) {
+        return; // it closed already (a connection that failed at once)
+    }
+    Connection &c = it->second;
     const QByteArray rest = c.reader.takeBuffered();
     c.mode = mode;
     c.peer = peer;
@@ -228,25 +232,30 @@ void FakePeer::identify(quint64 id, Mode mode, const QString &peer)
     Q_EMIT identified(id, peer, typeFor(mode));
 }
 
-quint64 FakePeer::connectTo(const QString &user, const QHostAddress &address, quint16 port, ConnectionType type)
+quint64 FakePeer::dial(const QString &user, const QHostAddress &address, quint16 port, const QByteArray &first,
+                       Mode mode)
 {
     auto *socket = new QTcpSocket(this);
     const quint64 id = add(socket, true);
     socket->connectToHost(address, port);
-    // Written now, sent once connected: PeerInit is always the first message.
-    socket->write(frame(peerinit::PeerInit{m_username, type, 0}));
-    identify(id, modeFor(type, true), user);
+    if (!isOpen(id)) {
+        return id; // failed at once (nobody listens there, port 0): already closed and forgotten
+    }
+    // Written now, sent once connected: PeerInit or PierceFireWall is always the first message.
+    socket->write(first);
+    identify(id, mode, user);
     return id;
+}
+
+quint64 FakePeer::connectTo(const QString &user, const QHostAddress &address, quint16 port, ConnectionType type)
+{
+    return dial(user, address, port, frame(peerinit::PeerInit{m_username, type, 0}), modeFor(type, true));
 }
 
 quint64 FakePeer::connectAsDownloader(const QString &user, const QHostAddress &address, quint16 port)
 {
-    auto *socket = new QTcpSocket(this);
-    const quint64 id = add(socket, true);
-    socket->connectToHost(address, port);
-    socket->write(frame(peerinit::PeerInit{m_username, ConnectionType::File, 0}));
-    identify(id, Mode::FileDownload, user);
-    return id;
+    return dial(user, address, port, frame(peerinit::PeerInit{m_username, ConnectionType::File, 0}),
+                Mode::FileDownload);
 }
 
 bool FakePeer::requestIndirect(const QString &user, ConnectionType type, quint32 token)
@@ -688,18 +697,18 @@ void FakePeer::handleFileDownload(quint64 id)
 void FakePeer::connectToPeerRequested(const fromserver::ConnectToPeerRequest &request)
 {
     ++indirectRequests;
-    if (!answerIndirect) {
-        if (reportCantConnect && m_server != nullptr) {
-            m_server->relayCantConnectToPeer(request.token, request.username);
-        }
-        return;
+    // A client that doesn't listen (port 0) can't be dialled back; real peers then report it.
+    const bool dialable = request.ip != 0 && request.port != 0 && request.port <= 65535;
+    quint64 id = 0;
+    if (answerIndirect && dialable) {
+        // We answer their request: as a downloader on F (they upload), as a parent on D.
+        id = dial(request.username, ipv4Address(request.ip), static_cast<quint16>(request.port),
+                  frame(peerinit::PierceFireWall{request.token}), modeFor(request.type, false));
     }
-    auto *socket = new QTcpSocket(this);
-    const quint64 id = add(socket, true);
-    socket->connectToHost(ipv4Address(request.ip), static_cast<quint16>(request.port));
-    socket->write(frame(peerinit::PierceFireWall{request.token}));
-    // We answer their request: as a downloader on F (they upload), as a parent on D.
-    identify(id, modeFor(request.type, false), request.username);
+    const bool failed = id == 0 || !isOpen(id);
+    if (failed && reportCantConnect && m_server != nullptr) {
+        m_server->relayCantConnectToPeer(request.token, request.username);
+    }
 }
 
 void FakePeer::cantConnectToPeer(quint32 /*token*/) {}

@@ -38,16 +38,25 @@ selecta_add_test_suite(selecta_slsk_tests
         DistributedNodeTest.cpp
         ClientTest.cpp
         DevnetTest.cpp
+        CliTest.cpp
     LIBRARIES selecta_slsk_testing selecta_devnet_core)
+# CliTest runs selecta-cli's slsk-* commands against the fakes.
+target_compile_definitions(selecta_slsk_tests PRIVATE SELECTA_CLI_PATH="$<TARGET_FILE:selecta-cli>")
+add_dependencies(selecta_slsk_tests selecta-cli)
 
 # slsk against a real Soulfind on this machine (devenv/README.md). Soulfind listens on every interface, so these are
 # opt-in twice: built only with SELECTA_SOULFIND_TESTS=ON (CTest label `devenv`), and run only with SELECTA_DEVENV=1.
 # Nothing here downloads Soulfind: fetch the pinned build by hand (devenv/fetch-soulfind.sh).
 option(SELECTA_SOULFIND_TESTS "Build the slsk tests against a real Soulfind (it listens on every interface)" OFF)
 if(SELECTA_SOULFIND_TESTS)
-    add_executable(selecta_slsk_devenv_tests "${PROJECT_SOURCE_DIR}/tests/unit_main.cpp" devenv/SoulfindTest.cpp)
+    add_executable(selecta_slsk_devenv_tests "${PROJECT_SOURCE_DIR}/tests/unit_main.cpp"
+        devenv/Soulfind.h devenv/Soulfind.cpp
+        devenv/SoulfindTest.cpp
+        devenv/SoulfindCliTest.cpp)
     target_link_libraries(selecta_slsk_devenv_tests PRIVATE selecta_slsk_testing Qt6::Core Qt6::Test GTest::gtest)
-    target_compile_definitions(selecta_slsk_devenv_tests PRIVATE SELECTA_DEVENV_DIR="${PROJECT_SOURCE_DIR}/devenv")
+    target_compile_definitions(selecta_slsk_devenv_tests PRIVATE SELECTA_DEVENV_DIR="${PROJECT_SOURCE_DIR}/devenv"
+        SELECTA_CLI_PATH="$<TARGET_FILE:selecta-cli>")
+    add_dependencies(selecta_slsk_devenv_tests selecta-cli)
     selecta_set_warnings(selecta_slsk_devenv_tests)
     gtest_discover_tests(selecta_slsk_devenv_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS devenv)
 endif()
