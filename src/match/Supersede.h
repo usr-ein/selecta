@@ -86,6 +86,7 @@ enum class SupersedeReason : quint8 {
     SingleChanged,       // recheck (T41)
     VersionDiffers,      // another version of the same title: no supersede (T40)
     SameQuality,         // arrival: the new copy is no better than the one already there: flag the duplicate
+    NoMatch,             // nothing matches: leave both alone
 };
 
 struct SupersedePair
@@ -94,7 +95,7 @@ struct SupersedePair
     quint64 singleId = 0;
     Tier tier = Tier::None;
     SupersedeAction action = SupersedeAction::None;
-    SupersedeReason reason = SupersedeReason::VersionDiffers;
+    SupersedeReason reason = SupersedeReason::NoMatch;
     QString summary;         // one line for the activity log: the decision and why
     QStringList explanation; // every guard that was checked, for the inspector
 };
@@ -106,7 +107,7 @@ struct SupersedeArrivalDecision
     quint64 existingId = 0;
     Tier tier = Tier::None;
     SupersedeAction action = SupersedeAction::None;
-    SupersedeReason reason = SupersedeReason::VersionDiffers;
+    SupersedeReason reason = SupersedeReason::NoMatch;
     QString summary;         // one line for the activity log: the decision and why
     QStringList explanation; // every guard that was checked, for the inspector
 };
@@ -144,7 +145,7 @@ public:
                                     const QList<SupersedeSingle> &singles, int inboxSingleCount);
 
     // One pair, without the circuit breaker. Tier None with reason VersionDiffers when the versions differ; tier
-    // None and action None when nothing matches.
+    // None, action None and reason NoMatch when nothing matches.
     static SupersedePair decidePair(AlbumDownloadState state, const SupersedeAlbumTrack &albumTrack,
                                     const SupersedeSingle &single);
 

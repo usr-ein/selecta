@@ -21,6 +21,7 @@ qt_add_library(selecta_match STATIC
     QueryPlanner.h QueryPlanner.cpp
     Tracklist.h Tracklist.cpp
     DurationConsensus.h DurationConsensus.cpp
+    Supersede.h Supersede.cpp
     detail/Alignment.h detail/Alignment.cpp
     detail/Hungarian.h detail/Hungarian.cpp
     detail/IndexData.h

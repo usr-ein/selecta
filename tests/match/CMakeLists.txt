@@ -14,6 +14,7 @@ selecta_add_test_suite(selecta_match_tests
         ReleaseScorerTest.cpp
         RemotePathParserTest.cpp
         SimilarityTest.cpp
+        SupersedeTest.cpp
         TokenIndexTest.cpp
         TracklistTest.cpp
         VersionClassifierTest.cpp

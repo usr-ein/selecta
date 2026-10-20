@@ -120,6 +120,17 @@ Types ── Normalizer ── VersionClassifier ── Lexicon (all word lists,
     preferred cluster and no other cluster that could be the wanted version backed by two peers or more: a single
     peer's odd length (a truncated file) is noise, two unlabelled lengths for an unversioned line are a guess. With
     T51's data an unversioned line has no preferred cluster (both are named by non-original versions).
+21. **Supersede (§15).** Local against local: a small MatchIndex of the album tracks (or of the copy already there)
+    and `Matcher::matchLocal` give the §9 verdict with exact lengths; another version is reported (VersionDiffers,
+    T40), likely pairs only flag. Exact then needs the strict rule on top: equal squashed title keys and bracket
+    extras, equal artist sets, the same version, both lengths known and within 2 s. Guards for an exact pair, in
+    order: changed → Recheck, busy → Defer, filed → Flag, arrived after the album → Flag, album not complete and
+    verified → Flag, a quality rank unknown → Flag, the single better → Flag, else Trash. The circuit breaker counts
+    the Trash pairs of the event (> 10, or ≥ 4 and > 30 % of the Inbox singles); they stay Trash and
+    `needsConfirmation` asks core to confirm first. The arrival pipeline (`decideArrival`) uses the same matching
+    and guards (without the album-only ones) and replaces only when the new copy ranks strictly higher; equal →
+    SameQuality, worse → SingleBetterQuality, both flagged. Quality is ranked as given (the source quality from the
+    history). Every decision has a one-line `summary` for the activity log and an explanation of each check.
 
 ## Integration points
 
@@ -187,8 +198,10 @@ letters, two fuzzy fields, an uncorroborated short-word edit), not retrieval: pr
   its own `SupersedeArrivalDecision`; `LocalTrackFacts::quality` is the best evidence of the real quality (the
   source quality from the history, since downloads become MP3 320); every decision carries a one-line `summary`.
 - Done since: DurationConsensus (X4, decision 20), so X4 is complete.
-- Next: SupersedeDecider (X5). Memory could drop further by interning artist sets and versions apart (records now
-  intern one meta per artist set × version × extra text).
+- Done since: SupersedeDecider (X5, decision 21): T36–T42 on the decision side, the circuit breaker's 3/5, 4/10,
+  4/20 and 11/100 cases, and the arrival pipeline; 578 tests. Every deliverable of the contract is in.
+- Next (optional): a `selecta-cli` demo command; memory could drop further by interning artist sets and versions
+  apart (records now intern one meta per artist set × version × extra text).
 - Open questions: none (Q-M1 and Q-M2 answered, decisions 11 and 13).
 - Working rules from the head implementer: `tools/lint.sh src/match tests/match` before each commit; a note to
   `main` at each milestone; `Matcher` and everything else safe to call concurrently on one shared index.
