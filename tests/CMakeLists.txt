@@ -41,6 +41,7 @@ selecta_add_test_suite(selecta_unit_tests
         library/HistoryStoreTest.cpp
         library/InboxStoreTest.cpp
         library/NamingTest.cpp
+        library/QuarantineTest.cpp
         storage/DatabaseTest.cpp
         storage/MigrationsTest.cpp
         storage/SessionLogTest.cpp

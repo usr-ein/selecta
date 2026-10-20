@@ -13,6 +13,7 @@
 #include "core/ReleaseJson.h"
 #include "library/HistoryStore.h"
 #include "library/Naming.h"
+#include "library/Quarantine.h"
 #include "storage/Database.h"
 
 #include <QDateTime>
@@ -376,8 +377,12 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
         !mismatch.isEmpty()) {
         warnings.append(mismatch);
     }
+    // A quarantine attribute the download has survives the conversion (NFR-4); publishing gives it one otherwise.
+    if (QString why; !library::quarantine::copy(source, staged, &why)) {
+        qCInfo(lcArrival).noquote() << why;
+    }
 
-    // Into the Inbox.
+    // Into the Inbox, quarantined.
     const library::FileOps fileOps(job.library.inboxRoot, {}, job.trash);
     const library::FileResult published =
         fileOps.publishIntoInbox(staged, QDir(job.library.singlesFolder).filePath(name));

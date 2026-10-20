@@ -69,8 +69,8 @@ struct AlbumArrivalResult
 // (matched by disc and track number, then by name and length), else from its own tags with the album's fields, given
 // the album cover (fetched, else the folder's image, else its own) and named by the album track template; the cover
 // is saved as cover.jpg too. The album folder, named by the album folder template, is assembled in staging and
-// published into Inbox/Albums in one move. Originals then go: converted lossless files to the Trash (D11), the rest
-// deleted.
+// published into Inbox/Albums in one move, the folder and every file in it quarantined (NFR-4). Originals then go:
+// converted lossless files to the Trash (D11), the rest deleted.
 //
 // Threading: blocking file work; call it from a worker. Failure modes: a file that can't be read or converted is left
 // out and reported in its Track; when no audio file makes it, the album fails and nothing is published.
