@@ -11,10 +11,10 @@ maintainer reviews the **Decisions taken autonomously** and **Waiting for the ma
 | M1 Foundations | 🟡 almost | Build system, static deps, app shell, storage, governor, lint, sanitizers, debug tools, devenv ✅ · CI workflow ⏳ |
 | M2 Protocol core and governor | ✅ | slsk S1–S7 merged (codec, server, peers, transfers, distributed, devnet, CLI) · core NetworkService, governor bookkeeping ✅ |
 | M3 Search experience | 🟡 most | SearchService, FileRanking ✅ · **Search view** ✅ (release first, streamed results, filters and presets, why hidden, ownership badges, 24 h SQLite cache, preview and download from results) · search history (P1) ⏳ |
-| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanned, watched and matched ("you have it" in Get tracks and Search) ✅ · Inbox inspector (tags, release picking) ⏳ |
-| M5 Preview and waveform | 🟡 most | Player (decoder thread, lock-free ring, CoreAudio AUHAL), rekordbox-style waveform, transport ✅ · previews from the Inbox, from peers (Get tracks, Search) and from YouTube through the user's yt-dlp ✅ · Keep, analysis cache, preview source setting ⏳ |
+| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanned, watched and matched ✅ · Inbox inspector (tags, cover, provenance, edit, choose another release) ✅ · album downloads and supersede ⏳ |
+| M5 Preview and waveform | ✅ | Player, waveform, transport ✅ · Space previews from YouTube (the user's yt-dlp), else Deezer's 30-s clip, else the peer; ⇧Space the peer's file; K keeps it (a preview in flight becomes the download) ✅ · analysis cache, 2 GB preview cache, Preview as You Move ✅ · spectrum check (P1) ⏳ |
 | M6 Converter and arrival pipeline | 🟡 most | Arrival pipeline: MusicBrainz label/genre, cover, MP3 320 (verified) or keep lossy, Inbox + history ✅ · media C1–C3, A3 merged ✅ · Converter view ⏳ |
-| M7 Sharing and fairness | 🟡 | slsk answering hooks ready · share library (index, upload queue) being built by its agent · core wiring ⏳ |
+| M7 Sharing and fairness | 🟡 most | share library merged ✅ · core ShareService: index from the collection, distributed network, search answers, browses, uploads in queue order, upload records ✅ · Shares view, toolbar ratio ✅ · buddies/bans (P1), Peers view ⏳ |
 | M8 Get tracks, wishlist, browse, messages, rooms | 🟡 | **Get tracks end to end ✅** (paste → release lookup → find → tick → Get → download with retries and resume → converted, tagged MP3 320 in the Inbox; verified against selecta-devnet) · wishlist, browse, messages, rooms ⏳ |
 | M9 Live-network beta | ⛔ maintainer only | never automated (CLAUDE.md) |
 | M10 v1.0 | ⏳ | |
@@ -29,12 +29,16 @@ All four library contracts are delivered and merged.
 | meta | `lib/meta` | [contracts/meta.md](contracts/meta.md) | M1–M6 ✅ merged (Spotify, MusicBrainz, covers, Deezer, resolver, yt-dlp, clips, CLI; one manual smoke run) |
 | media | `lib/media` | [contracts/media.md](contracts/media.md) | A1–A3, C1–C3 ✅ merged, plus `probeStreamInfo` (header-only probe) |
 | match | `lib/match`, `lib/collection` | [contracts/match.md](contracts/match.md), [contracts/collection.md](contracts/collection.md) | X1–X5 ✅ and the collection scanner ✅ merged |
-| share | `lib/share` | [contracts/share.md](contracts/share.md) | 🟡 in progress: share index, safe opening for uploads, upload queue |
+| share | `lib/share` | [contracts/share.md](contracts/share.md) | ✅ merged: share index, safe opening for uploads, upload queue (135 tests) |
 
 ## Decisions taken autonomously (for review)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-20 | Selecta answers at most 10 searches a minute (burst 5), on top of the governor's connection budget | Each answer opens a connection: answering must never crowd out what the user asked for |
+| 2026-10-20 | The ratio is "healthy" while under 1 GB was taken in 30 days or a quarter of it went back; "low" otherwise | FAIR-3 needs a status; generous on purpose until M9 shows real numbers |
+| 2026-10-20 | Space previews from YouTube (the user's yt-dlp), else Deezer's clip, else the peer's file; Settings can pick one | D26 and PREV-12 as written; the fallback keeps Space useful without yt-dlp |
+| 2026-10-20 | A Get (or K) while the same file previews makes the preview the download, without a second transfer | PREV-5: keep without re-downloading, also before the preview has finished |
 | 2026-10-20 | A result that would be an "Upgrade" over a collection copy that is already MP3 320 (or lossless) shows "In collection" | Every download arrives as MP3 320 (D29): it would only make the same file again |
 | 2026-10-20 | Search results only claim "Upgrade" or "In collection" for sure matches; an unclear version shows "Likely owned" | To a DJ another mix is another track |
 | 2026-10-20 | Searches that found nothing aren't kept in the search cache | An empty answer is worth asking again later; the governor still keeps a repeat quiet for 10 minutes |
