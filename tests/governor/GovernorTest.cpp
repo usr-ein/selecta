@@ -54,6 +54,20 @@ TEST_F(GovernorTest, SearchBudgetIsSixThenOneEveryThirtySeconds)
     EXPECT_EQ(search(u"one too many"_s), Refusal::None);
 }
 
+TEST_F(GovernorTest, TheRefillIsTimedEvenWhileSearchesAreLeft)
+{
+    EXPECT_EQ(governor.nextSearchRefillIn(), 0s); // full: nothing to wait for
+    ASSERT_EQ(search(u"query number 10"_s), Refusal::None);
+    ASSERT_EQ(search(u"query number 11"_s), Refusal::None);
+    EXPECT_EQ(governor.nextSearchIn(), 0s);        // a search can still go now…
+    EXPECT_EQ(governor.nextSearchRefillIn(), 30s); // …and the next one comes back in 30 s
+    clock.advance(10s);
+    EXPECT_EQ(governor.nextSearchRefillIn(), 20s);
+    clock.advance(20s);
+    EXPECT_EQ(governor.searchesAvailable(), limits::kSearchBurst - 1);
+    EXPECT_EQ(governor.nextSearchRefillIn(), 30s);
+}
+
 TEST_F(GovernorTest, AllowedSearchCarriesTheCleanedQuery)
 {
     const auto decision = governor.request(Operation::Search, Request{.query = u"  neon   rain x "_s});

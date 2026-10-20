@@ -107,7 +107,6 @@ protected:
     {
         auto fake = std::make_unique<FakePeer>(name, &server);
         EXPECT_TRUE(fake->start());
-        fake->answerIndirect = false; // it is reached directly; we don't listen, so it couldn't dial back anyway
         return fake;
     }
 

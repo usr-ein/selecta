@@ -9,6 +9,7 @@
 #include <QMainWindow>
 
 #include <functional>
+#include <optional>
 
 class QAction;
 class QActionGroup;
@@ -131,6 +132,7 @@ private:
     QActionGroup *m_appearanceGroup = nullptr;
     QList<QAction *> m_goActions;
     QList<QAction *> m_playbackActions;
+    std::optional<bool> m_shownPaused; // what the pause action shows
     QList<View> m_views;
     QHash<QString, qsizetype> m_viewIndex;
     QString m_currentId;

@@ -280,7 +280,7 @@ void Engine::reportSearchBudget()
     Q_EMIT searchBudgetChanged(available);
     if (available < governor::limits::kSearchBurst && m_budgetTimer) {
         // The next token's arrival, plus a millisecond so the bucket has really refilled when the timer fires.
-        m_budgetTimer->start(m_governor->nextSearchIn() + 1ms);
+        m_budgetTimer->start(m_governor->nextSearchRefillIn() + 1ms);
     }
 }
 

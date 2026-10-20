@@ -628,14 +628,16 @@ void MainWindow::refreshTitle()
 void MainWindow::refreshNetworkState()
 {
     const bool paused = m_services.engine.isPaused();
-    {
+    if (!m_shownPaused || *m_shownPaused != paused) {
+        // Only on a change: an action's icon resyncs the native menus, far too slow for every budget tick.
+        m_shownPaused = paused;
         const QSignalBlocker blocker(m_togglePause);
         m_togglePause->setChecked(paused);
+        m_togglePause->setIcon(paused ? icons::symbol(u"play.circle"_s, u"media-playback-start"_s)
+                                      : icons::symbol(u"pause.circle"_s, u"media-playback-pause"_s));
+        m_togglePause->setToolTip(paused ? tr("Resume network activity")
+                                         : tr("Pause network activity (no new searches or transfers)"));
     }
-    m_togglePause->setIcon(paused ? icons::symbol(u"play.circle"_s, u"media-playback-start"_s)
-                                  : icons::symbol(u"pause.circle"_s, u"media-playback-pause"_s));
-    m_togglePause->setToolTip(paused ? tr("Resume network activity")
-                                     : tr("Pause network activity (no new searches or transfers)"));
 
     const int available = m_services.engine.searchesAvailable();
     m_budget->setText(QString::number(available));

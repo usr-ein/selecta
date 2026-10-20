@@ -83,7 +83,11 @@ public:
 
     // --- for the UI ---
     int searchesAvailable() const;
+    // Until a search may go: zero while one is available.
     base::Clock::Duration nextSearchIn() const;
+    // Until the budget grows by one search: zero only when it is full. (nextSearchIn() is zero as long as one search
+    // is left, so it can't time a refill.)
+    base::Clock::Duration nextSearchRefillIn() const;
     PeerDay peerToday(const QString &peer) const { return m_ledger.today(peer); }
     int peerQueued(const QString &peer) const { return m_ledger.queuedAt(peer); }
     int peerActive(const QString &peer) const { return m_ledger.activeAt(peer); }

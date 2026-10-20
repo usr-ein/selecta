@@ -7,6 +7,7 @@
 
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QTest>
 #include <QThread>
 
 #include <gtest/gtest.h>
@@ -55,6 +56,19 @@ TEST_F(EngineTest, StartsOnAnEmptyDatabaseAndRecordsDecisions)
     const auto lines = selecta::core::ActivityLog::recent(engine.database(), 10);
     ASSERT_EQ(lines.size(), 1);
     EXPECT_EQ(lines[0].operation, u"search"_s);
+}
+
+TEST_F(EngineTest, TheSearchBudgetIsReportedOnceAndAgainOnlyWhenItRefills)
+{
+    // With searches spent but some left, the engine waits for the next refill (the clock here stands still): it
+    // must not spin re-reporting the same budget.
+    Engine engine(options());
+    ASSERT_TRUE(engine.start()) << engine.error().toStdString();
+    ASSERT_TRUE(engine.governor().request(Operation::Search, {.query = u"okuma drift"_s}).allowed());
+    ASSERT_TRUE(engine.governor().request(Operation::Search, {.query = u"halden rue"_s}).allowed());
+    const QSignalSpy reports(&engine, &Engine::searchBudgetChanged);
+    QTest::qWait(200);
+    EXPECT_LE(reports.size(), 2);
 }
 
 TEST_F(EngineTest, PauseRefusesSoulseekOperationsAndIsLogged)

@@ -421,6 +421,11 @@ Duration Governor::nextSearchIn() const
     return m_searches.timeUntilAvailable();
 }
 
+Duration Governor::nextSearchRefillIn() const
+{
+    return m_searches.timeUntilAvailable(m_searches.available() + 1);
+}
+
 QString refusalName(Refusal refusal)
 {
     switch (refusal) {
