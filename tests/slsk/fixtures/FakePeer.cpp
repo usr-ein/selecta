@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "fixtures/FakePeer.h"
 
+#include <QBuffer>
+#include <QFile>
+#include <QFileInfo>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
@@ -14,6 +17,10 @@ using namespace Qt::StringLiterals;
 
 namespace selecta::slsk::testing {
 namespace {
+
+constexpr qint64 kUploadChunk = qint64{64} * 1024;
+constexpr qint64 kUploadWatermark = qint64{256} * 1024; // unsent bytes kept queued on an upload socket
+constexpr std::chrono::milliseconds kRateTick{100};
 
 // A port nothing listens on: bound once, then released.
 quint16 closedPort()
@@ -68,7 +75,9 @@ FakePeer::FakePeer(QString username, FakeServer *server, QObject *parent)
     , m_username(std::move(username))
     , m_server(server)
     , m_listener(new QTcpServer(this))
+    , m_rateTimer(new QTimer(this))
 {
+    connect(m_rateTimer, &QTimer::timeout, this, &FakePeer::onRateTick);
     connect(m_listener, &QTcpServer::newConnection, this, [this] {
         while (QTcpSocket *socket = m_listener->nextPendingConnection()) {
             if (refuseInbound) {
@@ -111,6 +120,14 @@ quint16 FakePeer::port() const
     return m_listener->serverPort();
 }
 
+quint64 FakePeer::sizeOf(const Upload &upload)
+{
+    if (!upload.sourceFile.isEmpty()) {
+        return static_cast<quint64>(std::max<qint64>(0, QFileInfo(upload.sourceFile).size()));
+    }
+    return static_cast<quint64>(upload.content.size());
+}
+
 int FakePeer::identifiedCount(ConnectionType type) const
 {
     return static_cast<int>(std::ranges::count_if(m_connections, [type](const auto &entry) {
@@ -149,18 +166,27 @@ void FakePeer::onClosed(quint64 id)
     if (it == m_connections.end()) {
         return;
     }
-    // Like real uploaders: a transfer cut short is reported on P, so the downloader can re-queue (or ignore it).
-    if (it->second.mode == Mode::FileUpload && it->second.offsetReceived && !it->second.path.isEmpty() &&
-        it->second.socket->bytesToWrite() > 0) {
-        const QString user = it->second.peer;
-        const RemotePath path = it->second.path;
+    const Connection &c = it->second;
+    const bool uploading = c.mode == Mode::FileUpload && c.offsetReceived && !c.path.isEmpty();
+    const bool cutShort = c.remaining > 0 || c.socket->bytesToWrite() > 0;
+    // Like real uploaders: a transfer the downloader cut short is reported on P, so it can re-queue (or ignore it).
+    if (uploading && cutShort && !c.uploaderClosed) {
+        const QString user = c.peer;
+        const RemotePath path = c.path;
         uploadFailuresSent.append(path);
         QTimer::singleShot(0, this, [this, user, path] { sendTo(user, frame(peer::UploadFailed{path})); });
     }
-    QTcpSocket *socket = it->second.socket;
+    const QString peer = c.peer;
+    const RemotePath path = c.path;
+    const quint64 sent = c.sent - std::min<quint64>(c.sent, static_cast<quint64>(c.socket->bytesToWrite()));
+    const bool complete = uploading && c.source && !cutShort && !c.killAfter;
+    QTcpSocket *socket = c.socket;
     m_connections.erase(it);
     socket->disconnect(this);
     socket->deleteLater();
+    if (uploading) {
+        Q_EMIT uploadFinished(id, peer, path, sent, complete);
+    }
     Q_EMIT closed(id);
 }
 
@@ -232,7 +258,13 @@ bool FakePeer::requestIndirect(const QString &user, ConnectionType type, quint32
 bool FakePeer::send(quint64 connection, const QByteArray &bytes)
 {
     const Connection *c = find(connection);
-    return c != nullptr && c->socket->write(bytes) == bytes.size();
+    if (c == nullptr) {
+        return false;
+    }
+    if (c->mode == Mode::Peer) {
+        Q_EMIT peerFrameSent(connection, c->peer, bytes);
+    }
+    return c->socket->write(bytes) == bytes.size();
 }
 
 bool FakePeer::sendTo(const QString &user, const QByteArray &bytes)
@@ -322,8 +354,6 @@ void FakePeer::handleInit(quint64 id, const Frame &f)
                 Connection &c = m_connections.at(id);
                 c.transferToken = upload.key();
                 c.path = upload->path;
-                c.uploadContent = files.value(upload->path.raw).content;
-                c.stopAfter = files.value(upload->path.raw).stopAfter;
                 c.socket->write(file::encodeTransferInit(upload.key()));
                 return;
             }
@@ -371,17 +401,22 @@ struct FakePeer::Responder
 
     void operator()(const peer::QueueUpload &m) const
     {
+        const bool queued = peer.heldPosition(from, m.path) > 0; // a repeated request keeps its place
         switch (peer.queueBehaviour) {
         case QueueBehaviour::StartUpload:
             if (peer.files.contains(m.path.raw)) {
-                peer.m_held.append(PendingUpload{from, m.path, 0});
+                if (!queued) {
+                    peer.m_held.append(PendingUpload{from, m.path, 0});
+                }
                 peer.startUpload(from, m.path);
             } else {
                 peer.send(id, frame(peer::UploadDenied{m.path, u"File not shared."_s}));
             }
             return;
         case QueueBehaviour::Hold:
-            peer.m_held.append(PendingUpload{from, m.path, 0});
+            if (!queued) {
+                peer.m_held.append(PendingUpload{from, m.path, 0});
+            }
             return;
         case QueueBehaviour::Deny:
             peer.send(id, frame(peer::UploadDenied{m.path, peer.denyReason}));
@@ -454,8 +489,40 @@ bool FakePeer::startUpload(const QString &user, const RemotePath &path)
     const quint32 token = m_nextToken++;
     m_uploads.insert(token, PendingUpload{user, path, token});
     const Upload upload = files.value(path.raw);
-    const quint64 size = upload.reportZeroSize ? 0 : static_cast<quint64>(upload.content.size());
+    const quint64 size = upload.reportZeroSize ? 0 : sizeOf(upload);
     return sendTo(user, frame(peer::TransferRequest{TransferDirection::Upload, token, path, size}));
+}
+
+bool FakePeer::denyHeld(const QString &user, const RemotePath &path, const QString &reason)
+{
+    const auto held =
+        std::ranges::find_if(m_held, [&](const PendingUpload &p) { return p.user == user && p.path == path; });
+    if (held == m_held.end()) {
+        return false;
+    }
+    m_held.erase(held);
+    return sendTo(user, frame(peer::UploadDenied{path, reason}));
+}
+
+int FakePeer::heldPosition(const QString &user, const RemotePath &path) const
+{
+    const auto held =
+        std::ranges::find_if(m_held, [&](const PendingUpload &p) { return p.user == user && p.path == path; });
+    return held == m_held.end() ? 0 : static_cast<int>(std::distance(m_held.begin(), held)) + 1;
+}
+
+bool FakePeer::sendSearchResponse(const QString &user, const peer::FileSearchResponse &response)
+{
+    if (sendTo(user, frame(response))) {
+        return true;
+    }
+    const FakeServer::Client *client = m_server != nullptr ? m_server->client(user) : nullptr;
+    if (client == nullptr || client->listenPort == 0) {
+        return false;
+    }
+    const quint64 id =
+        connectTo(user, QHostAddress::LocalHost, static_cast<quint16>(client->listenPort), ConnectionType::Peer);
+    return send(id, frame(response));
 }
 
 void FakePeer::openFileConnection(const QString &user, quint32 token)
@@ -468,8 +535,6 @@ void FakePeer::openFileConnection(const QString &user, quint32 token)
         Connection &c = m_connections.at(id);
         c.transferToken = token;
         c.path = upload.path;
-        c.uploadContent = files.value(upload.path.raw).content;
-        c.stopAfter = files.value(upload.path.raw).stopAfter;
         c.socket->write(file::encodeTransferInit(token));
         return;
     }
@@ -493,23 +558,99 @@ void FakePeer::handleFileUpload(quint64 id)
         if (stallUploads) {
             return; // keep the connection open and silent
         }
-        const auto start = static_cast<qsizetype>(std::min<quint64>(offset, c->uploadContent.size()));
-        QByteArray body = c->uploadContent.mid(start);
-        if (c->stopAfter >= 0 && c->stopAfter < body.size()) {
-            body.truncate(c->stopAfter);
-            // A killed transfer happens once; the retry gets the whole rest.
-            for (auto &upload : files) {
-                if (upload.content == c->uploadContent) {
-                    upload.stopAfter = -1;
-                }
-            }
-            c->socket->write(body);
-            c->socket->flush();
-            c->socket->disconnectFromHost();
+        if (!openSource(*c, offset)) {
+            close(id);
             return;
         }
-        c->socket->write(body);
-        // The downloader closes once it has everything; we only wait.
+        Q_EMIT uploadStarted(id, c->peer, c->path, offset, sizeOf(files.value(c->path.raw)));
+    }
+    pumpUpload(id);
+}
+
+bool FakePeer::openSource(Connection &c, quint64 offset)
+{
+    const Upload spec = files.value(c.path.raw);
+    std::unique_ptr<QIODevice> source;
+    if (spec.sourceFile.isEmpty()) {
+        auto buffer = std::make_unique<QBuffer>();
+        buffer->setData(spec.content);
+        source = std::move(buffer);
+    } else {
+        source = std::make_unique<QFile>(spec.sourceFile);
+    }
+    if (!source->open(QIODevice::ReadOnly)) {
+        return false;
+    }
+    const qint64 start = static_cast<qint64>(std::min<quint64>(offset, static_cast<quint64>(source->size())));
+    if (!source->seek(start)) {
+        return false;
+    }
+    c.remaining = source->size() - start;
+    if (spec.stopAfter >= 0 && spec.stopAfter < c.remaining) {
+        c.remaining = spec.stopAfter;
+        c.killAfter = true;
+        files[c.path.raw].stopAfter = -1; // a killed transfer happens once; the retry gets the whole rest
+    }
+    c.source = std::move(source);
+    c.budget = 0;
+    return true;
+}
+
+void FakePeer::pumpUpload(quint64 id)
+{
+    Connection *c = find(id);
+    if (c == nullptr || !c->source || c->uploaderClosed) {
+        return;
+    }
+    while (c->remaining > 0 && c->socket->bytesToWrite() < kUploadWatermark) {
+        qint64 want = std::min(kUploadChunk, c->remaining);
+        if (uploadRate > 0) {
+            want = std::min(want, c->budget);
+            if (want <= 0) {
+                break; // the next tick refills the budget
+            }
+        }
+        const QByteArray chunk = c->source->read(want);
+        if (chunk.isEmpty()) {
+            close(id); // the file went away
+            return;
+        }
+        c->socket->write(chunk);
+        c->remaining -= chunk.size();
+        c->sent += static_cast<quint64>(chunk.size());
+        if (uploadRate > 0) {
+            c->budget -= chunk.size();
+        }
+    }
+    if (c->remaining > 0) {
+        if (uploadRate > 0 && !m_rateTimer->isActive()) {
+            m_rateTimer->start(kRateTick);
+        }
+        return;
+    }
+    if (c->killAfter) {
+        // A transfer killed mid-way: what's queued still goes out, then the connection closes.
+        c->uploaderClosed = true;
+        c->socket->disconnectFromHost(); // may close (and erase `c`) at once
+    }
+    // Otherwise the downloader closes once it has everything; we only wait.
+}
+
+void FakePeer::onRateTick()
+{
+    const qint64 perTick = std::max<qint64>(1, uploadRate * kRateTick.count() / 1000);
+    QList<quint64> uploading;
+    for (auto &[id, c] : m_connections) {
+        if (c.mode == Mode::FileUpload && c.source && c.remaining > 0 && !c.uploaderClosed) {
+            c.budget = std::min(c.budget + perTick, 2 * perTick);
+            uploading.append(id);
+        }
+    }
+    if (uploading.isEmpty() || uploadRate <= 0) {
+        m_rateTimer->stop();
+    }
+    for (const quint64 id : std::as_const(uploading)) {
+        pumpUpload(id);
     }
 }
 
@@ -565,7 +706,14 @@ void FakePeer::cantConnectToPeer(quint32 /*token*/) {}
 
 void FakePeer::searchRequested(const fromserver::SearchRequest &request)
 {
-    if (searchHits.isEmpty() || request.username == m_username) {
+    if (request.username == m_username) {
+        return;
+    }
+    if (onSearch) {
+        onSearch(request);
+        return;
+    }
+    if (searchHits.isEmpty()) {
         return;
     }
     peer::FileSearchResponse response;
@@ -586,16 +734,9 @@ void FakePeer::searchRequested(const fromserver::SearchRequest &request)
             }
         }
     }
-    if (response.results.isEmpty()) {
-        return;
+    if (!response.results.isEmpty()) {
+        sendSearchResponse(request.username, response);
     }
-    const FakeServer::Client *client = m_server != nullptr ? m_server->client(request.username) : nullptr;
-    if (client == nullptr || client->listenPort == 0) {
-        return;
-    }
-    const quint64 id = connectTo(request.username, QHostAddress::LocalHost, static_cast<quint16>(client->listenPort),
-                                 ConnectionType::Peer);
-    send(id, frame(response));
 }
 
 } // namespace selecta::slsk::testing

@@ -36,9 +36,19 @@ FakeServer::~FakeServer()
     }
 }
 
-bool FakeServer::start()
+bool FakeServer::start(quint16 port)
 {
-    return m_listener->listen(QHostAddress::LocalHost, 0);
+    return m_listener->listen(QHostAddress::LocalHost, port);
+}
+
+QString FakeServer::errorString() const
+{
+    return m_listener->errorString();
+}
+
+void FakeServer::setAccount(const QString &username, const QString &password)
+{
+    m_account = std::make_pair(username, password);
 }
 
 QHostAddress FakeServer::address() const
@@ -172,6 +182,7 @@ FakeServer::Client *FakeServer::findLoggedIn(const QString &username)
 
 bool FakeServer::write(Client &client, const QByteArray &bytes)
 {
+    Q_EMIT frameSent(client.username, bytes);
     return client.socket->write(bytes) == bytes.size();
 }
 
@@ -205,6 +216,13 @@ void FakeServer::handleLogin(Client &client, const toserver::Login &login)
         fromserver::LoginReply reply;
         reply.reason = login.username.isEmpty() ? u"INVALIDUSERNAME"_s : u"INVALIDVERSION"_s;
         reply.detail = login.username.isEmpty() ? u"Nick empty."_s : QString();
+        writeMessage(client, reply);
+        client.socket->disconnectFromHost();
+        return;
+    }
+    if (m_account && (login.username != m_account->first || login.password != m_account->second)) {
+        fromserver::LoginReply reply;
+        reply.reason = login.username != m_account->first ? u"INVALIDUSERNAME"_s : u"INVALIDPASS"_s;
         writeMessage(client, reply);
         client.socket->disconnectFromHost();
         return;

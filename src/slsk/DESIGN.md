@@ -199,6 +199,29 @@ payload; code 93 from the server or a parent is unpacked identically.
 8. Distributed: nothing to do; optionally `setChildrenAllowed(false)` from a setting.
 9. Kill switch (SAFE-5): `server().disconnectFromServer()`, `peers().stopListening()`, `peers().closeAll()`.
 
+## Local test network: `selecta-devnet`
+
+`tools/devnet/` builds `selecta-devnet` on the test fixtures: a `FakeServer` and one `FakePeer` per subfolder of a
+library folder (the peer is named after the folder and shares everything below it, with attributes read from the
+MP3/FLAC/WAV/AIFF headers), all on 127.0.0.1 and nowhere else. It prints the `127.0.0.1:<port>` to put in Selecta's
+settings and accepts any login (or only `--user`/`--password`).
+
+- `--generate <dir>` first writes a small synthetic corpus with ffmpeg, the same for the same `--seed`: invented
+  artists and generated tones (never music); peers with different habits (FLAC 16/44.1 and 24/96 with cue sheets and
+  rip logs, scene-style MP3 320, V0 with disc folders, a 192 kbps "Unsorted" folder of loose files, AIFF and WAV
+  extended mixes); overlapping releases, so one search finds a track in several qualities; the naming mess real
+  shares have. Next to the peers it writes `tracklist.txt` (every shared "Artist - Title", for a Get tracks list),
+  `tracklist-missing.txt` (tracks nobody shares) and `devnet.conf`.
+- `devnet.conf` (or `--queue <peer>=<s>` / `--refuse <peer>[=<reason>]`) makes peers misbehave on purpose: in the
+  corpus, `queue_quinn` keeps each download queued 45 s (no free slot advertised, place-in-queue answered) and
+  `refusing_rita` refuses every one with "Too many files"; each alone shares one release, so the queue and failure
+  paths can't be avoided for those tracks.
+- Peers answer searches after a random delay (whole-word matching, `-word` exclusions, `*part` partials) with their
+  free slot, speed and queue; answer browses, user info and folder requests; queue download requests, start them
+  after a random wait (`--queue-wait`) or refuse a share of them with real reasons (`--deny`); and stream the local
+  files at their own speed (25–100 % of `--speed`). Every message both ways is logged unless `--quiet`.
+- It is hooked from `tests/slsk/CMakeLists.txt` (it needs the fixtures), so it builds with the tests.
+
 ## Decisions taken here (for review)
 
 | # | Decision | Why |
@@ -235,6 +258,9 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
     `SendUploadSpeed`, `UploadFailed`/`UploadDenied`, downloader-opened `F` connections), stable ids, coalesced
     progress, ordered signals, every wait timed; 38 tests (PeerNetwork now 44). The fixtures are a static library,
     `selecta_slsk_testing` (`#include "fixtures/FakeServer.h"` …), for core/'s end-to-end tests.
-- **Next:** main's `tools/devnet/` request (FakeServer + FakePeers as a local network for manual runs), then S5
-  distributed, S6 devenv, S7 CLI.
+  - `selecta-devnet` (see above), with `FakePeer` streaming uploads from files at a set speed, a search hook, and
+    queue control, and `FakeServer` on a chosen port with an optional single account; 19 tests, one of which writes
+    a corpus with ffmpeg (skipped without it) and checks every format probes as planned. S4 merged into main as
+    `974a017`.
+- **Next:** S5 (`DistributedNode`, and the `Client` facade with the share-index answering hooks), S6 devenv, S7 CLI.
 - **Open questions:** none blocking.

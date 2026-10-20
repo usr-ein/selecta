@@ -20,6 +20,9 @@ target_include_directories(selecta_slsk_testing PUBLIC
 target_link_libraries(selecta_slsk_testing PUBLIC selecta_slsk Qt6::Network Qt6::Test)
 selecta_set_warnings(selecta_slsk_testing)
 
+# selecta-devnet, the local network for manual runs, is built on these fixtures.
+add_subdirectory("${PROJECT_SOURCE_DIR}/tools/devnet" "${CMAKE_BINARY_DIR}/tools/devnet")
+
 selecta_add_test_suite(selecta_slsk_tests
     SOURCES
         CodecTest.cpp
@@ -32,7 +35,8 @@ selecta_add_test_suite(selecta_slsk_tests
         ServerSessionTest.cpp
         PeerNetworkTest.cpp
         TransferManagerTest.cpp
-    LIBRARIES selecta_slsk_testing)
+        DevnetTest.cpp
+    LIBRARIES selecta_slsk_testing selecta_devnet_core)
 
 if(SELECTA_SLSK_FUZZ)
     add_subdirectory("${PROJECT_SOURCE_DIR}/tests/fuzz/slsk" "${CMAKE_BINARY_DIR}/tests/fuzz/slsk")
