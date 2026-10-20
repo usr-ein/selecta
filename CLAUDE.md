@@ -42,7 +42,7 @@ tools/dev/run-headless.sh                  # start Selecta with a throwaway data
 tools/dev/app.sh state | tree | screenshot path=/abs.png | navigate view=<id> | click name=<objectName> | log
 ```
 
-- Media modules (`audio/`, `convert/`) need `-DSELECTA_WITH_MEDIA=ON`.
+- Media modules (`audio/`, `convert/`) are on by default (`SELECTA_WITH_MEDIA`); turn it off only for quick builds.
 - Run the app with `--headless --debug-server` to inspect it without a window; never with a real library unless
   `--data-dir` points elsewhere.
 

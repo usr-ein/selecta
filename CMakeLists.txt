@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.28)
 
 # Options that decide which vcpkg features to install must exist before project().
 option(SELECTA_BUILD_TESTS "Build the test suites" ON)
-option(SELECTA_WITH_MEDIA "Build with FFmpeg, LAME, soxr and TagLib (milestones M5 and M6)" OFF)
+option(SELECTA_WITH_MEDIA "Build with FFmpeg, LAME, soxr and TagLib (audio, waveforms, conversion)" ON)
 if(SELECTA_BUILD_TESTS)
     list(APPEND VCPKG_MANIFEST_FEATURES "tests")
 endif()
