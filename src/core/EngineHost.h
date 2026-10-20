@@ -77,6 +77,8 @@ public:
     // Previews a line's chosen file while it arrives (previewStarted / previewRefused); stops the one playing.
     void previewTrack(qint64 lineId, PreviewSource source = PreviewSource::Automatic);
     void stopPreview();
+    // Discard (PREV-5): the preview (previewStarted()'s id) leaves the preview cache; one still arriving is cancelled.
+    void discardPreview(qint64 previewId);
 
     // --- previews (PREV-11, PREV-12) ---
     void setYtDlpPath(const QString &path);
