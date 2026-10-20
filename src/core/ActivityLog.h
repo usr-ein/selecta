@@ -76,7 +76,8 @@ public:
 
     // How long a request we made of a peer names the lookup that follows it (the same call chain: well under this).
     static constexpr qint64 kRequestMemoryMs = 5000;
-    // At most this many peers are remembered; older ones are forgotten first.
+    // At most this many peers are remembered. A new peer when full first drops the expired ones; if all are still
+    // recent (a burst), the whole memory is cleared.
     static constexpr int kRequestMemoryPeers = 256;
 
 Q_SIGNALS:
