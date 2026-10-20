@@ -1,0 +1,203 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# A stand-in for yt-dlp in meta's tests (references/metadata-and-preview-services.md §12.7). The real yt-dlp never runs
+# in tests. A test's wrapper script sets these variables and execs this file with /bin/sh:
+#   FAKE_YTDLP_MODE     ok (default), or one of the failure modes below
+#   FAKE_YTDLP_VERSION  what --version prints (default 2026.08.19)
+#   FAKE_YTDLP_SEARCH   the JSON file a search prints
+#   FAKE_YTDLP_ARGS     a file that receives this run's arguments, one per line
+#   FAKE_YTDLP_LOG      a file that receives "start <kind>" and "end <kind>" lines (one process at a time)
+#   FAKE_YTDLP_PIDFILE  a file that receives the pid of a background child (hang modes: the group kill must reach it)
+# Exit codes as yt-dlp's (0 success, 1 error, 2 bad options); 99 when Selecta passed an unsafe argument or left out a
+# safety flag; 98 when the caller's environment leaked through.
+
+set -u
+mode="${FAKE_YTDLP_MODE:-ok}"
+
+if [ -n "${FAKE_YTDLP_ARGS:-}" ]; then
+    : > "$FAKE_YTDLP_ARGS"
+    for argument in "$@"; do
+        printf '%s\n' "$argument" >> "$FAKE_YTDLP_ARGS"
+    done
+fi
+
+# Selecta gives yt-dlp a minimal environment: nothing from the test process may reach it.
+if [ -n "${SELECTA_FAKE_LEAK_CANARY:-}" ]; then
+    echo "fake-yt-dlp: the caller's environment leaked through" >&2
+    exit 98
+fi
+
+# The safety flags (§12.5) must all be there, and none of the forbidden options.
+for required in --ignore-config --no-plugin-dirs --no-cookies --no-cookies-from-browser --no-remote-components; do
+    found=0
+    for argument in "$@"; do
+        if [ "$argument" = "$required" ]; then
+            found=1
+        fi
+    done
+    if [ "$found" -ne 1 ]; then
+        echo "fake-yt-dlp: missing $required" >&2
+        exit 99
+    fi
+done
+for argument in "$@"; do
+    case "$argument" in
+        -U | --update | --update-to | --update-to=* | --exec | --exec=* | --cookies | --cookies=* | \
+        --cookies-from-browser | --cookies-from-browser=* | -u | --username | -p | --password | --netrc | \
+        --netrc-location | --config-locations | --config-location | -a | --batch-file | --load-info-json | \
+        --impersonate | --extractor-args | --plugin-dirs)
+            echo "fake-yt-dlp: forbidden option $argument" >&2
+            exit 99
+            ;;
+    esac
+done
+
+kind=other
+directory=""
+url=""
+previous=""
+for argument in "$@"; do
+    if [ "$previous" = "-P" ]; then
+        directory="$argument"
+    fi
+    case "$argument" in
+        --version) kind=version ;;
+        ytsearch*) kind=search ;;
+        https://www.youtube.com/watch*) url="$argument" ;;
+    esac
+    previous="$argument"
+done
+if [ -n "$url" ] && [ -n "$directory" ]; then
+    kind=fetch
+fi
+
+if [ -n "${FAKE_YTDLP_LOG:-}" ]; then
+    echo "start $kind" >> "$FAKE_YTDLP_LOG"
+    trap 'echo "end $kind" >> "$FAKE_YTDLP_LOG"' EXIT
+fi
+
+hang() {
+    sleep 30 &
+    if [ -n "${FAKE_YTDLP_PIDFILE:-}" ]; then
+        echo "$!" > "$FAKE_YTDLP_PIDFILE"
+    fi
+    wait
+    exit 0
+}
+
+fail() {
+    echo "ERROR: [youtube] AAAAAAAAAAA: $1" >&2
+    exit 1
+}
+
+if [ "$kind" = version ]; then
+    case "$mode" in
+        badoption)
+            echo "Usage: yt-dlp [OPTIONS] URL [URL...]" >&2
+            echo "" >&2
+            echo "yt-dlp: error: no such option: --no-remote-components" >&2
+            exit 2
+            ;;
+        versioncrash) kill -SEGV $$ ;;
+        versionhang) hang ;;
+        versiongarbled)
+            echo "yt-dlp, the latest"
+            exit 0
+            ;;
+    esac
+    echo "${FAKE_YTDLP_VERSION:-2026.08.19}"
+    exit 0
+fi
+
+case "$mode" in
+    ratelimit) fail "This content isn't available, try again later. The current session has been rate-limited by YouTube for up to an hour. It is recommended to use \`-t sleep\` to add a delay between video requests to avoid exceeding the rate limit." ;;
+    http429)
+        echo "ERROR: Unable to download API page: HTTP Error 429: Too Many Requests (caused by <HTTPError 429: Too Many Requests>)" >&2
+        exit 1
+        ;;
+    bot) fail "Sign in to confirm you’re not a bot. Use --cookies-from-browser or --cookies for the authentication. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies." ;;
+    captcha) fail "YouTube is requiring a captcha challenge before playback" ;;
+    age) fail "Sign in to confirm your age. This video may be inappropriate for some users. Use --cookies-from-browser or --cookies for the authentication." ;;
+    geo) fail "The uploader has not made this video available in your country. This video is not available from your location due to geo restriction" ;;
+    drm) fail "This video is DRM protected" ;;
+    unavailable) fail "Video unavailable. This video has been removed by the uploader" ;;
+    private) fail "Private video. Sign in if you've been granted access to this video. Use --cookies-from-browser or --cookies for the authentication." ;;
+    network) fail "Unable to download API page: <urlopen error [Errno 8] nodename nor servname provided, or not known> (caused by TransportError('<urlopen error [Errno 8] nodename nor servname provided, or not known>'))" ;;
+    noruntime)
+        echo "WARNING: [youtube] No supported JavaScript runtime could be found. Only deno is enabled by default; to use another runtime add  --js-runtimes RUNTIME[:PATH]  to your command/config. YouTube extraction without a JS runtime has been deprecated, and some formats may be missing." >&2
+        if [ "$kind" = fetch ]; then
+            fail "Requested format is not available. Use --list-formats for a list of available formats"
+        fi
+        ;;
+    challenge)
+        echo "WARNING: [youtube] AAAAAAAAAAA: n challenge solving failed: Some formats may be missing. Ensure you have a supported JavaScript runtime and challenge solver script distribution installed." >&2
+        fail "Requested format is not available. Use --list-formats for a list of available formats"
+        ;;
+    crash) kill -SEGV $$ ;;
+    hang) hang ;;
+    garbage)
+        echo "this is not json"
+        exit 0
+        ;;
+    huge)
+        dd if=/dev/zero bs=1048576 count=5 2> /dev/null | tr '\000' 'x'
+        exit 0
+        ;;
+    oddexit)
+        echo "ERROR: something unexpected happened in $HOME/.cache/yt-dlp" >&2
+        exit 1
+        ;;
+esac
+
+if [ "$kind" = search ]; then
+    if [ "$mode" = slow ]; then
+        sleep 0.3
+    fi
+    cat "${FAKE_YTDLP_SEARCH:?}"
+    exit 0
+fi
+
+if [ "$kind" != fetch ]; then
+    echo "fake-yt-dlp: unexpected command line" >&2
+    exit 2
+fi
+
+id="${url##*=}"
+file="$directory/$id.m4a"
+if [ "$mode" = nofile ]; then
+    exit 0
+fi
+if [ "$mode" = unnamed ]; then
+    # Writes before naming its format, then stalls: the runner must still clean up.
+    dd if=/dev/zero bs=8192 count=1 2> /dev/null > "$file"
+    hang
+fi
+echo "SELECTA-FORMAT 140 m4a mp4a.40.2 129.478 201"
+: > "$file"
+total=40960
+written=0
+while [ "$written" -lt "$total" ]; do
+    dd if=/dev/zero bs=8192 count=1 2> /dev/null >> "$file"
+    written=$((written + 8192))
+    echo "SELECTA-PROGRESS $written $total.0 1" >&2
+    case "$mode" in
+        stall) hang ;;
+        die)
+            echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2
+            exit 1
+            ;;
+        endless)
+            while :; do
+                echo "SELECTA-PROGRESS $written $total.0 1" >&2
+                sleep 0.05
+            done
+            ;;
+    esac
+    sleep 0.02
+done
+if [ "$mode" = elsewhere ]; then
+    echo "SELECTA-FILE /tmp/somewhere-else/$id.m4a"
+else
+    echo "SELECTA-FILE $file"
+fi
+exit 0

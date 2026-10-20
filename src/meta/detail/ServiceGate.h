@@ -64,6 +64,9 @@ public:
     base::Clock::TimePoint blockedUntil() const { return m_blockedUntil; }
     // How long until the back-off ends; zero when not blocked.
     base::Clock::Duration blockRemaining() const;
+    // How long until spacing, window and back-off would let a new start through (ignoring the queue and the in-flight
+    // limit); zero when one could start now.
+    base::Clock::Duration nextStartIn() const;
 
     int queued() const { return static_cast<int>(m_interactive.size() + m_background.size()); }
     int inFlight() const { return static_cast<int>(m_inFlight.size()); }
@@ -84,7 +87,7 @@ private:
     };
 
     void schedule(); // poll() on the next event-loop turn
-    base::Clock::TimePoint earliestStart(base::Clock::TimePoint now);
+    base::Clock::TimePoint earliestStart(base::Clock::TimePoint now) const;
 
     Limits m_limits;
     const base::Clock &m_clock;
