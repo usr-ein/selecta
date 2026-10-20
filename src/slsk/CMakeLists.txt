@@ -14,7 +14,8 @@ qt_add_library(selecta_slsk STATIC
     Frame.h Frame.cpp
     TokenGenerator.h TokenGenerator.cpp
     Logging.h Logging.cpp
-    internal/CodecHelpers.h)
+    internal/CodecHelpers.h
+    ServerSession.h ServerSession.cpp)
 add_library(Selecta::Slsk ALIAS selecta_slsk)
 target_link_libraries(selecta_slsk
     PUBLIC selecta_base selecta_governor Qt6::Core Qt6::Network
@@ -22,7 +23,7 @@ target_link_libraries(selecta_slsk
 selecta_set_warnings(selecta_slsk)
 
 # The fuzz configuration (tests/fuzz/slsk/README.md): coverage instrumentation for libFuzzer. Needs LLVM clang.
-option(SELECTA_SLSK_FUZZ "Build the slsk libFuzzer targets (LLVM clang with libFuzzer; see tests/fuzz/slsk/README.md)" OFF)
+option(SELECTA_SLSK_FUZZ "Build the slsk libFuzzer targets (LLVM clang; tests/fuzz/slsk/README.md)" OFF)
 if(SELECTA_SLSK_FUZZ)
     target_compile_options(selecta_slsk PRIVATE -fsanitize=fuzzer-no-link)
 endif()

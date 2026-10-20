@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QByteArrayView>
 
+#include <algorithm>
 #include <functional>
 #include <optional>
 #include <type_traits>
@@ -72,8 +73,16 @@ public:
 
     Error error() const { return m_error; }
     bool hasError() const { return m_error != Error::None; }
-    // Payload bytes the frame being read announced (0 before its header is complete). For progress and logging.
+    // Payload bytes and code the frame being read announced (0 before its header is complete). For progress and
+    // logging.
     qsizetype pendingFrameSize() const { return m_pendingPayload; }
+    quint32 pendingFrameCode() const { return m_headerChecked ? m_pendingCode : 0; }
+    // Payload bytes of the pending frame already buffered.
+    qsizetype pendingFrameReceived() const
+    {
+        const qsizetype header = 4 + static_cast<qsizetype>(m_width);
+        return m_headerChecked ? std::min(m_pendingPayload, buffered() - header) : 0;
+    }
     qsizetype buffered() const { return m_buffer.size() - m_offset; }
     // Removes and returns every byte not yet consumed, e.g. what follows a peer-init frame on an `F` connection.
     QByteArray takeBuffered();

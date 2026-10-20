@@ -6,14 +6,12 @@
 #include "slsk/ServerMessages.h"
 #include "slsk/Types.h"
 
+#include <QDeadlineTimer>
 #include <QHash>
 #include <QHostAddress>
 #include <QObject>
-#include <QSet>
 #include <QString>
 #include <QStringList>
-
-#include <memory>
 
 class QTcpSocket;
 class QTimer;
@@ -66,7 +64,7 @@ enum class ChatTextError {
 };
 
 ChatTextError validateRoomName(const QString &room);
-// Replaces CR and LF with spaces (the server refuses newlines) and checks the length.
+// Removes CR and turns LF into a space (the server refuses newlines; Nicotine+ does the same), then checks the length.
 ChatTextError prepareChatLine(QString &text);
 
 // The connection to the Soulseek server (references/soulseek-protocol.md §4, §9.1, §11).
@@ -137,12 +135,13 @@ public:
 
     // --- connection --------------------------------------------------------------------------------------------------
 
-    // Opens the TCP connection to `address`:`port`. The caller has already checked governor::addressAllowed(); `login`
-    // must be a Login permit. Returns false, consuming nothing, when the session isn't Disconnected or the permit is
-    // invalid. A failed connection ends the session with ConnectFailed.
+    // Opens the TCP connection to `address`:`port` (never a host name). The caller has already checked
+    // governor::addressAllowed(); `login` must be a Login permit. Returns false, with the permit dropped unused, when a
+    // session is already running or the permit is invalid. A failed connection ends the session with ConnectFailed.
     bool connectToServer(const QHostAddress &address, quint16 port, governor::Permit login);
     // Sends the login request as soon as the connection is up (right away when Connected). Returns false when there is
-    // no connection in progress, a login was already sent, or the username is empty.
+    // no connection in progress, a login was already sent, or the username is empty. A connection left without login()
+    // for the login timeout ends with LoggedOut (a caller error; logged).
     bool login(const QString &username, const QString &password);
     // Ends the session with LoggedOut (no signal is lost: ended() is emitted before this returns, if a session was
     // running).
@@ -167,7 +166,7 @@ public:
     bool fileSearch(quint32 token, const QString &query, governor::Permit search);
     bool userSearch(const QString &username, quint32 token, const QString &query, governor::Permit search);
     bool wishlistSearch(quint32 token, const QString &query, governor::Permit search);
-    // CR/LF become spaces; a line over protocol::kChatLineMaxBytes is refused (see prepareChatLine()).
+    // Newlines are flattened; a line over protocol::kChatLineMaxBytes is refused (see prepareChatLine()).
     bool sendPrivateMessage(const QString &username, const QString &text, governor::Permit privateMessage);
     // Only in a room we joined. The server echoes our own line back as a roomMessage().
     bool sayInRoom(const QString &room, const QString &text, governor::Permit roomMessage);
@@ -260,38 +259,38 @@ private:
     void onLoginTimeout();
     void sendLogin();
     void sendPostLoginBurst();
+    void enableKeepAlive();
     template <typename Message>
     bool send(const Message &message);
-    bool sendIfLoggedIn(const QByteArray &frame);
-    bool consumePermit(governor::Permit &permit, governor::Operation operation);
+    template <typename Message>
+    bool sendIfLoggedIn(const Message &message);
+    static bool consumePermit(governor::Permit &permit, governor::Operation operation);
     void handleFrame(const Frame &frame);
     void handleLoginReply(const fromserver::LoginReply &reply);
     void handlePrivateMessage(const fromserver::PrivateMessage &message);
     void handleRoomJoined(const fromserver::RoomJoined &room);
     void handleRoomLeft(const fromserver::RoomLeft &room);
-    void handleRoomEvent(const FromServerMessage &message);
-    void dispatch(FromServerMessage &&message);
-    void enableKeepAlive();
+    void dispatch(const FromServerMessage &message);
 
     Timeouts m_timeouts;
-    std::unique_ptr<QTcpSocket> m_socket;
-    QTimer *m_connectTimer = nullptr;
-    QTimer *m_loginTimer = nullptr;
-    QTimer *m_pingTimer = nullptr;
+    QTcpSocket *m_socket = nullptr; // child; replaced per session
+    QTimer *m_connectTimer;
+    QTimer *m_loginTimer;
+    QTimer *m_pingTimer;
     FrameReader m_reader;
     State m_state = State::Disconnected;
     EndReason m_endReason = EndReason::None;
     LoginRejection m_rejection;
     LoginInfo m_loginInfo;
     QString m_username;
-    QString m_password;
+    QString m_password; // only until the login request is sent
     bool m_loginRequested = false;
     bool m_banNoticeSeen = false;
     quint16 m_listenPort = protocol::kDefaultListenPort;
     quint32 m_sharedFolders = 0;
     quint32 m_sharedFiles = 0;
     UserStatus m_status = UserStatus::Online;
-    QSet<QString> m_pendingAddressLookups; // GetPeerAddress sent, reply not yet seen
+    QHash<QString, QDeadlineTimer> m_pendingAddressLookups; // GetPeerAddress sent, reply not yet seen
     QHash<QString, RoomState> m_rooms;
 };
 
