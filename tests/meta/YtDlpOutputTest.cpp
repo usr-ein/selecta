@@ -305,6 +305,46 @@ TEST(YtDlpPick, ArtistAndLabelChannelsThenViews)
     EXPECT_EQ(picked(strangers, track(u"Glass Harbour"_s, 202000)), u"AAAAAAAAAA1"_s); // verified, then views
 }
 
+TEST(YtDlpPick, TheArtistsChannelsThenYouTubeMusicThenAnybody)
+{
+    // Seen live (2026-10-20): fan uploads ("Filippos Sgouros", "Kelly K") were picked for "Glue" and "On Time".
+    const QList<YouTubeCandidate> results{
+        video(u"AAAAAAAAAA1"_s, u"Kestrel Moon - Glass Harbour"_s, u"Filippos Sgouros"_s, 202, 9000000, true),
+        video(u"AAAAAAAAAA2"_s, u"Glass Harbour"_s, u"Clara Vale - Topic"_s, 203, 10),
+        video(u"AAAAAAAAAA3"_s, u"Kestrel Moon - Glass Harbour (Audio)"_s, u"KestrelMoonVEVO"_s, 204, 20)};
+    const Release release = track(u"Glass Harbour"_s, 202000);
+    std::optional<YouTubePick> pick = YtDlpRunner::pick(results, release);
+    ASSERT_TRUE(pick.has_value());
+    EXPECT_EQ(pick->candidate.id, u"AAAAAAAAAA3"_s); // the artist's VEVO channel, though 2 s further off
+    EXPECT_EQ(pick->channel, YouTubePick::Channel::Artist);
+    pick = YtDlpRunner::pick({results.at(0), results.at(1)}, release);
+    ASSERT_TRUE(pick.has_value());
+    EXPECT_EQ(pick->candidate.id, u"AAAAAAAAAA2"_s); // another Topic channel: YouTube Music's official audio
+    EXPECT_EQ(pick->channel, YouTubePick::Channel::Music);
+    EXPECT_TRUE(pick->reasons.contains(u"YouTube Music's official audio"_s));
+    pick = YtDlpRunner::pick({results.at(0)}, release);
+    ASSERT_TRUE(pick.has_value());
+    EXPECT_EQ(pick->channel, YouTubePick::Channel::Other);
+    // "Official" around the artist's name, a bare " - Topic" and the length window still hold.
+    EXPECT_EQ(
+        picked({results.at(0), video(u"AAAAAAAAAA4"_s, u"Glass Harbour"_s, u"Kestrel Moon Official"_s, 202)}, release),
+        u"AAAAAAAAAA4"_s);
+    EXPECT_EQ(picked({results.at(0), video(u"AAAAAAAAAA5"_s, u"Glass Harbour"_s, u" - Topic"_s, 202)}, release),
+              u"AAAAAAAAAA1"_s);
+    EXPECT_EQ(
+        picked({results.at(0), video(u"AAAAAAAAAA6"_s, u"Glass Harbour"_s, u"Kestrel Moon - Topic"_s, 206)}, release),
+        u"AAAAAAAAAA1"_s);
+}
+
+TEST(YtDlpPick, TopicSearchTextNamesTheArtistsTopicChannel)
+{
+    EXPECT_EQ(YtDlpRunner::topicSearchText(track(u"Glass Harbour - Extended Mix"_s, 391000)),
+              u"Kestrel Moon - Topic Glass Harbour Extended Mix"_s);
+    EXPECT_EQ(YtDlpRunner::topicSearchText(track(u"Glass Harbour"_s, 202000, {u"Kestrel Moon feat. Clara Vale"_s})),
+              u"Kestrel Moon - Topic Glass Harbour"_s);
+    EXPECT_TRUE(YtDlpRunner::topicSearchText(track(u"Glass Harbour"_s, 202000, {})).isEmpty());
+}
+
 TEST(YtDlpPick, SearchTextNamesTheVersion)
 {
     EXPECT_EQ(YtDlpRunner::searchText(track(u"Glass Harbour - Extended Mix"_s, 391000)),

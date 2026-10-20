@@ -19,6 +19,7 @@
 #include <QLoggingCategory>
 #include <QMetaObject>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 
 #include <algorithm>
 #include <cmath>
@@ -211,6 +212,16 @@ QStringList artistKeysOf(const QStringList &names)
     return keys;
 }
 
+// A channel's name without the decorations official channels add: "BicepVEVO", "Bicep Official" → "Bicep".
+QString channelName(const QString &channel)
+{
+    static const QRegularExpression kDecorations(uR"((?:\s*\bofficial\b|\s*vevo)+\s*$|^\s*official\s+)"_s,
+                                                 QRegularExpression::CaseInsensitiveOption);
+    QString name = channel;
+    name.remove(kDecorations);
+    return name.trimmed().isEmpty() ? channel : name.trimmed();
+}
+
 bool namesArtist(const QString &name, const QStringList &artistKeys)
 {
     const QStringList keys = match::Normalizer::artistKeys(name).set;
@@ -231,11 +242,17 @@ bool namesLabel(const QString &channel, const QString &label)
     return !a.isEmpty() && !b.isEmpty() && match::FieldMatcher::compareKeys(a, b, {}).similarity >= kArtistMatch;
 }
 
-// "Kestrel Moon - Topic": YouTube's automatic channel for an artist's official audio.
+// "Kestrel Moon - Topic": YouTube's automatic channel for an artist's official audio, the audio YouTube Music plays.
+constexpr QLatin1StringView kTopicSuffix{" - Topic"};
+
+bool isTopicChannel(const QString &channel)
+{
+    return channel.endsWith(kTopicSuffix, Qt::CaseInsensitive) && channel.size() > kTopicSuffix.size();
+}
+
 bool isTopicChannelOf(const QString &channel, const QStringList &artistKeys)
 {
-    static const QLatin1StringView kSuffix{" - Topic"};
-    return channel.endsWith(kSuffix, Qt::CaseInsensitive) && namesArtist(channel.chopped(kSuffix.size()), artistKeys);
+    return isTopicChannel(channel) && namesArtist(channel.chopped(kTopicSuffix.size()), artistKeys);
 }
 
 // The title to compare: a video's "Artist - Title (…)" without the artist part when it names the release's artist,
@@ -268,14 +285,14 @@ struct PickCandidate
 {
     const YouTubeCandidate *candidate = nullptr;
     int delta = 0;
-    bool topic = false;
-    bool ownChannel = false; // named like the artist or the label
+    YouTubePick::Channel channel = YouTubePick::Channel::Other;
+    bool topic = false; // the artist's Topic channel, first among the artist's channels
     int version = 0;
     QStringList reasons;
 
     auto key() const
     {
-        return std::make_tuple(topic, ownChannel, version, candidate->channelVerified, -delta,
+        return std::make_tuple(static_cast<int>(channel), topic, version, candidate->channelVerified, -delta,
                                candidate->viewCount.value_or(0));
     }
 };
@@ -308,15 +325,21 @@ std::optional<PickCandidate> considered(const YouTubeCandidate &candidate, const
     PickCandidate pick;
     pick.candidate = &candidate;
     pick.delta = delta;
+    const QString channel = channelName(candidate.channel);
     pick.topic = isTopicChannelOf(candidate.channel, artistKeys);
-    pick.ownChannel =
-        !pick.topic && (namesArtist(candidate.channel, artistKeys) || namesLabel(candidate.channel, release.label));
+    if (pick.topic || namesArtist(channel, artistKeys) || namesLabel(channel, release.label)) {
+        pick.channel = YouTubePick::Channel::Artist;
+    } else if (isTopicChannel(candidate.channel)) {
+        pick.channel = YouTubePick::Channel::Music;
+    }
     pick.version = versionRank(version);
     pick.reasons.append(u"length Δ %1 s"_s.arg(delta));
     if (pick.topic) {
         pick.reasons.append(u"official Topic channel"_s);
-    } else if (pick.ownChannel) {
+    } else if (pick.channel == YouTubePick::Channel::Artist) {
         pick.reasons.append(u"the artist's or label's channel"_s);
+    } else if (pick.channel == YouTubePick::Channel::Music) {
+        pick.reasons.append(u"YouTube Music's official audio"_s);
     } else if (candidate.channelVerified) {
         pick.reasons.append(u"verified channel"_s);
     }
@@ -1075,16 +1098,35 @@ void YtDlpRunner::setExecutable(const QString &path)
     d->install.reset();
 }
 
-QString YtDlpRunner::searchText(const Release &release)
+namespace {
+
+// The base title and the version words of a release's search.
+QString titleWords(const Release &release)
 {
-    const QString artist = release.artists.isEmpty() ? QString() : detail::primaryArtist(release.artists.first());
     const detail::TitleInfo title = detail::analyseTitle(release.title);
-    QString text = artist + u' ' + (title.coreDisplay.isEmpty() ? release.title : title.coreDisplay);
+    QString text = title.coreDisplay.isEmpty() ? release.title : title.coreDisplay;
     const QString version = detail::versionWords(title.version);
     if (!version.isEmpty()) {
         text += u' ' + version;
     }
-    return detail::ytdlp::cleanSearchText(text);
+    return text;
+}
+
+} // namespace
+
+QString YtDlpRunner::searchText(const Release &release)
+{
+    const QString artist = release.artists.isEmpty() ? QString() : detail::primaryArtist(release.artists.first());
+    return detail::ytdlp::cleanSearchText(artist + u' ' + titleWords(release));
+}
+
+QString YtDlpRunner::topicSearchText(const Release &release)
+{
+    const QString artist = release.artists.isEmpty() ? QString() : detail::primaryArtist(release.artists.first());
+    if (artist.isEmpty()) {
+        return {};
+    }
+    return detail::ytdlp::cleanSearchText(artist + kTopicSuffix + u' ' + titleWords(release));
 }
 
 std::optional<YouTubePick> YtDlpRunner::pick(const QList<YouTubeCandidate> &candidates, const Release &release)
@@ -1107,7 +1149,7 @@ std::optional<YouTubePick> YtDlpRunner::pick(const QList<YouTubeCandidate> &cand
     if (!best.has_value()) {
         return std::nullopt;
     }
-    return YouTubePick{*best->candidate, best->reasons};
+    return YouTubePick{*best->candidate, best->reasons, best->channel};
 }
 
 // --- YtDlpFetch ----------------------------------------------------------------------------------------------------
