@@ -32,6 +32,7 @@ const QString kRecentSearchesKey = u"search/recent"_s;
 const QString kConverterTarget = u"converter/target"_s;
 const QString kConverterSampleRateKey = u"converter/sampleRate"_s;
 const QString kConverterBitDepthKey = u"converter/bitDepth"_s;
+const QString kConverterMp3SampleRateKey = u"converter/mp3SampleRate"_s;
 const QString kConverterId3v24 = u"converter/id3v24"_s;
 const QString kConverterArtwork = u"converter/artworkMax"_s;
 const QString kConverterFolder = u"converter/outputFolder"_s;
@@ -258,6 +259,10 @@ AppSettings::ConverterState AppSettings::converterState() const
     if (ok && std::ranges::find(kConverterBitDepths, bitDepth) != kConverterBitDepths.end()) {
         state.bitDepth = bitDepth;
     }
+    const int mp3SampleRate = m_settings.value(kConverterMp3SampleRateKey).toInt(&ok);
+    if (ok && std::ranges::find(kConverterMp3SampleRates, mp3SampleRate) != kConverterMp3SampleRates.end()) {
+        state.mp3SampleRate = mp3SampleRate;
+    }
     state.id3v24 = m_settings.value(kConverterId3v24, false).toBool();
     const int artwork = m_settings.value(kConverterArtwork).toInt(&ok);
     if (ok && artwork >= 0 && artwork <= 3000) {
@@ -272,6 +277,7 @@ void AppSettings::setConverterState(const ConverterState &state)
     m_settings.setValue(kConverterTarget, state.target);
     m_settings.setValue(kConverterSampleRateKey, state.sampleRate);
     m_settings.setValue(kConverterBitDepthKey, state.bitDepth);
+    m_settings.setValue(kConverterMp3SampleRateKey, state.mp3SampleRate);
     m_settings.setValue(kConverterId3v24, state.id3v24);
     m_settings.setValue(kConverterArtwork, state.artworkMax);
     if (state.outputFolder.isEmpty()) {

@@ -69,16 +69,19 @@ public:
     void addRecentSearch(const QString &text);
 
     // The Converter (PRD CONV-1, CONV-3): the format chosen ("mp3-320", "mp3-256", "mp3-192", "mp3-v0", "mp3-v2",
-    // "aiff", "wav", "flac", "alac"), the sample rate and bit depth for lossless formats (0: automatic; otherwise one
-    // of kConverterSampleRates and kConverterBitDepths), ID3v2.4 rather than 2.3, the cover's longest side (0: as it
-    // is), and the folder new files go to (empty: next to each original).
+    // "aiff", "wav", "flac", "alac"), the sample rate and bit depth for lossless formats and the rate for MP3 (0:
+    // automatic; otherwise one of kConverterSampleRates, kConverterBitDepths and kConverterMp3SampleRates), ID3v2.4
+    // rather than 2.3, the cover's longest side (0: as it is), and the folder new files go to (empty: next to each
+    // original).
     static constexpr std::array kConverterSampleRates{44100, 48000, 88200, 96000, 176400, 192000};
     static constexpr std::array kConverterBitDepths{16, 24};
+    static constexpr std::array kConverterMp3SampleRates{32000, 44100, 48000};
     struct ConverterState
     {
         QString target = QStringLiteral("mp3-320");
         int sampleRate = 0;
         int bitDepth = 0;
+        int mp3SampleRate = 0;
         bool id3v24 = false;
         int artworkMax = 800;
         QString outputFolder;

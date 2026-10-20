@@ -126,34 +126,38 @@ protected:
 
 } // namespace
 
-TEST_F(ConverterViewTest, LosslessFormatsTakeASampleRateAndABitDepth)
+TEST_F(ConverterViewTest, EachFormatTakesItsOwnRatesAndLosslessOnesABitDepth)
 {
     makeView();
     ASSERT_GE(target()->findData(u"alac"_s), 0);
     EXPECT_EQ(target()->itemText(target()->findData(u"alac"_s)), u"ALAC (Apple Lossless)"_s);
-    QStringList rates;
-    for (int index = 0; index < sampleRate()->count(); ++index) {
-        rates.append(sampleRate()->itemText(index));
-    }
-    EXPECT_EQ(rates, (QStringList{u"Automatic rate"_s, u"44.1 kHz"_s, u"48 kHz"_s, u"88.2 kHz"_s, u"96 kHz"_s,
-                                  u"176.4 kHz"_s, u"192 kHz"_s}));
-    ASSERT_EQ(bitDepth()->count(), 3);
-    EXPECT_EQ(bitDepth()->itemText(0), u"Automatic bit depth"_s);
-    EXPECT_EQ(bitDepth()->itemText(1), u"16-bit"_s);
-    EXPECT_EQ(bitDepth()->itemText(2), u"24-bit"_s);
+    const auto items = [](const QComboBox *box) {
+        QStringList texts;
+        for (int index = 0; index < box->count(); ++index) {
+            texts.append(box->itemText(index));
+        }
+        return texts;
+    };
+    EXPECT_EQ(sampleRate()->accessibleName(), u"Sample rate"_s);
+    EXPECT_EQ(bitDepth()->accessibleName(), u"Bit depth"_s);
+    EXPECT_EQ(items(bitDepth()), (QStringList{u"Automatic bit depth"_s, u"16-bit"_s, u"24-bit"_s}));
 
-    // MP3, the default, follows the source: both automatic, and not offered.
+    // MP3, the default: the rates MP3 stores, and no bit depth.
     EXPECT_EQ(target()->currentData().toString(), u"mp3-320"_s);
-    EXPECT_FALSE(sampleRate()->isEnabled());
+    EXPECT_EQ(items(sampleRate()), (QStringList{u"Automatic rate"_s, u"32 kHz"_s, u"44.1 kHz"_s, u"48 kHz"_s}));
+    EXPECT_TRUE(sampleRate()->isEnabled());
     EXPECT_FALSE(bitDepth()->isEnabled());
-    EXPECT_EQ(sampleRate()->currentIndex(), 0);
     EXPECT_EQ(bitDepth()->currentIndex(), 0);
-    EXPECT_EQ(sampleRate()->toolTip(),
-              u"MP3 keeps the source's rate when it can store it (32, 44.1 or 48 kHz); any other becomes 44.1 kHz."_s);
+    choose(sampleRate(), 48000);
+    EXPECT_EQ(view->options().target.sampleRate, 48000);
+    EXPECT_EQ(view->options().target.bitDepth, 0);
+    EXPECT_EQ(settings->converterState().mp3SampleRate, 48000);
 
     // AIFF 24-bit / 96 kHz: what the converter gets, and what is kept.
     choose(target(), u"aiff"_s);
-    EXPECT_TRUE(sampleRate()->isEnabled());
+    EXPECT_EQ(items(sampleRate()), (QStringList{u"Automatic rate"_s, u"44.1 kHz"_s, u"48 kHz"_s, u"88.2 kHz"_s,
+                                                u"96 kHz"_s, u"176.4 kHz"_s, u"192 kHz"_s}));
+    EXPECT_EQ(sampleRate()->currentText(), u"Automatic rate"_s); // MP3's choice is MP3's
     EXPECT_TRUE(bitDepth()->isEnabled());
     choose(sampleRate(), 96000);
     choose(bitDepth(), 24);
@@ -161,21 +165,20 @@ TEST_F(ConverterViewTest, LosslessFormatsTakeASampleRateAndABitDepth)
     EXPECT_EQ(options.target.format, OutputFormat::Aiff);
     EXPECT_EQ(options.target.sampleRate, 96000);
     EXPECT_EQ(options.target.bitDepth, 24);
-    AppSettings::ConverterState state = settings->converterState();
+    const AppSettings::ConverterState state = settings->converterState();
     EXPECT_EQ(state.target, u"aiff"_s);
     EXPECT_EQ(state.sampleRate, 96000);
     EXPECT_EQ(state.bitDepth, 24);
+    EXPECT_EQ(state.mp3SampleRate, 48000);
 
-    // MP3 again: automatic, whatever was chosen for lossless files, which comes back with a lossless format.
+    // MP3 again: its own rate, no bit depth; the lossless choices come back with a lossless format.
     choose(target(), u"mp3-320"_s);
-    EXPECT_FALSE(sampleRate()->isEnabled());
-    EXPECT_EQ(sampleRate()->currentText(), u"Automatic rate"_s);
+    EXPECT_EQ(sampleRate()->currentText(), u"48 kHz"_s);
     EXPECT_EQ(bitDepth()->currentText(), u"Automatic bit depth"_s);
     options = view->options();
     EXPECT_EQ(options.target.format, OutputFormat::Mp3);
-    EXPECT_EQ(options.target.sampleRate, 0);
+    EXPECT_EQ(options.target.sampleRate, 48000);
     EXPECT_EQ(options.target.bitDepth, 0);
-    EXPECT_EQ(settings->converterState().sampleRate, 96000);
     choose(target(), u"flac"_s);
     EXPECT_EQ(sampleRate()->currentText(), u"96 kHz"_s);
     EXPECT_EQ(bitDepth()->currentText(), u"24-bit"_s);
@@ -190,7 +193,8 @@ TEST_F(ConverterViewTest, LosslessFormatsTakeASampleRateAndABitDepth)
     EXPECT_EQ(target()->currentData().toString(), u"flac"_s);
     EXPECT_EQ(view->options().target.sampleRate, 96000);
     EXPECT_EQ(view->options().target.bitDepth, 24);
-    EXPECT_TRUE(sampleRate()->isEnabled());
+    choose(target(), u"mp3-v0"_s);
+    EXPECT_EQ(view->options().target.sampleRate, 48000);
 }
 
 TEST_F(ConverterViewTest, SettingsOnlyKeepRatesAndBitDepthsTheBarOffers)
@@ -200,12 +204,14 @@ TEST_F(ConverterViewTest, SettingsOnlyKeepRatesAndBitDepthsTheBarOffers)
         ini.setValue(u"converter/target"_s, u"alac"_s);
         ini.setValue(u"converter/sampleRate"_s, 12345);
         ini.setValue(u"converter/bitDepth"_s, 20);
+        ini.setValue(u"converter/mp3SampleRate"_s, 96000); // not an MP3 rate
     }
     settings = std::make_unique<AppSettings>(dir.filePath(u"settings.ini"_s));
     AppSettings::ConverterState state = settings->converterState();
     EXPECT_EQ(state.target, u"alac"_s);
     EXPECT_EQ(state.sampleRate, 0);
     EXPECT_EQ(state.bitDepth, 0);
+    EXPECT_EQ(state.mp3SampleRate, 0);
 
     state.sampleRate = 176400;
     state.bitDepth = 16;

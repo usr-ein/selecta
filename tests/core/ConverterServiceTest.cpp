@@ -412,3 +412,35 @@ TEST_F(ConverterServiceTest, AnMp3At320IsCopiedAsItIsForMp3At320)
     EXPECT_TRUE(item.askFirst);
     EXPECT_EQ(item.verdict, u"Generation loss"_s);
 }
+
+TEST_F(ConverterServiceTest, AnMp3RateAboveTheSourceAsksAndBelowItResamples)
+{
+    const QString source = album(u"01 - Neon Rain.flac"_s);
+    ASSERT_TRUE(writeFile(source, synth::makeFlac(synth::quantised(synth::whiteNoise(1.0, 3), 16))));
+    ConverterOptions options;
+    options.target.sampleRate = 48000; // MP3 320 at 48 kHz, from 44.1 kHz
+    service->setOptions(options);
+    service->add({source});
+    ConverterItem item = settled().constFirst();
+    ASSERT_EQ(item.state, State::Ready) << item.message.toStdString();
+    EXPECT_TRUE(item.askFirst);
+    EXPECT_EQ(item.verdict, u"No quality gain — upsampled"_s);
+
+    options.target.sampleRate = 32000;
+    service->setOptions(options);
+    item = service->items().constFirst();
+    EXPECT_FALSE(item.askFirst);
+    EXPECT_TRUE(item.verdict.startsWith(u"MP3 320 kbps CBR, 32 kHz · "_s)) << item.verdict.toStdString();
+    EXPECT_TRUE(item.notices.join(u'\n').contains(u"Resampled to 32 kHz"_s)) << item.notices.join(u'\n').toStdString();
+
+    // An MP3 320 at its own rate is copied; at another, it's a new generation, after asking.
+    const QString mp3 = album(u"02 - Low Tide.mp3"_s);
+    ASSERT_TRUE(writeFile(mp3, synth::makeMp3(synth::whiteNoise(1.0, 5), {.bitrateKbps = 320})));
+    service->add({mp3});
+    item = settled().constLast();
+    ASSERT_EQ(item.state, State::Ready) << item.message.toStdString();
+    EXPECT_TRUE(item.askFirst);
+    options.target.sampleRate = 44100;
+    service->setOptions(options);
+    EXPECT_EQ(service->items().constLast().verdict, u"Same format · audio copied as is"_s);
+}
