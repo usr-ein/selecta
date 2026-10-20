@@ -555,11 +555,13 @@ TEST_F(PeerNetworkTest, SocketLimitRefusesNewConnections)
         alice->connectTo(u"selecta"_s, QHostAddress::LocalHost, peers.listenPort(), ConnectionType::Peer);
     EXPECT_TRUE(waitFor([&] { return !alice->isOpen(extra); }));
     EXPECT_TRUE(alice->isOpen(c));
-    // A new outbound attempt fails at once.
+    // A new outbound attempt fails without asking for a permit, on the next turn: never inside the call.
     const QSignalSpy failed(&peers, &PeerNetwork::requestFailed);
     ASSERT_TRUE(peers.requestUserInfo(u"bob"_s, permit(Operation::UserInfo)));
-    ASSERT_EQ(failed.size(), 1);
+    EXPECT_TRUE(failed.isEmpty());
+    ASSERT_TRUE(waitFor([&] { return failed.size() == 1; }));
     EXPECT_EQ(failed.at(0).at(3).value<PeerError>(), PeerError::SocketLimit);
+    EXPECT_EQ(permits.requestsFor(u"bob"_s), 0);
 }
 
 // --- dial-backs ------------------------------------------------------------------------------------------------------
@@ -656,11 +658,41 @@ TEST_F(PeerNetworkTest, FileConnectionFailuresAreReported)
     EXPECT_EQ(failed.at(0).at(0).toULongLong(), id);
     EXPECT_EQ(failed.at(0).at(2).value<PeerError>(), PeerError::Unreachable);
 
+    // A cancelled one is never heard of again, even when its permit comes later.
     permits.mode = TestPermits::Mode::Defer;
+    const QSignalSpy taken(&peers, &PeerNetwork::fileConnectionReady);
     const quint64 cancelled = peers.openFileConnection(u"dave"_s);
     peers.cancelFileConnection(cancelled);
-    ASSERT_EQ(failed.size(), 2);
-    EXPECT_EQ(failed.at(1).at(2).value<PeerError>(), PeerError::Cancelled);
+    permits.release();
+    settle();
+    EXPECT_EQ(failed.size(), 1);
+    EXPECT_TRUE(taken.isEmpty());
+    EXPECT_EQ(peers.socketCount(), 0);
+}
+
+TEST_F(PeerNetworkTest, FileConnectionFailuresComeAfterTheCall)
+{
+    const auto alice = makePeer(u"alice"_s);
+    const QSignalSpy failed(&peers, &PeerNetwork::fileConnectionFailed);
+    // A permit refused on the spot.
+    permits.mode = TestPermits::Mode::Refuse;
+    permits.synchronous = true;
+    const quint64 refused = peers.openFileConnection(u"alice"_s);
+    EXPECT_TRUE(failed.isEmpty());
+    ASSERT_TRUE(waitFor([&] { return failed.size() == 1; }));
+    EXPECT_EQ(failed.at(0).at(0).toULongLong(), refused);
+    EXPECT_EQ(failed.at(0).at(2).value<PeerError>(), PeerError::NotPermitted);
+    // No session: cancelling before the next turn silences it.
+    session.disconnectFromServer();
+    const quint64 silenced = peers.openFileConnection(u"alice"_s);
+    peers.cancelFileConnection(silenced);
+    const quint64 reported = peers.openFileConnection(u"alice"_s);
+    EXPECT_EQ(failed.size(), 1);
+    ASSERT_TRUE(waitFor([&] { return failed.size() == 2; }));
+    EXPECT_EQ(failed.at(1).at(0).toULongLong(), reported);
+    EXPECT_EQ(failed.at(1).at(2).value<PeerError>(), PeerError::NotLoggedIn);
+    settle();
+    EXPECT_EQ(failed.size(), 2);
 }
 
 TEST_F(PeerNetworkTest, DistributedConnectionToACandidate)
