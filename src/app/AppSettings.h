@@ -21,8 +21,8 @@ class AppSettings
 {
 public:
     // `inboxRoot`: Selecta's own Inbox, which libraryConfig() reports and no setting changes; empty: paths::inboxDir().
-    // Settings from before the two collection folders (P-001: an Inbox folder, collection folders, Singles and Albums
-    // names) are removed here: the new folders start unset, and Settings asks for them.
+    // The settings of the single collection folder (before P-001) are removed here: the tracks and albums folders start
+    // unset, and Settings asks for them.
     explicit AppSettings(const QString &iniPath, const QString &inboxRoot = {});
 
     Appearance appearance() const;

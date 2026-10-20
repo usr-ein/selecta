@@ -43,8 +43,7 @@ const QString kConverterArtwork = u"converter/artworkMax"_s;
 const QString kConverterFolder = u"converter/outputFolder"_s;
 const QString kTracksFolder = u"library/tracks"_s; // absolute; absent until chosen
 const QString kAlbumsFolder = u"library/albums"_s;
-// Before P-001: a user-chosen Inbox, a list of collection folders, and the names of the Singles and Albums folders
-// inside the first one. Removed at start-up.
+// The settings of the single collection folder (before P-001), removed at start-up: nothing reads them.
 const std::array kFormerLibraryKeys{u"library/inbox"_s, u"library/collections"_s, u"library/singlesFolder"_s,
                                     u"library/albumsFolder"_s};
 const QString kSingleTemplate = u"filing/single"_s;
@@ -89,8 +88,7 @@ AppSettings::AppSettings(const QString &iniPath, const QString &inboxRoot)
     : m_settings(iniPath, QSettings::IniFormat)
     , m_inboxRoot(inboxRoot.isEmpty() ? base::paths::inboxDir() : QDir::cleanPath(inboxRoot))
 {
-    // The old Inbox folder and its files stay where they are; Selecta's own Inbox starts empty. The old collection
-    // folder isn't guessed into a tracks or an albums folder: Settings asks for both.
+    // The single collection folder isn't guessed into a tracks or an albums folder: Settings asks for both.
     bool migrated = false;
     for (const QString &key : kFormerLibraryKeys) {
         if (m_settings.contains(key)) {
@@ -99,8 +97,8 @@ AppSettings::AppSettings(const QString &iniPath, const QString &inboxRoot)
         }
     }
     if (migrated) {
-        qCInfo(lcSettings).noquote() << u"the Inbox is now Selecta's own (%1); the tracks and albums folders wait "
-                                        "to be chosen in Settings"_s.arg(m_inboxRoot);
+        qCInfo(lcSettings) << "removed the single collection folder's settings; the tracks and albums folders wait to "
+                              "be chosen in Settings";
     }
 }
 

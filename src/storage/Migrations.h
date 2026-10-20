@@ -38,8 +38,8 @@ struct MigrationResult
 // Selecta's schema history. Append only: never edit a migration that has shipped.
 std::span<const Migration> selectaMigrations();
 
-// The migration that forgets the old Inbox's items, when the Inbox moved into Selecta's data folder (P-001, PRD D39):
-// a database below this version recorded the items of another Inbox folder.
+// The migration that empties the Inbox of earlier builds (P-001, PRD D39: the Inbox is Selecta's own, in its data
+// folder): a database below this version may hold their Inbox items.
 inline constexpr int kInboxMovedVersion = 18;
 
 } // namespace selecta::storage

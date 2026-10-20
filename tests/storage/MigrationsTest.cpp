@@ -121,8 +121,8 @@ TEST_F(MigrationsTest, SelectasOwnHistoryApplies)
     EXPECT_TRUE(tableExists(u"sessions"_s));
 }
 
-// P-001 moved the Inbox into Selecta's data folder, and the new one starts empty (PRD D39). A database from before
-// forgets the old Inbox's items, wherever that Inbox was, but History keeps what it says about them.
+// P-001 (PRD D39): the Inbox is Selecta's own and starts empty. Updating a database of an earlier build drops its
+// Inbox items, but History keeps what it says about them.
 TEST_F(MigrationsTest, TheInboxMoveForgetsTheOldItemsButNotWhatHistorySays)
 {
     const std::span<const Migration> all = selecta::storage::selectaMigrations();
@@ -130,7 +130,7 @@ TEST_F(MigrationsTest, TheInboxMoveForgetsTheOldItemsButNotWhatHistorySays)
     ASSERT_GT(all.size(), kBeforeTheMove);
     // kInboxMovedVersion names the migration that forgets the items (it moves along if the migration is renumbered).
     ASSERT_TRUE(QString::fromUtf8(all[kBeforeTheMove].sql).contains(u"DELETE FROM inbox_items"_s));
-    ASSERT_TRUE(selecta::storage::migrate(db, all.first(kBeforeTheMove)).ok()); // the old Inbox's last schema
+    ASSERT_TRUE(selecta::storage::migrate(db, all.first(kBeforeTheMove)).ok()); // the schema of earlier builds
     ASSERT_TRUE(db.exec(uR"sql(
         INSERT INTO inbox_items (id, kind, relative_path, state, created_at) VALUES
             (1, 'single', 'Singles/Okuma Drift - Neon Rain.mp3', 'ready', 1),
@@ -153,13 +153,13 @@ TEST_F(MigrationsTest, TheInboxMoveForgetsTheOldItemsButNotWhatHistorySays)
     const auto result = selecta::storage::migrate(db, all);
     ASSERT_TRUE(result.ok()) << result.error.toStdString();
 
-    EXPECT_TRUE(rows(u"SELECT id FROM inbox_items;"_s).isEmpty()); // the new Inbox starts empty
+    EXPECT_TRUE(rows(u"SELECT id FROM inbox_items;"_s).isEmpty()); // the Inbox starts empty
     // History says what it said ("In the Inbox", "Filed: …"): only its links to the forgotten items go.
     EXPECT_EQ(rows(u"SELECT id, whereabouts, filed_path, inbox_item FROM history ORDER BY id;"_s),
               (QStringList{u"1|inbox|null|null"_s, u"2|inbox|null|null"_s,
                            u"3|filed|/Music/Tracks/Marlo Vance - Tidal Memory.mp3|null"_s}));
     EXPECT_EQ(rows(u"SELECT inbox_item FROM downloads;"_s), QStringList{u"null"_s});
     EXPECT_EQ(rows(u"SELECT inbox_item FROM album_downloads;"_s), QStringList{u"null"_s});
-    // The flag of the old Inbox's single goes with it; a filed single's flag stays.
+    // A dropped Inbox single's flag goes with it; a filed single's flag stays.
     EXPECT_EQ(rows(u"SELECT id, album_item FROM supersede_flags;"_s), QStringList{u"2|null"_s});
 }

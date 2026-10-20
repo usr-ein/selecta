@@ -82,7 +82,7 @@ TEST_F(LibrarySettingsTest, TheSingleFolderOfEarlierBuildsIsNotGuessed)
     {
         AppSettings settings(iniPath(), inbox());
         const LibraryConfig config = settings.libraryConfig();
-        EXPECT_EQ(config.inboxRoot, inbox()); // Selecta's own, not the old folder
+        EXPECT_EQ(config.inboxRoot, inbox()); // Selecta's own
         EXPECT_TRUE(config.tracksRoot.isEmpty());
         EXPECT_TRUE(config.albumsRoot.isEmpty());
         EXPECT_EQ(config.templates.single, u"{title} - {artist}"_s); // the naming stays
