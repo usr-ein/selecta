@@ -409,6 +409,48 @@ TEST_F(TransferManagerTest, DownloadWhenTheUploaderMustDialBack)
     EXPECT_FALSE(alice->pierceTokens.isEmpty());
 }
 
+TEST_F(TransferManagerTest, ResumeAfterAKillThroughTheIndirectPath)
+{
+    // We advertise no port, so every F connection is the uploader asking us to dial back. The first transfer dies
+    // half-way; the retry's dial-back must carry the retry's token, not the dead transfer's.
+    session.setListenPort(0);
+    ASSERT_TRUE(waitFor([&] { return server.client(u"selecta"_s)->listenPort == 0; }));
+    const auto alice = makePeer(u"alice"_s);
+    const RemotePath path = RemotePath::fromText(u"Music\\resume-indirect.flac"_s);
+    const QByteArray content = randomContent(400'000, 23);
+    alice->files.insert(path.raw, FakePeer::Upload{content, 150'000, false, {}});
+    const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
+    const TransferId first = download(u"alice"_s, path);
+    ASSERT_TRUE(waitFor([&] { return reached(changes, first, DownloadState::Failed); }));
+    EXPECT_EQ(lastDownload(changes, first)->error, TransferError::ConnectionLost);
+    EXPECT_EQ(storage.contents.value(path.raw).size(), 150'000);
+    const TransferId second = download(u"alice"_s, path);
+    ASSERT_TRUE(waitFor([&] { return reached(changes, second, DownloadState::Completed); }));
+    EXPECT_EQ(lastDownload(changes, second)->startOffset, 150'000U);
+    EXPECT_EQ(storage.contents.value(path.raw), content);
+    EXPECT_EQ(alice->pierceTokens.size(), 2); // both F connections were our dial-backs
+}
+
+TEST_F(TransferManagerTest, TwoFilesThroughTheIndirectPathKeepTheirTokens)
+{
+    // Two uploads from one peer waiting at once, each over our dial-back: each must carry its own token.
+    session.setListenPort(0);
+    ASSERT_TRUE(waitFor([&] { return server.client(u"selecta"_s)->listenPort == 0; }));
+    const auto alice = makePeer(u"alice"_s);
+    const RemotePath a = RemotePath::fromText(u"a-indirect.flac"_s);
+    const RemotePath b = RemotePath::fromText(u"b-indirect.flac"_s);
+    alice->files.insert(a.raw, FakePeer::Upload{randomContent(120'000, 24), -1, false, {}});
+    alice->files.insert(b.raw, FakePeer::Upload{randomContent(90'000, 25), -1, false, {}});
+    const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
+    const TransferId first = download(u"alice"_s, a);
+    const TransferId second = download(u"alice"_s, b);
+    ASSERT_TRUE(waitFor([&] {
+        return reached(changes, first, DownloadState::Completed) && reached(changes, second, DownloadState::Completed);
+    }));
+    EXPECT_EQ(storage.contents.value(a.raw), alice->files.value(a.raw).content);
+    EXPECT_EQ(storage.contents.value(b.raw), alice->files.value(b.raw).content);
+}
+
 TEST_F(TransferManagerTest, PreviewFlagTravelsWithTheDownload)
 {
     const auto alice = makePeer(u"alice"_s);
