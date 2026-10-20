@@ -3,8 +3,6 @@
 
 #include <QFile>
 #include <QFileInfo>
-#include <QMutexLocker>
-#include <QRecursiveMutex>
 
 #include <algorithm>
 #include <cstring>
@@ -31,8 +29,8 @@ struct Subscription::Entry
 
     std::function<void()> listener;
     // Held while the listener runs, so reset() can wait for an in-flight call. Recursive: a listener may drop its own
-    // subscription.
-    QRecursiveMutex callMutex;
+    // subscription. Standard mutexes throughout: ThreadSanitizer sees them (Qt here is built without it).
+    std::recursive_mutex callMutex;
     bool active = true;                 // guarded by callMutex
     std::atomic<bool> pruneHint{false}; // set once inactive, read without the call mutex when pruning the list
 };
@@ -65,7 +63,7 @@ void Subscription::reset()
         return;
     }
     {
-        const QMutexLocker lock(&m_entry->callMutex);
+        const std::scoped_lock lock(m_entry->callMutex);
         m_entry->active = false;
         m_entry->pruneHint.store(true, std::memory_order_release);
     }
@@ -79,13 +77,13 @@ ByteSource::~ByteSource() = default;
 
 Error ByteSource::lastError() const
 {
-    const QMutexLocker lock(&m_errorMutex);
+    const std::scoped_lock lock(m_errorMutex);
     return m_lastError;
 }
 
 void ByteSource::setLastError(const Error &error)
 {
-    const QMutexLocker lock(&m_errorMutex);
+    const std::scoped_lock lock(m_errorMutex);
     m_lastError = error;
 }
 
@@ -93,7 +91,7 @@ Subscription ByteSource::subscribe(std::function<void()> listener)
 {
     auto entry = std::make_shared<Subscription::Entry>(std::move(listener));
     {
-        const QMutexLocker lock(&m_listenersMutex);
+        const std::scoped_lock lock(m_listenersMutex);
         std::erase_if(m_listeners, [](const std::shared_ptr<Subscription::Entry> &e) {
             return e->pruneHint.load(std::memory_order_acquire);
         });
@@ -106,14 +104,14 @@ void ByteSource::notifyListeners()
 {
     std::vector<std::shared_ptr<Subscription::Entry>> listeners;
     {
-        const QMutexLocker lock(&m_listenersMutex);
+        const std::scoped_lock lock(m_listenersMutex);
         std::erase_if(m_listeners, [](const std::shared_ptr<Subscription::Entry> &e) {
             return e->pruneHint.load(std::memory_order_acquire);
         });
         listeners = m_listeners;
     }
     for (const std::shared_ptr<Subscription::Entry> &entry : listeners) {
-        const QMutexLocker lock(&entry->callMutex);
+        const std::scoped_lock lock(entry->callMutex);
         if (entry->active && entry->listener) {
             entry->listener();
         }
@@ -190,7 +188,7 @@ using NativeFile = PosixFile;
 struct QtFile
 {
     QFile file;
-    mutable QMutex mutex;
+    mutable std::mutex mutex;
 
     bool open(const QString &path, QString *why)
     {
@@ -208,7 +206,7 @@ struct QtFile
     qint64 size() const { return file.size(); }
     qint64 readAt(qint64 position, char *destination, qint64 count) const
     {
-        const QMutexLocker lock(&mutex);
+        const std::scoped_lock lock(mutex);
         auto &f = const_cast<QFile &>(file); // NOLINT(cppcoreguidelines-pro-type-const-cast)
         if (!f.seek(position)) {
             return -1;

@@ -4,12 +4,12 @@
 #include "audio/Error.h"
 
 #include <QByteArray>
-#include <QMutex>
 #include <QString>
 
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 // Byte sources: where a Decoder reads a file from. A complete file on disk, a file that is still downloading (a
@@ -109,9 +109,9 @@ protected:
     void setLastError(const Error &error);
 
 private:
-    mutable QMutex m_listenersMutex;
+    mutable std::mutex m_listenersMutex;
     std::vector<std::shared_ptr<Subscription::Entry>> m_listeners;
-    mutable QMutex m_errorMutex;
+    mutable std::mutex m_errorMutex;
     Error m_lastError;
 };
 
