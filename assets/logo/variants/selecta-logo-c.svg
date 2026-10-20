@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+  <!-- Selecta logo, Variant C: label 34% of the disc (a 12-inch record's proportion); fine grooves (4-unit pitch, 5 track gaps); crisp narrow sheen at 2 and 8 o'clock; brighter rim highlight. -->
+  <title>Selecta</title>
+  <defs>
+    <filter id="blur-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <filter id="blur-sheen" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+    <linearGradient id="vinyl" x1="0.15" y1="0.1" x2="0.85" y2="0.9">
+      <stop offset="0" stop-color="#1c1c1f"/>
+      <stop offset="1" stop-color="#070708"/>
+    </linearGradient>
+    <radialGradient id="grooves" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="4" spreadMethod="repeat">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="grooves-lit" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="4" spreadMethod="repeat">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.03"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.03"/>
+    </radialGradient>
+    <mask id="sheen" maskUnits="userSpaceOnUse" x="-512" y="-512" width="1024" height="1024">
+      <g filter="url(#blur-sheen)" fill="#fff">
+        <path fill-opacity="0.3" d="M0 0L337.1 -282.8L46 -437.6zM0 0L-337.1 282.8L-46 437.6z"/>
+        <path d="M0 0L252.4 -360.4L157.7 -410.8zM0 0L-252.4 360.4L-157.7 410.8z"/>
+      </g>
+    </mask>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.7"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.4"/>
+    </linearGradient>
+    <clipPath id="label"><circle r="149.6"/></clipPath>
+    <radialGradient id="paper" cx="0.3" cy="0.25" r="0.9">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.14"/>
+      <stop offset="0.6" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.12"/>
+    </radialGradient>
+    <linearGradient id="label-edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(512 512)">
+    <circle cy="12" r="440" fill-opacity="0.45" filter="url(#blur-shadow)"/>
+    <circle r="440" fill="url(#vinyl)"/>
+    <path fill="url(#grooves)" fill-rule="evenodd" d="M-428 0a428 428 0 1 0 856 0a428 428 0 1 0 -856 0zM-175.6 0a175.6 175.6 0 1 0 351.2 0a175.6 175.6 0 1 0 -351.2 0z"/>
+    <g fill="none" stroke="#000" stroke-opacity="0.6" stroke-width="2.5">
+      <circle r="205.9"/>
+      <circle r="251.3"/>
+      <circle r="291.7"/>
+      <circle r="334.6"/>
+      <circle r="382.6"/>
+    </g>
+    <g mask="url(#sheen)">
+      <path fill="url(#grooves-lit)" fill-rule="evenodd" d="M-428 0a428 428 0 1 0 856 0a428 428 0 1 0 -856 0zM-175.6 0a175.6 175.6 0 1 0 351.2 0a175.6 175.6 0 1 0 -351.2 0z"/>
+      <path fill="#fff" fill-opacity="0.09" fill-rule="evenodd" d="M-440 0a440 440 0 1 0 880 0a440 440 0 1 0 -880 0zM-149.6 0a149.6 149.6 0 1 0 299.2 0a149.6 149.6 0 1 0 -299.2 0z"/>
+      <g fill="none" stroke="#000" stroke-opacity="0.5" stroke-width="2.5">
+        <circle r="205.9"/>
+        <circle r="251.3"/>
+        <circle r="291.7"/>
+        <circle r="334.6"/>
+        <circle r="382.6"/>
+      </g>
+    </g>
+    <circle r="437.5" fill="none" stroke="url(#rim)" stroke-width="4"/>
+    <circle r="439.2" fill="none" stroke="#000" stroke-opacity="0.5" stroke-width="1.5"/>
+    <g clip-path="url(#label)">
+      <path fill="#009B3A" d="M-149.6 -149.6H149.6V149.6H-149.6z"/>
+      <path fill="#0e0e0e" d="M-149.6 -149.6L0 0L-149.6 149.6zM149.6 -149.6L0 0L149.6 149.6z"/>
+      <path stroke="#FED100" stroke-width="49.9" d="M-149.6 -149.6L149.6 149.6M149.6 -149.6L-149.6 149.6"/>
+      <rect x="-149.6" y="-149.6" width="299.2" height="299.2" fill="url(#paper)"/>
+    </g>
+    <circle r="147.1" fill="none" stroke="url(#label-edge)" stroke-width="5"/>
+    <circle r="13" fill="#0a0a0a" stroke="#000" stroke-opacity="0.35" stroke-width="3.9"/>
+  </g>
+</svg>

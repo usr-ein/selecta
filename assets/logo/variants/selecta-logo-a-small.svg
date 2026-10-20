@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+  <!-- Selecta logo, The 16 and 32 px drawing for variant A: no grooves, a label 55% of the disc, a thicker cross, and a light edge so the disc shows on dark backgrounds. -->
+  <title>Selecta (16 and 32 px)</title>
+  <defs>
+    <clipPath id="label"><circle r="8.5"/></clipPath>
+  </defs>
+  <g transform="translate(16 16)">
+    <circle r="15.5" fill="#161616"/>
+    <path fill="#fff" fill-opacity="0.16" d="M0 0L-1.9 -15.4L-8.4 -13zM0 0L1.9 15.4L8.4 13z"/>
+    <circle r="12" fill="none" stroke="#000" stroke-opacity="0.55" stroke-width="0.6"/>
+    <circle r="15" fill="none" stroke="#fff" stroke-opacity="0.42" stroke-width="1"/>
+    <g clip-path="url(#label)">
+      <path fill="#009B3A" d="M-9-9H9V9H-9z"/>
+      <path fill="#000" d="M-9-9L0 0-9 9zM9-9L0 0 9 9z"/>
+      <path stroke="#FED100" stroke-width="3.8" d="M-9-9L9 9M9-9-9 9"/>
+    </g>
+    <circle r="8.5" fill="none" stroke="#fff" stroke-opacity="0.35" stroke-width="0.7"/>
+    <circle r="1.3" fill="#000"/>
+  </g>
+</svg>
