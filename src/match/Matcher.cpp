@@ -62,11 +62,13 @@ void consider(std::optional<detail::Scored> &best, std::optional<detail::Scored>
     }
 }
 
-// Two likely-or-better candidates of different versions: neither can be exact.
+// Two likely-or-better candidates of different versions, and the remote's version doesn't single one out: the
+// choice is a guess, so it can't be exact (note §9 ambiguity rule).
 void capAmbiguous(std::optional<detail::Scored> &best, const std::optional<detail::Scored> &runnerUp,
                   const detail::IndexData &data, QStringList *explanation)
 {
-    if (!best || !runnerUp || best->tier != Tier::Exact || runnerUp->tier == Tier::None) {
+    if (!best || !runnerUp || best->tier != Tier::Exact || runnerUp->tier == Tier::None ||
+        best->version == VersionCompatibility::Same) {
         return;
     }
     const QString bestVersion = data.metas[data.records[best->record].meta].version.key();

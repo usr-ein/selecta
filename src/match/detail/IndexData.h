@@ -6,6 +6,7 @@
 #include "match/Normalizer.h"
 #include "match/TokenIndex.h"
 #include "match/Types.h"
+#include "match/detail/Alignment.h"
 
 #include <QHash>
 #include <QMultiHash>
@@ -48,8 +49,10 @@ struct TrackRecord
     qint16 trackNumber = 0;
     qint16 discNumber = 0;
     Source source = Source::Collection;
-    quint8 quality = 0; // qualityRank()
-    bool mix = false;   // longer than 20 minutes: never matched as a track
+    quint8 quality = 0;      // qualityRank()
+    bool mix = false;        // longer than 20 minutes: never matched as a track
+    bool titleLeet = false;  // IndexData::titleLeet has an entry for this record
+    bool artistLeet = false; // IndexData::artistLeet has an entry for this record
 };
 
 // One local album, with its duration signature (note §8).
@@ -80,9 +83,11 @@ struct IndexData
     quint64 generation = 0;
     qsizetype dropped = 0;
 
-    TokenIndex words;      // title and artist words → record indexes (with the fuzzy index)
-    TokenIndex albumWords; // album-title words → record indexes (with the fuzzy index)
-    TokenIndex squashed;   // squashed title, artist and album keys → record indexes (exact only)
+    TokenIndex words;                       // title and artist words → record indexes (with the fuzzy index)
+    TokenIndex albumWords;                  // album-title words → record indexes (with the fuzzy index)
+    TokenIndex squashed;                    // squashed title, artist and album keys → record indexes (exact only)
+    std::vector<TokenFacts> wordFacts;      // per term of `words`
+    std::vector<TokenFacts> albumWordFacts; // per term of `albumWords`
     std::vector<quint32> tokenPool;
     std::vector<TrackRecord> records;
     std::vector<RecordMeta> metas;

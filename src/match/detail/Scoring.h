@@ -71,6 +71,9 @@ struct RecordFields
     FieldView album;
 };
 RecordFields recordFields(const IndexData &data, quint32 record);
+FieldView recordTitle(const IndexData &data, quint32 record);
+FieldView recordArtist(const IndexData &data, quint32 record);
+FieldView recordAlbum(const IndexData &data, quint32 record);
 
 // Candidate records for a query (note §10): squashed-key postings, then the rarest word groups (typos through the
 // fuzzy token index), best first, at most `limit`. Mixes are never candidates.

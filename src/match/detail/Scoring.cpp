@@ -17,8 +17,11 @@ namespace selecta::match::detail {
 namespace {
 
 constexpr double kEpsilon = 1e-9;              // thresholds compare with a little slack for rounding
-constexpr qsizetype kMaxGroupPostings = 20000; // a word in more records than this is no help for retrieval
-constexpr int kMaxRetrievalGroups = 3;         // the 2–3 rarest tokens (note §10)
+constexpr qsizetype kMaxGroupPostings = 20000; // postings considered per word group
+constexpr qsizetype kSeedTarget = 32;          // a third seed group joins while there are fewer candidates
+constexpr qsizetype kNarrowAbove = 64;         // larger candidate lists are narrowed by title and artist words
+constexpr int kMinSeedGroups = 2;              // the 2–3 rarest groups (note §10): two, so one stray word can't
+constexpr int kMaxSeedGroups = 3;              // keep the true record out
 constexpr qsizetype kFuzzyExpansions = 8;
 constexpr int kZoneSegmentBrackets = 100;
 constexpr int kZoneSegmentParent = 200;
@@ -64,12 +67,13 @@ void appendZone(Query &query, AlignTokens &out, const QString &text, int segment
     }
 }
 
-FieldView termView(const IndexData &data, const TokenIndex &vocabulary, quint32 begin, quint16 count,
-                   quint32 squashedTerm)
+FieldView termView(const IndexData &data, const TokenIndex &vocabulary, const std::vector<TokenFacts> &facts,
+                   quint32 begin, quint16 count, quint32 squashedTerm)
 {
     FieldView view;
     for (quint32 k = begin; k < begin + count; ++k) {
-        view.tokens.append({vocabulary.term(data.tokenPool[k]), 0, false});
+        const quint32 term = data.tokenPool[k];
+        view.tokens.append({vocabulary.term(term), 0, false, facts[term]});
     }
     const QStringView term = data.squashed.term(squashedTerm);
     view.squashed = term.size() > 2 ? term.sliced(2) : QStringView(); // the role prefix "t␟", "a␟", "l␟"
@@ -88,9 +92,9 @@ DurationComparison durationFor(const Query &query, const TrackRecord &record)
 std::pair<qsizetype, qsizetype> unexplainedCharacters(const AlignTokens &body, const Alignment &title,
                                                       const Alignment &artist)
 {
-    QList<int> titleSegments;
+    QVarLengthArray<int, 8> titleSegments;
     for (qsizetype j = 0; j < body.size() && j < title.scoreB.size(); ++j) {
-        if (title.scoreB.at(j) > 0.0 && !titleSegments.contains(body.at(j).segment)) {
+        if (title.scoreB[j] > 0.0 && !titleSegments.contains(body.at(j).segment)) {
             titleSegments.append(body.at(j).segment);
         }
     }
@@ -101,15 +105,63 @@ std::pair<qsizetype, qsizetype> unexplainedCharacters(const AlignTokens &body, c
         if (token.ignorable || !titleSegments.contains(token.segment)) {
             continue;
         }
-        const qsizetype length = TokenRules::length(token.text);
+        const qsizetype length = token.facts.length;
         total += length;
-        const bool byTitle = j < title.scoreB.size() && title.scoreB.at(j) > 0.0;
-        const bool byArtist = j < artist.scoreB.size() && artist.scoreB.at(j) > 0.0;
+        const bool byTitle = j < title.scoreB.size() && title.scoreB[j] > 0.0;
+        const bool byArtist = j < artist.scoreB.size() && artist.scoreB[j] > 0.0;
         if (!byTitle && !byArtist) {
             unexplained += length;
         }
     }
     return {unexplained, total};
+}
+
+// The title half of the token bag: computed first, because its coverage bounds the bag's title score.
+struct ZoneTitle
+{
+    Alignment inBody;
+    double coverage = 0.0;
+    bool fuzzy = false;
+};
+
+ZoneTitle zoneTitle(const Query &query, const AlignTokens &title, FieldMatchOptions options)
+{
+    ZoneTitle zone;
+    if (!query.hasZones || title.isEmpty()) {
+        return zone;
+    }
+    zone.inBody = align(spanOf(title), spanOf(query.body), options);
+    zone.coverage = zone.inBody.coverageA();
+    zone.fuzzy = zone.inBody.fuzzy;
+    if (zone.coverage < 1.0 && !query.parent.isEmpty()) {
+        const Alignment inParent = align(spanOf(title), spanOf(query.parent), options);
+        zone.coverage = std::max(zone.coverage, kParentTitleFactor * inParent.coverageA());
+    }
+    return zone;
+}
+
+ZoneBag completeBag(const Query &query, const ZoneTitle &title, const AlignTokens &artist, FieldMatchOptions options)
+{
+    ZoneBag bag;
+    bag.coverageTitle = title.coverage;
+    bag.fuzzy = title.fuzzy;
+    if (!query.hasZones) {
+        return bag;
+    }
+    Alignment artistInFolders;
+    if (!artist.isEmpty()) {
+        artistInFolders = align(spanOf(artist), spanOf(query.folders), options);
+        bag.coverageArtist = artistInFolders.coverageA();
+        bag.fuzzy = bag.fuzzy || artistInFolders.fuzzy;
+        if (bag.coverageArtist < 0.5 && !query.brackets.isEmpty()) {
+            const Alignment inBrackets = align(spanOf(artist), spanOf(query.brackets), options);
+            bag.artistOnlyInBrackets = atLeast(inBrackets.coverageA(), kArtistFoundInBrackets);
+        }
+    }
+    const auto [unexplained, total] = unexplainedCharacters(query.body, title.inBody, artistInFolders);
+    bag.unexplained = total > 0 ? static_cast<double>(unexplained) / static_cast<double>(total) : 0.0;
+    bag.fullyExplained = unexplained == 0;
+    return bag;
 }
 
 // The token bag as the matcher uses it, with the record's tags as the reference.
@@ -121,10 +173,10 @@ struct Bag
     bool exact = false;  // title and artist fully covered by exact tokens, nothing unexplained
 };
 
-Bag tokenBag(const Query &query, const RecordFields &record, FieldMatchOptions options)
+Bag tokenBag(const Query &query, const ZoneTitle &title, const RecordFields &record, FieldMatchOptions options)
 {
     Bag bag;
-    bag.zones = zoneBag(query, record.title.tokens, record.artist.tokens, options);
+    bag.zones = completeBag(query, title, record.artist.tokens, options);
     const ZoneBag &zones = bag.zones;
     bag.title = zones.unexplained > kMaxUnexplained ? zones.coverageTitle * 0.5 : zones.coverageTitle;
     bag.artist = zones.artistOnlyInBrackets ? 0.0 : zones.coverageArtist;
@@ -168,7 +220,7 @@ ArtistEvidence artistEvidence(const Query &query, const FieldView &recordArtist,
         evidence.exact = true;
         return evidence;
     }
-    const FieldMatch field = compareFields(query.artist, recordArtist, options);
+    const FieldMatch field = compareFields(query.artist, recordArtist, options, /*withPairs=*/false);
     if (field.exact) {
         evidence.score = 1.0;
         evidence.exact = true;
@@ -194,14 +246,13 @@ struct Evidence
     bool keysEqual = false; // title and artist keys equal (A), or a fully explained bag
 };
 
-Evidence gatherEvidence(const Query &query, const RecordFields &fields, const RecordMeta &meta,
+Evidence gatherEvidence(const Query &query, const FieldMatch &title, const RecordFields &fields, const RecordMeta &meta,
                         const DurationComparison &duration, const Bag &bag, FieldMatchOptions options)
 {
     Evidence evidence;
-    const FieldMatch title = compareFields(query.title, fields.title, options);
     const ArtistEvidence artist = artistEvidence(query, fields.artist, meta, options);
     if (!query.album.isEmpty() && !fields.album.isEmpty()) {
-        evidence.album = compareFields(query.album, fields.album, options).similarity;
+        evidence.album = compareFields(query.album, fields.album, options, /*withPairs=*/false).similarity;
     }
     if (duration.known) {
         evidence.duration = duration.score;
@@ -369,112 +420,156 @@ void explainScore(Scored &scored, const IndexData &data, const Query &query, con
 
 // --- Retrieval (note §10) --------------------------------------------------------------------------------------------
 
-using Hits = std::vector<std::pair<quint32, int>>;
-
-void addPostings(Hits &hits, std::span<const quint32> postings, int weight)
-{
-    const std::size_t take = std::min<std::size_t>(postings.size(), kMaxGroupPostings);
-    for (std::size_t i = 0; i < take; ++i) {
-        hits.emplace_back(postings[i], weight);
-    }
-}
-
-std::span<const quint32> squashedPostings(const IndexData &data, QChar role, QStringView squashed)
-{
-    if (squashed.isEmpty()) {
-        return {};
-    }
-    return data.squashed.postings(data.squashed.find(QString(QString(role) + u'␟' + squashed)));
-}
-
-// One query word: its exact term, or the vocabulary terms within its typo budget.
+// One query word: its exact term, or the vocabulary terms within its typo budget; or a squashed key.
 struct WordGroup
 {
-    QList<quint32> terms;
-    qsizetype frequency = 0;
+    std::span<const quint32> postings; // one term: its postings
+    std::vector<quint32> merged;       // several terms: the union of their postings
+    qsizetype frequency = 0;           // Σ postings of the terms
     int weight = kWeightOtherWords;
+    bool seeds = true;   // a title or artist word, or the title's squashed key: every true candidate has one
+    bool narrows = true; // likewise; body-only words and the reversed-name key only boost
+
+    // The records holding the word: sorted, unique.
+    std::span<const quint32> records() const { return merged.empty() ? postings : std::span<const quint32>(merged); }
 };
 
-void collectGroups(const IndexData &data, const AlignTokens &tokens, int weight, QStringList &seen,
-                   QList<WordGroup> &groups)
+using WordGroups = QVarLengthArray<WordGroup, 16>;
+
+void addGroup(const TokenIndex &vocabulary, std::span<const quint32> terms, WordGroup group, WordGroups &groups)
 {
-    for (const AlignToken &token : tokens) {
-        if (token.ignorable || lexicon::isLightWord(token.text) || seen.contains(token.text)) {
-            continue;
+    if (terms.size() == 1) {
+        group.postings = vocabulary.postings(terms.front());
+        group.frequency = static_cast<qsizetype>(group.postings.size());
+    } else {
+        for (const quint32 term : terms) {
+            const std::span<const quint32> postings = vocabulary.postings(term);
+            group.merged.insert(group.merged.end(), postings.begin(), postings.end());
         }
-        seen.append(token.text.toString());
-        WordGroup group;
-        group.weight = weight;
-        if (const quint32 term = data.words.find(token.text); term != TokenIndex::kNoTerm) {
-            group.terms.append(term);
-        } else {
-            const QList<TokenIndex::FuzzyHit> fuzzy = data.words.fuzzyLookup(token.text, kFuzzyExpansions);
-            for (const TokenIndex::FuzzyHit &hit : fuzzy) {
-                group.terms.append(hit.term);
-            }
-        }
-        for (const quint32 term : std::as_const(group.terms)) {
-            group.frequency += static_cast<qsizetype>(data.words.postings(term).size());
-        }
-        if (group.frequency > 0) {
-            groups.append(std::move(group));
-        }
+        group.frequency = static_cast<qsizetype>(group.merged.size());
+        std::ranges::sort(group.merged);
+        const auto [first, last] = std::ranges::unique(group.merged);
+        group.merged.erase(first, last);
+    }
+    if (group.frequency > 0) {
+        groups.append(std::move(group));
     }
 }
 
-QList<quint32> bestHits(const IndexData &data, Hits &hits, qsizetype limit)
+void addSquashedGroup(const IndexData &data, QChar role, QStringView squashed, int weight, bool seeds,
+                      WordGroups &groups)
 {
-    std::ranges::sort(hits);
-    Hits merged;
-    for (const auto &[record, weight] : hits) {
-        if (!merged.empty() && merged.back().first == record) {
-            merged.back().second += weight;
+    if (squashed.isEmpty()) {
+        return;
+    }
+    QVarLengthArray<char16_t, 64> key; // "t␟" + key, the squashed index's role prefix
+    key.append(role.unicode());
+    key.append(u'␟');
+    key.append(squashed.utf16(), squashed.size());
+    const quint32 term = data.squashed.find(QStringView(key.constData(), key.size()));
+    if (term == TokenIndex::kNoTerm) {
+        return;
+    }
+    WordGroup group;
+    group.weight = weight;
+    group.seeds = seeds;
+    group.narrows = seeds;
+    addGroup(data.squashed, std::span(&term, 1), std::move(group), groups);
+}
+
+void collectGroups(const IndexData &data, const AlignTokens &tokens, int weight, bool narrows,
+                   QVarLengthArray<QStringView, 16> &seen, WordGroups &groups)
+{
+    for (const AlignToken &token : tokens) {
+        if (token.ignorable || token.facts.light || seen.contains(token.text)) {
+            continue;
+        }
+        seen.append(token.text);
+        WordGroup group;
+        group.weight = weight;
+        group.seeds = narrows;
+        group.narrows = narrows;
+        if (const quint32 term = data.words.find(token.text); term != TokenIndex::kNoTerm) {
+            addGroup(data.words, std::span(&term, 1), std::move(group), groups);
+            continue;
+        }
+        const QList<TokenIndex::FuzzyHit> fuzzy = data.words.fuzzyLookup(token.text, kFuzzyExpansions);
+        QVarLengthArray<quint32, kFuzzyExpansions> terms;
+        for (const TokenIndex::FuzzyHit &hit : fuzzy) {
+            terms.append(hit.term);
+        }
+        addGroup(data.words, std::span(terms.constData(), static_cast<std::size_t>(terms.size())), std::move(group),
+                 groups);
+    }
+}
+
+struct Candidate
+{
+    quint32 record = 0;
+    int weight = 0;
+};
+
+// Unites a group's records into the sorted candidate list (weights added for records already present).
+void unite(std::vector<Candidate> &candidates, const WordGroup &group)
+{
+    const std::span<const quint32> all = group.records();
+    const std::span<const quint32> records = all.first(std::min<std::size_t>(all.size(), kMaxGroupPostings));
+    std::vector<Candidate> merged;
+    merged.reserve(candidates.size() + records.size());
+    std::size_t i = 0;
+    std::size_t j = 0;
+    while (i < candidates.size() || j < records.size()) {
+        if (j == records.size() || (i < candidates.size() && candidates[i].record < records[j])) {
+            merged.push_back(candidates[i++]);
+        } else if (i == candidates.size() || records[j] < candidates[i].record) {
+            merged.push_back({records[j++], group.weight});
         } else {
-            merged.emplace_back(record, weight);
+            merged.push_back({candidates[i].record, candidates[i].weight + group.weight});
+            ++i;
+            ++j;
         }
     }
-    std::ranges::stable_sort(merged, [](const auto &a, const auto &b) { return a.second > b.second; });
-    QList<quint32> candidates;
-    for (const auto &[record, weight] : merged) {
-        if (candidates.size() >= limit) {
-            break;
+    candidates = std::move(merged);
+}
+
+// Narrows a large candidate list to the records in the group (unless none are), or boosts the ones that are.
+// Both lists are sorted: a merge when their sizes are comparable, binary searches when the group is much larger.
+void narrowOrBoost(std::vector<Candidate> &candidates, const WordGroup &group)
+{
+    constexpr std::size_t kSearchAbove = 16; // the group this many times larger than the candidate list
+    const std::span<const quint32> records = group.records();
+    std::vector<Candidate> inGroup;
+    const auto boost = [&inGroup, &group](Candidate &candidate) {
+        candidate.weight += group.weight;
+        inGroup.push_back(candidate);
+    };
+    if (records.size() > kSearchAbove * candidates.size()) {
+        for (Candidate &candidate : candidates) {
+            if (std::ranges::binary_search(records, candidate.record)) {
+                boost(candidate);
+            }
         }
-        if (!data.records[record].mix) {
-            candidates.append(record);
+    } else {
+        std::size_t j = 0;
+        for (Candidate &candidate : candidates) {
+            while (j < records.size() && records[j] < candidate.record) {
+                ++j;
+            }
+            if (j < records.size() && records[j] == candidate.record) {
+                boost(candidate);
+            }
         }
     }
-    return candidates;
+    if (group.narrows && static_cast<qsizetype>(candidates.size()) > kNarrowAbove && !inGroup.empty()) {
+        candidates = std::move(inGroup); // the word may be missing from a record; never narrow to nothing
+    }
 }
 
 } // namespace
 
 ZoneBag zoneBag(const Query &query, const AlignTokens &title, const AlignTokens &artist, FieldMatchOptions options)
 {
-    ZoneBag bag;
-    if (!query.hasZones || title.isEmpty()) {
-        return bag;
-    }
-    const Alignment titleInBody = align(spanOf(title), spanOf(query.body), options);
-    bag.coverageTitle = titleInBody.coverageA();
-    bag.fuzzy = titleInBody.fuzzy;
-    if (bag.coverageTitle < 1.0 && !query.parent.isEmpty()) {
-        const Alignment inParent = align(spanOf(title), spanOf(query.parent), options);
-        bag.coverageTitle = std::max(bag.coverageTitle, kParentTitleFactor * inParent.coverageA());
-    }
-    Alignment artistInFolders;
-    if (!artist.isEmpty()) {
-        artistInFolders = align(spanOf(artist), spanOf(query.folders), options);
-        bag.coverageArtist = artistInFolders.coverageA();
-        bag.fuzzy = bag.fuzzy || artistInFolders.fuzzy;
-        if (bag.coverageArtist < 0.5 && !query.brackets.isEmpty()) {
-            const Alignment inBrackets = align(spanOf(artist), spanOf(query.brackets), options);
-            bag.artistOnlyInBrackets = atLeast(inBrackets.coverageA(), kArtistFoundInBrackets);
-        }
-    }
-    const auto [unexplained, total] = unexplainedCharacters(query.body, titleInBody, artistInFolders);
-    bag.unexplained = total > 0 ? static_cast<double>(unexplained) / static_cast<double>(total) : 0.0;
-    bag.fullyExplained = unexplained == 0;
-    return bag;
+    return completeBag(query, zoneTitle(query, title, options), artist, options);
 }
 
 Query prepareRemote(const ParsedRemote &parsed, const RemoteFile &file)
@@ -528,60 +623,129 @@ Query prepareLocal(const LocalTrackQuery &local)
     return query;
 }
 
-RecordFields recordFields(const IndexData &data, quint32 record)
+FieldView recordTitle(const IndexData &data, quint32 record)
 {
     const TrackRecord &r = data.records[record];
-    RecordFields fields;
-    fields.title = termView(data, data.words, r.titleBegin, r.titleCount, r.titleSquashed);
-    fields.artist = termView(data, data.words, r.artistBegin, r.artistCount, r.artistSquashed);
-    fields.album = termView(data, data.albumWords, r.albumBegin, r.albumCount, r.albumSquashed);
-    if (const auto it = data.titleLeet.constFind(record); it != data.titleLeet.cend()) {
-        fields.title.leet = it.value();
+    FieldView view = termView(data, data.words, data.wordFacts, r.titleBegin, r.titleCount, r.titleSquashed);
+    if (r.titleLeet) {
+        view.leet = *data.titleLeet.constFind(record);
     }
-    if (const auto it = data.artistLeet.constFind(record); it != data.artistLeet.cend()) {
-        fields.artist.leet = it.value();
+    return view;
+}
+
+FieldView recordArtist(const IndexData &data, quint32 record)
+{
+    const TrackRecord &r = data.records[record];
+    FieldView view = termView(data, data.words, data.wordFacts, r.artistBegin, r.artistCount, r.artistSquashed);
+    if (r.artistLeet) {
+        view.leet = *data.artistLeet.constFind(record);
     }
-    return fields;
+    return view;
+}
+
+FieldView recordAlbum(const IndexData &data, quint32 record)
+{
+    const TrackRecord &r = data.records[record];
+    return termView(data, data.albumWords, data.albumWordFacts, r.albumBegin, r.albumCount, r.albumSquashed);
+}
+
+RecordFields recordFields(const IndexData &data, quint32 record)
+{
+    return {recordTitle(data, record), recordArtist(data, record), recordAlbum(data, record)};
 }
 
 QList<quint32> retrieve(const IndexData &data, const Query &query, qsizetype limit)
 {
-    Hits hits;
-    addPostings(hits, squashedPostings(data, u't', query.title.squashed), kWeightSquashedTitle);
+    WordGroups groups;
+    addSquashedGroup(data, u't', query.title.squashed, kWeightSquashedTitle, true, groups);
     if (query.hasArtist) {
-        addPostings(hits, squashedPostings(data, u't', query.artist.squashed), kWeightSquashedArtistAsTitle);
+        // Reversed names ("Glue - Bicep" parsed with "Glue" as the artist): only a booster, never a seed.
+        addSquashedGroup(data, u't', query.artist.squashed, kWeightSquashedArtistAsTitle, false, groups);
     }
-    QList<WordGroup> groups;
-    QStringList seen;
-    collectGroups(data, query.title.tokens, kWeightTitleWords, seen, groups);
-    collectGroups(data, query.artist.tokens, kWeightOtherWords, seen, groups);
-    collectGroups(data, query.body, kWeightOtherWords, seen, groups);
+    QVarLengthArray<QStringView, 16> seen;
+    collectGroups(data, query.title.tokens, kWeightTitleWords, true, seen, groups);
+    collectGroups(data, query.artist.tokens, kWeightOtherWords, true, seen, groups);
+    collectGroups(data, query.body, kWeightOtherWords, false, seen, groups);
     std::ranges::stable_sort(groups, {}, &WordGroup::frequency);
-    int used = 0;
-    for (const WordGroup &group : std::as_const(groups)) {
-        if (used >= kMaxRetrievalGroups || (group.frequency > kMaxGroupPostings && used > 0)) {
+
+    // The rarest seed groups are united (two, and a third while candidates are few); then every other group
+    // narrows a large list or boosts the candidates it contains.
+    std::vector<Candidate> candidates;
+    QVarLengthArray<bool, 16> used(groups.size(), false);
+    int seeded = 0;
+    for (qsizetype g = 0; g < groups.size(); ++g) {
+        const bool more = seeded < kMinSeedGroups ||
+                          (seeded < kMaxSeedGroups && static_cast<qsizetype>(candidates.size()) < kSeedTarget);
+        if (!more) {
             break;
         }
-        for (const quint32 term : group.terms) {
-            addPostings(hits, data.words.postings(term), group.weight);
+        if (groups.at(g).seeds) {
+            unite(candidates, groups.at(g));
+            used[g] = true;
+            ++seeded;
         }
-        ++used;
     }
-    return bestHits(data, hits, limit);
+    for (qsizetype g = 0; g < groups.size(); ++g) {
+        if (!used[g]) {
+            narrowOrBoost(candidates, groups.at(g));
+        }
+    }
+    // The `limit` heaviest records that aren't mixes; equal weights in record order.
+    std::erase_if(candidates, [&data](Candidate c) { return data.records[c.record].mix; });
+    const auto heavier = [](Candidate a, Candidate b) {
+        return a.weight != b.weight ? a.weight > b.weight : a.record < b.record;
+    };
+    const auto keep =
+        static_cast<std::ptrdiff_t>(std::min<std::size_t>(candidates.size(), std::max<qsizetype>(limit, 0)));
+    std::ranges::partial_sort(candidates, candidates.begin() + keep, heavier);
+    QList<quint32> records;
+    records.reserve(keep);
+    for (std::ptrdiff_t k = 0; k < keep; ++k) {
+        records.append(candidates[static_cast<std::size_t>(k)].record);
+    }
+    return records;
 }
 
 Scored score(const IndexData &data, const Query &query, quint32 recordIndex, bool explain)
 {
     const TrackRecord &record = data.records[recordIndex];
     const RecordMeta &meta = data.metas[record.meta];
-    const RecordFields fields = recordFields(data, recordIndex);
     const DurationComparison duration = durationFor(query, record);
     const FieldMatchOptions options{duration.withinExact()};
-
-    const Bag bag = tokenBag(query, fields, options);
-    const Evidence evidence = gatherEvidence(query, fields, meta, duration, bag, options);
     Scored scored;
     scored.record = recordIndex;
+
+    // Every positive tier and the "other version" relation need a title of 0.85 or more, on the parsed fields or in
+    // the token bag (whose title score is at most its coverage; the parent-folder route stays below 0.85): below that
+    // on both, nothing else can matter. Cheap upper bounds reject most candidates before any alignment.
+    RecordFields fields;
+    fields.title = recordTitle(data, recordIndex);
+    const double bound =
+        std::max(similarityBound(query.title, fields.title),
+                 query.hasZones ? coverageBound(spanOf(fields.title.tokens), spanOf(query.body)) : 0.0);
+    if (!atLeast(bound, kLikelyMinTitle)) {
+        scored.scores.title = bound;
+        if (explain) {
+            scored.explanation.append(
+                u"record %1: title at most %2, below the likely threshold"_s.arg(record.id).arg(number(bound)));
+        }
+        return scored;
+    }
+    const FieldMatch title = compareFields(query.title, fields.title, options, /*withPairs=*/false);
+    const ZoneTitle zone = zoneTitle(query, fields.title.tokens, options);
+    if (!atLeast(std::max(title.similarity, zone.coverage), kLikelyMinTitle)) {
+        scored.scores.title = std::max(title.similarity, zone.coverage);
+        if (explain) {
+            scored.explanation.append(
+                u"record %1: title %2, below the likely threshold"_s.arg(record.id).arg(number(scored.scores.title)));
+        }
+        return scored;
+    }
+    fields.artist = recordArtist(data, recordIndex);
+    fields.album = recordAlbum(data, recordIndex);
+
+    const Bag bag = tokenBag(query, zone, fields, options);
+    const Evidence evidence = gatherEvidence(query, title, fields, meta, duration, bag, options);
     scored.fuzzy = evidence.fuzzy;
     scored.version = VersionClassifier::compare(query.keys.title.version, meta.version);
     scored.scores = combine(evidence, scored.version, duration, query.wholeNameOnly);
@@ -606,6 +770,9 @@ bool better(const Scored &a, const Scored &b, const IndexData &data)
     }
     if (std::abs(a.scores.score - b.scores.score) > kEpsilon) {
         return a.scores.score > b.scores.score;
+    }
+    if (a.version != b.version) {
+        return a.version < b.version; // Same before ProbablySame before Unsure (enum order)
     }
     const Source sa = data.records[a.record].source;
     const Source sb = data.records[b.record].source;

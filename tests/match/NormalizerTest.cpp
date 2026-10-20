@@ -138,6 +138,29 @@ TEST(Normalizer, NormalisingTwiceChangesNothing) // property test
     }
 }
 
+// ASCII text takes a fast path through folding; it must give what the general path gives (property test). A
+// non-ASCII word after a space sends the same text down the general path without changing its other tokens.
+TEST(Normalizer, AsciiFastPathMatchesTheGeneralPath)
+{
+    const QString pool = u"abcxyzABCXYZ0159 &+$@!'`.,-_/()[]:;\t\"#%*=?~"_s;
+    selecta::match::test::Random random(31);
+    for (int i = 0; i < 20000; ++i) {
+        QString text;
+        const qsizetype length = random.below(40);
+        for (qsizetype k = 0; k < length; ++k) {
+            text.append(pool.at(random.below(pool.size())));
+        }
+        const QString withAccent = text + u" é"_s;
+        for (const FieldKind kind : {FieldKind::Title, FieldKind::Plain}) {
+            QStringList tokens = Normalizer::tokens(text, kind);
+            tokens.append(u"e"_s);
+            ASSERT_EQ(Normalizer::tokens(withAccent, kind), tokens) << text.toStdString();
+            ASSERT_EQ(Normalizer::leetKey(withAccent, kind), QString(Normalizer::leetKey(text, kind) + u'e'))
+                << text.toStdString();
+        }
+    }
+}
+
 TEST(Normalizer, TokensAreTheKeyWords)
 {
     EXPECT_EQ(Normalizer::tokens(u"Leave the World Behind"_s, FieldKind::Title),

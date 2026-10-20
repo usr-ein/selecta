@@ -439,12 +439,28 @@ TEST(Matcher, InboxAndCollectionAreSeparate) // SRCH-11 badges
     EXPECT_EQ(result.inbox.source, Source::Inbox);
 }
 
-TEST(Matcher, TwoVersionsMatchingCapsAtLikely) // note §9 ambiguity rule
+TEST(Matcher, TwoFittingVersionsCapAGuessAtLikely) // note §9 ambiguity rule
 {
+    // An unversioned remote fits the owned Original (probably the same) and the owned Extended (lengths agree): which
+    // one it is would be a guess.
+    const auto index = indexOf(
+        {O{1, u"Artist"_s, u"Title (Original Mix)"_s, 300000}, O{2, u"Artist"_s, u"Title (Extended Mix)"_s, 302000}});
+    EXPECT_EQ(matchPath(index, u"Artist - Title.mp3"_s, 300).collection.tier, Tier::Likely);
+}
+
+TEST(Matcher, TheNamedVersionWinsOverAnUnversionedTwin)
+{
+    // The remote names its version and we own exactly that version: exact, and that record, even though an
+    // unversioned copy of the same length is owned too.
     const auto index =
-        indexOf({O{1, u"Artist"_s, u"Title (Original Mix)"_s, 300000}, O{2, u"Artist"_s, u"Title"_s, 300000}});
-    const MatchResult result = matchPath(index, u"Artist - Title.mp3"_s, 300);
-    EXPECT_EQ(result.collection.tier, Tier::Likely);
+        indexOf({O{1, u"Artist"_s, u"Title"_s, 300000}, O{2, u"Artist"_s, u"Title (Original Mix)"_s, 300000}});
+    const MatchResult result = matchPath(index, u"Artist - Title (Original Mix).mp3"_s, 300);
+    EXPECT_EQ(result.collection.tier, Tier::Exact);
+    EXPECT_EQ(result.collection.id, 2U);
+    // An unversioned remote matches the unversioned copy exactly.
+    const MatchResult plain = matchPath(index, u"Artist - Title.mp3"_s, 300);
+    EXPECT_EQ(plain.collection.tier, Tier::Exact);
+    EXPECT_EQ(plain.collection.id, 1U);
 }
 
 TEST(Matcher, ExplanationsDoNotChangeDecisions)
