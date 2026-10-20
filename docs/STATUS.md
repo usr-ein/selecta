@@ -11,7 +11,7 @@ maintainer reviews the **Decisions taken autonomously** and **Waiting for the ma
 | M1 Foundations | 🟡 almost | Build system, static deps, app shell, storage, governor, lint, sanitizers, debug tools, devenv ✅ · CI workflow ⏳ |
 | M2 Protocol core and governor | ✅ | slsk S1–S7 merged (codec, server, peers, transfers, distributed, devnet, CLI) · core NetworkService, governor bookkeeping ✅ |
 | M3 Search experience | 🟡 most | SearchService, FileRanking ✅ · **Search view** ✅ (release first, streamed results, filters and presets, why hidden, ownership badges, 24 h SQLite cache, preview and download from results) · search history (P1) ⏳ |
-| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanned, watched and matched ✅ · Inbox inspector (tags, cover, provenance, edit, choose another release) ✅ · album downloads and supersede ⏳ |
+| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanned, watched and matched ✅ · Inbox inspector (tags, cover, provenance, edit, choose another release) ✅ · **album downloads** ✅ (Download Folder as Album, DL-12 offer, folder listed by the peer, one tagged MP3 320 album with cover.jpg in Inbox/Albums, resumes after a restart; verified against selecta-devnet) · **supersede** ✅ (Inbox singles to the Trash with Undo, the circuit breaker asks first, filed singles only flagged) · "also on album X" flags shown in the views ⏳ |
 | M5 Preview and waveform | ✅ | Player, waveform, transport ✅ · Space previews from YouTube (the user's yt-dlp), else Deezer's 30-s clip, else the peer; ⇧Space the peer's file; K keeps it (a preview in flight becomes the download) ✅ · analysis cache, 2 GB preview cache, Preview as You Move ✅ · spectrum check (P1) ⏳ |
 | M6 Converter and arrival pipeline | 🟡 most | Arrival pipeline: MusicBrainz label/genre, cover, MP3 320 (verified) or keep lossy, Inbox + history ✅ · media C1–C3, A3 merged ✅ · Converter view ⏳ |
 | M7 Sharing and fairness | 🟡 most | share library merged ✅ · core ShareService: index from the collection, distributed network, search answers, browses, uploads in queue order, upload records ✅ · Shares view, toolbar ratio ✅ · buddies/bans (P1), Peers view ⏳ |
@@ -35,6 +35,12 @@ All four library contracts are delivered and merged.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-20 | An album download asks the peer for the folder's listing first (FolderContents, through the governor); after 30 s without an answer it takes the files the search found | The search only shows the files that matched the query; the album is the whole folder |
+| 2026-10-20 | An album brings its audio files and images only (no .cue, .log, .nfo); a missing image doesn't make it incomplete; only a complete album sends singles to the Trash | Cue sheets and rip logs don't belong in a DJ library; supersede must never act on a partial album (T39) |
+| 2026-10-20 | Album tags: the album's track list from Spotify when the release picked has an album id, else each file's own tags (or its name), with the album fields the same in every file; cover: fetched, else the folder's image, else the files' own | DJ software groups tracks by their album fields; D29/D30 for the sources |
+| 2026-10-20 | Supersede and Inbox trash notifications offer Undo, which moves the item back from where the Trash put it | DL-7 asks for Undo; the mock does the same for items moved to the Trash by hand |
+| 2026-10-20 | When the circuit breaker trips, the singles stay and the notification asks ("Move to Trash") | T42 says ask first; a notification is enough, nothing is lost if it's ignored |
+| 2026-10-20 | `--data-dir` runs move "trashed" files to `<data>/Trash`, never the user's Trash | An isolated run must leave nothing outside its folder |
 | 2026-10-20 | Selecta answers at most 10 searches a minute (burst 5), on top of the governor's connection budget | Each answer opens a connection: answering must never crowd out what the user asked for |
 | 2026-10-20 | The ratio is "healthy" while under 1 GB was taken in 30 days or a quarter of it went back; "low" otherwise | FAIR-3 needs a status; generous on purpose until M9 shows real numbers |
 | 2026-10-20 | Space previews from YouTube (the user's yt-dlp), else Deezer's clip, else the peer's file; Settings can pick one | D26 and PREV-12 as written; the fallback keeps Space useful without yt-dlp |
@@ -85,6 +91,10 @@ All four library contracts are delivered and merged.
    and whether it reads the M4A KEY atom.
 4. Spotify: register a development app with redirect `http://127.0.0.1/callback`. The Client ID in
    `local/secrets.env` is used only by manual smoke tools.
+5. Check that Undo after a move to the Trash works with the real macOS Trash (macOS may keep apps out of
+   `~/.Trash`; if it does, Undo says the item is no longer in the Trash and nothing else happens).
+6. Earlier development runs (before isolated runs got their own Trash) left a few synthetic FLAC files from the
+   test network in your Trash (`01 - Saffron Tide.flac`, `02 - Glass Meridian.flac` and the like): safe to empty.
 
 ## How to see it
 
