@@ -18,6 +18,7 @@ struct SourceQuality
 {
     audio::Container container = audio::Container::Unknown;
     audio::Codec codec = audio::Codec::Unknown;
+    QString codecName; // FFmpeg's codec name ("wmav2", "ape", …), for formats the Codec enum doesn't name
     bool lossless = false;
     int sampleRate = 0;
     int bitDepth = 0;          // declared, lossless only
@@ -36,6 +37,25 @@ SourceQuality makeSourceQuality(const audio::StreamInfo &info, const std::option
 // a worker. Failure codes: those of Decoder::open()/read() and analyzeQuality().
 Result<SourceQuality> probeSourceQuality(const QString &path, bool runChecks,
                                          const audio::CancellationFlag *cancel = nullptr);
+
+// A file's verdict for the inspector (Get tracks, after arrival): is it plausibly what it claims to be, a 320 kbps MP3
+// that really is one, a lossless file that isn't a transcode? From the stream facts and the quality checks.
+struct QualityVerdict
+{
+    enum class Kind {
+        Genuine,   // the checks ran and found nothing wrong at the claimed quality
+        Suspect,   // a check found that the file is likely not what it claims (the reason says why)
+        Unchecked, // the checks didn't run, or couldn't judge (too short, silent, no measurable spectrum)
+    };
+    Kind kind = Kind::Unchecked;
+    QString claimed; // what the file claims: "MP3 320 kbps CBR", "FLAC 24-bit / 96 kHz", "AAC ≈ 256 kbps"
+    QString reason;  // one or two sentences, "likely" wording: "Likely upconverted from ≈ 128 kbps (…)."
+};
+
+// Pure function.
+QualityVerdict judgeQuality(const SourceQuality &source);
+// "MP3 320 kbps CBR", "MP3 VBR ≈ 245 kbps", "FLAC 16-bit / 44.1 kHz", "Ogg Vorbis ≈ 192 kbps"…
+QString describeSource(const SourceQuality &source);
 
 // The rows of the warning matrix (conversion §6.2).
 enum class SourceClass {

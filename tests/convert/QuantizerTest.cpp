@@ -51,6 +51,20 @@ TEST(Quantizer, TpdfDitherStaysWithinOneLsbAndAveragesOut)
     EXPECT_EQ(out, again);
 }
 
+TEST(Quantizer, DitherLeavesSamplesOnTheGridAlone)
+{
+    // Padded 16-bit audio and digital silence reduce to 16 bits exactly, dither on.
+    std::vector<float> in;
+    std::vector<qint32> expected;
+    for (const qint32 k : {0, 0, 1, -1, 12345, -32768, 32767, 0}) {
+        in.push_back(static_cast<float>(k / 32768.0));
+        expected.push_back(k);
+    }
+    std::vector<qint32> out(in.size());
+    Quantizer(16, /*dither=*/true).quantize(in, out);
+    EXPECT_EQ(out, expected);
+}
+
 TEST(Quantizer, ClipsAndCountsBeyondFullScale)
 {
     const std::vector<float> in = {1.0F, 1.5F, -1.0F, -2.0F, std::numeric_limits<float>::quiet_NaN(), 0.999999F};

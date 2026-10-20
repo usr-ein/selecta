@@ -16,6 +16,7 @@ selecta_add_test_suite(selecta_convert_tests
         EncodeSettingsTest.cpp
         MetadataTest.cpp
         OutputVerifierTest.cpp
+        QualityAdvisorTest.cpp
         QuantizerTest.cpp
         TagWriterTest.cpp
         TranscoderTest.cpp

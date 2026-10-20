@@ -15,6 +15,7 @@ qt_add_library(selecta_convert STATIC
     Transcoder.h Transcoder.cpp
     ArtworkProcessor.h ArtworkProcessor.cpp
     ArtworkFinder.h ArtworkFinder.cpp
+    QualityAdvisor.h QualityAdvisor.cpp
     detail/Encoder.h
     detail/FfmpegEncoder.cpp
     detail/LameEncoder.cpp

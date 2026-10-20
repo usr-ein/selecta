@@ -31,8 +31,9 @@ struct QualityReport
     // measured: silence, under 2 seconds, a rate below 32 kHz, or a reference band holding only the noise floor (more
     // than 80 dB below the loudest part of the spectrum). Spectral findings need 44.1 kHz or more.
     int cutoffHz = -1;
-    // What the cut-off suggests about the source, from LAME's lowpass table (128 kbps → 17 kHz, …, 320 → 20.5 kHz);
-    // set only together with LikelyFromLossy or LikelyUpconvertedMp3.
+    // What the cut-off suggests about the source, from LAME's lowpass table (128 kbps → 17 kHz, …, 320 → 20.5 kHz),
+    // when the cut-off is near one of its entries; set only together with LikelyFromLossy, LikelyUpconvertedMp3 or
+    // LikelyReencoded.
     std::optional<int> likelySourceKbps;
     // The lowpass a LAME tag records, for MP3s that have one.
     std::optional<int> lameLowpassHz;
