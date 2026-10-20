@@ -1,0 +1,71 @@
+{
+  "data": [
+    {
+      "id": 3135553,
+      "readable": true,
+      "title": "Glass Harbour (Extended Mix)",
+      "title_short": "Glass Harbour",
+      "title_version": "(Extended Mix)",
+      "isrc": "GBXYZ2600101",
+      "link": "https://www.deezer.com/track/3135553",
+      "duration": 391,
+      "rank": 412000,
+      "explicit_lyrics": false,
+      "preview": "https://cdnt-preview.dzcdn.net/api/1/1/a/b/c/0/abc123.mp3?hdnea=exp=1792000000~acl=/api/1/1/a/b/c/0/abc123.mp3*~data=user_id=0,application_id=42~hmac=deadbeef",
+      "md5_image": "abc",
+      "artist": { "id": 1001, "name": "Kestrel Moon", "link": "https://www.deezer.com/artist/1001", "type": "artist" },
+      "album": {
+        "id": 302127,
+        "title": "Glass Harbour",
+        "cover": "https://api.deezer.com/album/302127/image",
+        "cover_small": "https://e-cdns-images.dzcdn.net/images/cover/abc/56x56-000000-80-0-0.jpg",
+        "cover_medium": "https://e-cdns-images.dzcdn.net/images/cover/abc/250x250-000000-80-0-0.jpg",
+        "cover_big": "https://e-cdns-images.dzcdn.net/images/cover/abc/500x500-000000-80-0-0.jpg",
+        "cover_xl": "https://e-cdns-images.dzcdn.net/images/cover/abc/1000x1000-000000-80-0-0.jpg",
+        "type": "album"
+      },
+      "type": "track"
+    },
+    {
+      "id": 3135554,
+      "title": "Glass Harbour (Radio Edit)",
+      "title_short": "Glass Harbour",
+      "title_version": "(Radio Edit)",
+      "isrc": "GBXYZ2600102",
+      "link": "https://www.deezer.com/track/3135554",
+      "duration": 201,
+      "preview": "https://cdnt-preview.dzcdn.net/api/1/1/a/b/d/0/def456.mp3?hdnea=exp=1792000000~acl=x~hmac=y",
+      "artist": { "id": 1001, "name": "Kestrel Moon" },
+      "album": { "id": 302127, "title": "Glass Harbour", "cover_xl": "https://e-cdns-images.dzcdn.net/images/cover/abc/1000x1000-000000-80-0-0.jpg" },
+      "type": "track"
+    },
+    {
+      "id": 4900001,
+      "title": "Glass Harbour (Mixed)",
+      "title_short": "Glass Harbour",
+      "title_version": "(Mixed)",
+      "isrc": "GBXYZ2600190",
+      "link": "https://www.deezer.com/track/4900001",
+      "duration": 175,
+      "preview": "https://cdnt-preview.dzcdn.net/api/1/1/m/i/x/0/mix.mp3",
+      "artist": { "id": 1001, "name": "Kestrel Moon" },
+      "album": { "id": 490000, "title": "Club Sounds 2026 (DJ Mix)" },
+      "type": "track"
+    },
+    {
+      "id": 5900001,
+      "title": "Glass Harbour (Slowed + Reverb)",
+      "title_short": "Glass Harbour",
+      "isrc": "QZXXX2600001",
+      "duration": 455,
+      "preview": "http://insecure.example/preview.mp3",
+      "artist": { "id": 77, "name": "Lofi Uploads" },
+      "album": { "id": 590000, "title": "Slowed Hits" },
+      "type": "track"
+    },
+    { "title": "No id here", "type": "track" },
+    { "id": 6000000, "title": "An Episode", "type": "episode" }
+  ],
+  "total": 6,
+  "next": "https://api.deezer.com/search?q=kestrel+moon+glass+harbour&index=25"
+}

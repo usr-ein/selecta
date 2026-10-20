@@ -4,6 +4,7 @@
 #include "base/Version.h"
 #include "meta/MetaCache.h"
 #include "meta/RequestPacer.h"
+#include "meta/detail/Json.h"
 #include "meta/detail/ServiceGate.h"
 
 #include <QLoggingCategory>
@@ -132,6 +133,19 @@ RetryAdvice defaultInspection(Service service, const HttpResponse &response)
         advice.kind = RetryAdvice::Kind::Retry;
         advice.error =
             makeError(service, ErrorCode::ServerError, u"%1 had a server error."_s.arg(serviceName(service)), status);
+    }
+    return advice;
+}
+
+RetryAdvice jsonInspection(Service service, const HttpResponse &response)
+{
+    RetryAdvice advice = defaultInspection(service, response);
+    if (advice.kind == RetryAdvice::Kind::Accept && response.status == 200) {
+        const Result<QJsonObject> json = json::parseObject(response.body, service);
+        if (!json.ok()) {
+            advice.kind = RetryAdvice::Kind::Fail;
+            advice.error = json.error();
+        }
     }
     return advice;
 }

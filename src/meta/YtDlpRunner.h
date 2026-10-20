@@ -4,7 +4,6 @@
 #include "base/Clock.h"
 #include "meta/Release.h"
 #include "meta/Result.h"
-#include "meta/TextMatcher.h"
 
 #include <QDate>
 #include <QFuture>
@@ -121,14 +120,13 @@ public:
     QFuture<Result<QList<YouTubeCandidate>>> search(const QString &text, int count = 10);
 
     // The search text for a release: main artist, base title, and the version words (remixer + "remix" for a remix).
-    static QString searchText(const Release &release, const TextMatcher &matcher);
+    static QString searchText(const Release &release);
 
     // The candidate to fetch for a release (§12.3): length within ±3 s of the release, not live or upcoming, no DJ-mix
     // or derivative junk the release doesn't have, the release's title words present; then the "<main artist> -
     // Topic" channel, a channel named like the artist, most views. Nullopt when none fits (or the release has no
     // length: ±3 s can't be checked). Thread-safe (pure).
-    static std::optional<YouTubePick> pick(const QList<YouTubeCandidate> &candidates, const Release &release,
-                                           const TextMatcher &matcher);
+    static std::optional<YouTubePick> pick(const QList<YouTubeCandidate> &candidates, const Release &release);
 
     // Starts fetching the audio of one video into `previewCacheDir` (which must exist): the job waits for yt-dlp's
     // turn, then reports the growing file, progress, and the result. The caller owns the job (deleting it cancels).

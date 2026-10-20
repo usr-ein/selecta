@@ -1,0 +1,34 @@
+{
+  "id": 3135553,
+  "readable": true,
+  "title": "Glass Harbour (Extended Mix)",
+  "title_short": "Glass Harbour",
+  "title_version": "(Extended Mix)",
+  "isrc": "GBXYZ2600101",
+  "link": "https://www.deezer.com/track/3135553",
+  "share": "https://www.deezer.com/track/3135553?utm_source=deezer",
+  "duration": 391,
+  "track_position": 2,
+  "disk_number": 1,
+  "rank": 412000,
+  "release_date": "2026-03-13",
+  "explicit_lyrics": false,
+  "preview": "https://cdnt-preview.dzcdn.net/api/1/1/a/b/c/0/abc123.mp3?hdnea=exp=1792000000~acl=/api/1/1/a/b/c/0/abc123.mp3*~hmac=deadbeef",
+  "bpm": 0,
+  "gain": -9.1,
+  "available_countries": ["FR", "GB"],
+  "contributors": [
+    { "id": 1001, "name": "Kestrel Moon", "role": "Main", "type": "artist" },
+    { "id": 1002, "name": "Clara Vale", "role": "Featured", "type": "artist" }
+  ],
+  "artist": { "id": 1001, "name": "Kestrel Moon", "type": "artist" },
+  "album": {
+    "id": 302127,
+    "title": "Glass Harbour",
+    "link": "https://www.deezer.com/album/302127",
+    "cover_xl": "https://e-cdns-images.dzcdn.net/images/cover/abc/1000x1000-000000-80-0-0.jpg",
+    "release_date": "2026-03-13",
+    "type": "album"
+  },
+  "type": "track"
+}

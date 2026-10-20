@@ -9,6 +9,7 @@ selecta_add_test_suite(selecta_meta_tests
         support/Fixtures.h
         support/Images.h
         CoverFetcherTest.cpp
+        DeezerTest.cpp
         HttpChannelTest.cpp
         ImageHeaderTest.cpp
         JsonTest.cpp
@@ -16,13 +17,13 @@ selecta_add_test_suite(selecta_meta_tests
         MetaCacheTest.cpp
         MusicBrainzTest.cpp
         PkceTest.cpp
+        ReleaseResolverTest.cpp
         ResultTest.cpp
         ServiceGateTest.cpp
         SpotifyAuthTest.cpp
         SpotifyClientTest.cpp
         SpotifyJsonTest.cpp
         SpotifyLinksTest.cpp
-        TextFoldTest.cpp
         TokenStoreTest.cpp
         WorkerTest.cpp
     LIBRARIES selecta_meta Qt6::Network)

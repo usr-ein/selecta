@@ -69,7 +69,7 @@ detail::RetryAdvice inspect(const detail::HttpResponse &response)
             return advice;
         }
     }
-    return detail::defaultInspection(Service::SpotifyApi, response);
+    return detail::jsonInspection(Service::SpotifyApi, response);
 }
 
 } // namespace
