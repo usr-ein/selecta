@@ -194,6 +194,10 @@ bool Engine::start()
     connect(m_transfers.get(), &TransferService::changed, m_getTracks.get(), &GetTracksService::downloadChanged);
     connect(m_transfers.get(), &TransferService::progress, m_getTracks.get(), &GetTracksService::downloadProgress);
     connect(m_transfers.get(), &TransferService::previewChanged, this, &Engine::previewChanged);
+    m_youtube = std::make_unique<YouTubePreviews>(
+        m_meta->ytDlp(), m_options.previewDir.isEmpty() ? QString() : m_options.previewDir + u"/YouTube"_s);
+    connect(m_youtube.get(), &YouTubePreviews::started, this, &Engine::previewStarted);
+    connect(m_youtube.get(), &YouTubePreviews::changed, this, &Engine::previewChanged);
 
     pruneActivity();
     m_pruneTimer = new QTimer(this);
@@ -238,6 +242,7 @@ void Engine::stop()
     }
     m_network.reset(); // before the token store it reads from (owned by m_meta), and after shutdown()
     m_transfers.reset();
+    m_youtube.reset(); // uses m_meta's yt-dlp runner
     m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();
@@ -279,10 +284,28 @@ void Engine::previewLine(qint64 lineId)
             line = candidate;
         }
     }
-    if (!line || !line->best) {
-        Q_EMIT previewRefused(lineId, tr("Find the track first: there is no file to preview yet."));
+    if (!line) {
         return;
     }
+    if (!line->best) {
+        // No file on Soulseek yet: hear it from YouTube, through the user's own yt-dlp (ADR-011).
+        stopPreview();
+        meta::Release release;
+        if (line->release) {
+            release = *line->release;
+        } else {
+            release.title = line->title;
+            release.artists = line->artist.isEmpty() ? QStringList() : QStringList{line->artist};
+            release.durationMs = line->durationHintMs;
+        }
+        if (release.title.isEmpty()) {
+            Q_EMIT previewRefused(lineId, tr("There's nothing to look for in this line."));
+            return;
+        }
+        m_previewId = m_youtube->start(lineId, release);
+        return;
+    }
+    m_youtube->stop();
     const FileChoice &file = *line->best;
     DownloadSpec spec;
     spec.peer = file.peer;
@@ -316,6 +339,7 @@ void Engine::stopPreview()
 {
     if (m_started && m_previewId != 0) {
         m_transfers->stopPreview(m_previewId);
+        m_youtube->stop();
         m_previewId = 0;
     }
 }

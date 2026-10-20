@@ -18,7 +18,8 @@ qt_add_library(selecta_core STATIC
     NetworkService.h NetworkService.cpp
     ReleaseJson.h ReleaseJson.cpp
     SearchService.h SearchService.cpp
-    TransferService.h TransferService.cpp)
+    TransferService.h TransferService.cpp
+    YouTubePreviews.h YouTubePreviews.cpp)
 add_library(Selecta::Core ALIAS selecta_core)
 target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match
     selecta_meta selecta_slsk selecta_audio selecta_convert selecta_collection Qt6::Core Qt6::Network)

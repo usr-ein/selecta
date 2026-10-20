@@ -10,6 +10,7 @@
 #include "core/NetworkService.h"
 #include "core/SearchService.h"
 #include "core/TransferService.h"
+#include "core/YouTubePreviews.h"
 #include "governor/Governor.h"
 
 #include <QObject>
@@ -155,6 +156,7 @@ private:
     std::unique_ptr<TransferService> m_transfers;
     std::unique_ptr<ArrivalService> m_arrival;
     std::unique_ptr<CollectionService> m_collection;
+    std::unique_ptr<YouTubePreviews> m_youtube;
     qint64 m_previewId = 0; // the preview playing
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;

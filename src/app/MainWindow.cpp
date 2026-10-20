@@ -201,6 +201,7 @@ void MainWindow::createViews()
                     return; // the user asked for something else meanwhile
                 }
                 m_previewId = previewId;
+                m_playingLine = lineId;
                 m_services.preview.preview({source, {title, artist, label}, identity});
             });
     connect(&m_services.engine, &core::EngineHost::previewRefused, this, [this](qint64 lineId, const QString &why) {
@@ -392,6 +393,7 @@ void MainWindow::createActions()
     connect(stop, &QAction::triggered, this, [this] {
         m_services.preview.stop();
         m_askedPreviewLine = 0;
+        m_playingLine = 0;
         if (m_previewId != 0) {
             m_services.engine.stopPreview(); // a nearly complete preview still finishes, for a Get to reuse
             m_previewId = 0;
@@ -598,16 +600,14 @@ void MainWindow::previewGetTracksLine(bool toggleIfLoaded)
     PreviewController &preview = m_services.preview;
     const playback::Player::State state = preview.player().state();
     const bool loaded = preview.player().isActive() || state == playback::Player::State::Ended;
-    if (toggleIfLoaded && loaded && !target->identity.isEmpty() && target->identity == preview.identity()) {
+    if (toggleIfLoaded && loaded && target->lineId == m_playingLine) {
         preview.toggle();
         return;
     }
-    if (target->identity.isEmpty()) {
-        m_player->showMessage(tr("Find the track first: there is no file to preview yet."));
-        return;
-    }
     m_askedPreviewLine = target->lineId;
-    m_player->showMessage(tr("Asking %1 for a preview…").arg(target->peer));
+    // A line with a file previews it from its peer; one without, from YouTube (the user's own yt-dlp).
+    m_player->showMessage(target->peer.isEmpty() ? tr("Looking for it on YouTube…")
+                                                 : tr("Asking %1 for a preview…").arg(target->peer));
     m_services.engine.previewTrack(target->lineId);
 }
 
@@ -630,6 +630,7 @@ void MainWindow::previewInboxSelection(bool toggleIfLoaded)
         return;
     }
     m_askedPreviewLine = 0; // a peer preview playing gives way
+    m_playingLine = 0;
     if (m_previewId != 0) {
         m_services.engine.stopPreview();
         m_previewId = 0;

@@ -9,6 +9,7 @@
 #include "meta/ReleaseResolver.h"
 #include "meta/SpotifyAuth.h"
 #include "meta/SpotifyClient.h"
+#include "meta/YtDlpRunner.h"
 
 #include <QByteArray>
 #include <QDateTime>
@@ -49,6 +50,8 @@ struct MetaEndpoints
     // Covers also come straight from the CDNs a release links to (Spotify's, Deezer's), which no URL here redirects:
     // isolated runs turn cover downloads off instead.
     bool coverDownloads = true;
+    // The user's own yt-dlp for previews (ADR-011). Isolated runs never find or run it.
+    bool ytDlp = true;
 
     // Every service on 127.0.0.1:1, where nothing listens: requests fail at once. No cover downloads.
     static MetaEndpoints unreachable()
@@ -59,7 +62,8 @@ struct MetaEndpoints
                 .deezerApi = closed,
                 .musicBrainzApi = closed,
                 .coverArtArchive = closed,
-                .coverDownloads = false};
+                .coverDownloads = false,
+                .ytDlp = false};
     }
 };
 
@@ -126,6 +130,8 @@ public:
     meta::MusicBrainzClient &musicBrainz() { return *m_musicBrainz; }
     // Cover images; null when cover downloads are off (isolated runs).
     meta::CoverFetcher *covers() { return m_covers.get(); }
+    // Previews through the user's own yt-dlp (never finds or runs it in isolated runs).
+    meta::YtDlpRunner &ytDlp() { return *m_ytDlp; }
     meta::MetaCache &cache() { return m_cache; }
     QNetworkAccessManager &network() { return *m_network; }
     meta::RequestPacer &pacer() { return m_pacer; }
@@ -149,6 +155,7 @@ private:
     std::unique_ptr<meta::ReleaseResolver> m_resolver;
     std::unique_ptr<meta::MusicBrainzClient> m_musicBrainz;
     std::unique_ptr<meta::CoverFetcher> m_covers;
+    std::unique_ptr<meta::YtDlpRunner> m_ytDlp;
     QByteArray m_secret; // in memory only while set; never logged
     QString m_error;
 };

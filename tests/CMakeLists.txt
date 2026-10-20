@@ -76,7 +76,11 @@ if(SELECTA_WITH_MEDIA)
             core/NetworkServiceTest.cpp
             core/SearchServiceTest.cpp
             core/TransferServiceTest.cpp
+            core/YouTubePreviewsTest.cpp
         LIBRARIES selecta_core selecta_media_test_support selecta_slsk_testing Qt6::Gui)
+    # The fake yt-dlp and its fixtures live with meta's tests.
+    target_compile_definitions(selecta_core_tests PRIVATE
+        SELECTA_META_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/meta/fixtures")
     if(SELECTA_STATIC_QT)
         qt_import_plugins(selecta_core_tests INCLUDE Qt6::QJpegPlugin) # covers in the arrival tests
     endif()

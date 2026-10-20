@@ -48,6 +48,8 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
                         ? std::make_unique<meta::MusicBrainzClient>(m_network.get(), m_pacer, &m_cache, clock)
                         : std::make_unique<meta::MusicBrainzClient>(m_network.get(), m_pacer, &m_cache, clock, nullptr,
                                                                     options.endpoints.musicBrainzApi);
+    m_ytDlp = std::make_unique<meta::YtDlpRunner>(
+        options.endpoints.ytDlp ? meta::YtDlpRunner::Config{} : meta::YtDlpRunner::Config::disabled(), m_pacer, clock);
     if (options.endpoints.coverDownloads) {
         meta::CoverFetcher::Config covers;
         if (!options.endpoints.coverArtArchive.isEmpty()) {
@@ -67,6 +69,7 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
 MetaServices::~MetaServices()
 {
     // The resolver uses the clients, and the clients use the sign-in.
+    m_ytDlp.reset(); // kills a running yt-dlp and its children
     m_covers.reset();
     m_musicBrainz.reset();
     m_resolver.reset();
