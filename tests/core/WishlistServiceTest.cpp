@@ -56,6 +56,19 @@ selecta::slsk::peer::FileSearchResponse answer(quint32 token, const QStringList 
     return response;
 }
 
+// A file with what the peer says about it: a bitrate (0: not said), a length, a size.
+selecta::slsk::FileEntry described(const QString &path, quint32 kbps, quint32 seconds, quint64 size)
+{
+    selecta::slsk::FileEntry file;
+    file.name = selecta::slsk::RemotePath::fromText(path);
+    file.size = size;
+    if (kbps > 0) {
+        file.attributes.bitrate = kbps;
+    }
+    file.attributes.duration = seconds;
+    return file;
+}
+
 class WishlistServiceTest : public ::testing::Test
 {
 protected:
@@ -67,12 +80,15 @@ protected:
     }
 
     // Runs the next search and answers it with these files from vinyl_ghost.
-    void runAndAnswer(const QStringList &paths)
+    void runAndAnswer(const QStringList &paths) { runAndAnswerWith(answer(0, paths)); }
+
+    void runAndAnswerWith(selecta::slsk::peer::FileSearchResponse response)
     {
         const quint32 token = network.nextToken;
         wishlist->runNext();
         ASSERT_TRUE(QTest::qWaitFor([&] { return network.nextToken > token; }, 3000));
-        search.received(token, u"vinyl_ghost"_s, answer(token, paths));
+        response.token = token;
+        search.received(token, u"vinyl_ghost"_s, response);
         clock.advance(11min); // past the governor's quiet time for the same search
         now += 660'000;
     }
@@ -144,4 +160,37 @@ TEST_F(WishlistServiceTest, RunsTheSearchThatWaitedLongest)
     ASSERT_TRUE(QTest::qWaitFor([&] { return network.wishlist.size() == 2; }, 3000));
     EXPECT_EQ(network.wishlist,
               (QStringList{u"Okuma Drift Neon Rain"_s, u"Kassia Moreau Night Transit"_s})); // never run, oldest first
+}
+
+TEST_F(WishlistServiceTest, OnlyFilesOfItsPresetCount)
+{
+    // SRCH-8: a search saved with a preset counts only the files that pass it.
+    const selecta::core::FilterPreset lossless = selecta::core::builtInPreset(selecta::core::kLosslessPreset).value();
+    const std::optional<qint64> id = wishlist->add(u"Okuma Drift Neon Rain"_s, lossless.name, lossless.filter);
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(wishlist->items().constFirst().preset, lossless.name);
+    EXPECT_EQ(wishlist->items().constFirst().filter, lossless.filter);
+    QSignalSpy found(wishlist.get(), &WishlistService::found);
+
+    selecta::slsk::peer::FileSearchResponse response;
+    response.slotFree = true;
+    response.results = {described(u"Music\\Okuma Drift - Neon Rain.flac"_s, 0, 300, 30'000'000),
+                        described(u"Music\\Okuma Drift - Neon Rain.mp3"_s, 320, 300, 12'000'000)};
+    runAndAnswerWith(response);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !found.isEmpty(); }, 3000));
+    EXPECT_EQ(found.at(0).at(1).toInt(), 1); // the FLAC
+    EXPECT_EQ(wishlist->items().constFirst().found, 1);
+
+    // Another preset: the MP3 it left out is new to it now; the FLAC was seen.
+    wishlist->setPreset(*id, u"Any quality"_s, selecta::core::SearchFilter{});
+    EXPECT_EQ(wishlist->items().constFirst().preset, u"Any quality"_s);
+    runAndAnswerWith(response);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return found.size() == 2; }, 3000));
+    EXPECT_EQ(found.at(1).at(1).toInt(), 1);
+    EXPECT_EQ(wishlist->items().constFirst().found, 2);
+
+    // Saving the same search again changes its preset rather than adding it twice.
+    EXPECT_EQ(wishlist->add(u"neon rain okuma drift"_s, lossless.name, lossless.filter), id);
+    EXPECT_EQ(wishlist->items().size(), 1);
+    EXPECT_EQ(wishlist->items().constFirst().preset, lossless.name);
 }

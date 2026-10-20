@@ -34,37 +34,6 @@ match::ReleaseReference referenceFor(const GetLine &line)
     return reference;
 }
 
-match::RemoteAttributes attributesOf(const SearchHit &hit)
-{
-    match::RemoteAttributes attributes;
-    attributes.bitrateKbps = static_cast<int>(hit.attributes.bitrate.value_or(0));
-    attributes.durationSec = static_cast<int>(hit.attributes.duration.value_or(0));
-    attributes.vbr = hit.attributes.vbr;
-    attributes.sampleRateHz = static_cast<int>(hit.attributes.sampleRate.value_or(0));
-    attributes.bitDepth = static_cast<int>(hit.attributes.bitDepth.value_or(0));
-    return attributes;
-}
-
-bool wanted(const match::RemoteQuality &quality, QualityWanted want)
-{
-    const bool lossless = match::isLossless(quality.quality.codec);
-    switch (want) {
-    case QualityWanted::LosslessOnly:
-        return lossless && quality.plausible;
-    case QualityWanted::Mp3_320OrLossless:
-        // Lossless, or a plausible MP3 at 320 (CBR, or VBR averaging at least 300): anything less can't become a real
-        // MP3 320.
-        if (lossless) {
-            return quality.plausible;
-        }
-        return quality.quality.codec == match::Codec::Mp3 && quality.plausible &&
-               quality.quality.bitrateKbps >= (quality.quality.vbr.value_or(false) ? 300 : 320);
-    case QualityWanted::Any:
-        return quality.quality.codec != match::Codec::Unknown;
-    }
-    return false;
-}
-
 // The folder part of a virtual path ("@@share\Artist\Album"), with either separator.
 QString folderOf(const QString &path)
 {
@@ -76,12 +45,6 @@ QString nameOf(const QString &path)
 {
     const qsizetype separator = std::max(path.lastIndexOf(u'\\'), path.lastIndexOf(u'/'));
     return separator >= 0 ? path.mid(separator + 1) : path;
-}
-
-QString decoded(const QByteArray &raw)
-{
-    const QString utf8 = QString::fromUtf8(raw);
-    return utf8.contains(QChar::ReplacementCharacter) ? QString::fromLatin1(raw) : utf8;
 }
 
 } // namespace
@@ -102,7 +65,7 @@ QString FileRanking::query(const GetLine &line, const QStringList &excludedPhras
     return plan.text;
 }
 
-RankedChoices FileRanking::rank(const GetLine &line, const SearchOutcome &outcome, QualityWanted want)
+RankedChoices FileRanking::rank(const GetLine &line, const SearchOutcome &outcome, const SearchFilter &filter)
 {
     RankedChoices result;
     const match::ReleaseScorer scorer(referenceFor(line));
@@ -121,12 +84,12 @@ RankedChoices FileRanking::rank(const GetLine &line, const SearchOutcome &outcom
             continue;
         }
         ++result.considered;
-        const Entry entry{.hit = &hit,
-                          .path = decoded(hit.path),
-                          .quality = match::assessRemoteQuality(hit.extension, hit.size, attributesOf(hit))};
-        if (!wanted(entry.quality, want)) {
-            continue;
+        SearchResult filterable = filterableResult(hit);
+        filterable.parsed.kind = kind; // the hit's own extension decided it above
+        if (filter.hiddenReason(filterable, false) != HiddenReason::None) {
+            continue; // the release decides fit below: the filter judges quality and the peer
         }
+        const Entry entry{.hit = &hit, .path = std::move(filterable.path), .quality = filterable.quality};
         ++result.candidates;
         byFolder[{hit.peer, folderOf(entry.path)}].append(entry);
     }

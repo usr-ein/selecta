@@ -27,6 +27,7 @@ class EngineHost;
 
 namespace selecta::app {
 
+class Presets;
 class SearchInspector;
 class SearchResultsModel;
 
@@ -39,7 +40,7 @@ class SearchView : public QWidget
     Q_OBJECT
 
 public:
-    SearchView(core::EngineHost &engine, AppSettings &settings, QWidget *parent = nullptr);
+    SearchView(core::EngineHost &engine, AppSettings &settings, Presets &presets, QWidget *parent = nullptr);
 
     // Shows this search (its results so far), or the empty page for 0.
     void showSearch(qint64 searchId);
@@ -84,6 +85,13 @@ private:
     QWidget *createFilterBar();
     QWidget *createFiltersPanel();
     void applyFilter(const core::SearchFilter &filter, bool customised);
+    // The preset list changed (saved, renamed, deleted, a new default): the menu follows.
+    void rebuildPresetList();
+    void presetsMenu();
+    // The chosen preset's filter, with the choices that aren't about quality kept from the current filter.
+    core::SearchFilter presetFilter(const QString &id) const;
+    // What the Wishlist shows for this search's filter: the preset's name, "edited" when changed.
+    QString presetLabel() const;
     void filtersEdited();
     void loadFilterControls();
     void refreshHeader();
@@ -98,6 +106,7 @@ private:
 
     core::EngineHost &m_engine;
     AppSettings &m_settings;
+    Presets &m_presets;
     AppSettings::SearchViewState m_state;
     SearchResultsModel *m_model;
     SearchInspector *m_inspector;
@@ -106,6 +115,7 @@ private:
 
     QStackedWidget *m_pages;
     QComboBox *m_preset;
+    QPushButton *m_presetsButton; // save, rename, delete, default (SRCH-8)
     QCheckBox *m_onlyRelease;
     QCheckBox *m_grouped;
     QToolButton *m_filtersButton;
@@ -121,6 +131,7 @@ private:
     QTimeEdit *m_maxLength;
     QCheckBox *m_freeSlot;
     QComboBox *m_maxQueue;
+    QComboBox *m_minSpeed;
     QCheckBox *m_strict;
     QComboBox *m_owned;
     QLineEdit *m_excluded;

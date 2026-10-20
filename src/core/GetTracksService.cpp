@@ -363,6 +363,26 @@ void GetTracksService::setSearch(SearchService *search, std::function<QStringLis
     m_excludedPhrases = std::move(excludedPhrases);
 }
 
+void GetTracksService::setFilter(const SearchFilter &filter)
+{
+    if (filter == m_filter) {
+        return;
+    }
+    m_filter = filter;
+    // Lines already found are found again under the new filter: the search cache answers those it still has.
+    QList<qint64> again;
+    for (const GetLine &line : std::as_const(m_lines)) {
+        const bool found = line.findState == GetLine::FindState::Ready || line.findState == GetLine::FindState::Check ||
+                           line.findState == GetLine::FindState::NotFound;
+        if (found && line.downloadState == GetLine::DownloadState::None) {
+            again.append(line.id);
+        }
+    }
+    if (!again.isEmpty()) {
+        find(again);
+    }
+}
+
 void GetTracksService::find(const QList<qint64> &ids)
 {
     if (!m_search) {
@@ -437,7 +457,7 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
         store(*line);
         return;
     }
-    const RankedChoices choices = FileRanking::rank(*line, outcome, m_wanted);
+    const RankedChoices choices = FileRanking::rank(*line, outcome, m_filter);
     line->message.clear();
     if (choices.files.isEmpty()) {
         line->best.reset();

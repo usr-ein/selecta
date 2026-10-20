@@ -115,6 +115,18 @@ FileChoice fileChoiceOf(const SearchResult &result)
     return choice;
 }
 
+SearchResult filterableResult(const SearchHit &hit)
+{
+    SearchResult result;
+    result.hit = hit;
+    result.path = decodeRemotePath(hit.path);
+    result.folder = remoteFolderOf(result.path);
+    result.name = remoteNameOf(result.path);
+    result.parsed.kind = match::RemotePathParser::fileKind(hit.extension);
+    result.quality = match::assessRemoteQuality(hit.extension, hit.size, remoteAttributesOf(hit));
+    return result;
+}
+
 QList<SearchResult> analyzeHits(const QList<SearchHit> &hits, int firstIndex,
                                 const std::shared_ptr<const match::MatchIndex> &index,
                                 const std::optional<match::ReleaseReference> &release)

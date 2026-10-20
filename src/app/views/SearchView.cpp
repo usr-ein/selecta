@@ -3,6 +3,7 @@
 
 #include "app/Format.h"
 #include "app/PeerMenu.h"
+#include "app/Presets.h"
 #include "app/models/SearchResultsModel.h"
 #include "app/views/SearchInspector.h"
 #include "core/EngineHost.h"
@@ -16,6 +17,7 @@
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QLabel>
@@ -47,6 +49,7 @@ constexpr int kAlbumOffer = 3; // this many tracks of one folder selected: offer
 const std::array kBitrates{128, 160, 192, 224, 256, 320};
 const std::array kSampleRates{44'100, 48'000, 88'200, 96'000, 176'400, 192'000};
 const std::array kQueues{0, 5, 10, 20, 50};
+const std::array kSpeeds{0, 50, 100, 250, 500, 1000}; // KB/s
 
 QLabel *fieldLabel(const QString &text, QWidget *parent)
 {
@@ -80,15 +83,17 @@ QString candidateText(const meta::Candidate &candidate)
 
 } // namespace
 
-SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget *parent)
+SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets &presets, QWidget *parent)
     : QWidget(parent)
     , m_engine(engine)
     , m_settings(settings)
+    , m_presets(presets)
     , m_state(settings.searchViewState())
     , m_model(new SearchResultsModel(this))
     , m_inspector(new SearchInspector)
     , m_pages(new QStackedWidget(this))
     , m_preset(new QComboBox(this))
+    , m_presetsButton(new QPushButton(tr("Presets"), this))
     , m_onlyRelease(new QCheckBox(tr("Only this release"), this))
     , m_grouped(new QCheckBox(tr("Group by folder"), this))
     , m_filtersButton(new QToolButton(this))
@@ -102,6 +107,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
     , m_maxLength(new QTimeEdit(this))
     , m_freeSlot(new QCheckBox(tr("Free slot only"), this))
     , m_maxQueue(new QComboBox(this))
+    , m_minSpeed(new QComboBox(this))
     , m_strict(new QCheckBox(tr("Strict"), this))
     , m_owned(new QComboBox(this))
     , m_excluded(new QLineEdit(this))
@@ -306,7 +312,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
                 }
             });
 
-    loadFilterControls();
+    rebuildPresetList(); // and the filter controls
     m_model->setFilter(m_state.filter);
     m_model->setGrouped(m_state.grouped);
     showSearch(0);
@@ -319,21 +325,21 @@ QWidget *SearchView::createFilterBar()
     layout->setContentsMargins(16, 10, 16, 6);
     layout->addWidget(fieldLabel(tr("Want"), bar));
     m_preset->setObjectName(u"search.preset"_s);
-    for (const core::QualityWanted wanted :
-         {core::QualityWanted::Mp3_320OrLossless, core::QualityWanted::LosslessOnly, core::QualityWanted::Any}) {
-        m_preset->addItem(core::qualityWantedName(wanted), static_cast<int>(wanted));
-    }
-    m_preset->setToolTip(tr("The quality you want. Get tracks uses the same choices."));
+    m_preset->setToolTip(tr("The quality you want: a preset. Get tracks and the Wishlist pick from the same ones."));
     layout->addWidget(m_preset);
     connect(m_preset, &QComboBox::activated, this, [this](int row) {
-        const auto wanted = static_cast<core::QualityWanted>(m_preset->itemData(row).toInt());
-        core::SearchFilter filter = core::presetFilter(wanted);
-        filter.onlyThisRelease = m_state.filter.onlyThisRelease; // not part of the quality
-        filter.owned = m_state.filter.owned;
-        m_state.preset = wanted;
-        applyFilter(filter, false);
+        const QString id = m_preset->itemData(row).toString();
+        m_state.presetId = id;
+        applyFilter(presetFilter(id), false);
         loadFilterControls();
     });
+    // SRCH-8: named presets, saved from the filters.
+    m_presetsButton->setObjectName(u"search.presets"_s);
+    m_presetsButton->setToolTip(tr("Save these filters as a preset, rename or delete yours, choose the default"));
+    m_presetsButton->setMenu(new QMenu(m_presetsButton)); // a pull-down button on macOS
+    connect(m_presetsButton->menu(), &QMenu::aboutToShow, this, &SearchView::presetsMenu);
+    layout->addWidget(m_presetsButton);
+    connect(&m_presets, &Presets::changed, this, &SearchView::rebuildPresetList);
     m_onlyRelease->setObjectName(u"search.onlyRelease"_s);
     m_onlyRelease->setToolTip(tr("Hide files whose length or name doesn't fit the release"));
     connect(m_onlyRelease, &QCheckBox::toggled, this, [this](bool checked) {
@@ -372,8 +378,9 @@ QWidget *SearchView::createFilterBar()
     m_watch->setObjectName(u"search.wishlist"_s);
     m_watch->setToolTip(tr("Run this search again in the background and say when new files turn up"));
     connect(m_watch, &QPushButton::clicked, this, [this] {
+        // The search runs with the filters as they are now (SRCH-8).
         if (const std::optional<core::ManualSearch> search = m_engine.search(m_searchId)) {
-            m_engine.addToWishlist(search->text);
+            m_engine.addToWishlist(search->text, presetLabel(), m_state.filter);
         }
     });
     layout->addWidget(m_watch);
@@ -479,6 +486,15 @@ QWidget *SearchView::createFiltersPanel()
     }
     connect(m_maxQueue, &QComboBox::activated, this, &SearchView::filtersEdited);
     length->addWidget(m_maxQueue);
+    length->addSpacing(8);
+    length->addWidget(fieldLabel(tr("Speed at least"), panel));
+    m_minSpeed->setObjectName(u"search.minSpeed"_s);
+    m_minSpeed->setToolTip(tr("Hide files from peers whose upload speed, as the server reports it, is lower"));
+    for (const int speed : kSpeeds) {
+        m_minSpeed->addItem(speed == 0 ? tr("Any") : tr("%1 KB/s").arg(speed), speed);
+    }
+    connect(m_minSpeed, &QComboBox::activated, this, &SearchView::filtersEdited);
+    length->addWidget(m_minSpeed);
     length->addStretch(1);
 
     // Strictness, what the user already has, and words (SRCH-5, SRCH-6).
@@ -513,10 +529,10 @@ void SearchView::loadFilterControls()
 {
     m_loadingControls = true;
     const core::SearchFilter &filter = m_state.filter;
-    const int presetRow = m_preset->findData(static_cast<int>(m_state.preset));
-    for (int row = 0; row < m_preset->count(); ++row) {
-        const auto wanted = static_cast<core::QualityWanted>(m_preset->itemData(row).toInt());
-        const QString name = core::qualityWantedName(wanted);
+    const int presetRow = m_preset->findData(m_state.presetId);
+    const QList<core::FilterPreset> presets = m_presets.all();
+    for (int row = 0; row < m_preset->count() && row < presets.size(); ++row) {
+        const QString &name = presets.at(row).name;
         m_preset->setItemText(row, row == presetRow && m_state.customised ? tr("%1 (edited)").arg(name) : name);
     }
     m_preset->setCurrentIndex(std::max(presetRow, 0));
@@ -542,6 +558,7 @@ void SearchView::loadFilterControls()
     m_maxLength->setTime(timeOfSeconds(filter.maxDurationSec));
     m_freeSlot->setChecked(filter.freeSlotOnly);
     m_maxQueue->setCurrentIndex(std::max(m_maxQueue->findData(filter.maxQueue), 0));
+    m_minSpeed->setCurrentIndex(std::max(m_minSpeed->findData(filter.minSpeedKBps), 0));
     m_strict->setChecked(filter.strict);
     m_owned->setCurrentIndex(std::max(m_owned->findData(static_cast<int>(filter.owned)), 0));
     m_excluded->setText(filter.excludedWords.join(u' '));
@@ -574,15 +591,96 @@ void SearchView::filtersEdited()
     filter.maxDurationSec = secondsOf(m_maxLength->time());
     filter.freeSlotOnly = m_freeSlot->isChecked();
     filter.maxQueue = m_maxQueue->currentData().toInt();
+    filter.minSpeedKBps = m_minSpeed->currentData().toInt();
     filter.strict = m_strict->isChecked();
     filter.owned = static_cast<core::SearchFilter::OwnedResults>(m_owned->currentData().toInt());
     filter.excludedWords = m_excluded->text().split(QRegularExpression(u"[\\s,]+"_s), Qt::SkipEmptyParts);
-    // Still the preset when only the layout-free choices moved.
-    core::SearchFilter preset = core::presetFilter(m_state.preset);
+    // Still the preset when only the choices that aren't about quality moved.
+    core::SearchFilter preset = presetFilter(m_state.presetId);
     preset.onlyThisRelease = filter.onlyThisRelease;
     preset.owned = filter.owned;
     applyFilter(filter, !(filter == preset));
     loadFilterControls();
+}
+
+core::SearchFilter SearchView::presetFilter(const QString &id) const
+{
+    core::SearchFilter filter = m_presets.preset(id).filter;
+    filter.onlyThisRelease = m_state.filter.onlyThisRelease; // not part of the quality
+    filter.owned = m_state.filter.owned;
+    return filter;
+}
+
+QString SearchView::presetLabel() const
+{
+    const QString name = m_presets.preset(m_state.presetId).name;
+    return m_state.customised ? tr("%1 (edited)").arg(name) : name;
+}
+
+void SearchView::rebuildPresetList()
+{
+    const QSignalBlocker blocker(m_preset);
+    m_preset->clear();
+    const QList<core::FilterPreset> presets = m_presets.all();
+    for (const core::FilterPreset &preset : presets) {
+        m_preset->addItem(preset.name, preset.id);
+    }
+    if (!m_presets.byId(m_state.presetId)) {
+        // Its preset was deleted: the filters stay, as an edit of the default.
+        m_state.presetId = m_presets.defaultId();
+        const core::SearchFilter base = presetFilter(m_state.presetId);
+        m_state.customised = !(base == m_state.filter);
+        m_settings.setSearchViewState(m_state);
+    }
+    loadFilterControls();
+}
+
+void SearchView::presetsMenu()
+{
+    QMenu *menu = m_presetsButton->menu();
+    menu->clear();
+    const core::FilterPreset current = m_presets.preset(m_state.presetId);
+    menu->addAction(tr("Save Filters as Preset…"), this, [this] {
+        auto *ask = new QInputDialog(this);
+        ask->setAttribute(Qt::WA_DeleteOnClose);
+        ask->setObjectName(u"search.savePreset"_s);
+        ask->setWindowModality(Qt::WindowModal); // a sheet on macOS
+        ask->setLabelText(tr("Name the preset, e.g. “DJ — MP3 320”. A preset of yours with the same name is "
+                             "replaced."));
+        ask->setTextValue(m_state.customised ? QString() : m_presets.preset(m_state.presetId).name);
+        ask->setOkButtonText(tr("Save"));
+        connect(ask, &QInputDialog::textValueSelected, this, [this](const QString &name) {
+            if (const std::optional<QString> id = m_presets.save(name, m_state.filter)) {
+                m_state.presetId = *id;
+                applyFilter(m_state.filter, false);
+                loadFilterControls();
+            } else {
+                m_status->setText(tr("“%1” is one of Selecta's presets: pick another name.").arg(name));
+            }
+        });
+        ask->open();
+    });
+    if (!current.builtIn) {
+        menu->addAction(tr("Rename “%1”…").arg(current.name), this, [this, id = current.id, name = current.name] {
+            auto *ask = new QInputDialog(this);
+            ask->setAttribute(Qt::WA_DeleteOnClose);
+            ask->setObjectName(u"search.renamePreset"_s);
+            ask->setWindowModality(Qt::WindowModal);
+            ask->setLabelText(tr("New name for “%1”:").arg(name));
+            ask->setTextValue(name);
+            ask->setOkButtonText(tr("Rename"));
+            connect(ask, &QInputDialog::textValueSelected, this,
+                    [this, id](const QString &newName) { m_presets.rename(id, newName); });
+            ask->open();
+        });
+        menu->addAction(tr("Delete “%1”").arg(current.name), this, [this, id = current.id] { m_presets.remove(id); });
+    }
+    menu->addSeparator();
+    QAction *byDefault = menu->addAction(tr("Use “%1” by Default").arg(current.name), this,
+                                         [this, id = current.id] { m_presets.setDefaultId(id); });
+    byDefault->setCheckable(true);
+    byDefault->setChecked(current.id == m_presets.defaultId());
+    byDefault->setEnabled(current.id != m_presets.defaultId());
 }
 
 void SearchView::applyFilter(const core::SearchFilter &filter, bool customised)

@@ -6,6 +6,7 @@
 #include "app/Inspector.h"
 #include "app/NavModel.h"
 #include "app/PlayerBar.h"
+#include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/Sidebar.h"
 #include "app/Toasts.h"
@@ -309,12 +310,15 @@ void MainWindow::addView(const QString &id, QWidget *widget, std::function<QStri
 
 void MainWindow::createViews()
 {
+    // The filter presets Search, Get tracks and the Wishlist share (SRCH-8).
+    m_presets = new Presets(m_services.settings, this);
+
     const auto fixed = [](const QString &text) { return [text] { return text; }; };
 
     createSearchView();
     createBrowseView();
 
-    m_getTracksView = new GetTracksView(m_services.engine, m_stack);
+    m_getTracksView = new GetTracksView(m_services.engine, *m_presets, m_stack);
     addView(u"get"_s, m_getTracksView, [this] { return m_getTracksView->summary(); });
     m_inspector->addPanel(u"get"_s, m_getTracksView->inspectorPanel());
     connect(m_getTracksView, &GetTracksView::summaryChanged, this, [this] {
@@ -375,7 +379,7 @@ void MainWindow::createViews()
             m_player->showMessage(preview.message);
         }
     });
-    auto *wishlistView = new WishlistView(m_services.engine, m_stack);
+    auto *wishlistView = new WishlistView(m_services.engine, *m_presets, m_stack);
     addView(u"wishlist"_s, wishlistView, [wishlistView] { return wishlistView->summary(); });
     connect(wishlistView, &WishlistView::summaryChanged, this, [this, wishlistView] {
         m_navModel->setCount(u"wishlist"_s, wishlistView->foundCount());
@@ -451,7 +455,7 @@ void MainWindow::createViews()
 void MainWindow::createSearchView()
 {
     // Searches typed by hand: one view shows whichever search is picked in the sidebar.
-    m_searchView = new SearchView(m_services.engine, m_services.settings, m_stack);
+    m_searchView = new SearchView(m_services.engine, m_services.settings, *m_presets, m_stack);
     addView(u"search"_s, m_searchView, [this] { return m_searchView->summary(); });
     m_inspector->addPanel(u"search"_s, m_searchView->inspectorPanel());
     connect(m_searchView, &SearchView::summaryChanged, this, [this] {
