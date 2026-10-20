@@ -30,8 +30,13 @@ selecta_add_test_suite(selecta_audio_tests
 target_include_directories(selecta_audio_tests SYSTEM BEFORE PRIVATE
     $<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>)
 
-# Analysis speed (NFR-2). Not a CTest test: run it from a Release build and record the numbers in src/audio/DESIGN.md.
+# Analysis and quality-check speed (NFR-2, A7). Run it from a Release build for real numbers and record them in
+# src/audio/DESIGN.md; ctest only runs a small smoke pass over a few seconds of audio, so it keeps compiling and working.
 find_package(benchmark CONFIG REQUIRED)
 add_executable(selecta_audio_bench bench/AnalysisBenchmark.cpp)
 target_link_libraries(selecta_audio_bench PRIVATE selecta_audio selecta_media_test_support benchmark::benchmark)
 selecta_set_warnings(selecta_audio_bench)
+add_test(NAME selecta_audio_bench_smoke COMMAND selecta_audio_bench --benchmark_min_time=0.01s)
+set_tests_properties(selecta_audio_bench_smoke PROPERTIES
+    ENVIRONMENT "SELECTA_BENCH_SECONDS=4"
+    LABELS "benchmark")
