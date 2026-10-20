@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
 # The nightman's merge (docs/CREW.md, step 8): merges one crew PR once review approved it and CI's gating jobs are
-# green, then brings the main checkout's `main` up to date and pushes it to every remote (GitHub and the mirror).
+# green, then brings the main checkout's `main` up to date and pushes it to GitHub, then to the Gitea mirror (main only).
 # Refuses, saying why, when the PR isn't ready.
 #
 #   tools/crew/merge-pr.sh <PR number>
@@ -51,4 +51,8 @@ fi
 git -C "$root" fetch -q origin
 git -C "$root" merge -q --ff-only origin/main
 git -C "$root" push -q origin main
+# The Gitea mirror carries main only, no crew branches and no PRs (maintainer, 2026-10-21).
+if git -C "$root" remote get-url gitea >/dev/null 2>&1; then
+    git -C "$root" push -q gitea main
+fi
 echo "merged PR #$pr; main is $(git -C "$root" log -1 --format='%h %s' main)"
