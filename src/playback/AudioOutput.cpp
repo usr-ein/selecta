@@ -17,7 +17,9 @@ using namespace Qt::StringLiterals;
 namespace selecta::playback {
 namespace {
 
-Q_LOGGING_CATEGORY(lcOutput, "selecta.playback.output")
+#ifdef Q_OS_MACOS
+Q_LOGGING_CATEGORY(lcOutput, "selecta.playback.output") // CoreAudio's messages: no other platform has any yet
+#endif
 
 constexpr int kChannels = 2;
 
