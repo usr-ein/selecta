@@ -2,6 +2,7 @@
 #include "app/views/GetTracksView.h"
 
 #include "app/Icons.h"
+#include "app/TickDelegate.h"
 #include "app/TwoLineDelegate.h"
 #include "app/models/GetTracksModel.h"
 #include "app/views/AddTracksDialog.h"
@@ -101,6 +102,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     m_table->setFrameShape(QFrame::NoFrame);
     m_table->setAttribute(Qt::WA_MacShowFocusRect, false);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_table->setItemDelegateForColumn(GetTracksModel::TickColumn, new TickDelegate(m_table));
     m_table->setItemDelegateForColumn(GetTracksModel::TrackColumn,
                                       new TwoLineDelegate(GetTracksModel::SubtitleRole, m_table));
     QHeaderView *header = m_table->header();
@@ -255,6 +257,15 @@ QString GetTracksView::summary() const
         return tr("Nothing in the list");
     }
     QStringList parts{counts.total == 1 ? tr("1 track") : tr("%1 tracks").arg(counts.total)};
+    if (counts.downloading > 0) {
+        parts.append(tr("%1 downloading").arg(counts.downloading));
+    }
+    if (counts.arrived > 0) {
+        parts.append(tr("%1 in your Inbox").arg(counts.arrived));
+    }
+    if (counts.failed > 0) {
+        parts.append(counts.failed == 1 ? tr("1 download failed") : tr("%1 downloads failed").arg(counts.failed));
+    }
     if (counts.ready > 0) {
         parts.append(tr("%1 ready").arg(counts.ready));
     }
@@ -273,7 +284,8 @@ QString GetTracksView::summary() const
     if (counts.waiting > 0) {
         parts.append(tr("%1 waiting for a release lookup").arg(counts.waiting));
     }
-    if (counts.lookingUp == 0 && counts.waiting == 0 && counts.ready == 0 && counts.check == 0) {
+    if (counts.lookingUp == 0 && counts.waiting == 0 && counts.ready == 0 && counts.check == 0 &&
+        counts.downloading == 0 && counts.arrived == 0 && counts.failed == 0) {
         parts.append(counts.released == 1 ? tr("1 release found") : tr("%1 releases found").arg(counts.released));
     }
     return parts.join(u" · "_s);

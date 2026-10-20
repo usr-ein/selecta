@@ -85,6 +85,7 @@ if(SELECTA_WITH_MEDIA)
             app/FormatTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp
+            app/TickDelegateTest.cpp
             app/WaveformViewTest.cpp
         LIBRARIES selecta_app)
 endif()

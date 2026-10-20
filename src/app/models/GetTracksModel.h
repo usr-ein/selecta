@@ -51,6 +51,9 @@ public:
         int notFound = 0;
         int have = 0; // in the collection or the Inbox
         int ticked = 0;
+        int downloading = 0; // queued at a peer, downloading or converting
+        int arrived = 0;     // downloaded into the Inbox
+        int failed = 0;      // the download failed
     };
     Counts counts() const;
 

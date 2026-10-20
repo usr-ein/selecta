@@ -90,6 +90,25 @@ GetTracksModel::Counts GetTracksModel::counts() const
         if (line.release && line.releaseState != ReleaseState::None) {
             ++counts.released;
         }
+        if (line.ticked) {
+            ++counts.ticked;
+        }
+        // A line that went on to download counts by its download.
+        switch (line.downloadState) {
+        case DownloadState::Queued:
+        case DownloadState::Transferring:
+        case DownloadState::Converting:
+            ++counts.downloading;
+            continue;
+        case DownloadState::Arrived:
+            ++counts.arrived;
+            continue;
+        case DownloadState::Failed:
+            ++counts.failed;
+            continue;
+        case DownloadState::None:
+            break;
+        }
         switch (line.findState) {
         case FindState::Ready:
             ++counts.ready;
@@ -108,9 +127,6 @@ GetTracksModel::Counts GetTracksModel::counts() const
         case FindState::Queued:
         case FindState::Searching:
             break;
-        }
-        if (line.ticked) {
-            ++counts.ticked;
         }
     }
     return counts;

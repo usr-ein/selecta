@@ -12,6 +12,7 @@ qt_add_library(selecta_app STATIC
     Preview.h Preview.cpp
     Sidebar.h Sidebar.cpp
     SourceListView.h SourceListView.cpp
+    TickDelegate.h TickDelegate.cpp
     TwoLineDelegate.h TwoLineDelegate.cpp
     WaveformView.h WaveformView.cpp
     models/ActivityModel.h models/ActivityModel.cpp
