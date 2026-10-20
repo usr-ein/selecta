@@ -67,6 +67,7 @@ void EngineHost::start()
     });
     connect(engine, &Engine::inboxOperationFinished, this, &EngineHost::inboxOperationFinished);
     connect(engine, &Engine::tracksAdded, this, &EngineHost::tracksAdded);
+    connect(engine, &Engine::searchQueueChanged, this, &EngineHost::searchQueueChanged);
     connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
         m_networkStatus = status;
         Q_EMIT networkStatusChanged(status);
@@ -212,6 +213,24 @@ void EngineHost::retryTracks(const QList<qint64> &ids)
     post([ids](Engine &engine) {
         if (engine.isStarted()) {
             engine.getTracks().retry(ids);
+        }
+    });
+}
+
+void EngineHost::findTracks(const QList<qint64> &ids)
+{
+    post([ids](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().find(ids);
+        }
+    });
+}
+
+void EngineHost::stopFindingTracks()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.getTracks().stopFinding();
         }
     });
 }

@@ -61,6 +61,7 @@ struct GetLine
 
     FindState findState = FindState::Idle;
     std::optional<FileChoice> best;
+    QList<FileChoice> alternatives; // other peers' files, best first (not saved: found again on the next search)
     bool ticked = false;
     DownloadState downloadState = DownloadState::None;
     QString message; // why a step failed, in words

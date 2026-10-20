@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/FileRanking.h"
 #include "core/GetTracks.h"
 #include "meta/ReleaseResolver.h"
 
@@ -18,6 +19,8 @@ class Database;
 }
 
 namespace selecta::core {
+
+class SearchService;
 
 // Get tracks (PRD D27, BATCH-1…9) on the engine thread: the list the user pasted, each line matched to a release
 // before any Soulseek search (BATCH-5), then found, previewed and downloaded. The lines live in the database, so the
@@ -64,6 +67,19 @@ public:
     // The user picked a release among the candidates.
     void chooseRelease(qint64 id, const meta::Release &release);
 
+    // --- finding the files (BATCH-4, BATCH-5) ---
+    // Where searches go, and the server's excluded phrases (for the query planner). Not owned.
+    void setSearch(SearchService *search, std::function<QStringList()> excludedPhrases);
+    void setQualityWanted(QualityWanted wanted) { m_wanted = wanted; }
+    QualityWanted qualityWanted() const { return m_wanted; }
+    // Queues a search for each of these lines (every line still to find when empty). Lines still waiting for their
+    // release lookup are searched once it is done.
+    void find(const QList<qint64> &ids = {});
+    // Stops searching: queued searches are dropped and their lines go back to idle.
+    void stopFinding();
+    bool isFinding() const { return !m_finding.isEmpty() || !m_findAfterLookup.isEmpty(); }
+    int findingCount() const { return static_cast<int>(m_finding.size() + m_findAfterLookup.size()); }
+
     QList<GetLine> lines() const { return m_lines; }
     int resolvingCount() const { return static_cast<int>(m_resolving.size()); }
 
@@ -73,6 +89,8 @@ Q_SIGNALS:
 
 private:
     void load();
+    void startFinding(GetLine &line);
+    void found(qint64 id, const SearchOutcome &outcome);
     void resolveNext();
     void resolved(qint64 id, const meta::Result<meta::Resolution> &result);
     void store(const GetLine &line);
@@ -84,6 +102,11 @@ private:
     ResolveFunction m_resolve;
     QList<GetLine> m_lines;                                             // in list order, mirrors the database
     QHash<qint64, QFuture<meta::Result<meta::Resolution>>> m_resolving; // line id → resolution; cancelled if it goes
+    SearchService *m_search = nullptr;
+    std::function<QStringList()> m_excludedPhrases;
+    QualityWanted m_wanted = QualityWanted::Mp3_320OrLossless;
+    QHash<qint64, quint64> m_finding; // line id → its queued or running search
+    QSet<qint64> m_findAfterLookup;   // lines to search once their release lookup ends
 };
 
 } // namespace selecta::core

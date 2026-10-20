@@ -57,6 +57,9 @@ public:
     void clearTracks();
     void tickTracks(const QList<qint64> &ids, bool ticked);
     void retryTracks(const QList<qint64> &ids);
+    // Finds the best file for these lines (all lines still to find when empty), paced by the governor.
+    void findTracks(const QList<qint64> &ids = {});
+    void stopFindingTracks();
     QList<GetLine> getLines() const { return m_getLines; }
 
     // --- the Soulseek network (Settings → Network) ---
@@ -91,6 +94,7 @@ Q_SIGNALS:
     // What adding did, for a short message: lines added, already there, unidentified, and a note.
     void tracksAdded(int added, int duplicates, int unidentified, const QString &note);
     void networkStatusChanged(const selecta::core::NetworkStatus &status);
+    void searchQueueChanged(int waiting, int collecting, qint64 nextInMs);
 
 private:
     EngineOptions m_options;

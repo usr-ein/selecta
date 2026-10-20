@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/GetTracksService.h"
 
+#include "base/Clock.h"
 #include "core/ReleaseJson.h"
+#include "core/SearchService.h"
+#include "governor/Governor.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
@@ -267,4 +270,91 @@ TEST(ReleaseJson, EveryFieldRoundTrips)
     EXPECT_EQ(*back, r);
     EXPECT_FALSE(selecta::core::releaseFromText(QByteArray("not json")).has_value());
     EXPECT_FALSE(selecta::core::releaseFromText(QByteArray()).has_value());
+}
+
+namespace {
+
+struct FindNetwork final : selecta::core::SearchNetwork
+{
+    QStringList sent;
+    bool isOnline() const override { return true; }
+    // The permit is a move-only sink, taken by value like the interface.
+    quint32 search(const QString &query,
+                   [[maybe_unused]] selecta::governor::Permit permit) override // clazy:exclude=function-args-by-ref
+    {
+        sent.append(query);
+        return static_cast<quint32>(sent.size());
+    }
+    void stopSearch([[maybe_unused]] quint32 token) override {}
+};
+
+selecta::slsk::peer::FileSearchResponse fileResponse(quint32 token, const QString &path, quint32 bitrate,
+                                                     quint32 durationSec)
+{
+    selecta::slsk::peer::FileSearchResponse r;
+    r.token = token;
+    selecta::slsk::FileEntry file;
+    file.name = selecta::slsk::RemotePath::fromText(path);
+    file.size = quint64{bitrate} * 1000 / 8 * durationSec;
+    file.attributes.bitrate = bitrate;
+    file.attributes.duration = durationSec;
+    r.results.append(file);
+    r.slotFree = true;
+    return r;
+}
+
+} // namespace
+
+TEST_F(GetTracksServiceTest, FindingTicksConfidentMatchesAndFlagsTheRest)
+{
+    const selecta::base::ManualClock clock;
+    selecta::governor::Governor governor(clock);
+    FindNetwork network;
+    selecta::core::SearchService search(
+        governor, network, clock, {.idle = std::chrono::milliseconds(40), .total = std::chrono::milliseconds(1000)});
+    service->setSearch(&search, [] { return QStringList(); });
+    service->addReleases({release(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000),
+                          release(u"Halden Rue"_s, u"Tidewater"_s, 401'000),
+                          release(u"Kassia Moreau"_s, u"Night Transit"_s, 333'000)});
+    service->find();
+    ASSERT_TRUE(QTest::qWaitFor([&network] { return network.sent.size() == 3; }, 3000));
+    const auto searching = service->lines();
+    for (const auto &line : searching) {
+        EXPECT_EQ(line.findState, GetLine::FindState::Searching);
+    }
+
+    search.received(1, u"vinyl_ghost"_s, fileResponse(1, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, 320, 372));
+    search.received(2, u"bassbin"_s, fileResponse(2, u"@@b\\Halden Rue - Tidewater.mp3"_s, 320, 330)); // wrong length
+    // Nothing for the third.
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    const auto lines = service->lines();
+    EXPECT_EQ(lines[0].findState, GetLine::FindState::Ready);
+    EXPECT_TRUE(lines[0].ticked);
+    ASSERT_TRUE(lines[0].best.has_value());
+    EXPECT_EQ(lines[0].best->peer, u"vinyl_ghost"_s);
+    EXPECT_NE(lines[1].findState, GetLine::FindState::Ready);
+    EXPECT_FALSE(lines[1].ticked);
+    EXPECT_EQ(lines[2].findState, GetLine::FindState::NotFound);
+
+    // The chosen file is saved with the line.
+    service.reset();
+    GetTracksService restarted(db);
+    ASSERT_TRUE(restarted.lines().constFirst().best.has_value());
+    EXPECT_TRUE(restarted.lines().constFirst().ticked);
+}
+
+TEST_F(GetTracksServiceTest, StoppingPutsQueuedLinesBack)
+{
+    const selecta::base::ManualClock clock;
+    selecta::governor::Governor governor(clock);
+    FindNetwork network;
+    selecta::core::SearchService search(governor, network, clock);
+    service->setSearch(&search, [] { return QStringList(); });
+    governor.setPaused(true); // nothing can go out
+    service->addReleases({release(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000)});
+    service->find();
+    EXPECT_EQ(service->lines().constFirst().findState, GetLine::FindState::Queued);
+    service->stopFinding();
+    EXPECT_EQ(service->lines().constFirst().findState, GetLine::FindState::Idle);
+    EXPECT_FALSE(service->isFinding());
 }

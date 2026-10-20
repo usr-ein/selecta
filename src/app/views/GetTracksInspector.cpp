@@ -151,71 +151,86 @@ void GetTracksInspector::showLine(const std::optional<core::GetLine> &line)
         status += u" · "_s + line->message;
     }
     m_status->setText(status);
+    showRelease(*line);
+    showFile(*line);
+}
 
-    const bool hasRelease = line->release && line->releaseState != core::GetLine::ReleaseState::None;
+void GetTracksInspector::showRelease(const core::GetLine &line)
+{
+    const bool hasRelease = line.release && line.releaseState != core::GetLine::ReleaseState::None;
     m_releaseBox->setVisible(hasRelease);
     m_openRelease->setVisible(false);
-    if (hasRelease) {
-        const meta::Release &release = *line->release;
-        m_releaseHeading->setText(tr("Tags it will get · %1").arg(sourceText(release)));
-        m_releaseTitle->setText(release.title);
-        m_releaseArtist->setText(release.artist());
-        m_releaseAlbum->setText(release.album);
-        m_releaseDate->setText(release.releaseDate);
-        m_releaseLength->setText(format::length(release.durationMs));
-        QString track;
-        if (release.trackNumber && release.trackTotal) {
-            track = tr("%1 of %2").arg(*release.trackNumber).arg(*release.trackTotal);
-        } else if (release.trackNumber) {
-            track = QString::number(*release.trackNumber);
-        }
-        m_releaseTrack->setText(track);
-        m_releaseIsrc->setText(release.isrc);
-        m_releaseLabel->setText(release.label.isEmpty() ? tr("from MusicBrainz on arrival") : release.label);
-        // Spotify's terms ask for a link back next to its data (Developer Policy §II.4).
-        if (release.spotifyUrl.isValid() && !release.spotifyUrl.isEmpty()) {
-            m_openRelease->setText(tr("Open in Spotify"));
-            m_openRelease->setVisible(true);
-        } else if (release.deezerUrl.isValid() && !release.deezerUrl.isEmpty()) {
-            m_openRelease->setText(tr("Open in Deezer"));
-            m_openRelease->setVisible(true);
-        }
-        if (line->releaseState == core::GetLine::ReleaseState::Ambiguous) {
-            m_noRelease->setText(tr("Not sure this is the right release: check it before getting the file."));
-            m_noRelease->setVisible(true);
-        } else {
-            m_noRelease->setVisible(false);
-        }
-    } else {
+    if (!hasRelease) {
         m_releaseHeading->setText(tr("Tags it will get"));
-        m_noRelease->setText(line->releaseState == core::GetLine::ReleaseState::Pending
+        m_noRelease->setText(line.releaseState == core::GetLine::ReleaseState::Pending
                                  ? tr("Looking for the release on Spotify, Deezer and MusicBrainz…")
                                  : tr("No release found, so the file keeps its own tags. You can fix them in the "
                                       "Inbox."));
         m_noRelease->setVisible(true);
+        return;
     }
+    const meta::Release &release = *line.release;
+    m_releaseHeading->setText(tr("Tags it will get · %1").arg(sourceText(release)));
+    m_releaseTitle->setText(release.title);
+    m_releaseArtist->setText(release.artist());
+    m_releaseAlbum->setText(release.album);
+    m_releaseDate->setText(release.releaseDate);
+    m_releaseLength->setText(format::length(release.durationMs));
+    QString track;
+    if (release.trackNumber && release.trackTotal) {
+        track = tr("%1 of %2").arg(*release.trackNumber).arg(*release.trackTotal);
+    } else if (release.trackNumber) {
+        track = QString::number(*release.trackNumber);
+    }
+    m_releaseTrack->setText(track);
+    m_releaseIsrc->setText(release.isrc);
+    m_releaseLabel->setText(release.label.isEmpty() ? tr("from MusicBrainz on arrival") : release.label);
+    // Spotify's terms ask for a link back next to its data (Developer Policy §II.4).
+    if (release.spotifyUrl.isValid() && !release.spotifyUrl.isEmpty()) {
+        m_openRelease->setText(tr("Open in Spotify"));
+        m_openRelease->setVisible(true);
+    } else if (release.deezerUrl.isValid() && !release.deezerUrl.isEmpty()) {
+        m_openRelease->setText(tr("Open in Deezer"));
+        m_openRelease->setVisible(true);
+    }
+    const bool unsure = line.releaseState == core::GetLine::ReleaseState::Ambiguous;
+    m_noRelease->setText(unsure ? tr("Not sure this is the right release: check it before getting the file.")
+                                : QString());
+    m_noRelease->setVisible(unsure);
+}
 
-    if (line->best) {
-        const core::FileChoice &file = *line->best;
-        QString text = format::quality(file);
-        if (file.durationSec) {
-            text += u" · "_s + format::length(qint64{*file.durationSec} * 1000);
-            if (line->release && line->release->durationMs) {
-                const qint64 delta = *file.durationSec - ((*line->release->durationMs + 500) / 1000);
-                text += file.fitsRelease ? tr(" · same length") : u" · "_s + format::lengthDelta(delta);
-            }
-        }
-        text +=
-            u"\n"_s +
-            tr("From %1 · %2").arg(file.peer, file.freeSlot ? tr("free slot") : tr("queue %1").arg(file.queueLength));
-        text += u"\n"_s + QString::fromUtf8(file.remotePath);
-        m_file->setText(text);
-        m_fileHeading->setVisible(true);
-        m_file->setVisible(true);
-    } else {
-        m_fileHeading->setVisible(false);
-        m_file->setVisible(false);
+void GetTracksInspector::showFile(const core::GetLine &line)
+{
+    m_fileHeading->setVisible(line.best.has_value());
+    m_file->setVisible(line.best.has_value());
+    if (!line.best) {
+        return;
     }
+    const core::FileChoice &file = *line.best;
+    QString text = format::quality(file);
+    if (file.durationSec) {
+        text += u" · "_s + format::length(qint64{*file.durationSec} * 1000);
+        if (line.release && line.release->durationMs) {
+            const qint64 delta = *file.durationSec - ((*line.release->durationMs + 500) / 1000);
+            text += file.fitsRelease ? tr(" · same length") : u" · "_s + format::lengthDelta(delta);
+        }
+    }
+    text += u"\n"_s +
+            tr("From %1 · %2").arg(file.peer, file.freeSlot ? tr("free slot") : tr("queue %1").arg(file.queueLength));
+    text += u"\n"_s + QString::fromUtf8(file.remotePath);
+    if (!line.alternatives.isEmpty()) {
+        text += u"\n\n"_s + tr("Other files:");
+        for (const core::FileChoice &other : line.alternatives) {
+            QString alternative = format::quality(other);
+            if (other.durationSec) {
+                alternative += u" · "_s + format::length(qint64{*other.durationSec} * 1000);
+            }
+            text +=
+                u"\n"_s + tr("%1 · from %2%3")
+                              .arg(alternative, other.peer, other.fitsRelease ? tr(" · fits the release") : QString());
+        }
+    }
+    m_file->setText(text);
 }
 
 } // namespace selecta::app

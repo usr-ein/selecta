@@ -6,6 +6,7 @@
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
+#include "core/SearchService.h"
 #include "governor/Governor.h"
 
 #include <QObject>
@@ -84,6 +85,7 @@ public:
     MetaServices &meta() { return *m_meta; }
     GetTracksService &getTracks() { return *m_getTracks; }
     NetworkService &network() { return *m_network; }
+    SearchService &search() { return *m_search; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -99,6 +101,8 @@ Q_SIGNALS:
     // Lines added, already there, unidentified, and a sentence about anything else worth saying.
     void tracksAdded(int added, int duplicates, int unidentified, const QString &note);
     void networkStatusChanged(const selecta::core::NetworkStatus &status);
+    // Searches waiting for the governor, collecting results, and the wait before the next one.
+    void searchQueueChanged(int waiting, int collecting, qint64 nextInMs);
 
 private:
     bool fail(const QString &error);
@@ -117,6 +121,8 @@ private:
     std::unique_ptr<MetaServices> m_meta;
     std::unique_ptr<GetTracksService> m_getTracks;
     std::unique_ptr<NetworkService> m_network;
+    std::unique_ptr<SearchNetwork> m_searchNetwork;
+    std::unique_ptr<SearchService> m_search;
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     bool m_started = false;
