@@ -10,20 +10,14 @@
 #include "audio/QualityCheck.h"
 #include "audio/detail/SpectrumAnalysis.h"
 
-extern "C" {
-#include <libavutil/tx.h>
-}
-
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <cstdint>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <iostream>
 #include <limits>
 #include <numbers>
-#include <random>
 
 using namespace Qt::StringLiterals;
 using namespace selecta::audio;
@@ -103,44 +97,6 @@ Pcm decoded(const QByteArray &file, int sampleRate = 0)
     options.sampleRate = sampleRate;
     options.resampler = ResamplerQuality::VeryHigh;
     return decodeAll(file, options).pcm;
-}
-
-// White noise with nothing at or above `cutoffHz`: random phases (from `seed`) on every bin below it of a 2^17-point
-// inverse real FFT, repeated to `seconds` and scaled to `rms`; the same signal on both channels.
-Pcm brickwallNoise(double cutoffHz, double seconds, int sampleRate, double rms, std::uint32_t seed)
-{
-    constexpr int kPeriod = 131072; // 2^17
-    AVTXContext *context = nullptr;
-    av_tx_fn inverse = nullptr;
-    const float scale = 1.0F;
-    if (av_tx_init(&context, &inverse, AV_TX_FLOAT_RDFT, 1, kPeriod, &scale, AV_TX_UNALIGNED) < 0) {
-        ADD_FAILURE() << "no FFT";
-        return {};
-    }
-    std::vector<AVComplexFloat> spectrum((kPeriod / 2) + 1, AVComplexFloat{0.0F, 0.0F});
-    std::mt19937 random(seed);
-    std::uniform_real_distribution<double> phase(0.0, 2.0 * std::numbers::pi);
-    for (std::size_t k = 1; k < spectrum.size(); ++k) {
-        const double phi = phase(random);
-        if (static_cast<double>(k) * sampleRate / kPeriod < cutoffHz) {
-            spectrum[k] = {static_cast<float>(std::cos(phi)), static_cast<float>(std::sin(phi))};
-        }
-    }
-    std::vector<float> period(kPeriod);
-    inverse(context, period.data(), spectrum.data(), sizeof(AVComplexFloat));
-    av_tx_uninit(&context);
-    double power = 0.0;
-    for (const float x : period) {
-        power += double{x} * x;
-    }
-    const auto gain = static_cast<float>(rms / std::sqrt(power / kPeriod));
-    Pcm pcm = silence(seconds, sampleRate, 2);
-    for (qint64 f = 0; f < pcm.frames(); ++f) {
-        const float x = period[static_cast<std::size_t>(f % kPeriod)] * gain;
-        pcm.samples[static_cast<std::size_t>(2 * f)] = x;
-        pcm.samples[static_cast<std::size_t>((2 * f) + 1)] = x;
-    }
-    return pcm;
 }
 
 int loudestBin(const Spectrogram &s, int column)
@@ -388,7 +344,7 @@ TEST(Spectrogram, ALowpassEdgeStaysSharp)
 {
     // Noise with nothing above 16 kHz, like an MP3's lowpass but exact.
     const QByteArray file =
-        makeWav(brickwallNoise(16000.0, 5.0, 44100, 0.1, 1234), {.bits = 32, .floatingPoint = true});
+        makeWav(brickwallNoise(16000.0, 5.0, 1234, 44100, 2, 0.1), {.bits = 32, .floatingPoint = true});
     const QualityReport report = analyse(file, chunked(withSpectrogram()));
     const Spectrogram s = gridOf(report);
     const int edge = s.binForFrequency(16000.0);

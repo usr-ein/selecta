@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/ArrivalService.h"
 
+#include "DecodeHelpers.h"
 #include "SyntheticAudio.h"
+#include "audio/AnalysisCache.h"
 #include "convert/QualityAdvisor.h"
 #include "convert/TagReader.h"
 #include "convert/TagWriter.h"
 #include "core/ActivityLog.h"
 #include "core/InboxService.h"
+#include "core/SpectrumCheck.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
 #include "library/Quarantine.h"
@@ -89,11 +92,19 @@ protected:
             QDir().mkpath(dir.filePath(u"Trash"_s));
             return QFile::rename(path, *to);
         });
+        makeArrival();
+    }
+
+    // The service, keeping spectrum checks in `cache` (none: findings only).
+    void makeArrival(std::shared_ptr<selecta::audio::AnalysisCache> cache = {})
+    {
+        arrival.reset();
         ArrivalService::Options options;
         options.stagingDir = dir.filePath(u"staging"_s);
         options.encodedBy = u"Selecta 9.9.9"_s;
         options.session = std::nullopt;
         options.maxConcurrent = 2;
+        options.analysisCache = std::move(cache);
         arrival = std::make_unique<ArrivalService>(
             db, *inbox, log,
             [this](const QString &path, QString *to) {
@@ -338,4 +349,130 @@ TEST_F(ArrivalServiceTest, AFileFarFromTheLengthTheSearchShowedIsFlagged)
     const ArrivalResult fine = arrive(close);
     ASSERT_TRUE(fine.ok) << fine.message.toStdString();
     EXPECT_TRUE(fine.warning.isEmpty()) << fine.warning.toStdString();
+}
+
+
+// PREV-9: every arrival's original is checked before conversion; what it finds stays with the Inbox item, and the
+// report with its spectrogram goes into the analysis cache.
+TEST_F(ArrivalServiceTest, ALosslessFileLowPassedAt16kHzArrivesWithTheFinding)
+{
+    const auto cache = std::make_shared<selecta::audio::AnalysisCache>(dir.filePath(u"analysis"_s));
+    makeArrival(cache);
+    // Noise with nothing above 16 kHz, as a lossy encoder leaves it, stored as a 16-bit FLAC.
+    const Download download = downloaded(
+        1, u"okuma drift - neon rain.flac"_s,
+        synth::makeFlac(synth::quantised(synth::brickwallNoise(16000.0, 6.0, 7, 44100, 2, 0.1), 16)));
+    const ArrivalResult result = arrive(download);
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+
+    const auto item = selecta::library::InboxStore(db).find(result.inboxItem);
+    ASSERT_TRUE(item.has_value());
+    EXPECT_TRUE(item->qualityChecked);
+    EXPECT_EQ(item->qualityFindings, QStringList{u"from-lossy"_s});
+    ASSERT_TRUE(item->qualityCutoffHz.has_value());
+    EXPECT_NEAR(*item->qualityCutoffHz, 16000, 400);
+    EXPECT_FALSE(item->qualitySourceKbps.has_value()); // 16 kHz is no LAME bitrate's lowpass
+    EXPECT_EQ(selecta::core::spectrumBadge(*item), u"Likely from a lossy file"_s);
+    // It informs; the Inbox still gets its MP3 320, and the original goes to the Trash as usual.
+    EXPECT_EQ(item->format, u"MP3"_s);
+    EXPECT_EQ(item->bitrate, 320);
+    EXPECT_EQ(trashed, QStringList{download.localPath});
+    EXPECT_TRUE(result.warning.isEmpty()) << result.warning.toStdString();
+
+    // The full report and its spectrogram, under the original's content key.
+    const std::optional<selecta::audio::CacheKey> key = selecta::audio::CacheKey::fromHex(item->qualityKey);
+    ASSERT_TRUE(key.has_value()) << item->qualityKey.toStdString();
+    const std::optional<selecta::audio::QualityReport> report = cache->loadQuality(*key);
+    ASSERT_TRUE(report.has_value());
+    EXPECT_TRUE(report->hasFinding(selecta::audio::QualityFinding::LikelyFromLossy));
+    EXPECT_EQ(report->cutoffHz, *item->qualityCutoffHz);
+    ASSERT_TRUE(report->spectrogram.has_value());
+    EXPECT_EQ(report->spectrogram->bins(), 256);
+    EXPECT_GT(report->spectrogram->columns(), 100);
+
+    // The activity log says so too.
+    const QList<selecta::core::ActivityEntry> recent = selecta::core::ActivityLog::recent(db, 1);
+    ASSERT_EQ(recent.size(), 1);
+    EXPECT_TRUE(recent.constFirst().explanation.contains(u"(Likely from a lossy file)"_s))
+        << recent.constFirst().explanation.toStdString();
+}
+
+TEST_F(ArrivalServiceTest, AFlacMadeFromAn128kbpsMp3SaysSo)
+{
+    const auto cache = std::make_shared<selecta::audio::AnalysisCache>(dir.filePath(u"analysis"_s));
+    makeArrival(cache);
+    synth::Pcm music = synth::tones({110, 1000, 7000}, 6.0, 44100, 2, 0.08);
+    const synth::Pcm noise = synth::whiteNoise(6.0, 3, 44100, 2, 0.25);
+    for (std::size_t i = 0; i < music.samples.size(); ++i) {
+        music.samples[i] += noise.samples[i];
+    }
+    selecta::audio::DecoderOptions native;
+    native.channels = 0;
+    const synth::Pcm via128 =
+        synth::decodeAll(synth::makeMp3(synth::quantised(music, 16), {.bitrateKbps = 128}), native).pcm;
+    const ArrivalResult result =
+        arrive(downloaded(2, u"neon rain.flac"_s, synth::makeFlac(synth::quantised(via128, 16))));
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    const auto item = selecta::library::InboxStore(db).find(result.inboxItem);
+    ASSERT_TRUE(item.has_value());
+    EXPECT_EQ(item->qualityFindings, QStringList{u"from-lossy"_s});
+    EXPECT_EQ(item->qualitySourceKbps, 128);
+    EXPECT_EQ(selecta::core::spectrumBadge(*item), u"Likely from a ≈ 128 kbps MP3"_s);
+}
+
+TEST_F(ArrivalServiceTest, AGenuineLosslessFileArrivesCheckedWithoutFindings)
+{
+    const auto cache = std::make_shared<selecta::audio::AnalysisCache>(dir.filePath(u"analysis"_s));
+    makeArrival(cache);
+    const QByteArray flac = synth::makeFlac(synth::quantised(synth::whiteNoise(6.0, 11, 44100, 2, 0.3), 16));
+    const ArrivalResult first = arrive(downloaded(3, u"genuine.flac"_s, flac));
+    ASSERT_TRUE(first.ok) << first.message.toStdString();
+    const auto item = selecta::library::InboxStore(db).find(first.inboxItem);
+    ASSERT_TRUE(item.has_value());
+    EXPECT_TRUE(item->qualityChecked);
+    EXPECT_TRUE(item->qualityFindings.isEmpty());
+    ASSERT_TRUE(item->qualityCutoffHz.has_value());
+    EXPECT_GT(*item->qualityCutoffHz, 21000); // the whole band, up to Nyquist
+    EXPECT_TRUE(selecta::core::spectrumBadge(*item).isEmpty());
+    ASSERT_FALSE(item->qualityKey.isEmpty());
+
+    // The same file again is taken from the cache: the same key, one report kept.
+    const ArrivalResult again = arrive(downloaded(4, u"genuine (2).flac"_s, flac));
+    ASSERT_TRUE(again.ok) << again.message.toStdString();
+    const auto second = selecta::library::InboxStore(db).find(again.inboxItem);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ(second->qualityKey, item->qualityKey);
+    EXPECT_EQ(second->qualityCutoffHz, item->qualityCutoffHz);
+    EXPECT_EQ(QDir(dir.filePath(u"analysis/quality"_s)).entryList(QDir::Files).size(), 1);
+}
+
+TEST_F(ArrivalServiceTest, WithoutACacheTheFindingsStayWithTheItem)
+{
+    const ArrivalResult result = arrive(downloaded(
+        5, u"low.flac"_s,
+        synth::makeFlac(synth::quantised(synth::brickwallNoise(16000.0, 6.0, 5, 44100, 2, 0.1), 16))));
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    const auto item = selecta::library::InboxStore(db).find(result.inboxItem);
+    ASSERT_TRUE(item.has_value());
+    EXPECT_TRUE(item->qualityChecked);
+    EXPECT_EQ(item->qualityFindings, QStringList{u"from-lossy"_s});
+    EXPECT_TRUE(item->qualityKey.isEmpty()); // no spectrogram to show
+}
+
+TEST_F(ArrivalServiceTest, AFileTooShortToJudgeIsCheckedWithoutVerdict)
+{
+    const auto cache = std::make_shared<selecta::audio::AnalysisCache>(dir.filePath(u"analysis"_s));
+    makeArrival(cache);
+    selecta::meta::Release release = neonRain();
+    release.durationMs = 1'000;
+    const ArrivalResult result = arrive(downloaded(
+        6, u"short.flac"_s, synth::makeFlac(synth::quantised(synth::whiteNoise(1.0, 2, 44100, 2, 0.3), 16)),
+        release));
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    const auto item = selecta::library::InboxStore(db).find(result.inboxItem);
+    ASSERT_TRUE(item.has_value());
+    EXPECT_TRUE(item->qualityChecked);
+    EXPECT_TRUE(item->qualityFindings.isEmpty());
+    EXPECT_FALSE(item->qualityCutoffHz.has_value()); // under 2 s: no cut-off measured
+    EXPECT_FALSE(item->qualityKey.isEmpty());       // the spectrogram is still there to look at
 }

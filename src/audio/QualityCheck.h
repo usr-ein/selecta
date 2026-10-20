@@ -9,6 +9,7 @@
 #include <QList>
 #include <QMetaType>
 #include <QString>
+#include <QStringView>
 
 #include <memory>
 #include <optional>
@@ -69,6 +70,14 @@ struct QualityReport
 // UI copy for a finding, always phrased as "likely": e.g. "Likely from a lossy source (≈ 192 kbps MP3)". Uses the
 // report for the numbers.
 QString describeFinding(QualityFinding finding, const QualityReport &report);
+// A short form for badges, from what is kept without the report (an Inbox item keeps the findings and the bitrate):
+// "Likely from a ≈ 192 kbps MP3", "Likely from a lossy file", "Likely upconverted from ≈ 128 kbps", "Likely
+// re-encoded from a lossy file", "Likely 16-bit, padded", "Likely upsampled".
+QString findingBadge(QualityFinding finding, std::optional<int> likelySourceKbps = {});
+// A stable name for storing a finding outside the cache ("from-lossy", "upconverted-mp3", "reencoded",
+// "padded-24-bit", "upsampled"), and back: nullopt for a name this version doesn't know.
+QString findingName(QualityFinding finding);
+std::optional<QualityFinding> findingFromName(QStringView name);
 
 struct QualityOptions
 {

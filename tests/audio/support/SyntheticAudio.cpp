@@ -19,6 +19,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/opt.h>
+#include <libavutil/tx.h>
 }
 
 #include <lame/lame.h>
@@ -330,6 +331,42 @@ Pcm whiteNoise(double seconds, unsigned seed, int sampleRate, int channels, doub
     std::uniform_real_distribution<double> distribution(-amplitude, amplitude);
     for (float &s : pcm.samples) {
         s = static_cast<float>(distribution(generator));
+    }
+    return pcm;
+}
+
+Pcm brickwallNoise(double cutoffHz, double seconds, unsigned seed, int sampleRate, int channels, double rms)
+{
+    constexpr int kPeriod = 131072; // 2^17
+    AVTXContext *context = nullptr;
+    av_tx_fn inverse = nullptr;
+    const float scale = 1.0F;
+    if (av_tx_init(&context, &inverse, AV_TX_FLOAT_RDFT, 1, kPeriod, &scale, AV_TX_UNALIGNED) < 0) {
+        throw std::runtime_error("no FFT for the test signal");
+    }
+    std::vector<AVComplexFloat> spectrum((kPeriod / 2) + 1, AVComplexFloat{0.0F, 0.0F});
+    std::mt19937 random(seed);
+    std::uniform_real_distribution<double> phase(0.0, 2.0 * std::numbers::pi);
+    for (std::size_t k = 1; k < spectrum.size(); ++k) {
+        const double phi = phase(random);
+        if (static_cast<double>(k) * sampleRate / kPeriod < cutoffHz) {
+            spectrum[k] = {static_cast<float>(std::cos(phi)), static_cast<float>(std::sin(phi))};
+        }
+    }
+    std::vector<float> period(kPeriod);
+    inverse(context, period.data(), spectrum.data(), sizeof(AVComplexFloat));
+    av_tx_uninit(&context);
+    double power = 0.0;
+    for (const float x : period) {
+        power += double{x} * x;
+    }
+    const auto gain = static_cast<float>(rms / std::sqrt(power / kPeriod));
+    Pcm pcm = make(sampleRate, channels, seconds);
+    for (qint64 f = 0; f < pcm.frames(); ++f) {
+        const float x = period[static_cast<std::size_t>(f % kPeriod)] * gain;
+        for (int c = 0; c < channels; ++c) {
+            pcm.samples[static_cast<std::size_t>((f * channels) + c)] = x;
+        }
     }
     return pcm;
 }
