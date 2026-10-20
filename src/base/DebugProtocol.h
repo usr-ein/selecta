@@ -11,7 +11,7 @@
 //   request:  {"id": <int>, "cmd": "<command>", "args": {…}}
 //   response: {"id": <int>, "ok": true, "result": …} or {"id": <int>, "ok": false, "error": "<message>"}
 // Commands: ping, state, views, tree, screenshot, navigate, click, type, appearance, log, select, play-pause, player,
-// quit.
+// notifications, quit.
 namespace selecta::base::debugprotocol {
 
 inline constexpr QLatin1StringView kSocketName{"selecta-debug"};

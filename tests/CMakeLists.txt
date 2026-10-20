@@ -105,6 +105,7 @@ if(SELECTA_WITH_MEDIA)
             app/FormatTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp
+            app/NotifierTest.cpp
             app/PresetsTest.cpp
             app/SearchResultsModelTest.cpp
             app/SpotifyTermsTest.cpp
