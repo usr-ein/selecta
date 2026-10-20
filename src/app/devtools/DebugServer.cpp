@@ -3,6 +3,7 @@
 
 #include "app/Appearance.h"
 #include "app/MainWindow.h"
+#include "app/Notifications.h"
 #include "app/Preview.h"
 #include "base/DebugProtocol.h"
 #include "base/Version.h"
@@ -268,6 +269,8 @@ QJsonObject DebugServer::handle(const QJsonObject &request)
         result = true;
     } else if (command == u"player") {
         result = player(args, &error);
+    } else if (command == u"notifications") {
+        result = notifications(args, &error);
     } else if (command == u"quit") {
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
         result = true;
@@ -309,6 +312,42 @@ QJsonValue DebugServer::state()
                                   {"minimized"_L1, m_window.isMinimized()},
                                   {"onScreen"_L1, !m_window.testAttribute(Qt::WA_DontShowOnScreen)}}},
     };
+}
+
+// notifications: what system notifications would show (headless runs keep them) and the Dock badge.
+// notifications click=<id>: acts as a click on the kept notification with that id.
+QJsonValue DebugServer::notifications(const QJsonObject &args, QString *error)
+{
+    const Notifier *notifier = m_window.notifier();
+    const NotificationSink *sink = notifier->sink();
+    const auto *kept = dynamic_cast<const RecordingNotificationSink *>(sink);
+    if (const QString id = args.value("click"_L1).toString(); !id.isEmpty()) {
+        if (kept == nullptr || !kept->click(id)) {
+            *error = u"no notification kept with id "_s + id;
+            return {};
+        }
+        return QJsonObject{{"view"_L1, m_window.currentViewId()}, {"title"_L1, m_window.currentTitle()}};
+    }
+    QJsonArray posted;
+    if (kept != nullptr) {
+        const QList<SystemNotification> notifications = kept->posted();
+        for (const SystemNotification &notification : notifications) {
+            posted.append(QJsonObject{{"id"_L1, notification.id},
+                                      {"thread"_L1, notification.thread},
+                                      {"title"_L1, notification.title},
+                                      {"body"_L1, notification.body},
+                                      {"sound"_L1, notification.sound},
+                                      {"view"_L1, notification.target.view},
+                                      {"argument"_L1, notification.target.argument}});
+        }
+    }
+    return QJsonObject{{"enabled"_L1, notifier->isEnabled()},
+                       {"away"_L1, notifier->isAway()},
+                       {"badge"_L1, notifier->badge()},
+                       {"arrivalsWhileAway"_L1, notifier->arrivalsWhileAway()},
+                       {"sink"_L1, sink != nullptr ? sink->describe() : u"none"_s},
+                       {"appBundle"_L1, runsInAppBundle()},
+                       {"posted"_L1, posted}};
 }
 
 QJsonValue DebugServer::tree(const QJsonObject &args, QString *error)

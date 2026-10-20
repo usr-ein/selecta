@@ -43,8 +43,46 @@ IncludeCategories:
 SortIncludes: CaseSensitive
 InsertNewlineAtEOF: true
 ---
+# Objective-C++ (.mm): the C++ layout above, so platform glue reads like the rest.
 Language: ObjC
 BasedOnStyle: LLVM
 IndentWidth: 4
+ObjCBlockIndentWidth: 4
 ColumnLimit: 120
+AccessModifierOffset: -4
+NamespaceIndentation: None
+FixNamespaceComments: true
 PointerAlignment: Right
+ReferenceAlignment: Right
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: All
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: true
+  AfterFunction: true
+  AfterStruct: true
+  AfterUnion: true
+  AfterEnum: false
+  AfterNamespace: false
+  AfterControlStatement: Never
+  BeforeElse: false
+  BeforeCatch: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+BreakConstructorInitializers: BeforeComma
+PackConstructorInitializers: Never
+Cpp11BracedListStyle: true
+SpaceBeforeCpp11BracedList: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"'
+    Priority: 1
+  - Regex: '^<Q'
+    Priority: 2
+  - Regex: '^<'
+    Priority: 3
+SortIncludes: CaseSensitive
+InsertNewlineAtEOF: true

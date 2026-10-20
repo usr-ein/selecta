@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# audio/: decoding (growing files included), 3-band waveform analysis and its cache, quality checks.
+# audio/: decoding (growing files included), 3-band waveform analysis and its cache, quality checks and spectrograms.
 # Contract: docs/contracts/media.md; design: DESIGN.md next to this file.
 
 find_package(FFMPEG REQUIRED)            # avcodec, avformat, swresample, avutil (static, vcpkg)
@@ -16,6 +16,7 @@ qt_add_library(selecta_audio STATIC
     BandAnalyzer.h BandAnalyzer.cpp
     WaveformAnalyzer.h WaveformAnalyzer.cpp
     AnalysisCache.h AnalysisCache.cpp
+    Spectrogram.h Spectrogram.cpp
     QualityCheck.h QualityCheck.cpp
     detail/ThreadHandOver.h
     detail/AvioAdapter.h detail/AvioAdapter.cpp
@@ -31,7 +32,8 @@ qt_add_library(selecta_audio STATIC
     detail/OutputStage.h detail/OutputStage.cpp
     detail/ParseStatus.h
     detail/PcmFormat.h detail/PcmFormat.cpp
-    detail/SourceReader.h detail/SourceReader.cpp)
+    detail/SourceReader.h detail/SourceReader.cpp
+    detail/SpectrumAnalysis.h detail/SpectrumAnalysis.cpp)
 add_library(Selecta::Audio ALIAS selecta_audio)
 target_link_libraries(selecta_audio PUBLIC selecta_base Qt6::Core)
 # FFmpeg's headers are third-party code: SYSTEM keeps their C casts out of our warnings. PUBLIC because convert/ and the

@@ -102,7 +102,8 @@ behaviours Selecta relies on or compensates for, each covered by `tests/convert/
 ## Conversion in practice (C2)
 
 - **Rates and word lengths** (`resolveOutput`, shared with the advisor so advice describes what happens). MP3: 32,
-  44.1 and 48 kHz kept, everything else to 44.1 kHz (D-4); sources below 32 kHz are upsampled and flagged. Lossless:
+  44.1 and 48 kHz kept, everything else to 44.1 kHz (D-4); a source below 44.1 kHz is then upsampled, which the
+  advisor asks about (W-UPSAMPLE). Lossless:
   the source rate, or above `maxSampleRate` the highest rate of the source's family (44.1 or 48 kHz × 2ⁿ) that fits.
   Depth: ≤ 16-bit → 16, deeper or float → 24, lossy → 16. Dither only for 16-bit results whose samples aren't already
   on the 16-bit grid (deeper, float or lossy sources, resampled or downmixed audio); 24-bit results are rounded.
@@ -174,6 +175,13 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
   at the target are kept, others kept with "below target" (judged on the bitrate the checks say a suspect MP3 really
   delivers) and AAC with "format differs"; Ogg/Opus/WMA are asked about (D-5). Lossy to a higher rate or depth is
   refused. Warnings are listed before information. `describeNotice()` fills §6.3's texts with the real numbers.
+- **MP3 rates.** Raising the rate asks first for MP3 targets too (W-UPSAMPLE): a chosen rate above the source's, or
+  a source below 44.1 kHz that MP3 doesn't store (22.05 kHz goes to 44.1 kHz). An MP3 at the target's bitrate is kept
+  as it is only at the target's rate; at another one, a manual conversion asks (generation loss) and filing keeps it
+  anyway, marked "format differs". The upsampling notice for MP3 says nothing is gained, not that the file grows (an
+  MP3's size follows its bitrate); the resampling notice names its reason: a rate MP3 can't store, the user's choice,
+  or the players' limit. Rates are written exactly ("22.05 kHz"). For a kept file the advice describes the file
+  itself: its own rate and depth, size factor 1.
 - **Padded 24-bit.** The quantiser leaves samples already on the target grid alone even with dither on, so reducing
   a padded 24-bit file to 16 bits is lossless (and digital silence stays silent); the advisor says so
   (LosslessReduction) instead of announcing dither.
@@ -227,6 +235,8 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
 | A truncated JPEG cover is refused | libjpeg decodes it with grey filling the missing part; embedding that would be worse than no cover. |
 | Filing never re-encodes lossy audio (except formats rekordbox can't play, after asking) | CONV-2: a re-encode can't improve it, only lose more. |
 | The verdict extends the MP3 cut-off rule to AAC/Vorbis/Opus at ≥ 256 kbps | Core asked for fake-high-bitrate detection on every download; the rule is as safe for them as for MP3. |
+| A lossless source below 44.1 kHz (other than 32 kHz) asks before becoming MP3, so filing keeps it as it is | Never upsample automatically (contract): the MP3 would claim 44.1 kHz and hold nothing above half the source's rate. |
+| A chosen MP3 rate other than an MP3's own: manual asks, filing keeps the file with "format differs" | CONV-2 keeps an MP3 at the target as it is, but not by ignoring an explicit choice; filing still never re-encodes lossy audio. |
 
 ## Progress
 
@@ -237,6 +247,9 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
   `tagsAsWritten()`, the conversion benchmark. 53 tests; dev, ASan and TSan clean.
 - **Done (C3):** `processArtwork()`/`inspectImage()`, `chooseFolderCover()`, `advise()`/`describeNotice()`,
   `makeSourceQuality()`/`probeSourceQuality()`, `judgeQuality()`/`describeSource()`. 76 convert tests.
+- **Done (advisor gaps R1–R4, for explicit MP3 rates in the converter):** W-UPSAMPLE for MP3 targets, MP3 copy for
+  the upsampling and resampling notices, an MP3 kept only at the target's rate; `isMp3SampleRate()` and an exact
+  `describeRate()`. 80 convert tests.
 - **Done (CLI):** `selecta-cli media-convert <in> <out.mp3|.aiff|.flac|.wav|.m4a> [--title … --artist … --cover img]`
   prints the source, the verdict (`--check`), the advice and its notices, then converts, tags and verifies (the
   output format follows the extension; `--keep-audio`, `--bitrate`, `--vbr`, `--bits`, `--rate`, `--id3v24`,
