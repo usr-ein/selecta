@@ -611,7 +611,7 @@ TEST_F(AlbumServiceTest, NotTheSameTrackIsNeverFlaggedAgain)
     file.quality.codec = selecta::match::Codec::Mp3;
     file.quality.bitrateKbps = 320;
     ASSERT_TRUE(selecta::core::CollectionStore(db).apply({file}, {}, {}));
-    auto peer = ghost();
+    const auto peer = ghost();
     const std::optional<AlbumReport> first = arriveAlbum(*peer);
     ASSERT_TRUE(first.has_value());
     ASSERT_EQ(first->flagged, QStringList{u"Okuma Drift – Neon Rain"_s});
@@ -656,7 +656,7 @@ TEST_F(AlbumServiceTest, ACorrectedInboxSingleStays)
     ASSERT_TRUE(selecta::core::MatchCorrectionStore(db).record(
         selecta::core::CorrectionKind::Supersede, selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 3000),
         selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 3000), selecta::core::Verdict::Different, now));
-    auto peer = ghost();
+    const auto peer = ghost();
     const std::optional<AlbumReport> report = arriveAlbum(*peer);
     ASSERT_TRUE(report.has_value());
     EXPECT_TRUE(report->trashed.isEmpty());

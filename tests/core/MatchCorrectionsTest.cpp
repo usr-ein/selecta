@@ -205,7 +205,7 @@ TEST(SettleOwnership, VerdictsSetCandidatesAsideOrMakeThemSure)
     result.candidates = {OwnedCandidate{1, Source::Collection, Tier::Likely, Relation::Same},
                          OwnedCandidate{2, Source::Inbox, Tier::Exact, Relation::Same},
                          OwnedCandidate{3, Source::Collection, Tier::Exact, Relation::OtherVersion}};
-    const auto with = [&result](QHash<quint64, Verdict> verdicts) {
+    const auto with = [&result](const QHash<quint64, Verdict> &verdicts) {
         selecta::core::settleOwnership(result, [verdicts](const OwnedCandidate &candidate) {
             return verdicts.contains(candidate.id) ? std::optional<Verdict>(verdicts.value(candidate.id))
                                                    : std::nullopt;
@@ -319,7 +319,7 @@ const QString kTidewater = u"@@vinyl\\Music\\Halden Rue - Tidewater.mp3"_s;
 
 TEST_F(LibraryCorrectionsTest, NotWhatIHaveSurvivesARestartAndARescan)
 {
-    QList<SearchResult> results = search({{kNeonRain, 4}, {kTidewater, 4}});
+    const QList<SearchResult> results = search({{kNeonRain, 4}, {kTidewater, 4}});
     ASSERT_EQ(results.size(), 2);
     ASSERT_EQ(results.at(0).ownership, Ownership::InCollection);
     // A result that owns nothing has nothing to correct.
@@ -344,7 +344,7 @@ TEST_F(LibraryCorrectionsTest, NotWhatIHaveSurvivesARestartAndARescan)
 TEST_F(LibraryCorrectionsTest, SameAsWhatIHaveMakesALikelyMatchSure)
 {
     // No length announced: a likely match at best.
-    QList<SearchResult> results = search({{kNeonRain, 0}});
+    const QList<SearchResult> results = search({{kNeonRain, 0}});
     ASSERT_EQ(results.at(0).ownership, Ownership::LikelyInCollection);
     correct(results.at(0), Verdict::Same);
     EXPECT_EQ(search({{kNeonRain, 0}}).at(0).ownership, Ownership::InCollection);
