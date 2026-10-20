@@ -324,14 +324,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Ninja needs the compiler's environment: import what vcvars64.bat sets.
+      # Ninja needs the compiler's environment: import what vcvars64.bat sets, except VCPKG_ROOT, which it points at
+      # Visual Studio's own vcpkg.
       - name: MSVC developer environment
         shell: pwsh
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * `
             -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
-            if ($_ -match '^([^=]+)=(.*)$') {
+            if ($_ -match '^([^=]+)=(.*)$' -and $Matches[1] -notlike 'VCPKG_*') {
               "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
             }
           }
