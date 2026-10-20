@@ -67,14 +67,23 @@
     {
       "name": "linux",
       "displayName": "Debug on Linux",
+      "description": "Debug with line tables only (-g1), as dev.",
       "inherits": [ "base", "vcpkg-static-linux" ],
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_FLAGS_DEBUG": "-g1",
+        "CMAKE_CXX_FLAGS_DEBUG": "-g1"
+      }
     },
     {
       "name": "windows",
       "displayName": "RelWithDebInfo on Windows (MSVC)",
+      "description": "Debug information in the object files (/Z7): no shared PDB for parallel compiles to wait on.",
       "inherits": [ "base", "vcpkg-static-windows" ],
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "Embedded"
+      }
     },
     {
       "name": "asan",
