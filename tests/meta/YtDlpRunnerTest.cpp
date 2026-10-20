@@ -266,6 +266,21 @@ TEST_F(YtDlpRunnerTest, NoPathAndNoDirectoriesMeansNoYtDlp)
     EXPECT_EQ(pacer.acquiredCount(), 0);
 }
 
+TEST_F(YtDlpRunnerTest, ADisabledRunnerNeverFindsOrRunsAnything)
+{
+    config = YtDlpRunner::Config::disabled();
+    EXPECT_EQ(wait(runner().probe())->error().code, ErrorCode::NotConfigured);
+    runner().setExecutable(bin(u"yt-dlp"_s)); // even with a path
+    EXPECT_EQ(wait(runner().probe())->error().code, ErrorCode::NotConfigured);
+    EXPECT_EQ(wait(runner().search(u"Kestrel Moon"_s))->error().code, ErrorCode::NotConfigured);
+    const std::unique_ptr<YtDlpFetch> job(runner().fetch(u"KmTopic00Ex"_s, cache()));
+    const auto events = watch(job.get());
+    ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
+    EXPECT_EQ(events->finished->error().code, ErrorCode::NotConfigured);
+    EXPECT_TRUE(runs().isEmpty());
+    EXPECT_EQ(pacer.acquiredCount(), 0);
+}
+
 TEST_F(YtDlpRunnerTest, DenoIsPassedWhenFound)
 {
     addDeno();
@@ -581,6 +596,25 @@ TEST_F(YtDlpRunnerTest, DestroyingTheRunnerKillsTheProcess)
     ASSERT_TRUE(spinUntil([&] { return events->finished.has_value(); }));
     EXPECT_EQ(events->finished->error().code, ErrorCode::Cancelled);
     job->cancel(); // harmless once finished
+}
+
+TEST_F(YtDlpRunnerTest, DestroyingTheRunnerMidSearchOrMidVersionCheckLeavesNoChild)
+{
+    setMode(u"hang"_s);
+    const QFuture<Result<QList<YouTubeCandidate>>> search = runner().search(u"Kestrel Moon"_s);
+    ASSERT_TRUE(spinAdvancing([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
+    m_runner.reset();
+    EXPECT_TRUE(childGone());
+    ASSERT_TRUE(spinUntil([&] { return search.isFinished(); }));
+    EXPECT_TRUE(search.isCanceled());
+
+    QFile::remove(dir.filePath(u"child.pid"_s));
+    setMode(u"versionhang"_s);
+    const QFuture<Result<YtDlpInstall>> probe = runner().probe();
+    ASSERT_TRUE(spinUntil([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
+    m_runner.reset();
+    EXPECT_TRUE(childGone());
+    EXPECT_TRUE(probe.isCanceled());
 }
 
 TEST_F(YtDlpRunnerTest, FetchRejectsBadInputAtOnce)

@@ -96,6 +96,11 @@ public:
         std::chrono::milliseconds idleTimeout{30'000};   // a fetch with no output for this long is killed
         std::chrono::milliseconds totalTimeout{120'000}; // a fetch longer than this is killed
         std::function<QDate()> today = [] { return QDate::currentDate(); };
+        bool enabled = true; // false: every call fails with NotConfigured; nothing is looked up or run
+
+        // A configuration that never finds or runs anything, whatever setExecutable() says later: for tests and
+        // isolated runs (core::MetaEndpoints).
+        static Config disabled();
     };
 
     // /opt/homebrew/bin, /usr/local/bin, ~/.local/bin (pipx), then the directories of PATH; never the working

@@ -49,6 +49,11 @@ MetaError cancelledError()
     return ytError(ErrorCode::Cancelled, u"Cancelled."_s);
 }
 
+MetaError disabledError()
+{
+    return ytError(ErrorCode::NotConfigured, u"yt-dlp previews are off in this session."_s);
+}
+
 // What identifies the file that was probed: a change (brew upgrade) means probing again.
 struct FileStamp
 {
@@ -933,6 +938,15 @@ QUrl YouTubeCandidate::watchUrl() const
     return QUrl(u"https://www.youtube.com/watch?v="_s + id);
 }
 
+YtDlpRunner::Config YtDlpRunner::Config::disabled()
+{
+    Config config;
+    config.enabled = false;
+    config.executable.clear();
+    config.searchDirectories.clear();
+    return config;
+}
+
 QDate YtDlpRunner::minimumVersion()
 {
     // The release that added --js-runtimes and --no-remote-components (and YouTube's JavaScript-runtime support).
@@ -970,6 +984,9 @@ YtDlpRunner::~YtDlpRunner()
 
 QFuture<Result<YtDlpInstall>> YtDlpRunner::probe()
 {
+    if (!d->config.enabled) {
+        return detail::deferred<Result<YtDlpInstall>>(this, disabledError());
+    }
     const auto run = std::make_shared<Private::Run>();
     run->kind = Private::Run::Kind::Probe;
     run->probePromise.emplace();
@@ -984,6 +1001,9 @@ QFuture<Result<YtDlpInstall>> YtDlpRunner::probe()
 
 QFuture<Result<QList<YouTubeCandidate>>> YtDlpRunner::search(const QString &text, int count)
 {
+    if (!d->config.enabled) {
+        return detail::deferred<Result<QList<YouTubeCandidate>>>(this, disabledError());
+    }
     const QString clean = detail::ytdlp::cleanSearchText(text);
     if (clean.isEmpty()) {
         return detail::deferred<Result<QList<YouTubeCandidate>>>(
@@ -1009,6 +1029,11 @@ QFuture<Result<QList<YouTubeCandidate>>> YtDlpRunner::search(const QString &text
 YtDlpFetch *YtDlpRunner::fetch(const QString &videoId, const QString &previewCacheDir, QObject *parent)
 {
     auto *job = new YtDlpFetch(this, videoId, previewCacheDir, parent);
+    if (!d->config.enabled) {
+        job->m_runner = nullptr;
+        job->finish(disabledError());
+        return job;
+    }
     const QFileInfo directory(previewCacheDir);
     if (!detail::ytdlp::isValidVideoId(videoId)) {
         job->m_runner = nullptr;
