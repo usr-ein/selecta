@@ -423,6 +423,9 @@ void InboxInspector::setAlsoOn(const QStringList &albums)
     if (const QString badge = m_item ? core::spectrumBadge(*m_item) : QString(); !badge.isEmpty()) {
         lines.append(tr("⚠ %1.").arg(badge));
     }
+    if (m_item && !m_item->belowWanted.isEmpty()) {
+        lines.append(tr("Below the quality you wanted (%1): you got it anyway.").arg(m_item->belowWanted));
+    }
     if (m_item && !m_item->warning.isEmpty()) {
         lines.append(tr("⚠ %1").arg(m_item->warning));
     }

@@ -275,6 +275,34 @@ TEST_F(ArrivalServiceTest, LossyAudioBelowTheFormatIsKeptAsIt)
     EXPECT_EQ(selecta::library::InboxStore(db).find(result.inboxItem)->bitrate, 192);
 }
 
+TEST_F(ArrivalServiceTest, AFileGotAnywayIsKeptAsItAndMarkedBelowTheQualityWanted)
+{
+    // Get tracks' near miss: an MP3 192 the list's preset turned down, got anyway.
+    Download download =
+        downloaded(5, u"track.mp3"_s, synth::makeMp3(synth::sine(440.0, 5.0), {.bitrateKbps = 192}));
+    selecta::core::FileChoice file;
+    file.peer = download.peer;
+    file.remotePath = download.remotePath;
+    file.extension = u"mp3"_s;
+    file.bitrate = 192;
+    file.shortfall = u"under 320 kbps"_s;
+    download.file = file;
+    const ArrivalResult result = arrive(download);
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    const auto quality = selecta::convert::probeSourceQuality(inboxPath(result.message), false);
+    ASSERT_TRUE(quality.ok());
+    EXPECT_EQ(quality.value().bitrateKbps, 192); // no re-encode: tags and cover only
+    EXPECT_EQ(selecta::convert::readTags(inboxPath(result.message)).value().value(keys::Title),
+              u"Neon Rain - Extended Mix"_s);
+    EXPECT_EQ(selecta::library::InboxStore(db).find(result.inboxItem)->belowWanted, u"under 320 kbps"_s);
+
+    // A file that met the quality wanted isn't marked.
+    const ArrivalResult plain =
+        arrive(downloaded(6, u"plain.mp3"_s, synth::makeMp3(synth::sine(440.0, 5.0), {.bitrateKbps = 320})));
+    ASSERT_TRUE(plain.ok) << plain.message.toStdString();
+    EXPECT_TRUE(selecta::library::InboxStore(db).find(plain.inboxItem)->belowWanted.isEmpty());
+}
+
 TEST_F(ArrivalServiceTest, AnMp3At320IsOnlyTaggedWithoutAWarning)
 {
     const Download download =
