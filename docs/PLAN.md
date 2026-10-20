@@ -111,7 +111,7 @@ There is no API to modify, move or delete a file inside a collection root. Tests
 |---|---|
 | Database | `~/Library/Application Support/Selecta/selecta.sqlite3` |
 | Preview cache, analysis cache | `~/Library/Caches/Selecta/{previews,analysis}/` |
-| Inbox | `~/Music/Selecta/Inbox/{Singles,Albums}/` (configurable) |
+| Inbox | `~/Library/Application Support/Selecta/Inbox/{Singles,Albums}/` (Selecta's own, not configurable: PRD D39) |
 | Lossless originals converted on arrival | Moved to the macOS Trash once the converted file is verified (PRD D11, D29) |
 | Logs | `~/Library/Logs/Selecta/` |
 
