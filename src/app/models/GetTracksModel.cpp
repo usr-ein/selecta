@@ -273,6 +273,9 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         if (role == Qt::CheckStateRole && line->best) {
             return line->ticked ? Qt::Checked : Qt::Unchecked;
         }
+        if (role == Qt::AccessibleTextRole && line->best) {
+            return tr("Get"); // read with the tick's state: "Get, ticked"
+        }
         break;
     case TrackColumn:
         if (role == Qt::DisplayRole) {
@@ -285,6 +288,13 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         if (role == Qt::ToolTipRole) {
             return QString(line->raw + u'\n' + subtitle(*line));
         }
+        if (role == Qt::AccessibleTextRole) {
+            // Both lines the delegate draws; the ✓ before a release in words.
+            const QString track = data(index, Qt::DisplayRole).toString();
+            return line->release && line->releaseState != ReleaseState::None
+                       ? tr("%1. Release: %2").arg(track, format::release(*line->release))
+                       : tr("%1. %2").arg(track, subtitle(*line));
+        }
         break;
     case StatusColumn:
         if (role == Qt::DisplayRole) {
@@ -293,7 +303,7 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         if (role == Qt::ForegroundRole) {
             return colourFor(statusKind(*line));
         }
-        if (role == Qt::ToolTipRole && !line->message.isEmpty()) {
+        if ((role == Qt::ToolTipRole || role == Qt::AccessibleDescriptionRole) && !line->message.isEmpty()) {
             return line->message;
         }
         break;

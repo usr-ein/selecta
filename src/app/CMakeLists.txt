@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 qt_add_library(selecta_app STATIC
+    Accessibility.h Accessibility.cpp
     AppSettings.h AppSettings.cpp
     Appearance.h Appearance.cpp
     Format.h Format.cpp
