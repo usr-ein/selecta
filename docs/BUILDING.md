@@ -37,6 +37,7 @@ Add `-DSELECTA_WITH_MEDIA=ON` to include the audio and conversion libraries.
 tools/lint.sh [paths…]                     # clang-format check, clang-tidy, clazy, cppcheck
 tools/lint.sh --fix [paths…]               # apply formatting and automatic clang-tidy fixes
 ctest --preset asan                        # after building the asan preset; likewise tsan
+tests/fuzz/slsk/fuzz.sh [seconds] [target…] # libFuzzer on the protocol decoders (needs `brew install llvm`)
 ```
 
 ## Inspecting a running Selecta
