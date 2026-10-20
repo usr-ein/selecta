@@ -6,6 +6,7 @@
 #include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/Toasts.h"
+#include "app/devtools/DebugServer.h"
 #include "app/models/ConverterModel.h"
 #include "app/views/ConverterView.h"
 #include "convert/TagWriter.h"
@@ -33,6 +34,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QTemporaryDir>
 #include <QTest>
@@ -1125,3 +1127,45 @@ TEST_F(MainWindowTest, PresetsAreSharedBySearchGetTracksAndTheWishlist)
     EXPECT_EQ(getPresets->count(), 4);
     EXPECT_EQ(getPresets->currentData().toString(), selecta::core::kMp3OrLosslessPreset);
 }
+
+#ifdef SELECTA_DEVTOOLS
+TEST_F(MainWindowTest, TheDebugSocketSetsSpinBoxesAndPicksComboItems)
+{
+    // Live test 2026-10-20: `type` couldn't set the Soulseek port, nor `select` pick the preview source.
+    auto window = makeWindow();
+    selecta::app::devtools::DebugServer server(*window, dir.path());
+    const auto send = [&server](const QString &command, const QJsonObject &args) {
+        return server.handle(QJsonObject{{"cmd"_L1, command}, {"args"_L1, args}});
+    };
+    ASSERT_TRUE(send(u"navigate"_s, {{"view"_L1, u"settings"_s}}).value("ok"_L1).toBool());
+
+    auto *port = window->findChild<QSpinBox *>(u"settings.network.port"_s);
+    ASSERT_NE(port, nullptr);
+    QJsonObject reply = send(u"type"_s, {{"name"_L1, port->objectName()}, {"text"_L1, 2416}}); // a JSON number
+    EXPECT_TRUE(reply.value("ok"_L1).toBool()) << reply.value("error"_L1).toString().toStdString();
+    EXPECT_EQ(port->value(), 2416);
+    EXPECT_TRUE(send(u"type"_s, {{"name"_L1, port->objectName()}, {"text"_L1, u" 2417 "_s}}).value("ok"_L1).toBool());
+    EXPECT_EQ(port->value(), 2417);
+    for (const QString &bad : {u"70000"_s, u"0"_s, u"twenty"_s, u"24.5"_s}) {
+        reply = send(u"type"_s, {{"name"_L1, port->objectName()}, {"text"_L1, bad}});
+        EXPECT_FALSE(reply.value("ok"_L1).toBool()) << bad.toStdString();
+        EXPECT_TRUE(reply.value("error"_L1).toString().contains(u"1 to 65535"_s));
+    }
+    EXPECT_EQ(port->value(), 2417);
+
+    auto *source = window->findChild<QComboBox *>(u"settings.preview.source"_s);
+    ASSERT_NE(source, nullptr);
+    reply = send(u"select"_s, {{"name"_L1, source->objectName()}, {"row"_L1, 2}});
+    EXPECT_TRUE(reply.value("ok"_L1).toBool()) << reply.value("error"_L1).toString().toStdString();
+    EXPECT_EQ(source->currentIndex(), 2);
+    EXPECT_EQ(settings->previewSource(), selecta::core::PreviewSource::Clip); // saved, as when the user picks it
+    reply = send(u"select"_s, {{"name"_L1, source->objectName()}, {"text"_L1, u"youtube only"_s}}); // any case
+    EXPECT_EQ(reply.value("result"_L1).toString(), u"YouTube only"_s);
+    EXPECT_EQ(settings->previewSource(), selecta::core::PreviewSource::YouTube);
+    reply = send(u"select"_s, {{"name"_L1, source->objectName()}, {"text"_L1, u"Vinyl"_s}});
+    EXPECT_FALSE(reply.value("ok"_L1).toBool());
+    EXPECT_TRUE(reply.value("error"_L1).toString().contains(u"YouTube only"_s)); // the items it has
+    EXPECT_FALSE(send(u"select"_s, {{"name"_L1, source->objectName()}, {"row"_L1, 9}}).value("ok"_L1).toBool());
+    EXPECT_EQ(source->currentIndex(), 1);
+}
+#endif
