@@ -45,6 +45,17 @@ struct ReleaseFit
     QStringList explanation;           // when requested
 };
 
+// One search result to rank against the release ("Best match", SRCH-18, BATCH-5).
+struct RankedFile
+{
+    ReleaseFit fit;        // ReleaseScorer::score() of the file
+    int qualityRank = 0;   // assessRemoteQuality().rank, or the preset's own quality order (higher is better)
+    bool freeSlot = false; // the peer has a free upload slot
+    int queueLength = 0;   // the peer's queue length (shorter is better)
+    QString peer;          // for a deterministic order
+    QString path;
+};
+
 // Scores remote files against one release (note §17.5 B), position-independently: zones F (filename body), B
 // (its brackets), D1 (parent folder) and D+ (higher folders); the artist found only inside B is a remixer, which counts
 // as version evidence, never as artist evidence; a remix or edit missing from the release is a version conflict (× 0).
@@ -66,6 +77,12 @@ public:
     // evidence; never names alone ahead of length. Negative when `a` ranks before `b`, 0 when equal. Quality,
     // availability and fairness are the caller's next keys.
     static int compareIdentity(const ReleaseFit &a, const ReleaseFit &b);
+
+    // Indexes of `files` in "Best match" order (note §9.1): identity first (compareIdentity: fits, length, artist,
+    // title, version), then quality, then availability (a free slot, then a shorter queue) as a tie-breaker only,
+    // then peer and path so the order is deterministic. Availability never outranks a better fit or better quality.
+    // Peer fairness (fewest downloads from a peer) is the caller's to apply among equals.
+    static QList<qsizetype> rank(const QList<RankedFile> &files);
 
 private:
     struct Prepared;
