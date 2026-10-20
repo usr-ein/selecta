@@ -2,7 +2,9 @@
 #include "share/detail/IndexBuilder.h"
 
 #include "share/detail/Text.h"
+#include "slsk/Codec.h"
 #include "slsk/PeerMessages.h"
+#include "slsk/Zlib.h"
 
 #include <QHash>
 
@@ -44,6 +46,10 @@ public:
         indexFolders();
         encodeList();
         m_data->counts = {static_cast<int>(m_data->folders.size()), static_cast<int>(m_data->files.size())};
+        // The snapshot lives long: no spare capacity.
+        m_data->pool.squeeze();
+        m_data->wordChars.shrink_to_fit();
+        m_data->sharedFileList.squeeze();
         m_data->memoryBytes = m_data->measure();
         return std::move(m_data);
     }
@@ -59,10 +65,11 @@ private:
         return offset;
     }
 
-    // Records and strings, in walk order; folders whose subtree holds no file are left out.
+    // Records and strings, in walk order; folders whose subtree holds no file are left out. Each folder's walked files
+    // are released once copied, so the walk and the snapshot never both hold every name.
     void layOut()
     {
-        const std::vector<WalkedFolder> &folders = m_walk.folders;
+        std::vector<WalkedFolder> &folders = m_walk.folders;
         std::vector<qsizetype> subtree(folders.size(), 0);
         for (std::size_t i = folders.size(); i-- > 0;) {
             subtree[i] += static_cast<qsizetype>(folders[i].files.size());
@@ -76,9 +83,10 @@ private:
             if (subtree[i] > 0) {
                 m_newId[i] = static_cast<qint64>(m_kept.size());
                 m_kept.push_back(i);
-                poolBytes += folders[i].nativePath.size() + (folders[i].virtualPath.size() * 2);
+                poolBytes += folders[i].nativePath.size() + (folders[i].virtualPath.size() * 3);
                 for (const WalkedFile &file : folders[i].files) {
-                    poolBytes += file.virtualName.size() + file.nativeName.size();
+                    poolBytes +=
+                        file.virtualName.size() + (file.nativeName != file.virtualName ? file.nativeName.size() : 0);
                 }
             }
         }
@@ -86,7 +94,7 @@ private:
         m_data->folders.reserve(m_kept.size());
         m_data->files.reserve(static_cast<std::size_t>(m_walk.files));
         for (const std::size_t i : m_kept) {
-            const WalkedFolder &walked = folders[i];
+            WalkedFolder &walked = folders[i];
             FolderRecord record;
             const QByteArray path = walked.virtualPath.toUtf8();
             record.path = append(path);
@@ -110,6 +118,7 @@ private:
                 entry.attributes = file.attributes;
                 m_data->files.push_back(entry);
             }
+            std::vector<WalkedFile>().swap(walked.files);
             m_data->folders.push_back(record);
         }
     }
@@ -211,10 +220,13 @@ private:
         }
     }
 
+    // The bytes slsk::peer::SharedFileListResponse::encode() writes for this list (the tests compare them), written one
+    // folder at a time so the list never exists whole as objects: the folders, `unknown` (always 0) and an empty
+    // private section, then zlib at slsk's level.
     void encodeList()
     {
-        slsk::peer::SharedFileListResponse response;
-        response.list.directories.reserve(static_cast<qsizetype>(m_data->folders.size()));
+        slsk::Writer writer(m_data->pool.size() + static_cast<qsizetype>(m_data->files.size() * 48));
+        writer.u32(static_cast<quint32>(m_data->folders.size()));
         for (const FolderRecord &folder : m_data->folders) {
             slsk::SharedDirectory directory;
             directory.path.raw = m_data->folderPath(folder).toByteArray();
@@ -222,9 +234,11 @@ private:
             for (quint32 f = folder.firstFile; f < folder.firstFile + folder.fileCount; ++f) {
                 directory.files.append(m_data->entry(f, false));
             }
-            response.list.directories.append(std::move(directory));
+            directory.encode(writer);
         }
-        m_data->sharedFileList = response.encode();
+        writer.u32(0); // unknown
+        writer.u32(0); // private folders: none in v1 (decision D-S4)
+        m_data->sharedFileList = slsk::zlib::deflate(QByteArrayView(writer.data()));
     }
 
     Walk m_walk;

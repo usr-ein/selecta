@@ -55,7 +55,7 @@ void enqueue(UploadQueue &queue, const QString &user, const QStringList &names, 
 
 // --- Slots and one upload per user -----------------------------------------------------------------------------------
 
-TEST(UploadQueue, ServesEachUsersFilesInTheOrderQueued)
+TEST(ShareUploadQueue, ServesEachUsersFilesInTheOrderQueued)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s, u"a3"_s});
@@ -64,7 +64,7 @@ TEST(UploadQueue, ServesEachUsersFilesInTheOrderQueued)
     EXPECT_EQ(queue.active(), 0);
 }
 
-TEST(UploadQueue, NeverStartsTwoUploadsForOneUser)
+TEST(ShareUploadQueue, NeverStartsTwoUploadsForOneUser)
 {
     UploadQueue queue; // 3 slots
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s});
@@ -75,7 +75,7 @@ TEST(UploadQueue, NeverStartsTwoUploadsForOneUser)
     EXPECT_EQ(startNext(queue), u"alice:a2"_s);
 }
 
-TEST(UploadQueue, StartsNoMoreThanTheSlots)
+TEST(ShareUploadQueue, StartsNoMoreThanTheSlots)
 {
     UploadQueue queue(withSlots(2));
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -91,7 +91,7 @@ TEST(UploadQueue, StartsNoMoreThanTheSlots)
     EXPECT_EQ(startNext(queue), u"carol:c1"_s);
 }
 
-TEST(UploadQueue, ZeroSlotsStartNothing)
+TEST(ShareUploadQueue, ZeroSlotsStartNothing)
 {
     UploadQueue queue(withSlots(0));
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -101,7 +101,7 @@ TEST(UploadQueue, ZeroSlotsStartNothing)
     EXPECT_EQ(startNext(queue), u"alice:a1"_s);
 }
 
-TEST(UploadQueue, NextChangesNothingUntilStarted)
+TEST(ShareUploadQueue, NextChangesNothingUntilStarted)
 {
     UploadQueue queue;
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -118,7 +118,7 @@ TEST(UploadQueue, NextChangesNothingUntilStarted)
 
 // --- Turns -----------------------------------------------------------------------------------------------------------
 
-TEST(UploadQueue, UsersTakeTurns)
+TEST(ShareUploadQueue, UsersTakeTurns)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s, u"a3"_s});
@@ -128,7 +128,7 @@ TEST(UploadQueue, UsersTakeTurns)
               QStringList({u"alice:a1"_s, u"bob:b1"_s, u"carol:c1"_s, u"alice:a2"_s, u"bob:b2"_s, u"alice:a3"_s}));
 }
 
-TEST(UploadQueue, ANewcomerGoesBeforeAUserWhoseTurnEndedAfterTheyArrived)
+TEST(ShareUploadQueue, ANewcomerGoesBeforeAUserWhoseTurnEndedAfterTheyArrived)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s});
@@ -138,7 +138,7 @@ TEST(UploadQueue, ANewcomerGoesBeforeAUserWhoseTurnEndedAfterTheyArrived)
     EXPECT_EQ(startNext(queue), u"bob:b1"_s);
 }
 
-TEST(UploadQueue, ANewcomerWaitsBehindUsersAlreadyWaiting)
+TEST(ShareUploadQueue, ANewcomerWaitsBehindUsersAlreadyWaiting)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -149,7 +149,7 @@ TEST(UploadQueue, ANewcomerWaitsBehindUsersAlreadyWaiting)
     EXPECT_EQ(serveAll(queue), QStringList({u"bob:b1"_s, u"carol:c1"_s}));
 }
 
-TEST(UploadQueue, QueueingMoreFilesDoesntCostATurn)
+TEST(ShareUploadQueue, QueueingMoreFilesDoesntCostATurn)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -158,7 +158,7 @@ TEST(UploadQueue, QueueingMoreFilesDoesntCostATurn)
     EXPECT_EQ(startNext(queue), u"alice:a1"_s);
 }
 
-TEST(UploadQueue, AReturningUserStartsAgainAtTheBack)
+TEST(ShareUploadQueue, AReturningUserStartsAgainAtTheBack)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -171,7 +171,7 @@ TEST(UploadQueue, AReturningUserStartsAgainAtTheBack)
 
 // --- Privileged users ------------------------------------------------------------------------------------------------
 
-TEST(UploadQueue, PrivilegedUsersGoFirst)
+TEST(ShareUploadQueue, PrivilegedUsersGoFirst)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s});
@@ -180,7 +180,7 @@ TEST(UploadQueue, PrivilegedUsersGoFirst)
     EXPECT_EQ(serveAll(queue), QStringList({u"vip:v1"_s, u"vip:v2"_s, u"alice:a1"_s, u"bob:b1"_s, u"alice:a2"_s}));
 }
 
-TEST(UploadQueue, PrivilegedUsersTakeTurnsAmongThemselves)
+TEST(ShareUploadQueue, PrivilegedUsersTakeTurnsAmongThemselves)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"vip1"_s, {u"x1"_s, u"x2"_s}, true);
@@ -188,7 +188,7 @@ TEST(UploadQueue, PrivilegedUsersTakeTurnsAmongThemselves)
     EXPECT_EQ(serveAll(queue), QStringList({u"vip1:x1"_s, u"vip2:y1"_s, u"vip1:x2"_s}));
 }
 
-TEST(UploadQueue, ABusyPrivilegedUserDoesntHoldSlotsIdle)
+TEST(ShareUploadQueue, ABusyPrivilegedUserDoesntHoldSlotsIdle)
 {
     UploadQueue queue(withSlots(2));
     enqueue(queue, u"vip"_s, {u"v1"_s, u"v2"_s}, true);
@@ -197,7 +197,7 @@ TEST(UploadQueue, ABusyPrivilegedUserDoesntHoldSlotsIdle)
     EXPECT_EQ(startNext(queue), u"alice:a1"_s);
 }
 
-TEST(UploadQueue, TheServersListMakesUsersPrivilegedAndReplacesWhatEnqueueSaid)
+TEST(ShareUploadQueue, TheServersListMakesUsersPrivilegedAndReplacesWhatEnqueueSaid)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -207,7 +207,7 @@ TEST(UploadQueue, TheServersListMakesUsersPrivilegedAndReplacesWhatEnqueueSaid)
     EXPECT_EQ(serveAll(queue), QStringList({u"carol:c1"_s, u"alice:a1"_s, u"bob:b1"_s}));
 }
 
-TEST(UploadQueue, TheLatestEnqueueSaysWhetherAUserIsPrivileged)
+TEST(ShareUploadQueue, TheLatestEnqueueSaysWhetherAUserIsPrivileged)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -218,7 +218,7 @@ TEST(UploadQueue, TheLatestEnqueueSaysWhetherAUserIsPrivileged)
 
 // --- Limits ----------------------------------------------------------------------------------------------------------
 
-TEST(UploadQueue, RefusesBeyondTheFileLimitWithTheStandardString)
+TEST(ShareUploadQueue, RefusesBeyondTheFileLimitWithTheStandardString)
 {
     UploadQueue::Options options;
     options.maxFilesPerUser = 2;
@@ -234,7 +234,7 @@ TEST(UploadQueue, RefusesBeyondTheFileLimitWithTheStandardString)
     EXPECT_TRUE(queue.enqueue(u"alice"_s, file(u"3"_s), 10, false).accepted);
 }
 
-TEST(UploadQueue, RefusesBeyondTheByteLimitWithTheStandardString)
+TEST(ShareUploadQueue, RefusesBeyondTheByteLimitWithTheStandardString)
 {
     UploadQueue::Options options;
     options.maxBytesPerUser = 1000;
@@ -252,7 +252,7 @@ TEST(UploadQueue, RefusesBeyondTheByteLimitWithTheStandardString)
     EXPECT_TRUE(queue.enqueue(u"alice"_s, file(u"3"_s), 1, false).accepted);
 }
 
-TEST(UploadQueue, TheFileLimitIsCheckedBeforeTheByteLimit)
+TEST(ShareUploadQueue, TheFileLimitIsCheckedBeforeTheByteLimit)
 {
     UploadQueue::Options options;
     options.maxFilesPerUser = 1;
@@ -262,7 +262,7 @@ TEST(UploadQueue, TheFileLimitIsCheckedBeforeTheByteLimit)
     EXPECT_EQ(queue.enqueue(u"alice"_s, file(u"2"_s), 100, false).reason, u"Too many files"_s);
 }
 
-TEST(UploadQueue, TheWholeQueueIsBounded)
+TEST(ShareUploadQueue, TheWholeQueueIsBounded)
 {
     UploadQueue::Options options;
     options.maxFilesPerUser = UploadQueue::kMaxEntries;
@@ -281,7 +281,7 @@ TEST(UploadQueue, TheWholeQueueIsBounded)
     EXPECT_TRUE(queue.enqueue(u"newcomer"_s, file(u"x"_s), 1, false).accepted);
 }
 
-TEST(UploadQueue, OptionsAreClamped)
+TEST(ShareUploadQueue, OptionsAreClamped)
 {
     UploadQueue::Options options;
     options.uploadSlots = -3;
@@ -305,7 +305,7 @@ TEST(UploadQueue, OptionsAreClamped)
 
 // --- Repeats and removal ---------------------------------------------------------------------------------------------
 
-TEST(UploadQueue, ARepeatIsAcceptedWithoutASecondEntry)
+TEST(ShareUploadQueue, ARepeatIsAcceptedWithoutASecondEntry)
 {
     UploadQueue queue(withSlots(1));
     EXPECT_EQ(queue.enqueue(u"alice"_s, file(u"a1"_s), 10, false), (UploadQueue::Decision{true, false, {}}));
@@ -319,7 +319,7 @@ TEST(UploadQueue, ARepeatIsAcceptedWithoutASecondEntry)
     EXPECT_FALSE(queue.enqueue(u"bob"_s, file(u"a1"_s), 10, false).repeat);
 }
 
-TEST(UploadQueue, ARepeatIsAcceptedEvenWhenTheLimitsAreReached)
+TEST(ShareUploadQueue, ARepeatIsAcceptedEvenWhenTheLimitsAreReached)
 {
     UploadQueue::Options options;
     options.maxFilesPerUser = 1;
@@ -328,7 +328,7 @@ TEST(UploadQueue, ARepeatIsAcceptedEvenWhenTheLimitsAreReached)
     EXPECT_TRUE(queue.enqueue(u"alice"_s, file(u"a1"_s), 10, false).repeat);
 }
 
-TEST(UploadQueue, RemovesQueuedAndActiveFiles)
+TEST(ShareUploadQueue, RemovesQueuedAndActiveFiles)
 {
     UploadQueue queue(withSlots(2));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s});
@@ -341,7 +341,7 @@ TEST(UploadQueue, RemovesQueuedAndActiveFiles)
     EXPECT_FALSE(queue.remove(u"nobody"_s, file(u"a1"_s)));
 }
 
-TEST(UploadQueue, CallsAboutFilesItDoesntHoldChangeNothing)
+TEST(ShareUploadQueue, CallsAboutFilesItDoesntHoldChangeNothing)
 {
     UploadQueue queue;
     enqueue(queue, u"alice"_s, {u"a1"_s});
@@ -356,7 +356,7 @@ TEST(UploadQueue, CallsAboutFilesItDoesntHoldChangeNothing)
     EXPECT_FALSE(queue.started(u"alice"_s, file(u"a1"_s))); // already active
 }
 
-TEST(UploadQueue, RemovingAUserReturnsTheirQueuedFiles)
+TEST(ShareUploadQueue, RemovingAUserReturnsTheirQueuedFiles)
 {
     UploadQueue queue;
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s, u"a3"_s});
@@ -369,7 +369,7 @@ TEST(UploadQueue, RemovingAUserReturnsTheirQueuedFiles)
     EXPECT_EQ(startNext(queue), u"bob:b1"_s);
 }
 
-TEST(UploadQueue, PathsAreComparedByTheirBytes)
+TEST(ShareUploadQueue, PathsAreComparedByTheirBytes)
 {
     UploadQueue queue;
     EXPECT_TRUE(queue.enqueue(u"alice"_s, slsk::RemotePath{QByteArray("Music\\Caf\xe9.mp3")}, 1, false).accepted);
@@ -379,7 +379,7 @@ TEST(UploadQueue, PathsAreComparedByTheirBytes)
 
 // --- Place in queue --------------------------------------------------------------------------------------------------
 
-TEST(UploadQueue, PlaceInQueueFollowsTheTurns)
+TEST(ShareUploadQueue, PlaceInQueueFollowsTheTurns)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s, u"a3"_s});
@@ -396,7 +396,7 @@ TEST(UploadQueue, PlaceInQueueFollowsTheTurns)
     EXPECT_FALSE(queue.placeInQueue(u"dave"_s, file(u"a1"_s)).has_value());
 }
 
-TEST(UploadQueue, PlaceInQueueMatchesWhatIsServed)
+TEST(ShareUploadQueue, PlaceInQueueMatchesWhatIsServed)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s, u"a3"_s, u"a4"_s});
@@ -422,7 +422,7 @@ TEST(UploadQueue, PlaceInQueueMatchesWhatIsServed)
     }
 }
 
-TEST(UploadQueue, ActiveFilesHaveNoPlaceAndTheirUsersComeLast)
+TEST(ShareUploadQueue, ActiveFilesHaveNoPlaceAndTheirUsersComeLast)
 {
     UploadQueue queue(withSlots(2));
     enqueue(queue, u"alice"_s, {u"a1"_s, u"a2"_s});
@@ -435,7 +435,7 @@ TEST(UploadQueue, ActiveFilesHaveNoPlaceAndTheirUsersComeLast)
     EXPECT_EQ(queue.placeInQueue(u"bob"_s, file(u"b2"_s)), 3U);
 }
 
-TEST(UploadQueue, PrivilegedFilesComeFirstInPlaces)
+TEST(ShareUploadQueue, PrivilegedFilesComeFirstInPlaces)
 {
     UploadQueue queue(withSlots(1));
     enqueue(queue, u"alice"_s, {u"a1"_s});

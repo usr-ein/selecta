@@ -16,6 +16,9 @@
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef Q_OS_DARWIN
+#include <sys/resource.h>
+#endif
 
 using namespace Qt::StringLiterals;
 using selecta::share::build;
@@ -273,6 +276,42 @@ TEST(ShareBuild, AFolderThatCantBeListedIsReportedAndTheRestShared)
     const BuildResult result = buildTree(tree);
     EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Open\\01.mp3"_s}));
     EXPECT_EQ(unreadablePaths(result), QStringList({guard.path}));
+}
+
+TEST(ShareBuild, EntriesWhoseAttributesCantBeReadAreReported)
+{
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "permissions don't apply to root";
+    }
+    // Readable but not searchable: the folder lists, its entries can't be stat'ed.
+    Tree tree;
+    tree.file(u"Open/01.mp3"_s);
+    const QString file = tree.file(u"NoSearch/02.mp3"_s);
+    const ModeGuard guard{tree.path(u"NoSearch"_s)};
+    ASSERT_TRUE(test::setMode(guard.path, 0444));
+    const BuildResult result = buildTree(tree);
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Open\\01.mp3"_s}));
+    EXPECT_EQ(unreadablePaths(result), QStringList({file}));
+}
+
+TEST(ShareBuild, TheThreadsMaterialisationPolicyIsRestored)
+{
+#ifdef Q_OS_DARWIN
+    const int before = ::getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD);
+    ASSERT_GE(before, 0);
+    if (::setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD,
+                         IOPOL_MATERIALIZE_DATALESS_FILES_ON) != 0) {
+        GTEST_SKIP() << "this thread's materialisation policy can't be changed";
+    }
+    Tree tree;
+    tree.file(u"a.mp3"_s, test::mp3Cbr320());
+    EXPECT_EQ(buildTree(tree).index->counts().files, 1);
+    EXPECT_EQ(::getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD),
+              IOPOL_MATERIALIZE_DATALESS_FILES_ON);
+    (void)::setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, before);
+#else
+    GTEST_SKIP() << "iCloud materialisation is macOS only";
+#endif
 }
 
 // --- The tree peers see ----------------------------------------------------------------------------------------------
@@ -633,6 +672,22 @@ TEST(ShareBuild, TheShareListDecodesToExactlyWhatWasIndexed)
              entry("cover.jpg", 1234, u"jpg"_s, {})}},
     };
     EXPECT_EQ(decodedList(*result.index), expected);
+}
+
+TEST(ShareBuild, TheShareListIsWhatSlsksOwnEncoderWrites)
+{
+    // build() writes the list a folder at a time; the bytes must be SharedFileListResponse::encode()'s, to the byte.
+    Tree tree;
+    tree.file(u"A/01.mp3"_s, test::mp3Cbr320());
+    tree.file(u"A/B/cover.jpg"_s);
+    tree.file(u"C/notes.txt"_s);
+    tree.file(u"C/Ünïcödé.flac"_s, test::flac(24));
+    const BuildResult result = buildTree(tree);
+    slsk::peer::SharedFileListResponse response;
+    response.list = decodedList(*result.index);
+    ASSERT_EQ(response.list.directories.size(), 4);
+    EXPECT_EQ(response.encode(), result.index->sharedFileList());
+    EXPECT_EQ(ShareIndex().sharedFileList(), slsk::peer::SharedFileListResponse{}.encode());
 }
 
 TEST(ShareBuild, AnEmptyIndexSharesNothing)

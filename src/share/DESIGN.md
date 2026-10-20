@@ -68,6 +68,19 @@ UploadQueue.h UploadQueue: per-user FIFOs, turns between users, slots, limits, p
 12. **One access level, kept in the design** (D-S4): every folder record carries a level (always public in v1). P1's
     buddy-only folders add a level to `ShareRoot`, a second precompressed list (the private section) and a level
     argument to `search`, `folderContents` and `lookup`.
+13. **The governor's numbers.** `UploadQueue::Options` defaults to `governor::limits` (3 slots, 100 files and
+    10 000 MiB per user, as Nicotine+ counts megabytes; the contract wrote 10^10 bytes), `search()` defaults to 300
+    answers and never exceeds the governor's ceiling of 500 whatever cap it is given, and the 3-character rule is
+    `kAnswerMinChars`. The option is `uploadSlots`, not `slots`: cppcheck's Qt configuration reads `slots` as the
+    keyword and stops parsing.
+14. **Build memory stays near the index's.** Each folder's walked files are released as soon as the builder has copied
+    them, and the share list is written one folder at a time with slsk's own `Writer`, `SharedDirectory::encode()`
+    and `zlib::deflate()` at slsk's level (a test checks the bytes equal `SharedFileListResponse::encode()`'s), so the
+    whole list never exists as objects. The finished snapshot gives back its spare capacity.
+15. **A test seam in the walk.** `detail::walk()` takes `WalkOptions`: limits (files, depth, string bytes, virtual path
+    bytes) and an `afterStat` hook. build() uses the defaults; tests use small limits, mark a file as an iCloud
+    placeholder (no test can make a real one) and cancel at a chosen file. The 4 KB virtual path limit can't be reached
+    on macOS through build(): PATH_MAX (1 KB) stops local paths first, so it is tested through the seam.
 
 ## Integration points
 
@@ -88,8 +101,31 @@ UploadQueue.h UploadQueue: per-user FIFOs, turns between users, slots, limits, p
 
 ## Benchmark
 
-Not measured yet.
+`selecta_share_bench` (Release, Apple M-series, performance cores, other agents' builds sometimes running; trees in the
+temporary folder, warm cache). Synthetic trees: artist folders of album folders of 10 tracks (every fifth a FLAC) and
+a cover each; `knownAudio` complete, as core passes it, so nothing is probed.
+
+| | Contract | Measured |
+|---|---|---|
+| First build, 22 000 files in 2 201 folders (stat only) | < ~3 s | 0.38 s |
+| Build, 110 000 files in 11 001 folders | | 2.0 s |
+| Index at 110 000 files (`memoryBytes()`) | < ~60 MB | 22 MB |
+| What a second such index adds to the process footprint | | 29 MB |
+| Footprint peak while building it, over the footprint before | | 45 MB |
+| Share list at 110 000 files, compressed | | 0.74 MB |
+| Typical search at 110 000 files (a few words, ~21 results) | < ~1 ms | 14 µs |
+| Broad search (every file matches; the 300 cap stops it) | | 180 µs |
+| Searches with `*suffix` words (thousands of words end so) | | 0.31 ms |
+| `lookup()` exact / through the case-insensitive fallback | | 0.38 µs / 0.58 µs |
+| `folderContents()` of a 10-file folder | | 0.85 µs |
+
+Real names are longer than the synthetic ones (about 45 bytes): the string pool, about a third of the index, grows
+with them. A build without `knownAudio` probes every audio file's header (tens of KB each): the collection's first
+scan numbers apply (`src/collection/DESIGN.md`). `selecta-cli share index <root>…` prints the same counts and
+timings on real folders.
 
 ## Progress
 
-- Done: contract and public headers.
+- Done: contract and public headers; the walk, the index (search, lookup, folder listings, the precompressed share
+  list), `open()`, `UploadQueue`; 135 tests, clean under dev, ASan and TSan; lint clean; the benchmark (above);
+  `selecta-cli share index <root>… [--search …] [--browse] [--folder …] [--lookup …]`.

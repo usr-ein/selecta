@@ -144,10 +144,10 @@ public:
     ShareIndex(ShareIndex &&) = delete;
     ShareIndex &operator=(ShareIndex &&) = delete;
 
-    // The SharedFileListResponse payload (slsk::peer::SharedFileListResponse::encode(): zlib-compressed), built once by
-    // build(): every folder that holds a shared file, and the folders above it so the tree keeps its parents; each with
-    // its files (bare names, sizes, lower-case extensions, attributes). Folders and files in walk order (names sorted
-    // within a folder). No private (buddy-only) section: one public level in v1 (decision D-S4).
+    // The SharedFileListResponse payload, zlib-compressed: the bytes slsk::peer::SharedFileListResponse::encode() gives
+    // for this list, built once by build(). Every folder that holds a shared file, and the folders above it so the tree
+    // keeps its parents; each with its files (bare names, sizes, lower-case extensions, attributes). Folders and files
+    // in walk order (names sorted within a folder). No private (buddy-only) section: one public level in v1 (D-S4).
     QByteArray sharedFileList() const;
 
     // The folder at `folder` (a raw path as the peer sent it) and its files, without subfolders: one entry, named with

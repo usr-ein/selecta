@@ -7,6 +7,9 @@
 //   SELECTA_BENCH_SEARCH_FILES (default 100000): the tree for memory, search and lookup
 //   SELECTA_BENCH_KEEP=0: trees in a temporary folder removed afterwards (the ctest smoke run)
 //
+// index_MB is the index's own accounting (ShareIndex::memoryBytes); retained_MB what a second index adds to the
+// process footprint (an independent check); build_peak_MB how far the footprint rose while building the first.
+//
 // The trees are synthetic: artist folders of album folders ("Artist 12 - Album 345 (2019)") of 10 tracks
 // ("07 - Artist 12 - Title 3456.mp3", every fifth a FLAC) and a cover.jpg each. Files hold one byte: build() only
 // stats them, and knownAudio (built here as the collection would report it) gives every track its attributes. Trees
@@ -66,17 +69,23 @@ void preferPerformanceCores()
 #endif
 }
 
-// The process' physical footprint in bytes (what Activity Monitor shows as Memory), or 0 elsewhere.
-qint64 footprint()
+// The process' physical footprint in bytes (what Activity Monitor shows as Memory), now and at its peak; 0 elsewhere.
+struct Footprint
+{
+    qint64 now = 0;
+    qint64 peak = 0;
+};
+
+Footprint footprint()
 {
 #ifdef __APPLE__
     task_vm_info_data_t info{};
     mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
     if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) == KERN_SUCCESS) {
-        return static_cast<qint64>(info.phys_footprint);
+        return {static_cast<qint64>(info.phys_footprint), info.ledger_phys_footprint_peak};
     }
 #endif
-    return 0;
+    return {};
 }
 
 QString trackPath(const QString &root, int i)
@@ -177,7 +186,8 @@ BuildResult buildOf(const BenchTree &tree)
 struct SearchIndex
 {
     std::shared_ptr<const ShareIndex> index;
-    qint64 footprintGrowth = 0;
+    qint64 peakGrowth = 0; // the footprint's peak during the first build, over what it was before
+    qint64 retained = 0;   // what a second build adds to the footprint while both indexes live: one index
     double seconds = 0;
 };
 
@@ -189,12 +199,18 @@ const SearchIndex &searchIndex()
         if (tree.root.isEmpty()) {
             return result;
         }
-        const qint64 before = footprint();
+        const Footprint before = footprint();
         QElapsedTimer timer;
         timer.start();
         result.index = buildOf(tree).index;
         result.seconds = static_cast<double>(timer.elapsed()) / 1000.0;
-        result.footprintGrowth = footprint() - before;
+        result.peakGrowth = footprint().peak - before.now;
+        // The first build's transient memory is free again but still mapped: a second build reuses it, so what the
+        // footprint gains is what the second index keeps.
+        const Footprint between = footprint();
+        std::shared_ptr<const ShareIndex> second = buildOf(tree).index;
+        result.retained = footprint().now - between.now;
+        benchmark::DoNotOptimize(second);
         return result;
     }();
     return built;
@@ -238,7 +254,8 @@ void BM_IndexMemory(benchmark::State &state)
     state.counters["files"] = built.index->counts().files;
     state.counters["build_s"] = built.seconds;
     state.counters["index_MB"] = static_cast<double>(built.index->memoryBytes()) / 1e6;
-    state.counters["footprint_growth_MB"] = static_cast<double>(built.footprintGrowth) / 1e6;
+    state.counters["retained_MB"] = static_cast<double>(built.retained) / 1e6;
+    state.counters["build_peak_MB"] = static_cast<double>(built.peakGrowth) / 1e6;
     state.counters["list_MB"] = static_cast<double>(built.index->sharedFileList().size()) / 1e6;
 }
 BENCHMARK(BM_IndexMemory)->Iterations(1);
