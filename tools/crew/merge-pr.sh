@@ -32,7 +32,9 @@ if grep -qvE '^(pass|skipping) ' <<<"$checks"; then
     exit 1
 fi
 
-gh pr merge "$pr" --merge --delete-branch
+# Squash only: the repo allows nothing else, and GitHub deletes the head branch itself. The minion's local branch goes
+# with its worktree (cleanup-minion.sh).
+gh pr merge "$pr" --squash
 # The main checkout stays on a clean main: the nightman never edits code there.
 if [[ "$(git -C "$root" branch --show-current)" != "main" ]] || [[ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]]; then
     echo "merged on GitHub; the main checkout isn't a clean main, so it wasn't updated"
