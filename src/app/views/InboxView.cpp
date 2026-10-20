@@ -5,6 +5,7 @@
 #include "app/views/EmptyStateView.h"
 #include "app/views/InboxInspector.h"
 #include "core/EngineHost.h"
+#include "core/SpectrumCheck.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -78,12 +79,39 @@ QString statusText(const core::InboxEntry &entry)
     case InboxItem::State::Failed:
         return InboxView::tr("Failed");
     case InboxItem::State::Ready:
+        // What the file is comes first (PREV-9): "Likely from a ≈ 192 kbps MP3".
+        if (const QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
+            return InboxView::tr("⚠ %1").arg(badge);
+        }
         if (!entry.alsoOn.isEmpty()) {
             return InboxView::tr("⚑ Also on “%1”").arg(entry.alsoOn.constFirst());
         }
         return entry.item.warning.isEmpty() ? InboxView::tr("Ready") : InboxView::tr("⚠ Ready, see why");
     }
     return {};
+}
+
+// The status's tooltip: why it failed, or everything the arrival noticed.
+QString statusToolTip(const core::InboxEntry &entry)
+{
+    const InboxItem &item = entry.item;
+    if (!item.error.isEmpty()) {
+        return item.error;
+    }
+    QStringList lines;
+    if (const QString badge = core::spectrumBadge(item); !badge.isEmpty()) {
+        lines.append(item.qualityCutoffHz ? InboxView::tr("%1: the spectrum stops at %2 kHz.")
+                                                .arg(badge)
+                                                .arg(*item.qualityCutoffHz / 1000.0, 0, 'f', 1)
+                                          : badge + u'.');
+    }
+    if (!entry.alsoOn.isEmpty()) {
+        lines.append(InboxView::tr("Also on “%1”.").arg(entry.alsoOn.join(u"”, “"_s)));
+    }
+    if (!item.warning.isEmpty()) {
+        lines.append(item.warning);
+    }
+    return lines.join(u'\n');
 }
 
 QStandardItem *cell(const QString &text, qint64 id, const QString &toolTip = {})
@@ -219,6 +247,13 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     rebuild(m_engine.inboxEntries());
 }
 
+void InboxView::setAnalysisCache(std::shared_ptr<audio::AnalysisCache> cache)
+{
+    m_inspector->setAnalysisCache(std::move(cache));
+    m_shownItem.reset(); // show the selection again, with its spectrogram
+    showSelection();
+}
+
 void InboxView::setLibraryConfig(const core::LibraryConfig &config)
 {
     m_config = config;
@@ -322,7 +357,7 @@ void InboxView::rebuild(const QList<core::InboxEntry> &entries)
                 item.sourceFormat.isEmpty() ? QString() : tr("Downloaded as %1").arg(item.sourceFormat);
             group->appendRow({cell(itemText, item.id), cell(formatText(item), item.id, source),
                               cell(fileName, item.id, item.relativePath), cell(item.peer, item.id),
-                              cell(statusText(*entry), item.id, item.error.isEmpty() ? item.warning : item.error)});
+                              cell(statusText(*entry), item.id, statusToolTip(*entry))});
         }
     };
     addGroup(tr("Albums"), InboxItem::Kind::Album);

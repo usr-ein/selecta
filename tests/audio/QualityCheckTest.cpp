@@ -221,3 +221,33 @@ TEST(QualityCheck, Failures)
     ASSERT_FALSE(result.ok());
     EXPECT_EQ(result.error().code, ErrorCode::Cancelled);
 }
+
+TEST(QualityCheck, FindingNamesAndBadges)
+{
+    // The names are stored (Inbox items keep them): they never change.
+    EXPECT_EQ(findingName(QualityFinding::LikelyFromLossy), u"from-lossy"_s);
+    EXPECT_EQ(findingName(QualityFinding::LikelyUpconvertedMp3), u"upconverted-mp3"_s);
+    EXPECT_EQ(findingName(QualityFinding::LikelyReencoded), u"reencoded"_s);
+    EXPECT_EQ(findingName(QualityFinding::LikelyPadded24Bit), u"padded-24-bit"_s);
+    EXPECT_EQ(findingName(QualityFinding::LikelyUpsampled), u"upsampled"_s);
+    for (const QualityFinding finding :
+         {QualityFinding::LikelyFromLossy, QualityFinding::LikelyUpconvertedMp3, QualityFinding::LikelyReencoded,
+          QualityFinding::LikelyPadded24Bit, QualityFinding::LikelyUpsampled}) {
+        EXPECT_EQ(findingFromName(findingName(finding)), finding);
+        for (const QString &badge : {findingBadge(finding), findingBadge(finding, 192)}) {
+            EXPECT_TRUE(badge.startsWith(u"Likely "_s)) << badge.toStdString();
+            EXPECT_FALSE(badge.contains(u"fake"_s, Qt::CaseInsensitive)) << badge.toStdString();
+        }
+    }
+    for (const QString &unknown : {u""_s, u"From-Lossy"_s, u" from-lossy"_s, u"fake"_s, u"from-lossy,upsampled"_s}) {
+        EXPECT_FALSE(findingFromName(unknown).has_value()) << unknown.toStdString();
+    }
+
+    EXPECT_EQ(findingBadge(QualityFinding::LikelyFromLossy, 192), u"Likely from a ≈ 192 kbps MP3"_s);
+    EXPECT_EQ(findingBadge(QualityFinding::LikelyFromLossy), u"Likely from a lossy file"_s);
+    EXPECT_EQ(findingBadge(QualityFinding::LikelyUpconvertedMp3, 128), u"Likely upconverted from ≈ 128 kbps"_s);
+    EXPECT_EQ(findingBadge(QualityFinding::LikelyUpconvertedMp3), u"Likely upconverted from a lower bitrate"_s);
+    EXPECT_EQ(findingBadge(QualityFinding::LikelyReencoded, 160), u"Likely re-encoded from a lossy file"_s);
+    EXPECT_EQ(findingBadge(QualityFinding::LikelyPadded24Bit), u"Likely 16-bit, padded"_s);
+    EXPECT_EQ(findingBadge(QualityFinding::LikelyUpsampled), u"Likely upsampled"_s);
+}

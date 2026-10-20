@@ -5,9 +5,11 @@
 #include "app/Notifications.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
+#include "app/SpectrogramView.h"
 #include "app/Toasts.h"
 #include "app/models/ConverterModel.h"
 #include "app/views/ConverterView.h"
+#include "audio/AnalysisCache.h"
 #include "convert/TagWriter.h"
 #include "core/EngineHost.h"
 #include "library/HistoryStore.h"
@@ -1224,4 +1226,140 @@ TEST_F(MainWindowTest, PresetsAreSharedBySearchGetTracksAndTheWishlist)
     presets->remove(*id);
     EXPECT_EQ(getPresets->count(), 4);
     EXPECT_EQ(getPresets->currentData().toString(), selecta::core::kMp3OrLosslessPreset);
+}
+
+// PREV-9: an item whose spectrum check found something shows a badge in the list and the inspector, and the
+// inspector draws its spectrogram from the analysis cache with the cut-off marked.
+TEST_F(MainWindowTest, TheInboxShowsTheSpectrumCheck)
+{
+    selecta::core::LibraryConfig library;
+    library.inboxRoot = dir.filePath(u"Inbox"_s);
+    ASSERT_TRUE(QDir().mkpath(library.inboxRoot + u"/Singles"_s));
+    for (const QString &name : {u"Suspect.wav"_s, u"Genuine.wav"_s}) {
+        QFile song(library.inboxRoot + u"/Singles/"_s + name);
+        const QByteArray wav = toneWav(1.0);
+        ASSERT_TRUE(song.open(QIODevice::WriteOnly) && song.write(wav) == wav.size());
+    }
+    settings->setLibraryConfig(library);
+
+    // The arrival's report, cached as the arrival keeps it: likely from a 128 kbps MP3, cut at 16.7 kHz.
+    const auto cache = std::make_shared<selecta::audio::AnalysisCache>(dir.filePath(u"analysis"_s));
+    QByteArray levels(qsizetype{100} * 64, '\0');
+    for (int c = 0; c < 100; ++c) {
+        for (int b = 0; b < 48; ++b) { // up to about 16.5 kHz
+            levels[(qsizetype{c} * 64) + b] = static_cast<char>(180);
+        }
+    }
+    selecta::audio::QualityReport report;
+    report.sampleRate = 44100;
+    report.cutoffHz = 16742;
+    report.likelySourceKbps = 128;
+    report.sourceBitDepth = 16;
+    report.effectiveBitDepth = 16;
+    report.findings = {selecta::audio::QualityFinding::LikelyFromLossy};
+    report.spectrogram = selecta::audio::Spectrogram::fromLevels(44100, 441000, 100, 64, levels).value();
+    const selecta::audio::CacheKey key = selecta::audio::CacheKey::forName(u"vinyl_ghost|Suspect.flac|1"_s);
+    ASSERT_TRUE(cache->storeQuality(key, report).ok());
+    preview = std::make_unique<selecta::app::PreviewController>(selecta::playback::AudioOutput::createSilent(), cache);
+
+    const QString engineDb = dir.filePath(u"engine.sqlite3"_s);
+    {
+        selecta::storage::Database setup;
+        ASSERT_TRUE(setup.open(engineDb));
+        ASSERT_TRUE(selecta::storage::migrate(setup, selecta::storage::selectaMigrations()).ok());
+        selecta::library::InboxItem suspect;
+        suspect.relativePath = u"Singles/Suspect.wav"_s;
+        suspect.state = selecta::library::InboxItem::State::Ready;
+        suspect.artist = u"Okuma Drift"_s;
+        suspect.title = u"Neon Rain"_s;
+        suspect.format = u"WAV"_s;
+        suspect.sourceFormat = u"FLAC 16/44.1"_s;
+        suspect.createdAt = 2000;
+        suspect.qualityChecked = true;
+        suspect.qualityFindings = {u"from-lossy"_s};
+        suspect.qualityCutoffHz = 16742;
+        suspect.qualitySourceKbps = 128;
+        suspect.qualityKey = key.toHex();
+        ASSERT_TRUE(selecta::library::InboxStore(setup).add(suspect).has_value());
+        selecta::library::InboxItem genuine = suspect;
+        genuine.relativePath = u"Singles/Genuine.wav"_s;
+        genuine.title = u"Halden"_s;
+        genuine.createdAt = 1000;
+        genuine.qualityFindings.clear();
+        genuine.qualityCutoffHz = 21900;
+        genuine.qualitySourceKbps.reset();
+        genuine.qualityKey = QString(64, u'0'); // not in the cache (evicted, emptied)
+        ASSERT_TRUE(selecta::library::InboxStore(setup).add(genuine).has_value());
+    }
+    selecta::core::EngineOptions options;
+    options.databasePath = engineDb;
+    options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy changed(engine.get(), &selecta::core::EngineHost::inboxChanged);
+    engine->start();
+    ASSERT_TRUE(changed.wait(5000));
+
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"inbox"_s));
+    auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
+    ASSERT_NE(table, nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    const QModelIndex singles = table->model()->index(0, 0);
+    ASSERT_EQ(table->model()->rowCount(singles), 2);
+    // Newest first: the suspect file, with its badge, a symbol and words (UI-4); the genuine one is just ready.
+    const QModelIndex suspectStatus = table->model()->index(0, 4, singles);
+    EXPECT_EQ(suspectStatus.data().toString(), u"⚠ Likely from a ≈ 128 kbps MP3"_s);
+    EXPECT_TRUE(suspectStatus.data(Qt::ToolTipRole).toString().contains(u"the spectrum stops at 16.7 kHz"_s))
+        << suspectStatus.data(Qt::ToolTipRole).toString().toStdString();
+    EXPECT_EQ(table->model()->index(1, 4, singles).data().toString(), u"Ready"_s);
+
+    const QModelIndex row = table->model()->index(0, 0, singles);
+    table->setCurrentIndex(row);
+    table->selectionModel()->select(row, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    const auto *alsoOn = window->findChild<QLabel *>(u"inspector.inbox.alsoOn"_s);
+    const auto *spectrum = window->findChild<QWidget *>(u"inspector.inbox.spectrum"_s);
+    const auto *text = window->findChild<QLabel *>(u"inspector.inbox.spectrumText"_s);
+    const auto *note = window->findChild<QLabel *>(u"inspector.inbox.spectrumNote"_s);
+    const auto *view = window->findChild<selecta::app::SpectrogramView *>(u"inspector.inbox.spectrogram"_s);
+    ASSERT_TRUE(alsoOn && spectrum && text && note && view);
+    EXPECT_TRUE(alsoOn->text().startsWith(u"⚠ Likely from a ≈ 128 kbps MP3."_s)) << alsoOn->text().toStdString();
+    EXPECT_FALSE(spectrum->isHidden());
+    EXPECT_FALSE(note->isHidden());
+    // The cached report: describeFinding()'s words, the grid and the cut-off.
+    QTRY_VERIFY_WITH_TIMEOUT(!view->spectrogram().isNull(), 5000);
+    EXPECT_EQ(view->spectrogram().columns(), 100);
+    EXPECT_EQ(view->cutoff(), 16742);
+    EXPECT_TRUE(text->text().startsWith(u"⚠ Likely from a lossy source (≈ 128 kbps MP3"_s))
+        << text->text().toStdString();
+    EXPECT_FALSE(text->text().contains(u"fake"_s, Qt::CaseInsensitive));
+
+    // The genuine one: checked, nothing found, and its spectrogram is gone from the cache.
+    const QModelIndex other = table->model()->index(1, 0, singles);
+    table->setCurrentIndex(other);
+    table->selectionModel()->select(other, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QTRY_VERIFY_WITH_TIMEOUT(text->text().startsWith(u"✓ The spectrum reaches 21.9 kHz"_s), 5000);
+    EXPECT_TRUE(note->isHidden());
+    EXPECT_FALSE(alsoOn->text().contains(u"Likely"_s));
+    QTRY_COMPARE_WITH_TIMEOUT(view->message(), u"The spectrogram is no longer in the cache."_s, 5000);
+    EXPECT_TRUE(view->spectrogram().isNull());
+    engine->stop();
+}
+
+// CACHE-2: the analysis cache's line says what it holds and the most it keeps: AnalysisCache::budgetBytes(), its three
+// tiers (waveform detail, overviews, spectrum checks).
+TEST_F(MainWindowTest, SettingsShowTheAnalysisCacheBudget)
+{
+    const auto cache = std::make_shared<selecta::audio::AnalysisCache>(dir.filePath(u"analysis"_s));
+    preview = std::make_unique<selecta::app::PreviewController>(selecta::playback::AudioOutput::createSilent(), cache);
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"settings"_s));
+    const auto *line = window->findChild<QLabel *>(u"settings.cache.waveforms"_s);
+    ASSERT_NE(line, nullptr);
+    EXPECT_EQ(cache->budgetBytes(), qint64{384} * 1024 * 1024);
+    QTRY_COMPARE_WITH_TIMEOUT(line->text(), u"0 B, at most 402.7 MB"_s, 5000);
+    engine->stop();
 }

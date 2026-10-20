@@ -7,6 +7,7 @@
 #include <QList>
 #include <QWidget>
 
+#include <memory>
 #include <optional>
 
 class QLabel;
@@ -15,6 +16,9 @@ class QStackedWidget;
 class QStandardItemModel;
 class QTreeView;
 
+namespace selecta::audio {
+class AnalysisCache;
+}
 namespace selecta::core {
 class EngineHost;
 }
@@ -34,6 +38,8 @@ public:
     explicit InboxView(core::EngineHost &engine, QWidget *parent = nullptr);
 
     void setLibraryConfig(const core::LibraryConfig &config);
+    // Where the spectrum checks' spectrograms are (PREV-9), for the inspector.
+    void setAnalysisCache(std::shared_ptr<audio::AnalysisCache> cache);
     // One line for the window subtitle.
     QString summary() const;
     QList<qint64> selectedIds() const;

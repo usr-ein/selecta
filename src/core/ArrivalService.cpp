@@ -11,6 +11,7 @@
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
 #include "core/ReleaseJson.h"
+#include "core/SpectrumCheck.h"
 #include "library/HistoryStore.h"
 #include "library/Naming.h"
 #include "library/Quarantine.h"
@@ -114,6 +115,7 @@ struct ArrivalService::Job
     QString stagingDir;
     QString encodedBy;
     library::FileOps::TrashFunction trash;
+    std::shared_ptr<audio::AnalysisCache> cache;
     audio::CancellationFlag cancel;
     bool started = false; // the worker has it (engine thread only)
 };
@@ -206,6 +208,7 @@ void ArrivalService::start(const Download &download)
     job->stagingDir = m_options.stagingDir;
     job->encodedBy = m_options.encodedBy;
     job->trash = m_trash;
+    job->cache = m_options.analysisCache;
     m_jobs.insert(download.id, job);
     // The lookups are bounded: past the timeout the file is tagged with what is known by then.
     QTimer::singleShot(m_options.metadataTimeoutMs, this, [this, weak = std::weak_ptr<Job>(job)] {
@@ -337,6 +340,13 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     if (format.kept) {
         warnings.append(tr("Kept as %1: converting it to MP3 320 can't improve it.").arg(outcome.sourceQuality));
     }
+    // PREV-9: is it what it claims? Checked on the original, before conversion; the findings inform, the format stays.
+    const SpectrumCheck spectrum = checkSpectrum(source, job.cache.get(), &job.cancel);
+    if (job.cancel.isCancelled()) {
+        outcome.cancelled = true;
+        outcome.error = tr("Cancelled");
+        return outcome;
+    }
 
     // Tags: the file's own, overridden by the release; the cover processed for CDJs.
     convert::MetadataModel tags;
@@ -431,6 +441,7 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     item.peer = job.download.peer;
     item.remotePath = job.download.remotePath;
     item.warning = warnings.join(u' ');
+    applySpectrumCheck(spectrum, item);
     outcome.warning = item.warning;
     outcome.relativePath = item.relativePath;
     outcome.ok = true;
@@ -479,9 +490,16 @@ void ArrivalService::record(const Outcome &outcome)
     if (!library::HistoryStore(m_db).add(entry)) {
         qCWarning(lcArrival) << "couldn't record the download in the history:" << m_db.lastError();
     }
+    QStringList notes;
+    if (const QString badge = spectrumBadge(item); !badge.isEmpty()) {
+        notes.append(badge);
+    }
+    if (!outcome.warning.isEmpty()) {
+        notes.append(outcome.warning);
+    }
     m_activity.record(u"arrival"_s, download.peer, u"arrived"_s,
-                      outcome.warning.isEmpty() ? outcome.relativePath
-                                                : outcome.relativePath + u" ("_s + outcome.warning + u')');
+                      notes.isEmpty() ? outcome.relativePath
+                                      : outcome.relativePath + u" ("_s + notes.join(u' ') + u')');
     Q_EMIT finished(outcome.downloadId, {true, *id, outcome.relativePath, outcome.warning});
 }
 

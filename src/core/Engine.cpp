@@ -177,6 +177,7 @@ bool Engine::start()
     arrivalOptions.stagingDir = m_options.stagingDir;
     arrivalOptions.encodedBy = u"Selecta "_s + QString(base::kVersion);
     arrivalOptions.session = m_options.session;
+    arrivalOptions.analysisCache = m_options.analysisCache;
     m_arrival = std::make_unique<ArrivalService>(*m_db, *m_inbox, *m_activity, m_options.trash,
                                                  std::move(arrivalOptions), m_options.wallClock);
     m_arrival->setMeta(m_meta.get());

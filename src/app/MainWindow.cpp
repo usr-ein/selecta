@@ -362,6 +362,7 @@ void MainWindow::createViews()
     });
     m_inboxView = new InboxView(m_services.engine, m_stack);
     m_inboxView->setLibraryConfig(m_services.settings.libraryConfig());
+    m_inboxView->setAnalysisCache(m_services.preview.sharedAnalysisCache());
     addView(u"inbox"_s, m_inboxView, [this] { return m_inboxView->summary(); });
     m_inspector->addPanel(u"inbox"_s, m_inboxView->inspectorPanel());
     connect(m_inboxView, &InboxView::summaryChanged, this, [this] {
@@ -674,7 +675,8 @@ void MainWindow::createSettingsView()
     // Caches (CACHE-2): sizes when Settings opens, and after each is emptied.
     const auto showCaches = [this](const core::CacheStatus &status) {
         audio::AnalysisCache *waveforms = m_services.preview.analysisCache();
-        m_settingsView->setCacheSizes(status, waveforms ? waveforms->totalBytes() : 0);
+        m_settingsView->setCacheSizes(status, waveforms ? waveforms->totalBytes() : 0,
+                                      waveforms ? waveforms->budgetBytes() : 0);
     };
     connect(&m_services.engine, &core::EngineHost::cachesChanged, this, showCaches);
     connect(this, &MainWindow::viewChanged, this, [this](const QString &id) {

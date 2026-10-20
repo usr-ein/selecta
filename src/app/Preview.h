@@ -3,6 +3,7 @@
 
 #include "audio/AnalysisCache.h"
 #include "audio/ByteSource.h"
+#include "audio/QualityCheck.h"
 #include "audio/Waveform.h"
 #include "playback/Player.h"
 
@@ -40,7 +41,8 @@ struct LocalPreview
 LocalPreview previewForPath(const QString &path, playback::PlayerTrack track);
 
 // The preview (PRD PREV-1…3): plays a source and analyses its waveform side by side, so the waveform fills in while
-// the track plays, or while it downloads. Owns the player. Main thread.
+// the track plays, or while it downloads. A peer's file, once complete, also gets the spectrum check (PREV-9). Owns
+// the player. Main thread; the analyses run on the global thread pool.
 class PreviewController : public QObject
 {
     Q_OBJECT
@@ -58,10 +60,17 @@ public:
     const playback::Player &player() const { return m_player; }
     // What has been analysed of the current preview: partial while it downloads, null before the first columns.
     const audio::Waveform &waveform() const { return m_waveform; }
+    // What the spectrum check (PREV-9) found about the current preview, once its file is complete: run on a peer's
+    // file only (identity "peer|…", the very file a Get would download). YouTube and Deezer previews are lossy by
+    // design and claim no quality, so they aren't judged. nullopt until then, for other previews, and when the file
+    // can't be analysed. Kept in the analysis cache under the preview's identity.
+    const std::optional<audio::QualityReport> &quality() const { return m_quality; }
     // The identity of what is loaded; empty when nothing is.
     QString identity() const { return m_identity; }
     // The waveform cache (Settings shows its size and can empty it); null when there is none.
     audio::AnalysisCache *analysisCache() const { return m_cache.get(); }
+    // The same, for owners that outlive this controller or hand it to workers (the Inbox inspector).
+    std::shared_ptr<audio::AnalysisCache> sharedAnalysisCache() const { return m_cache; }
 
     // Plays `request` from the start, replacing the current preview.
     void preview(const PreviewRequest &request);
@@ -71,10 +80,12 @@ public:
 
 Q_SIGNALS:
     void waveformChanged();
+    void qualityChanged();
 
 private:
     void startAnalysis(const PreviewRequest &request);
     void cancelAnalysis();
+    void startQualityCheck();
 
     playback::Player m_player;
     std::shared_ptr<audio::AnalysisCache> m_cache;
@@ -82,6 +93,10 @@ private:
     QList<audio::WaveformColumn> m_columns;
     audio::Waveform m_waveform;
     QString m_identity;
+    std::shared_ptr<audio::ByteSource> m_source; // the current preview's
+    std::optional<audio::QualityReport> m_quality;
+    std::shared_ptr<audio::CancellationFlag> m_qualityCancel; // the check in flight
+    quint64 m_generation = 0;                                 // which preview a check in flight belongs to
 };
 
 } // namespace selecta::app
