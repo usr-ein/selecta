@@ -2,6 +2,7 @@
 #include "app/MainWindow.h"
 
 #include "app/AppSettings.h"
+#include "app/Diagnostics.h"
 #include "app/Icons.h"
 #include "app/Inspector.h"
 #include "app/NavModel.h"
@@ -37,14 +38,21 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
 #include <QFileInfo>
 #include <QFrame>
+#include <QImage>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLocale>
 #include <QLoggingCategory>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QScreen>
 #include <QShortcut>
 #include <QSignalBlocker>
@@ -53,6 +61,7 @@
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <utility>
@@ -988,6 +997,19 @@ void MainWindow::createMenus()
     QMenu *window = menuBar()->addMenu(tr("&Window"));
     window->addAction(minimize);
     window->addAction(zoom);
+
+    // For testers: a note on what went wrong, kept with what Selecta was doing (Diagnostics.h).
+    auto *noteProblem = new QAction(tr("Note a Problem…"), this);
+    noteProblem->setObjectName(u"action.noteProblem"_s);
+    noteProblem->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
+    connect(noteProblem, &QAction::triggered, this, &MainWindow::noteProblem);
+    auto *showLogs = new QAction(tr("Show Logs in Finder"), this);
+    showLogs->setObjectName(u"action.showLogs"_s);
+    connect(showLogs, &QAction::triggered, this,
+            [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(m_services.build.logDir)); });
+    QMenu *help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(noteProblem);
+    help->addAction(showLogs);
 }
 
 void MainWindow::createToolBar()
@@ -1462,6 +1484,81 @@ void MainWindow::setAppearance(Appearance appearance)
         action->setChecked(action->data().toInt() == static_cast<int>(appearance));
     }
     m_settingsView->setAppearance(appearance);
+}
+
+QJsonObject MainWindow::diagnosticState() const
+{
+    const core::NetworkStatus network = m_services.engine.networkStatus();
+    const playback::Player &player = m_services.preview.player();
+    return QJsonObject{
+        {"time"_L1, QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+        {"version"_L1, m_services.build.version},
+        {"build"_L1, m_services.build.buildType},
+        {"session"_L1, m_services.build.session},
+        {"view"_L1, m_currentId},
+        {"title"_L1, currentTitle()},
+        {"subtitle"_L1, currentSubtitle()},
+        {"windowActive"_L1, isActiveWindow()},
+        {"paused"_L1, m_services.engine.isPaused()},
+        {"searchesAvailable"_L1, m_services.engine.searchesAvailable()},
+        {"network"_L1, QJsonObject{{"state"_L1, static_cast<int>(network.state)},
+                                   {"server"_L1, network.server},
+                                   {"detail"_L1, network.detail},
+                                   {"listening"_L1, network.listening},
+                                   {"peersReachedUs"_L1, network.peersReachedUs}}},
+        {"player"_L1, QJsonObject{{"state"_L1, static_cast<int>(player.state())},
+                                  {"title"_L1, player.track().title},
+                                  {"artist"_L1, player.track().artist},
+                                  {"source"_L1, player.track().source},
+                                  {"position"_L1, player.position()},
+                                  {"duration"_L1, player.duration()},
+                                  {"error"_L1, player.error()}}},
+    };
+}
+
+void MainWindow::noteProblem()
+{
+    // The window as it is now, before the note is asked for: that's what the problem looks like.
+    const QImage screenshot = grab().toImage();
+    const QJsonObject state = diagnosticState();
+    qCInfo(lcUi) << "noting a problem";
+
+    auto *dialog = new QDialog(this);
+    dialog->setObjectName(u"noteProblem"_s);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->setWindowTitle(tr("Note a Problem"));
+    auto *layout = new QVBoxLayout(dialog);
+    auto *intro = new QLabel(tr("What happened, and what did you expect? Your note is saved with a picture of the "
+                                "window as it was, what Selecta was doing and the end of its log, in the log folder. "
+                                "Nothing is sent anywhere."),
+                             dialog);
+    intro->setWordWrap(true);
+    auto *text = new QPlainTextEdit(dialog);
+    text->setObjectName(u"noteProblem.text"_s);
+    text->setAccessibleName(tr("What happened"));
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dialog);
+    buttons->button(QDialogButtonBox::Save)->setObjectName(u"noteProblem.save"_s);
+    connect(buttons, &QDialogButtonBox::accepted, dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    layout->addWidget(intro);
+    layout->addWidget(text, 1);
+    layout->addWidget(buttons);
+    connect(dialog, &QDialog::accepted, this, [this, text, screenshot, state] {
+        const QString note = text->toPlainText().trimmed();
+        QString error;
+        const QString folder = saveFeedback(m_services.build.logDir, note, screenshot, state, &error);
+        if (folder.isEmpty()) {
+            qCWarning(lcUi).noquote() << "couldn't save the note:" << error;
+            m_toasts->show(tr("Couldn't save the note"), error, Toasts::Kind::Warning);
+            return;
+        }
+        qCWarning(lcUi).noquote() << u"problem noted in %1: %2"_s.arg(folder, note.section(u'\n', 0, 0).left(200));
+        m_toasts->show(tr("Noted"), tr("Saved in %1").arg(QDir::toNativeSeparators(folder)), Toasts::Kind::Good);
+    });
+    dialog->resize(520, 320);
+    dialog->setWindowModality(Qt::WindowModal); // a sheet on macOS
+    dialog->open();
+    text->setFocus();
 }
 
 } // namespace selecta::app

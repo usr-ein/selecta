@@ -144,6 +144,8 @@ private:
     QSpinBox *m_listenPort = nullptr;
     QCheckBox *m_connectAtLaunch = nullptr;
     QCheckBox *m_portMapping = nullptr;
+    QCheckBox *m_liveNetwork = nullptr; // only in a build that may reach the live network (SAFE-3)
+    bool m_liveCompiledIn = false;
     QLabel *m_portMappingState = nullptr;
     QLabel *m_reachability = nullptr;
     QPushButton *m_networkSave = nullptr;

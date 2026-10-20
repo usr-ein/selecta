@@ -5,6 +5,7 @@
 #include "app/views/SettingsView.h"
 
 #include <QHash>
+#include <QJsonObject>
 #include <QList>
 #include <QMainWindow>
 
@@ -81,6 +82,8 @@ public:
     // Shows the view with this id (NavModel ids). Returns false, changing nothing, for an unknown id.
     bool navigateTo(const QString &id);
     QString currentViewId() const { return m_currentId; }
+    // What a problem report records about the window (Help → Note a Problem…): the view, the network, the player.
+    QJsonObject diagnosticState() const;
     QStringList viewIds() const;
     QString currentTitle() const;
     QString currentSubtitle() const;
@@ -163,6 +166,8 @@ private:
     void refreshUnread();
     // A click on a system notification: the window comes forward and shows what it was about.
     void showNotificationTarget(const NotificationTarget &target);
+    // Help → Note a Problem…: the window as it is, then what the user writes, saved in the log folder (Diagnostics.h).
+    void noteProblem();
 
     AppServices m_services;
     Appearance m_appearance;

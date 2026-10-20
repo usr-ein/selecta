@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/AppSettings.h"
+#include "app/Diagnostics.h"
 #include "app/Icons.h"
 #include "app/MainWindow.h"
 #include "app/Notifications.h"
@@ -131,6 +132,34 @@ QString buildType()
 
 namespace {
 
+// What a session leaves for the developer (Diagnostics.h): the trail of what the user did, and stalls of the GUI and
+// engine threads, with a stack sample when one lasts. Headless runs are driven by tools: no trail for them.
+struct Diagnostics
+{
+    selecta::app::ActionTrail trail;
+    std::unique_ptr<selecta::app::StallWatchdog> stalls;
+};
+
+std::unique_ptr<Diagnostics> startDiagnostics(selecta::app::MainWindow &window, selecta::core::EngineHost &engine,
+                                              bool headless)
+{
+    auto diagnostics = std::make_unique<Diagnostics>();
+    if (!headless) {
+        QCoreApplication::instance()->installEventFilter(&diagnostics->trail);
+        diagnostics->trail.watchActions(&window);
+    }
+    diagnostics->stalls = std::make_unique<selecta::app::StallWatchdog>(
+        selecta::app::StallWatchdog::Options{.sampleDir = paths::logDir() + u"/stalls"_s});
+    diagnostics->stalls->watch(&window, u"GUI"_s);
+    QObject::connect(&engine, &selecta::core::EngineHost::started, &window,
+                     [&engine, watchdog = diagnostics->stalls.get()](bool ok) {
+                         if (ok && engine.engineObject()) {
+                             watchdog->watch(engine.engineObject(), u"engine"_s);
+                         }
+                     });
+    return diagnostics;
+}
+
 int runSelecta(int argc, char **argv)
 {
     const QApplication app(argc, argv);
@@ -166,7 +195,8 @@ int runSelecta(int argc, char **argv)
         return 1;
     }
 
-    if (!selecta::base::installFileLogger(paths::logDir())) {
+    // 10 files of 10 MB: a beta tester's days of use stay readable (the trail and the network both log here).
+    if (!selecta::base::installFileLogger(paths::logDir(), qint64{10} * 1024 * 1024, 10)) {
         qCWarning(lcApp) << "can't write the log file in" << paths::logDir();
     }
     qCInfo(lcApp).noquote() << u"Selecta %1 starting; Qt %2 on %3; data in %4"_s.arg(
@@ -295,6 +325,8 @@ int runSelecta(int argc, char **argv)
     }
     window.show();
 
+    auto diagnostics = startDiagnostics(window, engine, options.headless);
+
 #ifdef SELECTA_DEVTOOLS
     std::unique_ptr<selecta::app::devtools::DebugServer> debugServer;
     if (options.debugServer) {
@@ -309,6 +341,7 @@ int runSelecta(int argc, char **argv)
 #endif
 
     const int exitCode = QApplication::exec();
+    diagnostics.reset(); // before the engine stops beating
     engine.stop();
 
     if (session > 0 && !sessions.end(session, QDateTime::currentMSecsSinceEpoch())) {
