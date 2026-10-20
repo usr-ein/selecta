@@ -31,6 +31,7 @@
 #include <QStackedWidget>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTextBrowser>
 #include <QTreeView>
 #include <QtEndian>
 
@@ -788,4 +789,68 @@ TEST_F(MainWindowTest, TheWishlistListsSavedSearchesAndSaysWhenOneFindsSomething
     ASSERT_EQ(toasts->count(), 1);
     EXPECT_EQ(toasts->texts().constFirst(), u"Wishlist: 2 new files for “Okuma Drift Neon Rain”"_s);
     EXPECT_NE(toasts->findChild<QPushButton *>(u"toast.1.action.0"_s), nullptr);
+}
+
+TEST_F(MainWindowTest, MessagesShowConversationsWhatIsUnreadAndWhatArrives)
+{
+    auto window = makeWindow();
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    Q_EMIT engine->conversationsChanged({selecta::core::Conversation{.peer = u"lossless_lena"_s,
+                                                                     .lastText = u"Yes, 24/96 from the LP"_s,
+                                                                     .lastAtMs = now - 120'000,
+                                                                     .lastOutgoing = false,
+                                                                     .unread = 2}});
+    ASSERT_TRUE(window->navigateTo(u"messages"_s));
+    EXPECT_EQ(window->currentSubtitle(), u"1 conversation · 2 unread"_s);
+    auto *list = window->findChild<QTreeView *>(u"messages.conversations"_s);
+    ASSERT_NE(list, nullptr);
+    ASSERT_EQ(list->model()->rowCount(), 1);
+    EXPECT_EQ(list->model()->index(0, 0).data().toString(), u"lossless_lena\nYes, 24/96 from the LP"_s);
+    EXPECT_EQ(list->model()->index(0, 1).data().toString(), u"2 min ago\n2 new"_s);
+    // The sidebar counts what is unread (NET-7).
+    auto *sidebar = window->findChild<QListView *>(u"sidebar.list"_s);
+    ASSERT_NE(sidebar, nullptr);
+    int count = 0;
+    for (int row = 0; row < sidebar->model()->rowCount(); ++row) {
+        if (sidebar->model()->index(row, 0).data(Qt::UserRole + 1).toString() == u"messages"_s) {
+            count = sidebar->model()->index(row, 0).data(Qt::UserRole + 3).toInt();
+        }
+    }
+    EXPECT_EQ(count, 2);
+
+    // A message from someone else: a notification, whose Reply opens the conversation.
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    const selecta::core::ChatMessage message{
+        .id = 7, .peer = u"vinyl_ghost"_s, .atMs = now, .outgoing = false, .text = u"Got the B-side?"_s, .read = false};
+    Q_EMIT engine->messageAdded(message);
+    ASSERT_EQ(toasts->count(), 1);
+    EXPECT_EQ(toasts->texts().constFirst(), u"Message from vinyl_ghost\nGot the B-side?"_s);
+    auto *reply = toasts->findChild<QPushButton *>(u"toast.1.action.0"_s);
+    ASSERT_NE(reply, nullptr);
+    reply->click();
+    auto *peer = window->findChild<QLabel *>(u"messages.peer"_s);
+    ASSERT_NE(peer, nullptr);
+    EXPECT_EQ(peer->text(), u"vinyl_ghost"_s);
+    // Until it has messages, a new conversation shows at the top.
+    ASSERT_EQ(list->model()->rowCount(), 2);
+    EXPECT_EQ(list->model()->index(0, 0).data().toString(), u"vinyl_ghost\nNew conversation"_s);
+    Q_EMIT engine->conversationLoaded(u"vinyl_ghost"_s, {message});
+    auto *thread = window->findChild<QTextBrowser *>(u"messages.thread"_s);
+    ASSERT_NE(thread, nullptr);
+    EXPECT_TRUE(thread->toPlainText().contains(u"Got the B-side?"_s));
+
+    // People: the lists, with buddies' status (NET-8).
+    Q_EMIT engine->userListsChanged(
+        {selecta::core::ListedUser{.username = u"leech"_s, .list = selecta::core::UserList::Banned},
+         selecta::core::ListedUser{.username = u"kassia"_s,
+                                   .list = selecta::core::UserList::Buddy,
+                                   .presence = selecta::core::Presence::Online}});
+    auto *people = window->findChild<QTreeView *>(u"people.table"_s);
+    ASSERT_NE(people, nullptr);
+    ASSERT_EQ(people->model()->rowCount(), 2);
+    EXPECT_EQ(people->model()->index(0, 0).data().toString(), u"kassia"_s);
+    EXPECT_EQ(people->model()->index(0, 1).data().toString(), u"Buddy"_s);
+    EXPECT_EQ(people->model()->index(0, 2).data().toString(), u"Online"_s);
+    EXPECT_EQ(people->model()->index(1, 1).data().toString(), u"Banned"_s);
 }

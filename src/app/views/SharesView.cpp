@@ -2,6 +2,7 @@
 #include "app/views/SharesView.h"
 
 #include "app/Format.h"
+#include "app/PeerMenu.h"
 #include "core/EngineHost.h"
 
 #include <QDir>
@@ -9,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QTreeWidget>
@@ -103,6 +105,19 @@ SharesView::SharesView(core::EngineHost &engine, QWidget *parent)
     m_uploads->header()->setStretchLastSection(false);
     m_uploads->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     m_uploads->setMinimumHeight(120);
+    // Who is downloading: browse them, write to them, or ban them (NET-8).
+    m_uploads->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_uploads, &QTreeWidget::customContextMenuRequested, this, [this](QPoint position) {
+        const QTreeWidgetItem *row = m_uploads->itemAt(position);
+        if (!row) {
+            return;
+        }
+        QMenu menu(this);
+        PeerMenu::addActions(menu, row->text(0), m_engine,
+                             {.browse = [this](const QString &peer) { Q_EMIT browseRequested(peer); },
+                              .message = [this](const QString &peer) { Q_EMIT messageRequested(peer); }});
+        menu.exec(m_uploads->viewport()->mapToGlobal(position));
+    });
     nowLayout->addWidget(m_uploads);
     layout->addWidget(now);
     layout->addStretch(1);

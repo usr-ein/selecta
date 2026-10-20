@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "app/PeerMenu.h"
+
 #include <QWidget>
 
 class QComboBox;
@@ -47,6 +49,8 @@ Q_SIGNALS:
     void summaryChanged();
     // "Browse <peer>'s Files" (BRWS-1).
     void browseRequested(const QString &peer);
+    // "Message <peer>…" (NET-7).
+    void messageRequested(const QString &peer);
 
 private:
     QWidget *createTransfersPage();
@@ -56,6 +60,7 @@ private:
     void refreshState();
     void refreshPeers();
     void transfersMenu(QPoint position);
+    PeerMenu::Handlers peerHandlers();
 
     core::EngineHost &m_engine;
     storage::Database &m_db;

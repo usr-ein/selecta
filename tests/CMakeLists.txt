@@ -85,6 +85,7 @@ if(SELECTA_WITH_MEDIA)
             core/SearchFilterTest.cpp
             core/SearchServiceTest.cpp
             core/ShareServiceTest.cpp
+            core/SocialServiceTest.cpp
             core/TransferServiceTest.cpp
             core/WishlistServiceTest.cpp
             core/YouTubePreviewsTest.cpp

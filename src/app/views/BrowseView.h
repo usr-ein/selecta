@@ -49,6 +49,8 @@ Q_SIGNALS:
     void summaryChanged();
     void previewRequested();
     void selectionMoved();
+    // "Message <peer>…" (NET-7).
+    void messageRequested(const QString &peer);
 
 private:
     void refresh();

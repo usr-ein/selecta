@@ -264,6 +264,24 @@ constexpr std::array kMigrations{
             list       BLOB NOT NULL     -- the share list, compressed
         ) STRICT;
     )sql"},
+    // Private messages and the user lists (PRD NET-7, NET-8): buddies, ignored and banned users.
+    Migration{13, R"sql(
+        CREATE TABLE messages (
+            id       INTEGER PRIMARY KEY,
+            peer     TEXT NOT NULL,
+            at_ms    INTEGER NOT NULL,           -- Unix time, ms
+            outgoing INTEGER NOT NULL CHECK (outgoing IN (0, 1)),
+            text     TEXT NOT NULL,
+            read     INTEGER NOT NULL DEFAULT 0 CHECK (read IN (0, 1))
+        ) STRICT;
+        CREATE INDEX messages_by_peer ON messages(peer, at_ms);
+        CREATE TABLE user_lists (
+            username TEXT PRIMARY KEY,
+            list     TEXT NOT NULL CHECK (list IN ('buddy', 'ignored', 'banned')),
+            note     TEXT NOT NULL DEFAULT '',
+            added_ms INTEGER NOT NULL
+        ) STRICT;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

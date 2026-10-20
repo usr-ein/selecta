@@ -9,6 +9,7 @@ qt_add_library(selecta_app STATIC
     MainWindow.h MainWindow.cpp
     NavDelegate.h NavDelegate.cpp
     NavModel.h NavModel.cpp
+    PeerMenu.h PeerMenu.cpp
     PlayerBar.h PlayerBar.cpp
     Preview.h Preview.cpp
     Sidebar.h Sidebar.cpp
@@ -36,6 +37,7 @@ qt_add_library(selecta_app STATIC
     views/HistoryView.h views/HistoryView.cpp
     views/InboxInspector.h views/InboxInspector.cpp
     views/InboxView.h views/InboxView.cpp
+    views/MessagesView.h views/MessagesView.cpp
     views/ReleasePickerDialog.h views/ReleasePickerDialog.cpp
     views/SearchInspector.h views/SearchInspector.cpp
     views/SearchView.h views/SearchView.cpp

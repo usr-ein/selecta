@@ -77,6 +77,8 @@ Q_SIGNALS:
     void previewRequested();
     // "Browse <peer>'s Files" (BRWS-1).
     void browseRequested(const QString &peer);
+    // "Message <peer>…" (NET-7).
+    void messageRequested(const QString &peer);
 
 private:
     QWidget *createFilterBar();

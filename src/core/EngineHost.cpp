@@ -46,6 +46,12 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<CacheStatus>();
     qRegisterMetaType<WishlistItem>();
     qRegisterMetaType<Browse>();
+    qRegisterMetaType<ChatMessage>();
+    qRegisterMetaType<QList<ChatMessage>>();
+    qRegisterMetaType<Conversation>();
+    qRegisterMetaType<QList<Conversation>>();
+    qRegisterMetaType<ListedUser>();
+    qRegisterMetaType<QList<ListedUser>>();
     qRegisterMetaType<QList<WishlistItem>>();
     qRegisterMetaType<QList<SupersedeFlag>>();
     qRegisterMetaType<QList<ConverterItem>>();
@@ -173,6 +179,17 @@ void EngineHost::start()
         Q_EMIT wishlistChanged(items);
     });
     connect(engine, &Engine::wishlistFound, this, &EngineHost::wishlistFound);
+    connect(engine, &Engine::conversationsChanged, this, [this](const QList<Conversation> &conversations) {
+        m_conversations = conversations;
+        Q_EMIT conversationsChanged(conversations);
+    });
+    connect(engine, &Engine::messageAdded, this, &EngineHost::messageAdded);
+    connect(engine, &Engine::messageSent, this, &EngineHost::messageSent);
+    connect(engine, &Engine::conversationLoaded, this, &EngineHost::conversationLoaded);
+    connect(engine, &Engine::userListsChanged, this, [this](const QList<ListedUser> &users) {
+        m_userLists = users;
+        Q_EMIT userListsChanged(users);
+    });
     connect(engine, &Engine::browseChanged, this, [this](const Browse &browse) {
         m_browses.insert(browse.peer, browse);
         Q_EMIT browseChanged(browse);
@@ -500,6 +517,70 @@ void EngineHost::refreshPeerStats()
             engine.refreshPeerStats();
         }
     });
+}
+
+void EngineHost::sendMessage(const QString &peer, const QString &text)
+{
+    post([peer, text](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.sendMessage(peer, text);
+        }
+    });
+}
+
+void EngineHost::loadConversation(const QString &peer)
+{
+    post([peer](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.loadConversation(peer);
+        }
+    });
+}
+
+void EngineHost::markConversationRead(const QString &peer)
+{
+    post([peer](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.social().markRead(peer);
+        }
+    });
+}
+
+void EngineHost::deleteConversation(const QString &peer)
+{
+    post([peer](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.social().deleteConversation(peer);
+        }
+    });
+}
+
+void EngineHost::setUserListed(const QString &username, std::optional<UserList> list)
+{
+    post([username, list](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.social().setListed(username, list);
+        }
+    });
+}
+
+std::optional<UserList> EngineHost::listOf(const QString &username) const
+{
+    for (const ListedUser &user : m_userLists) {
+        if (user.username == username) {
+            return user.list;
+        }
+    }
+    return std::nullopt;
+}
+
+int EngineHost::unreadMessages() const
+{
+    int unread = 0;
+    for (const Conversation &conversation : m_conversations) {
+        unread += conversation.unread;
+    }
+    return unread;
 }
 
 void EngineHost::browse(const QString &peer, bool refresh)

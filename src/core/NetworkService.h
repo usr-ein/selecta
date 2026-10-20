@@ -128,6 +128,8 @@ public:
     quint32 search(const QString &query, governor::Permit permit);
     // The same for a wishlist search (SRCH-14): the server's own message for searches that repeat in the background.
     quint32 searchWishlist(const QString &query, governor::Permit permit);
+    // A private message (NET-7), with a PrivateMessage permit. False when not connected or the text can't go.
+    bool sendPrivateMessage(const QString &username, const QString &text, governor::Permit permit);
     // Stops accepting results for this search.
     void stopSearch(quint32 token);
     // How often the server wants wishlist searches to run (NET-6); 12 minutes until it says.
@@ -156,6 +158,8 @@ Q_SIGNALS:
     // The server's list of privileged users (they go first in the upload queue).
     void privilegedUsersReceived(const QStringList &users);
     void wishlistIntervalChanged(std::chrono::seconds interval);
+    // A private message from a user (NET-7); the server's own messages are notices, not these.
+    void privateMessageReceived(const selecta::slsk::fromserver::PrivateMessage &message);
 
 private Q_SLOTS:
     void hostLookedUp(const QHostInfo &info);

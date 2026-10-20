@@ -119,6 +119,12 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
             });
     connect(m_server.get(), &slsk::ServerSession::privilegedUsersReceived, this,
             &NetworkService::privilegedUsersReceived);
+    connect(m_server.get(), &slsk::ServerSession::privateMessageReceived, this,
+            [this](const slsk::fromserver::PrivateMessage &message) {
+                if (message.username.compare(u"server"_s, Qt::CaseInsensitive) != 0) {
+                    Q_EMIT privateMessageReceived(message);
+                }
+            });
     connect(m_server.get(), &slsk::ServerSession::wishlistIntervalReceived, this, [this](quint32 seconds) {
         // At least two minutes, whatever the server says: a background search is never urgent.
         m_wishlistInterval = std::chrono::seconds(std::max<quint32>(seconds, 120));
@@ -434,6 +440,11 @@ quint32 NetworkService::search(const QString &query, governor::Permit permit)
     m_openSearches.insert(token);
     m_peers->openSearch(token);
     return token;
+}
+
+bool NetworkService::sendPrivateMessage(const QString &username, const QString &text, governor::Permit permit)
+{
+    return m_server->isLoggedIn() && m_server->sendPrivateMessage(username, text, std::move(permit));
 }
 
 quint32 NetworkService::searchWishlist(const QString &query, governor::Permit permit)

@@ -116,6 +116,8 @@ public:
     void collectionChanged();
     // A download arrived: the ratio moves.
     void refreshTotals();
+    // Banned users (NET-8): their uploads are denied with "Banned", and they see nothing of our shares.
+    void setBanned(const QSet<QString> &banned);
 
     ShareStatus status() const;
     QList<UploadEntry> uploads() const;
@@ -207,6 +209,7 @@ private:
     ShareStatus m_status;
     Shares m_shares{*this};
     Info m_info{*this};
+    QSet<QString> m_banned;
     QTimer *m_rebuildTimer = nullptr;
     QTimer *m_tick = nullptr; // tries the queue again now and then, and keeps the totals fresh
     QThreadPool m_pool;

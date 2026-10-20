@@ -28,6 +28,8 @@ public:
 Q_SIGNALS:
     void summaryChanged();
     void settingsRequested(); // "Choose folders…": Settings → Library
+    void browseRequested(const QString &peer);
+    void messageRequested(const QString &peer);
 
 private:
     void showStatus(const core::ShareStatus &status);

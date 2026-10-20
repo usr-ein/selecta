@@ -20,6 +20,7 @@
 #include "app/views/HistoryView.h"
 #include "app/views/InboxInspector.h"
 #include "app/views/InboxView.h"
+#include "app/views/MessagesView.h"
 #include "app/views/SearchInspector.h"
 #include "app/views/SearchView.h"
 #include "app/views/SharesView.h"
@@ -412,6 +413,7 @@ void MainWindow::createViews()
 
     m_activityView = new ActivityView(m_services.engine, m_services.database, m_stack);
     connect(m_activityView, &ActivityView::browseRequested, this, &MainWindow::browsePeer);
+    connect(m_activityView, &ActivityView::messageRequested, this, &MainWindow::messagePeer);
     addView(u"activity"_s, m_activityView, [this] { return m_activityView->summary(); });
     connect(m_activityView, &ActivityView::summaryChanged, this, [this] {
         if (m_currentId == u"activity"_s) {
@@ -426,11 +428,9 @@ void MainWindow::createViews()
         }
     });
     connect(sharesView, &SharesView::settingsRequested, this, [this] { navigateTo(u"settings"_s); });
-    addView(u"messages"_s,
-            emptyState(u"bubble.left.and.bubble.right"_s, u"mail-message"_s, tr("No conversations"),
-                       tr("Private messages with other Soulseek users appear here."),
-                       tr("Not built yet (milestone M8).")),
-            fixed(tr("No conversations")));
+    connect(sharesView, &SharesView::browseRequested, this, &MainWindow::browsePeer);
+    connect(sharesView, &SharesView::messageRequested, this, &MainWindow::messagePeer);
+    createMessagesView();
     addView(u"rooms"_s,
             emptyState(u"person.3"_s, u"system-users"_s, tr("No rooms joined"),
                        tr("Join a chat room to read and post."), tr("Not built yet (milestone M8).")),
@@ -470,6 +470,7 @@ void MainWindow::createSearchView()
             [this] { previewSearchResult(false, m_services.settings.previewSource()); });
     connect(m_searchView, &SearchView::selectionMoved, this, &MainWindow::selectionMoved);
     connect(m_searchView, &SearchView::browseRequested, this, &MainWindow::browsePeer);
+    connect(m_searchView, &SearchView::messageRequested, this, &MainWindow::messagePeer);
     connect(&m_services.engine, &core::EngineHost::searchOpened, this, [this](quint64 request, qint64 searchId) {
         if (request == m_searchRequest && searchId > 0) {
             if (const std::optional<core::ManualSearch> search = m_services.engine.search(searchId)) {
@@ -499,6 +500,7 @@ void MainWindow::createBrowseView()
             refreshTitle();
         }
     });
+    connect(m_browseView, &BrowseView::messageRequested, this, &MainWindow::messagePeer);
     connect(m_browseView, &BrowseView::previewRequested, this,
             [this] { previewBrowsedFile(false, m_services.settings.previewSource()); });
     connect(m_browseView, &BrowseView::selectionMoved, this, &MainWindow::selectionMoved);
@@ -523,6 +525,48 @@ void MainWindow::browsePeer(const QString &peer)
     m_navModel->setBrowse(peer, 0, true);
     m_services.engine.browse(peer);
     navigateTo(NavModel::browseItemId(peer));
+}
+
+void MainWindow::createMessagesView()
+{
+    // Private messages and the user lists (NET-7, NET-8), with a notification for a message nobody is reading.
+    m_messagesView = new MessagesView(m_services.engine, m_stack);
+    addView(u"messages"_s, m_messagesView, [this] { return m_messagesView->summary(); });
+    connect(m_messagesView, &MessagesView::summaryChanged, this, [this] {
+        if (m_currentId == u"messages"_s) {
+            refreshTitle();
+        }
+    });
+    connect(m_messagesView, &MessagesView::browseRequested, this, &MainWindow::browsePeer);
+    connect(&m_services.engine, &core::EngineHost::conversationsChanged, this, &MainWindow::refreshUnread);
+    connect(&m_services.engine, &core::EngineHost::messageAdded, this, [this](const core::ChatMessage &message) {
+        if (message.outgoing || m_messagesView->isReading(message.peer)) {
+            return;
+        }
+        constexpr qsizetype kShownLength = 200;
+        const QString text =
+            message.text.size() > kShownLength ? message.text.left(kShownLength - 1) + u'…' : message.text;
+        m_toasts->show(tr("Message from %1").arg(message.peer), text, Toasts::Kind::Info,
+                       {{tr("Reply"), [this, peer = message.peer] { messagePeer(peer); }}});
+        QApplication::alert(this); // the Dock icon bounces once while Selecta is in the background
+    });
+    refreshUnread();
+}
+
+void MainWindow::refreshUnread()
+{
+    const int unread = m_messagesView->unread();
+    m_navModel->setCount(u"messages"_s, unread);
+    qGuiApp->setBadgeNumber(unread); // the Dock icon (UI-6)
+}
+
+void MainWindow::messagePeer(const QString &peer)
+{
+    if (peer.isEmpty() || !m_messagesView) {
+        return;
+    }
+    navigateTo(u"messages"_s);
+    m_messagesView->openConversation(peer);
 }
 
 void MainWindow::previewBrowsedFile(bool toggleIfLoaded, core::PreviewSource source)

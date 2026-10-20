@@ -85,6 +85,7 @@ Q_SIGNALS:
 private:
     struct Peer;
     void answerSearch(const Peer &peer, const slsk::fromserver::SearchRequest &request);
+    void answerMessage(const QString &from, const slsk::toserver::MessageUser &message);
     void onPeerMessage(const Peer &peer, const QString &from, const slsk::PeerMessage &message);
     void connectLogging(const Peer &peer);
     void log(const QString &line);

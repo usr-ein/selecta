@@ -219,3 +219,26 @@ TEST_F(ShareServiceTest, PeersSeeOurUploadState)
     EXPECT_FALSE(service->sharedFileList(u"bob"_s).isEmpty());
     EXPECT_EQ(service->folderContents(u"bob"_s, RemotePath::fromText(u"Music\\Kel Varo"_s)).size(), 1);
 }
+
+TEST_F(ShareServiceTest, BannedUsersGetNothing)
+{
+    service->setBanned({u"bob"_s}); // NET-8
+    const auto bob = peer(u"bob"_s);
+    ASSERT_TRUE(
+        server.sendTo(u"selecta_test"_s, selecta::slsk::fromserver::SearchRequest{u"bob"_s, 81, u"amber engine"_s}));
+    const quint64 connection = connect(*bob);
+    const RemotePath path = RemotePath::fromText(u"Music\\Kel Varo\\Kel Varo - Amber Engine.flac"_s);
+    bob->send(connection, selecta::slsk::frame(peer::QueueUpload{path}));
+    ASSERT_TRUE(waitFor([&] { return bob->receivedOf<peer::UploadDenied>().size() == 1; }));
+    EXPECT_EQ(bob->receivedOf<peer::UploadDenied>().constFirst().reason, u"Banned"_s);
+    EXPECT_TRUE(bob->receivedOf<peer::FileSearchResponse>().isEmpty());
+    EXPECT_TRUE(bob->downloadedFiles.isEmpty());
+    const RemotePath folder = RemotePath::fromText(u"Music\\Kel Varo"_s);
+    EXPECT_TRUE(service->folderContents(u"bob"_s, folder).isEmpty());
+    EXPECT_NE(service->sharedFileList(u"bob"_s), service->sharedFileList(u"carol"_s));
+
+    // Unbanned, they see the shares again.
+    service->setBanned({});
+    EXPECT_EQ(service->folderContents(u"bob"_s, folder).size(), 1);
+    EXPECT_EQ(service->sharedFileList(u"bob"_s), service->sharedFileList(u"carol"_s));
+}

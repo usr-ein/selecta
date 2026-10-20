@@ -287,6 +287,14 @@ bool Engine::start()
     m_peerStatsTimer->setInterval(1s);
     connect(m_peerStatsTimer, &QTimer::timeout, this, &Engine::refreshPeerStats);
     connect(m_transfers.get(), &TransferService::changed, m_peerStatsTimer, qOverload<>(&QTimer::start));
+    // Private messages and the user lists (NET-7, NET-8); banned users get nothing of our shares.
+    m_social = std::make_unique<SocialService>(*m_db, *m_governor, *m_network, *m_activity, m_options.wallClock);
+    connect(m_social.get(), &SocialService::conversationsChanged, this, &Engine::conversationsChanged);
+    connect(m_social.get(), &SocialService::messageAdded, this, &Engine::messageAdded);
+    connect(m_social.get(), &SocialService::listsChanged, this, &Engine::userListsChanged);
+    connect(m_social.get(), &SocialService::bannedChanged, m_shares.get(), &ShareService::setBanned);
+    m_shares->setBanned(m_social->banned());
+
     // Browsing peers' shares (BRWS-1, BRWS-2).
     m_browse = std::make_unique<BrowseService>(*m_db, *m_governor, *m_network, m_options.wallClock);
     m_browse->setResolver([resolver = &m_meta->resolver()](const meta::ResolveQuery &query) {
@@ -364,6 +372,8 @@ bool Engine::start()
     refreshPeerStats();
     refreshSupersedeFlags();
     Q_EMIT wishlistChanged(m_wishlist->items());
+    Q_EMIT conversationsChanged(m_social->conversations());
+    Q_EMIT userListsChanged(m_social->listed());
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -381,6 +391,7 @@ void Engine::stop()
     m_annotateTimer = nullptr;
     delete m_peerStatsTimer;
     m_peerStatsTimer = nullptr;
+    m_social.reset();
     m_browse.reset();       // waits for an analysis in flight
     m_wishlist.reset();     // cancels its search in flight
     m_manualSearch.reset(); // before the search and transfer services it uses
@@ -485,6 +496,20 @@ void Engine::dismissSupersedeFlag(qint64 id)
     refreshSupersedeFlags();
     if (m_inbox) {
         m_inbox->refresh();
+    }
+}
+
+void Engine::sendMessage(const QString &peer, const QString &text)
+{
+    if (m_social) {
+        Q_EMIT messageSent(peer, m_social->send(peer, text));
+    }
+}
+
+void Engine::loadConversation(const QString &peer)
+{
+    if (m_social) {
+        Q_EMIT conversationLoaded(peer, m_social->messages(peer));
     }
 }
 

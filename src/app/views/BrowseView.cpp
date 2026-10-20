@@ -2,6 +2,7 @@
 #include "app/views/BrowseView.h"
 
 #include "app/Format.h"
+#include "app/PeerMenu.h"
 #include "app/models/SearchResultsModel.h"
 #include "core/EngineHost.h"
 
@@ -280,9 +281,10 @@ void BrowseView::contextMenu(QPoint position)
             QApplication::clipboard()->setText(paths.join(u'\n'));
         });
     }
-    if (!menu.isEmpty()) {
-        menu.exec(m_table->viewport()->mapToGlobal(position));
-    }
+    menu.addSeparator();
+    PeerMenu::addActions(menu, m_peer, m_engine,
+                         {.browse = {}, .message = [this](const QString &peer) { Q_EMIT messageRequested(peer); }});
+    menu.exec(m_table->viewport()->mapToGlobal(position));
 }
 
 bool BrowseView::eventFilter(QObject *watched, QEvent *event)

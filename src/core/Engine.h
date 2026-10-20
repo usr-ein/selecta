@@ -17,6 +17,7 @@
 #include "core/SearchCache.h"
 #include "core/SearchService.h"
 #include "core/ShareService.h"
+#include "core/SocialService.h"
 #include "core/TransferService.h"
 #include "core/WishlistService.h"
 #include "core/YouTubePreviews.h"
@@ -168,6 +169,10 @@ public:
     // DL-8: the singles flagged as also on an album (supersedeFlagsChanged()); a dismissed flag goes.
     void refreshSupersedeFlags();
     void dismissSupersedeFlag(qint64 id);
+    // NET-7: sends a message (messageSent() says if it went); a conversation's messages (conversationLoaded()).
+    void sendMessage(const QString &peer, const QString &text);
+    void loadConversation(const QString &peer);
+
     // CACHE-2: the caches' sizes (cachesChanged()), and emptying them.
     void refreshCaches();
     void clearSearchCache();
@@ -198,6 +203,7 @@ public:
     ConverterService &converter() { return *m_converter; }
     WishlistService &wishlist() { return *m_wishlist; }
     BrowseService &browse() { return *m_browse; }
+    SocialService &social() { return *m_social; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -244,6 +250,13 @@ Q_SIGNALS:
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
     void cachesChanged(const selecta::core::CacheStatus &status);
+    // Messages and user lists (SocialService's signals, forwarded).
+    void conversationsChanged(const QList<selecta::core::Conversation> &conversations);
+    void messageAdded(const selecta::core::ChatMessage &message);
+    void userListsChanged(const QList<selecta::core::ListedUser> &users);
+    // What send() said: empty when the message went.
+    void messageSent(const QString &peer, const QString &problem);
+    void conversationLoaded(const QString &peer, const QList<selecta::core::ChatMessage> &messages);
     // Browsing (BrowseService's signals, forwarded).
     void browseChanged(const selecta::core::Browse &browse);
     void browseClosed(const QString &peer);
@@ -303,6 +316,7 @@ private:
     std::unique_ptr<ConverterService> m_converter;
     std::unique_ptr<WishlistService> m_wishlist;
     std::unique_ptr<BrowseService> m_browse;
+    std::unique_ptr<SocialService> m_social;
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;             // the preview playing

@@ -35,6 +35,7 @@ class AppSettings;
 class ConverterView;
 class GetTracksView;
 class InboxView;
+class MessagesView;
 class Inspector;
 class NavModel;
 class PlayerBar;
@@ -96,6 +97,8 @@ public:
     PreviewController &preview() { return m_services.preview; }
     // Browses a peer's shares (BRWS-1): a sidebar item under Digging, and the Browse view.
     void browsePeer(const QString &peer);
+    // Opens the conversation with a peer (NET-7) in the Messages view.
+    void messagePeer(const QString &peer);
 
 Q_SIGNALS:
     void viewChanged(const QString &id);
@@ -138,6 +141,9 @@ private:
     void showSearchInSidebar(const core::ManualSearch &search);
     void createBrowseView();
     void previewBrowsedFile(bool toggleIfLoaded, core::PreviewSource source);
+    void createMessagesView();
+    // The unread count in the sidebar and on the Dock icon (UI-6).
+    void refreshUnread();
 
     AppServices m_services;
     Appearance m_appearance;
@@ -162,6 +168,7 @@ private:
     GetTracksView *m_getTracksView = nullptr;
     SearchView *m_searchView = nullptr;
     BrowseView *m_browseView = nullptr;
+    MessagesView *m_messagesView = nullptr;
     ConverterView *m_converterView = nullptr;
     quint64 m_searchRequest = 0; // the search the user asked for last, to show it when it opens
     QActionGroup *m_appearanceGroup = nullptr;

@@ -23,6 +23,7 @@ using slsk::testing::FakeServer;
 constexpr std::array kRefusals = {u"Too many files", u"Too many megabytes", u"Pending shutdown.", u"Banned"};
 constexpr qint64 kUncappedSpeed = qint64{10} * 1024 * 1024; // what a peer without a cap advertises
 constexpr qint64 kMinSearchDelayMs = 50;
+constexpr int kAnswerDelayMs = 1500; // before a peer answers a private message
 
 // The words of `text`, case-folded: runs of letters and digits.
 QStringList wordsOf(const QString &text)
@@ -134,6 +135,9 @@ DevNetwork::DevNetwork(NetworkOptions options, QObject *parent)
     connect(m_server.get(), &FakeServer::messageReceived, this,
             [this](const QString &user, const slsk::ToServerMessage &message) {
                 trace(u"server <- %1  %2"_s.arg(user, describe(message)));
+                if (const auto *written = std::get_if<slsk::toserver::MessageUser>(&message)) {
+                    answerMessage(user, *written);
+                }
             });
     connect(m_server.get(), &FakeServer::frameSent, this, [this](const QString &user, const QByteArray &frame) {
         trace(u"server -> %1  %2"_s.arg(user.isEmpty() ? u"(logging in)"_s : user, describeServerFrame(frame)));
@@ -210,6 +214,23 @@ QStringList DevNetwork::peerNames() const
         names.append(peer->library.username);
     }
     return names;
+}
+
+void DevNetwork::answerMessage(const QString &from, const slsk::toserver::MessageUser &message)
+{
+    // A peer of ours answers a private message after a moment, so Messages can be tried out (NET-7).
+    if (!peerNames().contains(message.username)) {
+        return;
+    }
+    constexpr qsizetype kQuoted = 60;
+    const QString quoted = message.message.size() > kQuoted ? message.message.left(kQuoted) + u'…' : message.message;
+    const QString answer =
+        u"Hi from %1 on the local test network (an automatic answer). I got: “%2”"_s.arg(message.username, quoted);
+    QTimer::singleShot(kAnswerDelayMs, this, [this, toClient = from, author = message.username, answer] {
+        if (m_server->sendPrivateMessage(author, toClient, answer)) {
+            log(u"%1 -> %2  private message answered"_s.arg(author, toClient));
+        }
+    });
 }
 
 void DevNetwork::answerSearch(const Peer &peer, const slsk::fromserver::SearchRequest &request)

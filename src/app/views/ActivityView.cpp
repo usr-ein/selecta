@@ -2,6 +2,7 @@
 #include "app/views/ActivityView.h"
 
 #include "app/MeterDelegate.h"
+#include "app/PeerMenu.h"
 #include "app/models/ActivityModel.h"
 #include "app/models/PeersModel.h"
 #include "app/models/TransfersModel.h"
@@ -243,9 +244,8 @@ QWidget *ActivityView::createPeersPage()
         if (!index.isValid()) {
             return;
         }
-        const QString peer = m_peers->peerAt(index.row()).peer;
         QMenu menu(this);
-        menu.addAction(tr("Browse %1's Files").arg(peer), this, [this, peer] { Q_EMIT browseRequested(peer); });
+        PeerMenu::addActions(menu, m_peers->peerAt(index.row()).peer, m_engine, peerHandlers());
         menu.exec(m_peersTable->viewport()->mapToGlobal(position));
     });
     connect(m_peersTable, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
@@ -357,6 +357,12 @@ void ActivityView::refreshPeers()
     m_peers->reset(m_engine.peerStats(), QDateTime::currentMSecsSinceEpoch());
 }
 
+PeerMenu::Handlers ActivityView::peerHandlers()
+{
+    return {.browse = [this](const QString &peer) { Q_EMIT browseRequested(peer); },
+            .message = [this](const QString &peer) { Q_EMIT messageRequested(peer); }};
+}
+
 void ActivityView::transfersMenu(QPoint position)
 {
     QList<qint64> ids;
@@ -397,8 +403,8 @@ void ActivityView::transfersMenu(QPoint position)
     retry->setEnabled(!failed.isEmpty());
     menu.addSeparator();
     if (const std::optional<core::Download> first = m_engine.download(ids.constFirst())) {
-        menu.addAction(tr("Browse %1's Files").arg(first->peer), this,
-                       [this, peer = first->peer] { Q_EMIT browseRequested(peer); });
+        PeerMenu::addActions(menu, first->peer, m_engine, peerHandlers());
+        menu.addSeparator();
     }
     menu.addAction(tr("Copy Path"), this, [paths] { QApplication::clipboard()->setText(paths.join(u'\n')); });
     menu.exec(m_transfersTable->viewport()->mapToGlobal(position));

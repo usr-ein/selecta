@@ -113,6 +113,19 @@ public:
     QList<PeerStats> peerStats() const { return m_peerStats; }
     void refreshPeerStats();
 
+    // --- private messages and the user lists (NET-7, NET-8) ---
+    void sendMessage(const QString &peer, const QString &text);
+    // Asks for a conversation's messages: conversationLoaded() brings them.
+    void loadConversation(const QString &peer);
+    void markConversationRead(const QString &peer);
+    void deleteConversation(const QString &peer);
+    // Puts a user on a list, or off every list (nullopt).
+    void setUserListed(const QString &username, std::optional<UserList> list);
+    QList<Conversation> conversations() const { return m_conversations; }
+    QList<ListedUser> userLists() const { return m_userLists; }
+    std::optional<UserList> listOf(const QString &username) const;
+    int unreadMessages() const;
+
     // --- browsing peers' shares (BRWS-1, BRWS-2) ---
     // Opens (or shows again) a peer's shares: browseChanged() follows.
     void browse(const QString &peer, bool refresh = false);
@@ -226,6 +239,11 @@ Q_SIGNALS:
     void cachesChanged(const selecta::core::CacheStatus &status);
     void wishlistChanged(const QList<selecta::core::WishlistItem> &items);
     void browseChanged(const selecta::core::Browse &browse);
+    void conversationsChanged(const QList<selecta::core::Conversation> &conversations);
+    void messageAdded(const selecta::core::ChatMessage &message);
+    void messageSent(const QString &peer, const QString &problem);
+    void conversationLoaded(const QString &peer, const QList<selecta::core::ChatMessage> &messages);
+    void userListsChanged(const QList<selecta::core::ListedUser> &users);
     void browseClosed(const QString &peer);
     void browseResultsReset(const QString &peer, const QList<selecta::core::SearchResult> &results);
     void wishlistFound(const selecta::core::WishlistItem &item, int newFiles);
@@ -253,7 +271,9 @@ private:
     QList<SupersedeFlag> m_supersedeFlags;
     CacheStatus m_cacheStatus;
     QList<WishlistItem> m_wishlist;
-    QMap<QString, Browse> m_browses;                     // by peer
+    QMap<QString, Browse> m_browses; // by peer
+    QList<Conversation> m_conversations;
+    QList<ListedUser> m_userLists;
     QHash<QString, QList<SearchResult>> m_browseResults; // by peer
     QList<ManualSearch> m_searches;                      // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;

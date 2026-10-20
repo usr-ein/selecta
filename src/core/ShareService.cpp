@@ -293,8 +293,9 @@ slsk::Client::UploadAvailability ShareService::availability() const
 
 void ShareService::searchReceived(const slsk::IncomingSearch &search)
 {
-    if (isPaused() || search.username.isEmpty() || search.username == m_network.username()) {
-        return; // Soulfind echoes our own searches back to us
+    if (isPaused() || search.username.isEmpty() || search.username == m_network.username() ||
+        m_banned.contains(search.username)) {
+        return; // Soulfind echoes our own searches back to us; banned users get nothing (NET-8)
     }
     const QList<slsk::FileEntry> results = m_index->search(search.query, m_governor.excludedPhrases());
     if (results.isEmpty() || !m_answers.tryTake()) {
@@ -307,7 +308,7 @@ void ShareService::searchReceived(const slsk::IncomingSearch &search)
 
 QByteArray ShareService::sharedFileList(const QString &username)
 {
-    if (isPaused()) {
+    if (isPaused() || m_banned.contains(username)) {
         static const share::ShareIndex nothing;
         return nothing.sharedFileList();
     }
@@ -318,8 +319,7 @@ QByteArray ShareService::sharedFileList(const QString &username)
 
 QList<slsk::SharedDirectory> ShareService::folderContents(const QString &username, const slsk::RemotePath &folder)
 {
-    Q_UNUSED(username)
-    return isPaused() ? QList<slsk::SharedDirectory>() : m_index->folderContents(folder);
+    return isPaused() || m_banned.contains(username) ? QList<slsk::SharedDirectory>() : m_index->folderContents(folder);
 }
 
 slsk::peer::UserInfoResponse ShareService::userInfo(const QString &username)
@@ -337,6 +337,11 @@ void ShareService::uploadRequested(const QString &user, const slsk::RemotePath &
 {
     Q_UNUSED(legacy) // slsk already answered a legacy request "Queued"
     slsk::TransferManager &transfers = m_network.transfers();
+    if (m_banned.contains(user)) {
+        transfers.denyUpload(user, path, u"Banned"_s); // the standard denial (NET-8)
+        m_activity.record(u"upload"_s, user, u"denied"_s, u"Banned"_s);
+        return;
+    }
     const std::optional<share::SharedFile> file = m_index->lookup(path);
     if (!file) {
         transfers.denyUpload(user, path, u"File not shared."_s);
@@ -354,6 +359,23 @@ void ShareService::uploadRequested(const QString &user, const slsk::RemotePath &
     startUploads();
     publish();
     publishUploads();
+}
+
+void ShareService::setBanned(const QSet<QString> &banned)
+{
+    const QSet<QString> added = banned - m_banned;
+    m_banned = banned;
+    // Newly banned users leave the queue at once (their transfers in flight finish: cutting them helps nobody).
+    for (const QString &user : added) {
+        const QList<slsk::RemotePath> paths = m_queue.removeUser(user);
+        for (const slsk::RemotePath &path : paths) {
+            m_network.transfers().denyUpload(user, path, u"Banned"_s);
+        }
+    }
+    if (!added.isEmpty()) {
+        publish();
+        publishUploads();
+    }
 }
 
 void ShareService::placeInQueueRequested(const QString &user, const slsk::RemotePath &path)
