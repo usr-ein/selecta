@@ -17,6 +17,10 @@ using selecta::meta::testing::spinUntil;
 
 namespace {
 
+// Generous ceilings for waits (they return as soon as their condition holds), and timeouts far above a shell's
+// start-up even on a loaded machine.
+constexpr int kCeilingMs = 30000;
+
 ToolProcess::Spec shell(const QString &script)
 {
     ToolProcess::Spec spec;
@@ -52,12 +56,12 @@ std::unique_ptr<Run> start(ToolProcess::Spec spec)
 
 bool finish(Run &run)
 {
-    return spinUntil([&] { return run.finished > 0; }, 10000);
+    return spinUntil([&] { return run.finished > 0; }, kCeilingMs);
 }
 
 bool processGone(pid_t pid)
 {
-    return spinUntil([pid] { return ::kill(pid, 0) != 0 && errno == ESRCH; }, 5000);
+    return spinUntil([pid] { return ::kill(pid, 0) != 0 && errno == ESRCH; }, kCeilingMs);
 }
 
 } // namespace
@@ -134,7 +138,7 @@ TEST(ToolProcess, KillAndTimeoutsEndTheWholeProcessGroup)
     ToolProcess::Spec spec = shell(u"sleep 30 & echo $!; wait"_s);
     spec.streamLines = true;
     const auto killed = start(spec);
-    ASSERT_TRUE(spinUntil([&] { return !killed->out.isEmpty(); }));
+    ASSERT_TRUE(spinUntil([&] { return !killed->out.isEmpty(); }, kCeilingMs));
     const auto child = static_cast<pid_t>(killed->out.first().toInt());
     ASSERT_GT(child, 0);
     killed->process->kill();
@@ -143,7 +147,7 @@ TEST(ToolProcess, KillAndTimeoutsEndTheWholeProcessGroup)
     EXPECT_TRUE(processGone(child));
 
     ToolProcess::Spec idle = spec;
-    idle.idleTimeout = 300ms;
+    idle.idleTimeout = 2s; // counted from the child's pid line, the last output
     const auto stalled = start(idle);
     ASSERT_TRUE(finish(*stalled));
     EXPECT_EQ(stalled->process->outcome().end, ToolOutcome::End::IdleTimeout);
@@ -151,8 +155,8 @@ TEST(ToolProcess, KillAndTimeoutsEndTheWholeProcessGroup)
     EXPECT_TRUE(processGone(static_cast<pid_t>(stalled->out.first().toInt())));
 
     ToolProcess::Spec busy = shell(u"while :; do echo x; sleep 0.05; done"_s);
-    busy.idleTimeout = 1s;
-    busy.totalTimeout = 400ms;
+    busy.idleTimeout = 2s;  // a line every 50 ms keeps resetting it…
+    busy.totalTimeout = 3s; // …so only the total timeout can end the run
     const auto endless = start(busy);
     ASSERT_TRUE(finish(*endless));
     EXPECT_EQ(endless->process->outcome().end, ToolOutcome::End::TotalTimeout);
@@ -163,7 +167,7 @@ TEST(ToolProcess, DestroyingARunningProcessKillsIt)
     ToolProcess::Spec spec = shell(u"sleep 30 & echo $!; wait"_s);
     spec.streamLines = true;
     auto run = start(std::move(spec));
-    ASSERT_TRUE(spinUntil([&] { return !run->out.isEmpty(); }));
+    ASSERT_TRUE(spinUntil([&] { return !run->out.isEmpty(); }, kCeilingMs));
     const auto child = static_cast<pid_t>(run->out.first().toInt());
     run->process.reset();
     EXPECT_TRUE(processGone(child));
