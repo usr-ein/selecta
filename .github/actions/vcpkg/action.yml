@@ -1,0 +1,58 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: vcpkg
+description: >-
+  vcpkg at vcpkg.json's builtin-baseline, with the binary cache (one zip archive per package ABI) for one triplet
+  restored from the Actions cache. Needs VCPKG_ROOT and VCPKG_DEFAULT_BINARY_CACHE in the environment.
+  A job that may build dependencies saves the cache afterwards with ../vcpkg-save.
+inputs:
+  triplet:
+    description: The vcpkg triplet whose binary cache to restore.
+    required: true
+outputs:
+  cache-key:
+    description: The key to save the binary cache under when this run builds new packages.
+    value: ${{ steps.key.outputs.key }}
+runs:
+  using: composite
+  steps:
+    - name: Fetch vcpkg at the manifest baseline
+      shell: bash
+      run: |
+        baseline="$(sed -n 's/.*"builtin-baseline": *"\([0-9a-f]*\)".*/\1/p' vcpkg.json)"
+        git init -q "$VCPKG_ROOT"
+        git -C "$VCPKG_ROOT" fetch -q --depth 1 https://github.com/microsoft/vcpkg.git "$baseline"
+        git -C "$VCPKG_ROOT" -c advice.detachedHead=false checkout -q FETCH_HEAD
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+        else
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+        fi
+        mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+    # Archives are named by package ABI, so an older cache is harmless: restore the newest, and save a new one only when
+    # this run built packages it didn't have (vcpkg-save).
+    - name: Binary cache key
+      id: key
+      shell: bash
+      env:
+        TRIPLET: ${{ inputs.triplet }}
+        RUN: ${{ github.run_id }}-${{ github.run_attempt }}
+      run: |
+        inputs="$(git ls-files -s vcpkg.json cmake/vcpkg-triplets cmake/vcpkg-ports | git hash-object --stdin)"
+        echo "prefix=vcpkg-$TRIPLET-${inputs:0:12}-" >> "$GITHUB_OUTPUT"
+        echo "key=vcpkg-$TRIPLET-${inputs:0:12}-$RUN" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the binary cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: |
+          ${{ steps.key.outputs.prefix }}
+          vcpkg-${{ inputs.triplet }}-
+
+    - name: List the restored archives
+      shell: bash
+      run: |
+        find "$VCPKG_DEFAULT_BINARY_CACHE" -name '*.zip' | sort > "$RUNNER_TEMP/vcpkg-restored.txt"
+        echo "$(wc -l < "$RUNNER_TEMP/vcpkg-restored.txt" | tr -d ' ') archives restored"

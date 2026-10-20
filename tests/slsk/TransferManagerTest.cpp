@@ -833,10 +833,10 @@ TEST_F(TransferManagerTest, ProgressIsCoalesced)
     ASSERT_TRUE(waitFor([&] { return bob->downloadedFiles.size() == 1; }, 10s));
     settle(300ms);
     ASSERT_GE(times.size(), 3);
-    // Apart from the final one, signals are at least an interval apart (with some scheduling slack).
-    for (qsizetype i = 1; i + 1 < times.size(); ++i) {
-        EXPECT_GE(times.at(i) - times.at(i - 1), 150) << "signal " << i;
-    }
+    // At most one signal per 200 ms interval, plus the final one, for an upload of many small writes. Counted rather
+    // than measured gap by gap: on a busy machine a late tick can come just before the next one, but QTimer drops the
+    // ticks it missed, so there are never more of them.
+    EXPECT_LE(times.size(), (times.constLast() / 200) + 2) << "the last one at " << times.constLast() << " ms";
     QList<quint64> done;
     for (const auto &signal : progress) {
         done.append(signal.at(1).toULongLong());

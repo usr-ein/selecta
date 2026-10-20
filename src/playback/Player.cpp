@@ -87,15 +87,15 @@ public:
     // Main thread.
     void open(std::shared_ptr<audio::ByteSource> source, int sampleRate, qint64 playId, qint64 generation)
     {
-        queue({Command::Open, std::move(source), sampleRate, playId, generation, 0});
+        queue({Command::Kind::Open, std::move(source), sampleRate, playId, generation, 0});
     }
-    void seek(qint64 frame, qint64 generation) { queue({Command::Seek, {}, 0, 0, generation, frame}); }
-    void close() { queue({Command::Close, {}, 0, 0, 0, 0}); }
+    void seek(qint64 frame, qint64 generation) { queue({Command::Kind::Seek, {}, 0, 0, generation, frame}); }
+    void close() { queue({Command::Kind::Close, {}, 0, 0, 0, 0}); }
 
 private:
     struct Command
     {
-        enum Kind { Open, Seek, Close } kind = Close;
+        enum class Kind { Open, Seek, Close } kind = Kind::Close;
         std::shared_ptr<audio::ByteSource> source;
         int sampleRate = 0;
         qint64 playId = 0;
@@ -167,7 +167,7 @@ private:
     void handle(Command &command)
     {
         switch (command.kind) {
-        case Command::Open:
+        case Command::Kind::Open:
             unload();
             m_source = std::move(command.source);
             m_sampleRate = command.sampleRate;
@@ -178,7 +178,7 @@ private:
             m_player.m_decodable.store(0, std::memory_order_relaxed);
             beginSegment(command.generation, 0);
             break;
-        case Command::Seek:
+        case Command::Kind::Seek:
             if (!m_source || m_failed || command.generation != m_player.m_generation.load(std::memory_order_acquire)) {
                 break; // a newer jump is queued behind this one
             }
@@ -186,7 +186,7 @@ private:
             m_pendingSeek = command.frame;
             beginSegment(command.generation, command.frame);
             break;
-        case Command::Close:
+        case Command::Kind::Close:
             unload();
             break;
         }

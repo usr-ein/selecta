@@ -7,7 +7,7 @@
       "hidden": true,
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
-      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON" }
+      "cacheVariables": { "CMAKE_EXPORT_COMPILE_COMMANDS": "ON", "CMAKE_CXX_SCAN_FOR_MODULES": "OFF" }
     },
     {
       "name": "vcpkg-static",
@@ -25,6 +25,34 @@
       }
     },
     {
+      "name": "vcpkg-static-linux",
+      "hidden": true,
+      "description": "Static dependencies from vcpkg on Linux (NFR-1, ADR-004). Needs VCPKG_ROOT.",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux-selecta",
+        "VCPKG_HOST_TRIPLET": "x64-linux-selecta",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-ports"
+      }
+    },
+    {
+      "name": "vcpkg-static-windows",
+      "hidden": true,
+      "description": "Static dependencies from vcpkg on Windows with MSVC (NFR-1, ADR-004). Needs VCPKG_ROOT and a Visual Studio developer environment.",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-selecta",
+        "VCPKG_HOST_TRIPLET": "x64-windows-selecta",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-ports",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
       "name": "dev",
       "displayName": "Debug",
       "description": "Debug with line tables only (-g1): file:line backtraces, builds about half the size.",
@@ -34,6 +62,27 @@
         "CMAKE_C_FLAGS_DEBUG": "-g1",
         "CMAKE_CXX_FLAGS_DEBUG": "-g1",
         "CMAKE_OBJCXX_FLAGS_DEBUG": "-g1"
+      }
+    },
+    {
+      "name": "linux",
+      "displayName": "Debug on Linux",
+      "description": "Debug with line tables only (-g1), as dev.",
+      "inherits": [ "base", "vcpkg-static-linux" ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_FLAGS_DEBUG": "-g1",
+        "CMAKE_CXX_FLAGS_DEBUG": "-g1"
+      }
+    },
+    {
+      "name": "windows",
+      "displayName": "RelWithDebInfo on Windows (MSVC)",
+      "description": "Debug information in the object files (/Z7): no shared PDB for parallel compiles to wait on.",
+      "inherits": [ "base", "vcpkg-static-windows" ],
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "Embedded"
       }
     },
     {
@@ -73,6 +122,8 @@
   ],
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
+    { "name": "linux", "configurePreset": "linux" },
+    { "name": "windows", "configurePreset": "windows" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "lint", "configurePreset": "lint" },
@@ -88,6 +139,8 @@
       "environment": { "QT_QPA_PLATFORM": "minimal" }
     },
     { "name": "dev", "inherits": "base", "configurePreset": "dev" },
+    { "name": "linux", "inherits": "base", "configurePreset": "linux" },
+    { "name": "windows", "inherits": "base", "configurePreset": "windows" },
     { "name": "asan", "inherits": "base", "configurePreset": "asan" },
     { "name": "tsan", "inherits": "base", "configurePreset": "tsan" },
     { "name": "ci", "inherits": "base", "configurePreset": "ci" }

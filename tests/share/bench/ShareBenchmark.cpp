@@ -45,6 +45,17 @@ namespace {
 constexpr int kTracksPerAlbum = 10;
 constexpr int kAlbumsPerArtist = 10;
 
+// st_mtimespec on macOS, st_mtim elsewhere: milliseconds, as the collection records them.
+qint64 modifiedMs(const struct stat &status)
+{
+#ifdef __APPLE__
+    const struct timespec &time = status.st_mtimespec;
+#else
+    const struct timespec &time = status.st_mtim;
+#endif
+    return (static_cast<qint64>(time.tv_sec) * 1000) + (static_cast<qint64>(time.tv_nsec) / 1'000'000);
+}
+
 int knob(const char *name, int fallback)
 {
     const char *value = std::getenv(name); // NOLINT(concurrency-mt-unsafe): read before any thread starts
@@ -145,9 +156,7 @@ BenchTree makeTree(int files, std::unique_ptr<QTemporaryDir> &throwaway)
             return {};
         }
         collection::ScannedFile scanned;
-        scanned.file = {path, static_cast<qint64>(status.st_size),
-                        (static_cast<qint64>(status.st_mtimespec.tv_sec) * 1000) +
-                            (status.st_mtimespec.tv_nsec / 1'000'000)};
+        scanned.file = {path, static_cast<qint64>(status.st_size), modifiedMs(status)};
         const bool flac = path.endsWith(u".flac"_s);
         scanned.quality = flac ? selecta::match::AudioQuality{selecta::match::Codec::Flac, 1000, {}, 44100, 16}
                                : selecta::match::AudioQuality{selecta::match::Codec::Mp3, 320, false, 44100, 0};
