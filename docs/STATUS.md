@@ -87,8 +87,9 @@ All four library contracts are delivered and merged.
    server address; put it in Settings → Soulseek (any user name and password), paste lines from
    `~/devnet-corpus/tracklist.txt` into Get tracks, Find Them, then Get. The MP3s land in the Inbox.
 
-1. Before the first push: rewrite the early commits' author to `usr-ein <usr-ein@pm.me>` (D16), create the GitHub
-   repository, push. Not done autonomously: it's outward-facing.
+1. First push: `git push -u origin main`. Ready since 2026-10-20: every commit carries `usr-ein <usr_ein@pm.me>` (D16),
+   and `origin` fetches from GitHub (`usr-ein/selecta`, public) and pushes to both Gitea and GitHub. Not done
+   autonomously: it's outward-facing.
 2. Before M9: ask the Nicotine+ maintainers to reserve a login version number for Selecta.
 3. Waveform calibration in rekordbox 7 and an import check of Selecta-tagged files (RESEARCH-SYNTHESIS §6). Two
    tag questions from the media agent (src/convert/DESIGN.md): which grouping frame rekordbox shows (GRP1 or TIT1),

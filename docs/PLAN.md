@@ -361,6 +361,6 @@ boundaries (maintainer's direction, 2026-10-19: one agent with the whole context
 ## 10. Immediate next steps
 
 1. Research synthesis ✅ (`docs/RESEARCH-SYNTHESIS.md`, draft v1) → ADR drafts (ADR-001…013, §4 of the synthesis) → ADR-011 once the metadata note lands.
-2. Before the first push: rewrite the early commits to the author identity `usr-ein <usr-ein@pm.me>` (PRD D16), then create the GitHub repository.
+2. Author identity ✅ (2026-10-20): every commit rewritten to `usr-ein <usr_ein@pm.me>` (PRD D16); the GitHub repository `usr-ein/selecta` exists and `origin` is set up. The first push is the maintainer's.
 3. M1 Foundations, built by the head implementer: CMake skeleton, CI, the Qt app shell following the mock, `devenv/`
    with the local test server. Then the `slsk/` contract, so its library agent can start while the shell grows.

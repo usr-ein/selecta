@@ -408,7 +408,7 @@ Answers given by the maintainer on 2026-10-19.
 | D13 | Preview skipped before its transfer finishes | **Cancel the transfer.** |
 | D14 | Licence | **GPL-3.0-or-later.** |
 | D15 | Hosting | **GitHub** (CI on GitHub Actions). |
-| D16 | Git author identity | **usr-ein <usr-ein@pm.me>.** |
+| D16 | Git author identity | **usr-ein <usr_ein@pm.me>.** The first version had `usr-ein@`, a typo; on 2026-10-20 every commit was rewritten to this address. |
 | D17 | First working slice after the mock | **Search + preview** (protocol on a local test server, strict filters, preview with waveform). |
 | D18 | Mock format | A **local HTML** mock in `mock/`, not a hosted page; it exists to decide what goes where in the Qt UI, in macOS visual language. |
 | D19 | Spotify integration | **Yes:** a matcher for quality metadata, playlist import, and quick previews from official 30-s clips. It needs no secret: PKCE sign-in with a client ID, or keyless sources (D21). Any credentials stay out of the repo and are fillable in Settings (META-1…8). |
