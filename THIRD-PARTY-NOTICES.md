@@ -18,6 +18,10 @@ behaviour, that is listed here.
 
 Nothing was read from or ported from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp.
 
+Port mapping (`src/core/PortMapClient.cpp`) is written from the specifications: RFC 6886 (NAT-PMP) and the UPnP Device
+Architecture and IGD WANIPConnection documents. No code is taken from miniupnpc; only libnatpmp's default-gateway lookup
+is linked.
+
 ## Libraries linked into Selecta
 
 Versions are pinned by `vcpkg.json` (its `builtin-baseline`) and `cmake/vcpkg-ports/`.
@@ -33,6 +37,7 @@ Versions are pinned by `vcpkg.json` (its `builtin-baseline`) and `cmake/vcpkg-po
 | OpenSSL | Apache-2.0 | TLS for the metadata services (through Qt) |
 | RapidFuzz (rapidfuzz-cpp) | MIT | fuzzy string matching |
 | zlib | Zlib | Soulseek message compression |
+| libnatpmp | BSD-3-Clause | finding the default gateway, for opening the listening port on the router (NET-3) |
 | libjpeg-turbo, libpng, FreeType, HarfBuzz, PCRE2, double-conversion, Brotli, bzip2, md4c, BLAKE2 (libb2) | BSD-style, FTL, MIT, Boost, IJG and similar permissive licences | dependencies of Qt |
 
 Tests also use GoogleTest and Google Benchmark (BSD-3-Clause); neither ships in the app.

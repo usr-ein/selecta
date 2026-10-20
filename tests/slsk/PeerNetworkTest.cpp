@@ -566,6 +566,32 @@ TEST_F(PeerNetworkTest, UnacceptableUsernameIsRefused)
     }
 }
 
+// NET-3's reachability check: a peer that opened a connection to our listening port.
+TEST_F(PeerNetworkTest, PeersThatReachOurPortAreReported)
+{
+    const QSignalSpy reached(&peers, &PeerNetwork::reachedByPeer);
+    const auto alice = makePeer(u"alice"_s);
+    alice->connectTo(u"selecta"_s, QHostAddress::LocalHost, peers.listenPort(), ConnectionType::Peer);
+    ASSERT_TRUE(waitFor([&] { return reached.size() == 1; }));
+    EXPECT_EQ(reached.at(0).at(0).toString(), u"alice"_s);
+
+    // A peer answering our ConnectToPeer reached our port too.
+    const auto bob = makePeer(u"bob"_s, false);
+    ASSERT_TRUE(peers.requestUserInfo(u"bob"_s, permit(Operation::UserInfo)));
+    ASSERT_TRUE(waitFor([&] { return reached.size() == 2; }));
+    EXPECT_EQ(reached.at(1).at(0).toString(), u"bob"_s);
+
+    // Our own outbound connections, and sockets that never identify themselves properly, don't count.
+    ASSERT_TRUE(peers.requestUserInfo(u"alice"_s, permit(Operation::UserInfo)));
+    QTcpSocket raw;
+    raw.connectToHost(QHostAddress::LocalHost, peers.listenPort());
+    ASSERT_TRUE(waitFor([&] { return raw.state() == QAbstractSocket::ConnectedState; }));
+    raw.write(frame(peerinit::PierceFireWall{123456}));
+    ASSERT_TRUE(waitFor([&] { return raw.state() == QAbstractSocket::UnconnectedState; }));
+    settle();
+    EXPECT_EQ(reached.size(), 2);
+}
+
 TEST_F(PeerNetworkTest, SilentInboundSocketIsDropped)
 {
     QTcpSocket raw;

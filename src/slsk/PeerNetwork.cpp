@@ -968,8 +968,10 @@ void PeerNetworkPrivate::handleInit(quint64 id, const Frame &init)
         if (const auto it = attemptByToken.constFind(pierce->token); it != attemptByToken.constEnd()) {
             const quint64 attemptId = it.value();
             const Attempt &a = attempts.at(attemptId);
+            const QString username = a.username;
             becomeReady(c, a.type, a.username);
             completeAttempt(attemptId, id);
+            Q_EMIT q->reachedByPeer(username);
             return;
         }
         if (const auto late = completedTokens.constFind(pierce->token); late != completedTokens.constEnd()) {
@@ -978,7 +980,9 @@ void PeerNetworkPrivate::handleInit(quint64 id, const Frame &init)
                 close(id, PeerError::Cancelled);
                 return;
             }
+            const QString username = late->key.username;
             becomeReady(c, late->key.type, late->key.username); // kept for reading; not the one we send on
+            Q_EMIT q->reachedByPeer(username);
             return;
         }
         qCDebug(lcSlskPeer) << "PierceFireWall with an unknown token" << pierce->token;
@@ -1014,6 +1018,7 @@ void PeerNetworkPrivate::handleInit(quint64 id, const Frame &init)
         }
         break;
     }
+    Q_EMIT q->reachedByPeer(key.username);
 }
 
 void PeerNetworkPrivate::processFrames(quint64 id)

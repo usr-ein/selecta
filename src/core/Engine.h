@@ -31,6 +31,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 
 class QTimer;
 
@@ -81,6 +82,8 @@ struct EngineOptions
     bool watchCollection = true; // follow changes in the collection folders (tests turn it off)
     std::optional<int> session;  // this run's session number, recorded with downloads
     QString ytDlpPath;           // Settings → Previews; empty: the usual places
+    // Opening the listening port on the router (NET-3). Empty: the router is never touched (tests, isolated runs).
+    std::optional<PortMapper::Options> portMapping;
 };
 
 // Where a preview's audio comes from (PRD PREV-12, D26).

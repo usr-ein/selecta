@@ -46,6 +46,7 @@ const QString kServerHost = u"soulseek/host"_s;
 const QString kServerPort = u"soulseek/port"_s;
 const QString kUsername = u"soulseek/username"_s;
 const QString kListenPort = u"soulseek/listenPort"_s;
+const QString kPortMapping = u"soulseek/portMapping"_s;
 const QString kConnectAtLaunch = u"soulseek/connectAtLaunch"_s;
 const QString kLiveAllowed = u"soulseek/liveAllowed"_s;
 const QString kSearchPreset = u"search/presetId"_s;
@@ -340,6 +341,7 @@ core::NetworkConfig AppSettings::networkConfig() const
     config.username = m_settings.value(kUsername).toString().trimmed();
     config.listenPort = portFrom(m_settings.value(kListenPort), config.listenPort);
     config.connectAtLaunch = m_settings.value(kConnectAtLaunch, config.connectAtLaunch).toBool();
+    config.portMapping = m_settings.value(kPortMapping, config.portMapping).toBool();
     config.liveAllowedByUser = m_settings.value(kLiveAllowed, false).toBool();
     return config;
 }
@@ -351,6 +353,7 @@ void AppSettings::setNetworkConfig(const core::NetworkConfig &config)
     m_settings.setValue(kUsername, config.username);
     m_settings.setValue(kListenPort, config.listenPort);
     m_settings.setValue(kConnectAtLaunch, config.connectAtLaunch);
+    m_settings.setValue(kPortMapping, config.portMapping);
     m_settings.setValue(kLiveAllowed, config.liveAllowedByUser);
 }
 

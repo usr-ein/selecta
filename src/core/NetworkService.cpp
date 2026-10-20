@@ -25,6 +25,8 @@ using Event = governor::ReconnectPolicy::Event;
 using EndReason = slsk::ServerSession::EndReason;
 using State = NetworkStatus::State;
 
+constexpr qsizetype kReachedByMax = 10'000; // peers counted for the reachability line; more prove nothing new
+
 // How a session ended, as the reconnect policy sees it.
 std::optional<Event> eventFor(EndReason reason)
 {
@@ -139,6 +141,14 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
     connect(m_server.get(), &slsk::ServerSession::serverNotice, this, [this](const slsk::ServerNotice &notice) {
         m_activity.record(u"server"_s, QString(), u"notice"_s, notice.text);
     });
+    connect(m_peers.get(), &slsk::PeerNetwork::reachedByPeer, this, [this](const QString &username) {
+        if (m_reachedBy.size() >= kReachedByMax || m_reachedBy.contains(username)) {
+            return;
+        }
+        m_reachedBy.insert(username);
+        m_status.peersReachedUs = static_cast<int>(m_reachedBy.size());
+        Q_EMIT statusChanged(m_status);
+    });
     connect(m_peers.get(), &slsk::PeerNetwork::searchResponseReceived, this,
             [this](const QString &username, const slsk::peer::FileSearchResponse &response) {
                 if (m_openSearches.contains(response.token)) {
@@ -167,6 +177,10 @@ bool NetworkService::answerSearch(const slsk::IncomingSearch &search, const QLis
 NetworkService::~NetworkService()
 {
     m_retryTimer->stop();
+    if (m_portMapper) {
+        m_portMapper->disconnect(this);
+        m_portMapper.reset(); // closes the port on the router again (bounded wait)
+    }
     m_distributed.reset(); // uses the session and the peers
     m_transfers.reset();   // closes open download devices through their storage; emits nothing
     m_peers->closeAll();
@@ -193,9 +207,44 @@ void NetworkService::setState(State state, const QString &detail)
     Q_EMIT statusChanged(m_status);
 }
 
+void NetworkService::enablePortMapping(PortMapper::Options options)
+{
+    m_portMapper = std::make_unique<PortMapper>(std::move(options));
+    connect(m_portMapper.get(), &PortMapper::statusChanged, this, [this](const PortMappingStatus &status) {
+        const quint16 before = advertisedPort();
+        m_status.portMapping = status;
+        if (advertisedPort() != before && m_status.listening) {
+            m_server->setListenPort(advertisedPort()); // sent at once if logged in; the next login sends it anyway
+        }
+        Q_EMIT statusChanged(m_status);
+    });
+    m_status.portMapping = m_portMapper->status();
+}
+
+void NetworkService::updatePortMapping()
+{
+    if (m_portMapper) {
+        m_portMapper->configure(m_config.portMapping, m_status.listening ? m_status.listenPort : 0);
+    }
+}
+
+quint16 NetworkService::advertisedPort() const
+{
+    if (!m_status.listening) {
+        return 0;
+    }
+    const PortMappingStatus &mapping = m_status.portMapping;
+    if (mapping.state == PortMappingStatus::State::Mapped && mapping.internalPort == m_status.listenPort &&
+        mapping.externalPort != 0) {
+        return mapping.externalPort;
+    }
+    return m_status.listenPort;
+}
+
 void NetworkService::start(const NetworkConfig &config)
 {
     m_config = config;
+    updatePortMapping();
     m_wanted = config.connectAtLaunch;
     if (m_config.username.isEmpty()) {
         setState(State::NotConfigured, tr("Set your Soulseek account in Settings."));
@@ -234,6 +283,7 @@ void NetworkService::setConfig(const NetworkConfig &config)
         m_peers->stopListening();
         m_status.listening = false;
     }
+    updatePortMapping();
     if (userChanged) {
         m_password.clear();
         start(config); // reads the new user's password
@@ -362,7 +412,8 @@ void NetworkService::connectTo(const QHostAddress &address)
         return;
     }
     ensureListening();
-    m_server->setListenPort(m_status.listening ? m_status.listenPort : 0);
+    updatePortMapping();
+    m_server->setListenPort(advertisedPort());
     m_server->setSharedCounts(0, 0); // sharing arrives with M7
     if (!m_server->connectToServer(address, m_config.port, std::move(*decision.permit)) ||
         !m_server->login(m_config.username, m_password)) {

@@ -512,6 +512,20 @@ QWidget *SettingsView::createNetworkBox(QWidget *parent)
                                 "transfers; without it, connections go through the server."));
     form->addRow(tr("Listening port:"), m_listenPort);
 
+    m_portMapping = new QCheckBox(tr("Open the port on the router automatically (UPnP/NAT-PMP)"), box);
+    m_portMapping->setObjectName(u"settings.network.portMapping"_s);
+    m_portMapping->setChecked(m_network.portMapping);
+    form->addRow(QString(), m_portMapping);
+    m_portMappingState = new QLabel(box);
+    m_portMappingState->setObjectName(u"settings.network.portMappingState"_s);
+    m_portMappingState->setWordWrap(true);
+    m_portMappingState->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    form->addRow(QString(), m_portMappingState);
+    m_reachability = new QLabel(box);
+    m_reachability->setObjectName(u"settings.network.reachability"_s);
+    m_reachability->setWordWrap(true);
+    form->addRow(QString(), m_reachability);
+
     m_connectAtLaunch = new QCheckBox(tr("Connect when Selecta opens"), box);
     m_connectAtLaunch->setObjectName(u"settings.network.connectAtLaunch"_s);
     m_connectAtLaunch->setChecked(m_network.connectAtLaunch);
@@ -549,6 +563,46 @@ QWidget *SettingsView::createNetworkBox(QWidget *parent)
     return box;
 }
 
+QString SettingsView::portMappingText(const core::PortMappingStatus &mapping, quint16 listenPort)
+{
+    using State = core::PortMappingStatus::State;
+    const quint16 port = mapping.internalPort != 0 ? mapping.internalPort : listenPort;
+    QString forward = tr("Forward TCP port %1 to this Mac on your router.").arg(port);
+    switch (mapping.state) {
+    case State::Unavailable:
+        return tr("Isolated runs leave the router alone (start with --port-mapping to use it). %1").arg(forward);
+    case State::Off:
+        return forward;
+    case State::Idle:
+        return tr("Opens the port when Selecta connects.");
+    case State::Searching:
+        return tr("Looking for the router…");
+    case State::Mapped: {
+        const QString protocol = mapping.protocol == core::portmap::Protocol::NatPmp ? u"NAT-PMP"_s : u"UPnP"_s;
+        QString text = mapping.externalAddress.isEmpty()
+                           ? tr("Port %1 is open on the router as port %2 (%3).")
+                                 .arg(mapping.internalPort)
+                                 .arg(mapping.externalPort)
+                                 .arg(protocol)
+                           : tr("Port %1 is open on the router (%2): peers reach you at %3:%4.")
+                                 .arg(mapping.internalPort)
+                                 .arg(protocol, mapping.externalAddress)
+                                 .arg(mapping.externalPort);
+        if (mapping.behindAnotherNat) {
+            text += u' ' + tr("But the router's own address is private: another router or your provider's network "
+                              "is in front of it, so peers may still not reach you.");
+        }
+        return text;
+    }
+    case State::NoRouter:
+        return (mapping.givenUp ? tr("No router answered.") : tr("No router answered yet; trying again shortly.")) +
+               u' ' + forward;
+    case State::Refused:
+        return (mapping.reason.isEmpty() ? tr("The router refused.") : mapping.reason) + u' ' + forward;
+    }
+    return forward;
+}
+
 void SettingsView::submitNetwork()
 {
     core::NetworkConfig config = m_network;
@@ -557,6 +611,7 @@ void SettingsView::submitNetwork()
     config.username = m_networkUser->text().trimmed();
     config.listenPort = static_cast<quint16>(m_listenPort->value());
     config.connectAtLaunch = m_connectAtLaunch->isChecked();
+    config.portMapping = m_portMapping->isChecked();
     if (config.host.isEmpty()) {
         config.host = m_network.host;
     }
@@ -602,6 +657,14 @@ void SettingsView::setNetworkStatus(const core::NetworkStatus &status)
         break;
     }
     m_networkState->setText(text);
+    m_portMappingState->setText(portMappingText(status.portMapping, m_network.listenPort));
+    QString reachable = tr("Reachable: not confirmed yet.");
+    if (status.peersReachedUs == 1) {
+        reachable = tr("Reachable: 1 peer connected directly.");
+    } else if (status.peersReachedUs > 1) {
+        reachable = tr("Reachable: %1 peers connected directly.").arg(status.peersReachedUs);
+    }
+    m_reachability->setText(reachable);
     const bool active =
         status.state == State::Online || status.state == State::Connecting || status.state == State::Reconnecting;
     m_networkConnect->setText(active ? tr("Disconnect") : tr("Connect"));

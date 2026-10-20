@@ -50,6 +50,7 @@ struct Options
 {
     bool isolated = false;        // --data-dir: nothing outside that folder, not even the Keychain
     bool metadataNetwork = false; // --metadata-network: let an isolated run reach Spotify, Deezer and the rest
+    bool portMapping = false;     // may open the listening port on the router: a normal run, or --port-mapping
     bool headless = false;
     bool debugServer = false;
     QString debugSocket;
@@ -75,14 +76,17 @@ Options parseOptions(const QApplication &app)
     const QCommandLineOption metadataNetwork(
         u"metadata-network"_s,
         u"With --data-dir, still look releases up on Spotify, Deezer and MusicBrainz (isolated runs don't)."_s);
-    parser.addOptions({dataDir, headless, debugServer, debugSocket, metadataNetwork});
+    const QCommandLineOption portMapping(
+        u"port-mapping"_s,
+        u"With --data-dir, still open the listening port on the router (UPnP, NAT-PMP; isolated runs don't)."_s);
+    parser.addOptions({dataDir, headless, debugServer, debugSocket, metadataNetwork, portMapping});
     parser.process(app);
 
     if (parser.isSet(dataDir)) {
         paths::setRootOverride(parser.value(dataDir));
     }
-    return {parser.isSet(dataDir), parser.isSet(metadataNetwork), parser.isSet(headless), parser.isSet(debugServer),
-            parser.value(debugSocket)};
+    return {parser.isSet(dataDir),  parser.isSet(metadataNetwork), !parser.isSet(dataDir) || parser.isSet(portMapping),
+            parser.isSet(headless), parser.isSet(debugServer),     parser.value(debugSocket)};
 }
 
 // Tells the user why Selecta can't start: a dialog normally, stderr when headless.
@@ -232,6 +236,9 @@ int runSelecta(int argc, char **argv)
     } else if (!options.metadataNetwork) {
         engineOptions.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // nothing leaves the machine
     } // isolated runs keep secrets in memory only
+    if (options.portMapping) {
+        engineOptions.portMapping = selecta::core::PortMapper::Options{}; // NET-3; isolated runs leave the router alone
+    }
     if (options.isolated) {
         // Isolated runs keep everything in their folder, the Trash included.
         const QString trashDir = dataDir + u"/Trash"_s;
