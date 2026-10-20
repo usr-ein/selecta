@@ -3,6 +3,9 @@
 
 #include "base/Paths.h"
 
+#include <algorithm>
+#include <cmath>
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
@@ -15,6 +18,7 @@ const QString kSidebar = u"window/sidebarShown"_s;
 const QString kInspector = u"window/inspectorShown"_s;
 const QString kLastView = u"window/lastView"_s;
 const QString kNetworkPaused = u"network/paused"_s;
+const QString kPreviewVolume = u"player/volume"_s;
 const QString kInboxDir = u"library/inbox"_s;
 const QString kCollectionRoots = u"library/collections"_s;
 const QString kSinglesFolder = u"library/singlesFolder"_s;
@@ -122,6 +126,18 @@ bool AppSettings::networkPaused() const
 void AppSettings::setNetworkPaused(bool paused)
 {
     m_settings.setValue(kNetworkPaused, paused);
+}
+
+double AppSettings::previewVolume() const
+{
+    bool ok = false;
+    const double volume = m_settings.value(kPreviewVolume, 0.8).toDouble(&ok);
+    return ok && std::isfinite(volume) ? std::clamp(volume, 0.0, 1.0) : 0.8;
+}
+
+void AppSettings::setPreviewVolume(double volume)
+{
+    m_settings.setValue(kPreviewVolume, std::clamp(volume, 0.0, 1.0));
 }
 
 core::LibraryConfig AppSettings::libraryConfig() const

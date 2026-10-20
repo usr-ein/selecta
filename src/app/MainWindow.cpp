@@ -6,6 +6,7 @@
 #include "app/Inspector.h"
 #include "app/NavModel.h"
 #include "app/PlayerBar.h"
+#include "app/Preview.h"
 #include "app/Sidebar.h"
 #include "app/views/ActivityView.h"
 #include "app/views/EmptyStateView.h"
@@ -30,6 +31,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QScreen>
+#include <QShortcut>
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -112,7 +114,10 @@ void MainWindow::createCentralArea()
     m_stack->setAutoFillBackground(true); // content panes use the content colour, the sidebar the window colour
     m_stack->setBackgroundRole(QPalette::Base);
     m_inspector = new Inspector(this);
-    m_player = new PlayerBar(this);
+    m_player = new PlayerBar(m_services.preview, this);
+    m_player->setVolume(m_services.settings.previewVolume());
+    connect(m_player, &PlayerBar::volumeChanged, this,
+            [this](double volume) { m_services.settings.setPreviewVolume(volume); });
 
     m_contentSplitter = new QSplitter(Qt::Horizontal, this);
     m_contentSplitter->setObjectName(u"contentSplitter"_s);
@@ -186,6 +191,7 @@ void MainWindow::createViews()
             refreshTitle();
         }
     });
+    connect(m_inboxView, &InboxView::previewRequested, this, [this] { previewInboxSelection(false); });
     addView(u"wishlist"_s,
             emptyState(u"star"_s, u"starred"_s, tr("No saved searches"),
                        tr("Searches saved here run again on their own and tell you when something new turns up."),
@@ -323,6 +329,40 @@ void MainWindow::createActions()
         connect(action, &QAction::triggered, this, [this, value] { setAppearance(value); });
     }
 
+    // Space plays and pauses wherever focus is, except in text fields, which keep it for typing (they claim it
+    // through ShortcutOverride). It isn't a menu shortcut: a menu's key equivalent would take it from them.
+    auto *space = new QShortcut(QKeySequence(Qt::Key_Space), this);
+    space->setObjectName(u"shortcut.playPause"_s);
+    space->setContext(Qt::WindowShortcut);
+    connect(space, &QShortcut::activated, this, &MainWindow::playOrPause);
+
+    playback::Player &player = m_services.preview.player();
+    const std::array skips{
+        std::tuple{u"back5"_s, tr("Back 5 Seconds"), -5.0, QKeySequence(Qt::ALT | Qt::Key_Left)},
+        std::tuple{u"forward5"_s, tr("Forward 5 Seconds"), 5.0, QKeySequence(Qt::ALT | Qt::Key_Right)},
+        std::tuple{u"back30"_s, tr("Back 30 Seconds"), -30.0, QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_Left)},
+        std::tuple{u"forward30"_s, tr("Forward 30 Seconds"), 30.0, QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_Right)}};
+    auto *playPause = new QAction(tr("Play or Pause"), this);
+    playPause->setObjectName(u"action.playPause"_s);
+    connect(playPause, &QAction::triggered, this, &MainWindow::playOrPause);
+    m_playbackActions.append(playPause);
+    for (const auto &[name, text, seconds, keys] : skips) {
+        auto *action = new QAction(text, this);
+        action->setObjectName(u"action."_s + name);
+        action->setShortcut(keys);
+        connect(action, &QAction::triggered, &player, [&player, step = seconds] {
+            if (player.isActive()) {
+                player.skip(step);
+            }
+        });
+        m_playbackActions.append(action);
+    }
+    auto *stop = new QAction(tr("Stop"), this);
+    stop->setObjectName(u"action.stopPreview"_s);
+    stop->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Period));
+    connect(stop, &QAction::triggered, &m_services.preview, &PreviewController::stop);
+    m_playbackActions.append(stop);
+
     const std::array go{std::pair{u"get"_s, Qt::Key_1},        std::pair{u"inbox"_s, Qt::Key_2},
                         std::pair{u"collection"_s, Qt::Key_3}, std::pair{u"history"_s, Qt::Key_4},
                         std::pair{u"activity"_s, Qt::Key_5},   std::pair{u"messages"_s, Qt::Key_6}};
@@ -389,6 +429,14 @@ void MainWindow::createMenus()
 
     QMenu *goMenu = menuBar()->addMenu(tr("&Go"));
     goMenu->addActions(m_goActions);
+
+    QMenu *playback = menuBar()->addMenu(tr("&Playback"));
+    for (QAction *action : std::as_const(m_playbackActions)) {
+        playback->addAction(action);
+        if (action->objectName() == u"action.playPause"_s || action->objectName() == u"action.forward30"_s) {
+            playback->addSeparator();
+        }
+    }
 
     QMenu *network = menuBar()->addMenu(tr("&Network"));
     network->addAction(m_togglePause);
@@ -490,6 +538,36 @@ void MainWindow::saveState()
     if (!settings.sync()) {
         qCWarning(lcUi) << "couldn't write settings to" << settings.fileName();
     }
+}
+
+void MainWindow::playOrPause()
+{
+    if (m_currentId == u"inbox"_s && m_inboxView->previewTarget()) {
+        previewInboxSelection(true);
+        return;
+    }
+    m_services.preview.toggle();
+}
+
+void MainWindow::previewInboxSelection(bool toggleIfLoaded)
+{
+    const std::optional<InboxView::PreviewTarget> target = m_inboxView->previewTarget();
+    if (!target) {
+        return;
+    }
+    const LocalPreview local = previewForPath(target->path, target->track);
+    if (!local.request) {
+        m_player->showMessage(local.error);
+        return;
+    }
+    PreviewController &preview = m_services.preview;
+    const playback::Player::State state = preview.player().state();
+    const bool loaded = preview.player().isActive() || state == playback::Player::State::Ended;
+    if (toggleIfLoaded && loaded && local.request->identity == preview.identity()) {
+        preview.toggle();
+        return;
+    }
+    preview.preview(*local.request);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

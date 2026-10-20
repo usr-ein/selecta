@@ -9,9 +9,11 @@ qt_add_library(selecta_app STATIC
     NavDelegate.h NavDelegate.cpp
     NavModel.h NavModel.cpp
     PlayerBar.h PlayerBar.cpp
+    Preview.h Preview.cpp
     Sidebar.h Sidebar.cpp
     SourceListView.h SourceListView.cpp
     TwoLineDelegate.h TwoLineDelegate.cpp
+    WaveformView.h WaveformView.cpp
     models/ActivityModel.h models/ActivityModel.cpp
     models/GetTracksModel.h models/GetTracksModel.cpp
     views/ActivityView.h views/ActivityView.cpp
@@ -28,7 +30,7 @@ if(SELECTA_DEVTOOLS)
     target_compile_definitions(selecta_app PUBLIC SELECTA_DEVTOOLS=1)
 endif()
 target_link_libraries(selecta_app PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_core
-    Qt6::Widgets Qt6::Network)
+    selecta_playback Qt6::Widgets Qt6::Network)
 selecta_set_warnings(selecta_app)
 
 # The application bundle.

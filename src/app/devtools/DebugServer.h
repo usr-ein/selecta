@@ -16,7 +16,7 @@ class MainWindow;
 namespace devtools {
 
 // A local control socket for inspecting and driving a running Selecta: state, widget tree, screenshots, navigation,
-// clicks, typing and the log (protocol: base/DebugProtocol.h; client: `selecta-cli app …`).
+// clicks, typing, row selection, the player and the log (protocol: base/DebugProtocol.h; client: `selecta-cli app …`).
 //
 // Built only with SELECTA_DEVTOOLS and started only with --debug-server. The socket is reachable by the same user
 // only. Everything runs on the main thread, where the widgets live.
@@ -48,6 +48,8 @@ private:
     QJsonValue type(const QJsonObject &args, QString *error);
     QJsonValue appearance(const QJsonObject &args, QString *error);
     QJsonValue log(const QJsonObject &args, QString *error);
+    QJsonValue select(const QJsonObject &args, QString *error);
+    QJsonValue player(const QJsonObject &args, QString *error);
 
     MainWindow &m_window;
     QString m_logDir;

@@ -6,6 +6,9 @@
 
 #include <QStringList>
 
+#include <algorithm>
+#include <cmath>
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::app::format {
@@ -23,6 +26,19 @@ QString length(std::optional<qint64> milliseconds)
         return u"%1:%2:%3"_s.arg(hours).arg(minutes, 2, 10, u'0').arg(seconds, 2, 10, u'0');
     }
     return u"%1:%2"_s.arg(minutes).arg(seconds, 2, 10, u'0');
+}
+
+QString clock(double seconds, int decimals)
+{
+    const double clamped = std::isfinite(seconds) ? std::max(0.0, seconds) : 0.0;
+    const double scale = decimals > 0 ? std::pow(10.0, decimals) : 1.0;
+    const auto units = static_cast<qint64>(std::floor(clamped * scale)); // floor: a playhead never reads ahead
+    const auto whole = static_cast<qint64>(static_cast<double>(units) / scale);
+    QString text = u"%1:%2"_s.arg(whole / 60).arg(whole % 60, 2, 10, u'0');
+    if (decimals > 0) {
+        text += u'.' + u"%1"_s.arg(units % static_cast<qint64>(scale), decimals, 10, u'0');
+    }
+    return text;
 }
 
 QString quality(const core::FileChoice &file)

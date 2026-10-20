@@ -33,7 +33,8 @@ int run(const QStringList &arguments, const selecta::cli::Context &context)
     if (arguments.isEmpty()) {
         printLine(stderr,
                   u"usage: selecta-cli app <command> [key=value …]\n"
-                  u"commands: ping, state, views, tree, screenshot, navigate, click, type, appearance, log, quit"_s);
+                  u"commands: ping, state, views, tree, screenshot, navigate, click, type, appearance, log, select, "
+                  u"play-pause, player, quit"_s);
         return selecta::cli::kExitUsage;
     }
     QJsonObject args;

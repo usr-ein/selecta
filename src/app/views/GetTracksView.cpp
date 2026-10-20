@@ -61,19 +61,30 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
                                   "release, then the best file on Soulseek. You preview, then each track lands in "
                                   "your Inbox as an MP3 320 with proper tags and its cover."),
                                empty);
-    explain->setAlignment(Qt::AlignCenter);
+    explain->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     explain->setWordWrap(true);
     explain->setForegroundRole(QPalette::PlaceholderText);
-    explain->setMaximumWidth(460);
     auto *emptyAdd = new QPushButton(tr("Add Tracks…"), empty);
     emptyAdd->setObjectName(u"get.emptyAdd"_s);
     emptyAdd->setDefault(true);
     connect(emptyAdd, &QPushButton::clicked, this, &GetTracksView::addTracks);
-    emptyLayout->addWidget(symbol);
-    emptyLayout->addWidget(heading);
-    emptyLayout->addWidget(explain, 0, Qt::AlignHCenter);
-    emptyLayout->addSpacing(8);
-    emptyLayout->addWidget(emptyAdd, 0, Qt::AlignHCenter);
+    // The wrapped text spans a centred column: an alignment flag on its layout item would size it to its unwrapped
+    // hint and clip it (see EmptyStateView).
+    auto *column = new QWidget(empty);
+    column->setMaximumWidth(460);
+    auto *columnLayout = new QVBoxLayout(column);
+    columnLayout->setContentsMargins(0, 0, 0, 0);
+    columnLayout->setSpacing(10);
+    columnLayout->addWidget(symbol);
+    columnLayout->addWidget(heading);
+    columnLayout->addWidget(explain);
+    columnLayout->addSpacing(8);
+    columnLayout->addWidget(emptyAdd, 0, Qt::AlignHCenter);
+    auto *row = new QHBoxLayout;
+    row->addStretch(1);
+    row->addWidget(column, 100);
+    row->addStretch(1);
+    emptyLayout->addLayout(row);
     emptyLayout->addStretch(3);
     m_pages->addWidget(empty);
 

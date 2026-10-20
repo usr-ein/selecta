@@ -38,6 +38,10 @@ public:
     bool networkPaused() const;
     void setNetworkPaused(bool paused);
 
+    // The player bar's volume, 0…1.
+    double previewVolume() const;
+    void setPreviewVolume(double volume);
+
     // Settings → Library and Filing (PRD LIB-1, DL-5, DL-13). Missing or invalid values read as the defaults.
     core::LibraryConfig libraryConfig() const;
     void setLibraryConfig(const core::LibraryConfig &config);

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/AppSettings.h"
 #include "app/MainWindow.h"
+#include "app/Preview.h"
+#include "audio/AnalysisCache.h"
 #include "base/DebugProtocol.h"
 #include "base/Logging.h"
 #include "base/Paths.h"
@@ -9,6 +11,7 @@
 #include "governor/ServerGuard.h"
 #include "meta/KeychainTokenStore.h"
 #include "meta/TokenStore.h"
+#include "playback/AudioOutput.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
@@ -27,6 +30,7 @@
 #include <QMessageBox>
 
 #include <cstdio>
+#include <exception>
 #include <memory>
 
 using namespace Qt::StringLiterals;
@@ -117,7 +121,9 @@ QString buildType()
 
 } // namespace
 
-int main(int argc, char *argv[])
+namespace {
+
+int runSelecta(int argc, char *argv[])
 {
     const QApplication app(argc, argv);
     // Cover art comes from untrusted files and services: cap what any single image decode may allocate (process-wide;
@@ -218,7 +224,16 @@ int main(int argc, char *argv[])
                      });
     engine.start();
 
-    selecta::app::MainWindow window({database, sessions, settings, engine, build, startedAt});
+    // Previews play on the main thread's player; headless runs (automated inspection) stay silent.
+    const QString analysisDir = paths::cacheDir() + u"/analysis"_s;
+    if (!paths::ensureDir(analysisDir)) {
+        qCWarning(lcApp) << "can't create the waveform cache" << analysisDir;
+    }
+    selecta::app::PreviewController preview(options.headless ? selecta::playback::AudioOutput::createSilent()
+                                                             : selecta::playback::AudioOutput::createDefault(),
+                                            std::make_shared<selecta::audio::AnalysisCache>(analysisDir));
+
+    selecta::app::MainWindow window({database, sessions, settings, engine, preview, build, startedAt});
     if (options.headless) {
         window.setAttribute(Qt::WA_DontShowOnScreen);
     }
@@ -246,4 +261,22 @@ int main(int argc, char *argv[])
     qCInfo(lcApp) << "Selecta quit with code" << exitCode;
     selecta::base::uninstallFileLogger();
     return exitCode;
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    // Anything thrown this far is a bug: say so on the way out instead of aborting without a word.
+    try {
+        return runSelecta(argc, argv);
+    } catch (const std::exception &error) {
+        if (std::fputs("Selecta stopped on an unexpected error: ", stderr) != EOF) {
+            std::fputs(error.what(), stderr);
+            std::fputs("\n", stderr);
+        }
+    } catch (...) {
+        std::fputs("Selecta stopped on an unexpected error\n", stderr);
+    }
+    return 1;
 }

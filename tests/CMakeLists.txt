@@ -56,11 +56,6 @@ selecta_add_test_suite(selecta_unit_tests
         storage/SessionLogTest.cpp
     LIBRARIES selecta_base selecta_governor selecta_storage selecta_library selecta_core)
 
-selecta_add_test_suite(selecta_ui_tests GUI
-    SOURCES
-        app/MainWindowTest.cpp
-        app/NavModelTest.cpp
-    LIBRARIES selecta_app)
 
 # Library test suites: tests/<library>/CMakeLists.txt, owned together with src/<library>/ (PLAN §9).
 set(_selecta_library_tests slsk meta match)
@@ -76,4 +71,11 @@ endforeach()
 # Head implementer's media-dependent modules.
 if(SELECTA_WITH_MEDIA)
     add_subdirectory(playback)
+    selecta_add_test_suite(selecta_ui_tests GUI
+        SOURCES
+            app/FormatTest.cpp
+            app/MainWindowTest.cpp
+            app/NavModelTest.cpp
+            app/WaveformViewTest.cpp
+        LIBRARIES selecta_app)
 endif()

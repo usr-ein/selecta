@@ -10,7 +10,8 @@
 // Messages: one JSON object per line, UTF-8, at most kMaxLineBytes bytes.
 //   request:  {"id": <int>, "cmd": "<command>", "args": {…}}
 //   response: {"id": <int>, "ok": true, "result": …} or {"id": <int>, "ok": false, "error": "<message>"}
-// Commands: ping, state, views, tree, screenshot, navigate, click, type, appearance, log, quit.
+// Commands: ping, state, views, tree, screenshot, navigate, click, type, appearance, log, select, play-pause, player,
+// quit.
 namespace selecta::base::debugprotocol {
 
 inline constexpr QLatin1StringView kSocketName{"selecta-debug"};

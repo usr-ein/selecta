@@ -20,7 +20,10 @@ endforeach()
 
 add_subdirectory(library)
 add_subdirectory(core)
+# The app previews, analyses and converts audio: it needs the media libraries.
 if(SELECTA_WITH_MEDIA)
     add_subdirectory(playback)
+    add_subdirectory(app)
+else()
+    message(STATUS "SELECTA_WITH_MEDIA is OFF: building the libraries only, not the app")
 endif()
-add_subdirectory(app)
