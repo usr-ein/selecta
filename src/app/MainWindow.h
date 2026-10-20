@@ -111,6 +111,8 @@ private:
     void createToolBar();
     void createCentralArea();
     void createViews();
+    void createSearchView();
+    void createSettingsView();
     void addView(const QString &id, QWidget *widget, std::function<QString()> subtitle);
     void restoreSavedState();
     void refreshTitle();
@@ -143,6 +145,7 @@ private:
     QAction *m_togglePause = nullptr;
     QAction *m_budget = nullptr;
     QAction *m_findAction = nullptr;
+    QAction *m_ratio = nullptr;
     ActivityView *m_activityView = nullptr;
     InboxView *m_inboxView = nullptr;
     GetTracksView *m_getTracksView = nullptr;

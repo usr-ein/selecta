@@ -25,9 +25,10 @@ qt_add_library(selecta_core STATIC
     SearchFilter.h SearchFilter.cpp
     SearchResults.h SearchResults.cpp
     SearchService.h SearchService.cpp
+    ShareService.h ShareService.cpp
     TransferService.h TransferService.cpp
     YouTubePreviews.h YouTubePreviews.cpp)
 add_library(Selecta::Core ALIAS selecta_core)
 target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match
-    selecta_meta selecta_slsk selecta_audio selecta_convert selecta_collection Qt6::Core Qt6::Network)
+    selecta_meta selecta_slsk selecta_audio selecta_convert selecta_collection selecta_share Qt6::Core Qt6::Network)
 selecta_set_warnings(selecta_core)

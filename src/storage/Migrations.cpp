@@ -189,6 +189,21 @@ constexpr std::array kMigrations{
         ) STRICT;
         CREATE INDEX search_cache_searched ON search_cache (searched_ms);
     )sql"},
+    // Every upload that ended (PRD SHARE-5, FAIR-3): who got what, for the ratio and the Shares view.
+    Migration{7, R"sql(
+        CREATE TABLE uploads (
+            id         INTEGER PRIMARY KEY,
+            session    INTEGER REFERENCES sessions(id),
+            username   TEXT NOT NULL,
+            path       BLOB NOT NULL,              -- the virtual path, as the peer asked for it
+            size       INTEGER NOT NULL DEFAULT 0 CHECK (size >= 0),
+            sent       INTEGER NOT NULL DEFAULT 0 CHECK (sent >= 0),
+            started_ms INTEGER NOT NULL,           -- Unix time, ms
+            ended_ms   INTEGER NOT NULL,
+            outcome    TEXT NOT NULL CHECK (outcome IN ('completed', 'failed', 'cancelled', 'declined'))
+        ) STRICT;
+        CREATE INDEX uploads_ended ON uploads (ended_ms);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

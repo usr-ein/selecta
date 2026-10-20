@@ -517,10 +517,10 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
     table->setCurrentIndex(row);
     table->selectionModel()->select(row, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
 
-    auto *title = window->findChild<QLabel *>(u"inspector.inbox.title"_s);
-    auto *tagList = window->findChild<QLabel *>(u"inspector.inbox.tags"_s);
-    auto *provenance = window->findChild<QLabel *>(u"inspector.inbox.provenance"_s);
-    auto *source = window->findChild<QLabel *>(u"inspector.inbox.source"_s);
+    const auto *title = window->findChild<QLabel *>(u"inspector.inbox.title"_s);
+    const auto *tagList = window->findChild<QLabel *>(u"inspector.inbox.tags"_s);
+    const auto *provenance = window->findChild<QLabel *>(u"inspector.inbox.provenance"_s);
+    const auto *source = window->findChild<QLabel *>(u"inspector.inbox.source"_s);
     ASSERT_TRUE(title && tagList && provenance && source);
     EXPECT_EQ(title->text(), u"Neon Rain"_s);
     QTRY_VERIFY_WITH_TIMEOUT(tagList->text().contains(u"Nightfall Records"_s), 5000);

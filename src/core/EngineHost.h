@@ -98,6 +98,9 @@ public:
     // --- the collection ---
     void scanCollection();
     CollectionStatus collectionStatus() const { return m_collectionStatus; }
+    // --- sharing (SHARE-1…5, FAIR-3) ---
+    ShareStatus shareStatus() const { return m_shareStatus; }
+    QList<UploadEntry> uploads() const { return m_uploads; }
     QList<GetLine> getLines() const { return m_getLines; }
 
     // --- the Soulseek network (Settings → Network) ---
@@ -139,6 +142,8 @@ Q_SIGNALS:
     void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    void shareStatusChanged(const selecta::core::ShareStatus &status);
+    void uploadsChanged(const QList<selecta::core::UploadEntry> &uploads);
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
     void ytDlpChecked(bool ok, const QString &description);
     void searchOpened(quint64 request, qint64 searchId);
@@ -159,6 +164,8 @@ private:
     QList<GetLine> m_getLines;
     NetworkStatus m_networkStatus;
     CollectionStatus m_collectionStatus;
+    ShareStatus m_shareStatus;
+    QList<UploadEntry> m_uploads;
     QList<ManualSearch> m_searches; // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;

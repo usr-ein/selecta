@@ -12,6 +12,7 @@
 #include "core/NetworkService.h"
 #include "core/SearchCache.h"
 #include "core/SearchService.h"
+#include "core/ShareService.h"
 #include "core/TransferService.h"
 #include "core/YouTubePreviews.h"
 #include "governor/Governor.h"
@@ -152,6 +153,7 @@ public:
     TransferService &transfers() { return *m_transfers; }
     ArrivalService &arrival() { return *m_arrival; }
     CollectionService &collection() { return *m_collection; }
+    ShareService &shares() { return *m_shares; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -176,6 +178,8 @@ Q_SIGNALS:
     void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    void shareStatusChanged(const selecta::core::ShareStatus &status);
+    void uploadsChanged(const QList<selecta::core::UploadEntry> &uploads);
     // Searches typed by hand (ManualSearchService's signals, forwarded).
     void searchOpened(quint64 request, qint64 searchId);
     void manualSearchChanged(const selecta::core::ManualSearch &search);
@@ -226,6 +230,7 @@ private:
     std::unique_ptr<TransferService> m_transfers;
     std::unique_ptr<ArrivalService> m_arrival;
     std::unique_ptr<CollectionService> m_collection;
+    std::unique_ptr<ShareService> m_shares;
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;          // the preview playing

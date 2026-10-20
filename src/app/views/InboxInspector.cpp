@@ -268,7 +268,7 @@ void InboxInspector::showItem(const std::optional<library::InboxItem> &item, con
         return;
     }
     // Off the main thread: a file can be slow to open (a sleeping disk).
-    auto promise = std::make_shared<QPromise<FileTags>>();
+    const auto promise = std::make_shared<QPromise<FileTags>>();
     QFuture<FileTags> future = promise->future();
     promise->start();
     QThreadPool::globalInstance()->start([promise, path = m_path] {

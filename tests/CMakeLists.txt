@@ -80,6 +80,7 @@ if(SELECTA_WITH_MEDIA)
             core/SearchCacheTest.cpp
             core/SearchFilterTest.cpp
             core/SearchServiceTest.cpp
+            core/ShareServiceTest.cpp
             core/TransferServiceTest.cpp
             core/YouTubePreviewsTest.cpp
         LIBRARIES selecta_core selecta_media_test_support selecta_slsk_testing Qt6::Gui)

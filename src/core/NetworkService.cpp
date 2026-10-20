@@ -102,6 +102,23 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
     m_permits = std::make_unique<GovernorPermits>(m_governor, this);
     m_peers = std::make_unique<slsk::PeerNetwork>(*m_server, *m_permits);
     m_transfers = std::make_unique<slsk::TransferManager>(*m_peers, *m_server);
+    m_distributed = std::make_unique<slsk::DistributedNode>(*m_server, *m_peers);
+    connect(m_server.get(), &slsk::ServerSession::searchRequestReceived, this,
+            [this](const slsk::fromserver::SearchRequest &request) {
+                Q_EMIT searchRequestReceived(slsk::IncomingSearch{.username = request.username,
+                                                                  .token = request.token,
+                                                                  .query = request.query,
+                                                                  .route = slsk::IncomingSearch::Route::Server});
+            });
+    connect(m_distributed.get(), &slsk::DistributedNode::searchRequestReceived, this,
+            [this](const slsk::distrib::Search &search) {
+                Q_EMIT searchRequestReceived(slsk::IncomingSearch{.username = search.username,
+                                                                  .token = search.token,
+                                                                  .query = search.query,
+                                                                  .route = slsk::IncomingSearch::Route::Distributed});
+            });
+    connect(m_server.get(), &slsk::ServerSession::privilegedUsersReceived, this,
+            &NetworkService::privilegedUsersReceived);
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &NetworkService::attempt);
     connect(m_server.get(), &slsk::ServerSession::loggedIn, this, &NetworkService::loggedIn);
@@ -119,10 +136,28 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
             });
 }
 
+bool NetworkService::answerSearch(const slsk::IncomingSearch &search, const QList<slsk::FileEntry> &results,
+                                  slsk::Client::UploadAvailability uploads)
+{
+    if (results.isEmpty() || search.username.isEmpty() || !m_server->isLoggedIn()) {
+        return false;
+    }
+    slsk::peer::FileSearchResponse response;
+    response.username = m_server->username();
+    response.token = search.token;
+    response.results = results;
+    response.slotFree = uploads.slotFree;
+    response.averageSpeed = uploads.averageSpeed;
+    response.queueLength = uploads.queueLength;
+    m_peers->sendSearchResponse(search.username, response);
+    return true;
+}
+
 NetworkService::~NetworkService()
 {
     m_retryTimer->stop();
-    m_transfers.reset(); // closes open download devices through their storage; emits nothing
+    m_distributed.reset(); // uses the session and the peers
+    m_transfers.reset();   // closes open download devices through their storage; emits nothing
     m_peers->closeAll();
     m_server->disconnectFromServer();
     m_peers.reset(); // uses the session and the permits

@@ -197,11 +197,18 @@ bool Engine::start()
     collectionOptions.watch = m_options.watchCollection;
     m_collection = std::make_unique<CollectionService>(*m_db, collectionOptions, m_options.wallClock);
     connect(m_collection.get(), &CollectionService::statusChanged, this, &Engine::collectionStatusChanged);
+    // Sharing: the collection, read-only (D12).
+    m_shares = std::make_unique<ShareService>(*m_db, *m_governor, *m_network, *m_activity, *m_clock, m_options.session,
+                                              m_options.wallClock);
+    connect(m_shares.get(), &ShareService::statusChanged, this, &Engine::shareStatusChanged);
+    connect(m_shares.get(), &ShareService::uploadsChanged, this, &Engine::uploadsChanged);
     connect(m_collection.get(), &CollectionService::indexChanged, this,
             [this](const std::shared_ptr<const match::MatchIndex> &index) {
                 m_getTracks->setLibraryIndex(index);
                 m_manualSearch->setLibraryIndex(index);
+                m_shares->collectionChanged();
             });
+    connect(m_arrival.get(), &ArrivalService::finished, m_shares.get(), &ShareService::refreshTotals);
     connect(m_inbox.get(), &InboxService::changed, m_collection.get(),
             [collection = m_collection.get()](const QList<InboxEntry> &entries) {
                 QList<library::InboxItem> items;
@@ -268,6 +275,7 @@ void Engine::stop()
     m_annotateTimer = nullptr;
     m_manualSearch.reset(); // before the search and transfer services it uses
     m_getTracks.reset();
+    m_shares.reset();     // stops uploads under way (their downloaders queue again later)
     m_collection.reset(); // cancels a scan in flight; what it read is read again next time
     m_arrival.reset();    // cancels conversions in flight (they run again at the next launch) and records finished ones
     m_search.reset();
@@ -294,7 +302,7 @@ void Engine::stop()
 
 void Engine::setLibraryConfig(const LibraryConfig &config)
 {
-    if (!m_inbox || !m_collection) {
+    if (!m_inbox || !m_collection || !m_shares) {
         return;
     }
     m_options.library = config;
@@ -307,6 +315,7 @@ void Engine::setLibraryConfig(const LibraryConfig &config)
         }
     }
     m_collection->setRoots(config.collectionRoots, excluded);
+    m_shares->setRoots(config.collectionRoots, excluded);
 }
 
 namespace {
@@ -413,15 +422,10 @@ void Engine::startPreview(PreviewPlan plan, PreviewSource source)
     stopPreview();
     // D26: Space hears the track from the user's yt-dlp, else Deezer's clip; the peer's file is the last resort and
     // what ⇧Space asks for.
-    QList<PreviewSource> attempts;
-    switch (source) {
-    case PreviewSource::Automatic:
-        attempts = {PreviewSource::YouTube, PreviewSource::Clip, PreviewSource::Peer};
-        break;
-    default:
-        attempts = {source};
-        break;
-    }
+    const QList<PreviewSource> attempts =
+        source == PreviewSource::Automatic
+            ? QList<PreviewSource>{PreviewSource::YouTube, PreviewSource::Clip, PreviewSource::Peer}
+            : QList<PreviewSource>{source};
     tryPreview(std::make_shared<const PreviewPlan>(std::move(plan)), attempts, 0, m_previewGeneration, {});
 }
 

@@ -96,7 +96,7 @@ RetagResult retagInboxFile(const RetagRequest &request, const library::FileOps &
     RetagResult result;
     result.ok = true;
     result.path = path;
-    result.tags = tags;
+    result.tags = std::move(tags);
     result.sizeBytes = QFileInfo(path).size();
     return result;
 }

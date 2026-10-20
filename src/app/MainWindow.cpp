@@ -18,6 +18,7 @@
 #include "app/views/InboxView.h"
 #include "app/views/SearchInspector.h"
 #include "app/views/SearchView.h"
+#include "app/views/SharesView.h"
 #include "base/Paths.h"
 #include "core/EngineHost.h"
 #include "governor/Limits.h"
@@ -187,36 +188,7 @@ void MainWindow::createViews()
     };
     const auto fixed = [](const QString &text) { return [text] { return text; }; };
 
-    // Searches typed by hand: one view shows whichever search is picked in the sidebar.
-    m_searchView = new SearchView(m_services.engine, m_services.settings, m_stack);
-    addView(u"search"_s, m_searchView, [this] { return m_searchView->summary(); });
-    m_inspector->addPanel(u"search"_s, m_searchView->inspectorPanel());
-    connect(m_searchView, &SearchView::summaryChanged, this, [this] {
-        if (NavModel::searchOfItem(m_currentId) > 0) {
-            refreshTitle();
-        }
-    });
-    connect(m_searchView, &SearchView::previewRequested, this,
-            [this] { previewSearchResult(false, m_services.settings.previewSource()); });
-    connect(m_searchView, &SearchView::selectionMoved, this, &MainWindow::selectionMoved);
-    connect(&m_services.engine, &core::EngineHost::searchOpened, this, [this](quint64 request, qint64 searchId) {
-        if (request == m_searchRequest && searchId > 0) {
-            if (const std::optional<core::ManualSearch> search = m_services.engine.search(searchId)) {
-                showSearchInSidebar(*search);
-            }
-            navigateTo(NavModel::searchItemId(searchId));
-        }
-    });
-    connect(&m_services.engine, &core::EngineHost::manualSearchChanged, this, &MainWindow::showSearchInSidebar);
-    connect(&m_services.engine, &core::EngineHost::manualSearchClosed, this, [this](qint64 searchId) {
-        const bool current = NavModel::searchOfItem(m_currentId) == searchId;
-        m_navModel->removeSearch(searchId);
-        if (current) {
-            // Another open search, or the home screen.
-            const QList<core::ManualSearch> searches = m_services.engine.searches();
-            navigateTo(searches.isEmpty() ? kDefaultView : NavModel::searchItemId(searches.constLast().id));
-        }
-    });
+    createSearchView();
 
     m_getTracksView = new GetTracksView(m_services.engine, m_stack);
     addView(u"get"_s, m_getTracksView, [this] { return m_getTracksView->summary(); });
@@ -305,11 +277,14 @@ void MainWindow::createViews()
             refreshTitle();
         }
     });
-    addView(u"shares"_s,
-            emptyState(u"dot.radiowaves.left.and.right"_s, u"folder-publicshare"_s, tr("Nothing shared yet"),
-                       tr("Selecta shares your collection, read-only, with other Soulseek users."),
-                       tr("Not built yet (milestone M7).")),
-            fixed(tr("Nothing shared")));
+    auto *sharesView = new SharesView(m_services.engine, m_stack);
+    addView(u"shares"_s, sharesView, [sharesView] { return sharesView->summary(); });
+    connect(sharesView, &SharesView::summaryChanged, this, [this] {
+        if (m_currentId == u"shares"_s) {
+            refreshTitle();
+        }
+    });
+    connect(sharesView, &SharesView::settingsRequested, this, [this] { navigateTo(u"settings"_s); });
     addView(u"messages"_s,
             emptyState(u"bubble.left.and.bubble.right"_s, u"mail-message"_s, tr("No conversations"),
                        tr("Private messages with other Soulseek users appear here."),
@@ -325,6 +300,53 @@ void MainWindow::createViews()
                        tr("Not built yet (milestone M6).")),
             fixed(tr("Not built yet")));
 
+    createSettingsView();
+    addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));
+
+#ifndef QT_NO_DEBUG
+    const QStringList ids = m_navModel->ids();
+    for (const QString &id : ids) {
+        Q_ASSERT_X(m_viewIndex.contains(id), "MainWindow::createViews", "every sidebar item needs a view");
+    }
+#endif
+}
+
+void MainWindow::createSearchView()
+{
+    // Searches typed by hand: one view shows whichever search is picked in the sidebar.
+    m_searchView = new SearchView(m_services.engine, m_services.settings, m_stack);
+    addView(u"search"_s, m_searchView, [this] { return m_searchView->summary(); });
+    m_inspector->addPanel(u"search"_s, m_searchView->inspectorPanel());
+    connect(m_searchView, &SearchView::summaryChanged, this, [this] {
+        if (NavModel::searchOfItem(m_currentId) > 0) {
+            refreshTitle();
+        }
+    });
+    connect(m_searchView, &SearchView::previewRequested, this,
+            [this] { previewSearchResult(false, m_services.settings.previewSource()); });
+    connect(m_searchView, &SearchView::selectionMoved, this, &MainWindow::selectionMoved);
+    connect(&m_services.engine, &core::EngineHost::searchOpened, this, [this](quint64 request, qint64 searchId) {
+        if (request == m_searchRequest && searchId > 0) {
+            if (const std::optional<core::ManualSearch> search = m_services.engine.search(searchId)) {
+                showSearchInSidebar(*search);
+            }
+            navigateTo(NavModel::searchItemId(searchId));
+        }
+    });
+    connect(&m_services.engine, &core::EngineHost::manualSearchChanged, this, &MainWindow::showSearchInSidebar);
+    connect(&m_services.engine, &core::EngineHost::manualSearchClosed, this, [this](qint64 searchId) {
+        const bool current = NavModel::searchOfItem(m_currentId) == searchId;
+        m_navModel->removeSearch(searchId);
+        if (current) {
+            // Another open search, or the home screen.
+            const QList<core::ManualSearch> searches = m_services.engine.searches();
+            navigateTo(searches.isEmpty() ? kDefaultView : NavModel::searchItemId(searches.constLast().id));
+        }
+    });
+}
+
+void MainWindow::createSettingsView()
+{
     m_settingsView = new SettingsView(m_services.build, m_appearance, m_services.settings.libraryConfig(),
                                       m_services.settings.networkConfig(), m_stack);
     connect(m_settingsView, &SettingsView::appearanceRequested, this, &MainWindow::setAppearance);
@@ -372,14 +394,6 @@ void MainWindow::createViews()
     connect(&m_services.engine, &core::EngineHost::networkStatusChanged, m_settingsView,
             &SettingsView::setNetworkStatus);
     m_settingsView->setNetworkStatus(m_services.engine.networkStatus());
-    addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));
-
-#ifndef QT_NO_DEBUG
-    const QStringList ids = m_navModel->ids();
-    for (const QString &id : ids) {
-        Q_ASSERT_X(m_viewIndex.contains(id), "MainWindow::createViews", "every sidebar item needs a view");
-    }
-#endif
 }
 
 void MainWindow::createActions()
@@ -633,6 +647,23 @@ void MainWindow::createToolBar()
     budgetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     budgetButton->setAutoRaise(true);
     bar->addWidget(budgetButton);
+    // The ratio, always in sight (FAIR-3): what went out against what came in, over 30 days.
+    m_ratio = new QAction(icons::symbol(u"arrow.up.arrow.down"_s, u"network-transmit-receive"_s), QString(), this);
+    m_ratio->setObjectName(u"action.ratio"_s);
+    connect(m_ratio, &QAction::triggered, this, [this] { navigateTo(u"shares"_s); });
+    auto *ratioButton = new QToolButton(bar);
+    ratioButton->setObjectName(u"toolbar.ratio"_s);
+    ratioButton->setDefaultAction(m_ratio);
+    ratioButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    ratioButton->setAutoRaise(true);
+    bar->addWidget(ratioButton);
+    const auto showRatio = [this](const core::ShareStatus &status) {
+        const core::RatioAssessment ratio = core::assessRatio(status);
+        m_ratio->setText(ratio.level == core::RatioAssessment::Level::Low ? ratio.summary + u" !"_s : ratio.summary);
+        m_ratio->setToolTip(ratio.guidance);
+    };
+    connect(&m_services.engine, &core::EngineHost::shareStatusChanged, this, showRatio);
+    showRatio(m_services.engine.shareStatus());
     bar->addAction(m_togglePause);
 
     auto *cycleAppearance =

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "slsk/Client.h"
+#include "slsk/DistributedNode.h"
 #include "slsk/PeerNetwork.h"
 #include "slsk/PermitSource.h"
 #include "slsk/ServerSession.h"
@@ -129,10 +131,25 @@ public:
     // The PeerLookup permits behind every new outbound peer connection.
     slsk::PermitSource &permits() { return *m_permits; }
 
+    // --- sharing (SHARE-2) ---
+    // Our place in the distributed search network: without a parent, nobody's searches reach us.
+    slsk::DistributedNode &distributed() { return *m_distributed; }
+    QString username() const { return m_server->username(); }
+    // Sends our answer to a search that reached us (only files we found for it), with our upload state. False when
+    // there is nothing to send or no session.
+    bool answerSearch(const slsk::IncomingSearch &search, const QList<slsk::FileEntry> &results,
+                      slsk::Client::UploadAvailability uploads);
+    // Tells the server what we share (folders and files), now and after every login.
+    void setSharedCounts(quint32 folders, quint32 files) { m_server->setSharedCounts(folders, files); }
+
 Q_SIGNALS:
     void statusChanged(const selecta::core::NetworkStatus &status);
     void searchResponseReceived(quint32 token, const QString &username,
                                 const selecta::slsk::peer::FileSearchResponse &response);
+    // A search that reached us, from the server or the distributed network (ShareService answers it).
+    void searchRequestReceived(const selecta::slsk::IncomingSearch &search);
+    // The server's list of privileged users (they go first in the upload queue).
+    void privilegedUsersReceived(const QStringList &users);
 
 private Q_SLOTS:
     void hostLookedUp(const QHostInfo &info);
@@ -156,6 +173,7 @@ private:
     std::unique_ptr<GovernorPermits> m_permits;
     std::unique_ptr<slsk::PeerNetwork> m_peers;
     std::unique_ptr<slsk::TransferManager> m_transfers; // uses the peers and the session
+    std::unique_ptr<slsk::DistributedNode> m_distributed;
     slsk::TokenGenerator m_searchTokens;
     QSet<quint32> m_openSearches;
     QTimer *m_retryTimer = nullptr;

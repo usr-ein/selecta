@@ -29,6 +29,9 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<NetworkStatus>();
     qRegisterMetaType<Preview>();
     qRegisterMetaType<CollectionStatus>();
+    qRegisterMetaType<ShareStatus>();
+    qRegisterMetaType<UploadEntry>();
+    qRegisterMetaType<QList<UploadEntry>>();
     qRegisterMetaType<std::shared_ptr<audio::ByteSource>>();
     qRegisterMetaType<ManualSearch>();
     qRegisterMetaType<QList<meta::Candidate>>();
@@ -115,6 +118,14 @@ void EngineHost::start()
             }
         }
         Q_EMIT searchResultsChanged(searchId, results);
+    });
+    connect(engine, &Engine::shareStatusChanged, this, [this](const ShareStatus &status) {
+        m_shareStatus = status;
+        Q_EMIT shareStatusChanged(status);
+    });
+    connect(engine, &Engine::uploadsChanged, this, [this](const QList<UploadEntry> &uploads) {
+        m_uploads = uploads;
+        Q_EMIT uploadsChanged(uploads);
     });
     connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
         m_networkStatus = status;
