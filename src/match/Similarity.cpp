@@ -193,75 +193,7 @@ TokenComparison TokenRules::compare(QStringView a, QStringView b)
 
 FieldMatch FieldMatcher::compare(const FieldKey &a, const FieldKey &b, FieldMatchOptions options)
 {
-    FieldMatch match;
-    if (a.key.isEmpty() || b.key.isEmpty()) {
-        return match;
-    }
-    const auto exactRoute = [&match](FieldMatch::Route route) {
-        match.similarity = 1.0;
-        match.coverageA = 1.0;
-        match.coverageB = 1.0;
-        match.unexplainedB = 0.0;
-        match.exact = true;
-        match.route = route;
-        return match;
-    };
-    if (a.key == b.key) {
-        return exactRoute(FieldMatch::Route::Tokens);
-    }
-    if (a.squashed == b.squashed) {
-        return exactRoute(FieldMatch::Route::Squashed);
-    }
-    if (!a.leet.isEmpty() && a.leet == b.leet) {
-        return exactRoute(FieldMatch::Route::Leet);
-    }
-
-    const QList<detail::AlignToken> tokensA = detail::alignTokens(a.key);
-    const QList<detail::AlignToken> tokensB = detail::alignTokens(b.key);
-    const detail::Alignment alignment = detail::align(tokensA, tokensB, options);
-    match.similarity = alignment.similarity();
-    match.coverageA = alignment.coverageA();
-    match.coverageB = alignment.coverageB();
-    match.edits = alignment.edits;
-    match.fuzzy = alignment.fuzzy;
-    match.pairs = alignment.pairs;
-    match.route = alignment.pairs.isEmpty() ? FieldMatch::Route::None : FieldMatch::Route::Tokens;
-    match.exact = match.similarity >= 1.0 && match.edits == 0;
-    qsizetype unexplained = 0;
-    qsizetype total = 0;
-    for (qsizetype j = 0; j < tokensB.size(); ++j) {
-        const qsizetype len = TokenRules::length(tokensB.at(j).text);
-        total += len;
-        if (j >= alignment.scoreB.size() || alignment.scoreB.at(j) <= 0.0) {
-            unexplained += len;
-        }
-    }
-    match.unexplainedB = total > 0 ? static_cast<double>(unexplained) / static_cast<double>(total) : 0.0;
-
-    // The squashed keys as one token, for concatenations the pair join misses ("okumadrft" against "okuma drift").
-    if (!match.exact && detail::digitsOf(a.squashed) == detail::digitsOf(b.squashed)) {
-        const double ratio =
-            rapidfuzz::fuzz::ratio(a.squashed.utf16(), a.squashed.utf16() + a.squashed.size(), b.squashed.utf16(),
-                                   b.squashed.utf16() + b.squashed.size(), kSquashedRatioMin);
-        if (ratio >= kSquashedRatioMin) {
-            const TokenComparison whole = TokenRules::compare(a.squashed, b.squashed);
-            const qsizetype shorter = std::min(TokenRules::length(a.squashed), TokenRules::length(b.squashed));
-            const bool allowed = whole.matched() && whole.edits <= TokenRules::fieldEditBudget(shorter) &&
-                                 (!whole.needsCorroboration || options.durationCorroborates);
-            if (allowed && whole.score() > match.similarity) {
-                match.similarity = whole.score();
-                match.coverageA = whole.score();
-                match.coverageB = whole.score();
-                match.unexplainedB = 0.0;
-                match.edits = whole.edits;
-                match.fuzzy = true;
-                match.exact = false;
-                match.route = FieldMatch::Route::SquashedFuzzy;
-                match.pairs.clear();
-            }
-        }
-    }
-    return match;
+    return detail::compareFields(detail::fieldView(a), detail::fieldView(b), options);
 }
 
 FieldMatch FieldMatcher::compareKeys(QStringView a, QStringView b, FieldMatchOptions options)
@@ -272,5 +204,105 @@ FieldMatch FieldMatcher::compareKeys(QStringView a, QStringView b, FieldMatchOpt
     keyB.leet = keyB.squashed;
     return compare(keyA, keyB, options);
 }
+
+namespace detail {
+
+namespace {
+
+bool sameTokens(const FieldView &a, const FieldView &b)
+{
+    if (a.tokens.size() != b.tokens.size()) {
+        return false;
+    }
+    for (qsizetype i = 0; i < a.tokens.size(); ++i) {
+        if (a.tokens.at(i).text != b.tokens.at(i).text) {
+            return false;
+        }
+    }
+    return true;
+}
+
+FieldMatch exactMatch(FieldMatch::Route route)
+{
+    FieldMatch match;
+    match.similarity = 1.0;
+    match.coverageA = 1.0;
+    match.coverageB = 1.0;
+    match.exact = true;
+    match.route = route;
+    return match;
+}
+
+// The squashed keys as one token, for concatenations the pair join misses ("okumadrft" against "okuma drift"):
+// equal digits, fuzz::ratio ≥ 85, and the token rules under the field budget.
+void trySquashedRoute(FieldMatch &match, QStringView a, QStringView b, FieldMatchOptions options)
+{
+    if (match.exact || a.isEmpty() || b.isEmpty() || digitsOf(a) != digitsOf(b)) {
+        return;
+    }
+    const double ratio =
+        rapidfuzz::fuzz::ratio(a.utf16(), a.utf16() + a.size(), b.utf16(), b.utf16() + b.size(), kSquashedRatioMin);
+    if (ratio < kSquashedRatioMin) {
+        return;
+    }
+    const TokenComparison whole = TokenRules::compare(a, b);
+    const qsizetype shorter = std::min(TokenRules::length(a), TokenRules::length(b));
+    const bool allowed = whole.matched() && whole.edits <= TokenRules::fieldEditBudget(shorter) &&
+                         (!whole.needsCorroboration || options.durationCorroborates);
+    if (allowed && whole.score() > match.similarity) {
+        match.similarity = whole.score();
+        match.coverageA = whole.score();
+        match.coverageB = whole.score();
+        match.unexplainedB = 0.0;
+        match.edits = whole.edits;
+        match.fuzzy = true;
+        match.exact = false;
+        match.route = FieldMatch::Route::SquashedFuzzy;
+        match.pairs.clear();
+    }
+}
+
+} // namespace
+
+FieldMatch compareFields(const FieldView &a, const FieldView &b, FieldMatchOptions options)
+{
+    if (a.isEmpty() || b.isEmpty()) {
+        return {};
+    }
+    if (!a.squashed.isEmpty() && a.squashed == b.squashed) {
+        return exactMatch(sameTokens(a, b) ? FieldMatch::Route::Tokens : FieldMatch::Route::Squashed);
+    }
+    const QStringView leetA = a.leet.isEmpty() ? a.squashed : a.leet;
+    const QStringView leetB = b.leet.isEmpty() ? b.squashed : b.leet;
+    if (!leetA.isEmpty() && leetA == leetB) {
+        return exactMatch(FieldMatch::Route::Leet);
+    }
+
+    const Alignment alignment = align(std::span(a.tokens.data(), static_cast<std::size_t>(a.tokens.size())),
+                                      std::span(b.tokens.data(), static_cast<std::size_t>(b.tokens.size())), options);
+    FieldMatch match;
+    match.similarity = alignment.similarity();
+    match.coverageA = alignment.coverageA();
+    match.coverageB = alignment.coverageB();
+    match.edits = alignment.edits;
+    match.fuzzy = alignment.fuzzy;
+    match.pairs = alignment.pairs;
+    match.route = alignment.pairs.isEmpty() ? FieldMatch::Route::None : FieldMatch::Route::Tokens;
+    match.exact = match.similarity >= 1.0 && match.edits == 0;
+    qsizetype unexplained = 0;
+    qsizetype total = 0;
+    for (qsizetype j = 0; j < b.tokens.size(); ++j) {
+        const qsizetype len = TokenRules::length(b.tokens.at(j).text);
+        total += len;
+        if (j >= alignment.scoreB.size() || alignment.scoreB.at(j) <= 0.0) {
+            unexplained += len;
+        }
+    }
+    match.unexplainedB = total > 0 ? static_cast<double>(unexplained) / static_cast<double>(total) : 0.0;
+    trySquashedRoute(match, a.squashed, b.squashed, options);
+    return match;
+}
+
+} // namespace detail
 
 } // namespace selecta::match

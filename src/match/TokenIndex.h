@@ -37,15 +37,17 @@ public:
     class Builder
     {
     public:
-        Builder();
+        // `fuzzy` false builds no delete index: exact lookups only (squashed keys, history keys).
+        explicit Builder(bool fuzzy = true);
         ~Builder();
         Builder(const Builder &) = delete;
         Builder &operator=(const Builder &) = delete;
         Builder(Builder &&) noexcept;
         Builder &operator=(Builder &&) noexcept;
 
-        // Adds `term` to the postings of `document`. Empty terms are ignored; adding the same pair twice is harmless.
-        void add(QStringView term, quint32 document);
+        // Adds `term` to the postings of `document` and returns the term's id (kNoTerm for an empty term, which is
+        // ignored). Adding the same pair twice is harmless. Ids are dense and stay valid in the built index.
+        quint32 add(QStringView term, quint32 document);
 
         // Sorts and deduplicates the postings and builds the delete index. The builder is empty afterwards.
         TokenIndex build();

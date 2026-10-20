@@ -237,20 +237,27 @@ Alignment align(std::span<const AlignToken> a, std::span<const AlignToken> b, Fi
     return best;
 }
 
-QList<AlignToken> alignTokens(QStringView key, int segment)
+void appendAlignTokens(AlignTokens &out, QStringView key, int segment, bool ignorable)
 {
-    QList<AlignToken> tokens;
     qsizetype start = -1;
     for (qsizetype i = 0; i <= key.size(); ++i) {
         const bool space = i == key.size() || key[i] == u' ';
         if (space && start >= 0) {
-            tokens.append({key.sliced(start, i - start), segment, false});
+            out.append({key.sliced(start, i - start), segment, ignorable});
             start = -1;
         } else if (!space && start < 0) {
             start = i;
         }
     }
-    return tokens;
+}
+
+FieldView fieldView(const FieldKey &key)
+{
+    FieldView view;
+    appendAlignTokens(view.tokens, key.key);
+    view.squashed = key.squashed;
+    view.leet = key.leet;
+    return view;
 }
 
 QString digitsOf(QStringView text)
