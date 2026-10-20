@@ -115,7 +115,13 @@ void ServiceGate::schedule()
     m_timer.start(0);
 }
 
-base::Clock::TimePoint ServiceGate::earliestStart(base::Clock::TimePoint now)
+base::Clock::Duration ServiceGate::nextStartIn() const
+{
+    const auto now = m_clock.now();
+    return earliestStart(now) - now;
+}
+
+base::Clock::TimePoint ServiceGate::earliestStart(base::Clock::TimePoint now) const
 {
     base::Clock::TimePoint earliest = std::max(now, m_blockedUntil);
     if (!m_starts.empty()) {

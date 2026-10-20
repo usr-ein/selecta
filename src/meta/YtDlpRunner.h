@@ -41,6 +41,7 @@ struct YouTubeCandidate
     std::optional<int> durationSec;
     std::optional<qint64> viewCount;
     QString liveStatus; // "not_live", "is_live", "is_upcoming", "was_live", or empty
+    bool channelVerified = false;
 
     QUrl watchUrl() const; // https://www.youtube.com/watch?v=<id>
 };
@@ -136,6 +137,9 @@ public:
     // When previews are paused after a YouTube rate limit or bot check, the time they resume.
     std::optional<base::Clock::TimePoint> pausedUntil() const;
 
+    // The path set in Settings (empty: search Config::searchDirectories). The next run probes again.
+    void setExecutable(const QString &path);
+
 Q_SIGNALS:
     // YouTube rate-limited Selecta or asked for a bot check: no yt-dlp until `until`.
     void paused(const selecta::meta::MetaError &reason);
@@ -177,6 +181,9 @@ Q_SIGNALS:
 private:
     friend class YtDlpRunner;
     YtDlpFetch(YtDlpRunner *runner, QString videoId, QString directory, QObject *parent);
+    // Signals go out from the event loop, so the runner never sees a receiver's reaction inside its own work.
+    void notifyStarted(const QString &path);
+    void notifyProgress(qint64 downloadedBytes, qint64 totalBytes);
     void finish(Result<FetchedAudio> result);
 
     QPointer<YtDlpRunner> m_runner;

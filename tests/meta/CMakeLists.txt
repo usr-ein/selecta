@@ -8,6 +8,7 @@ selecta_add_test_suite(selecta_meta_tests
         support/FakePacer.h
         support/Fixtures.h
         support/Images.h
+        ClipSourceTest.cpp
         CoverFetcherTest.cpp
         DeezerTest.cpp
         HttpChannelTest.cpp
@@ -25,7 +26,10 @@ selecta_add_test_suite(selecta_meta_tests
         SpotifyJsonTest.cpp
         SpotifyLinksTest.cpp
         TokenStoreTest.cpp
+        ToolProcessTest.cpp
         WorkerTest.cpp
+        YtDlpOutputTest.cpp
+        YtDlpRunnerTest.cpp
     LIBRARIES selecta_meta Qt6::Network)
 target_compile_definitions(selecta_meta_tests PRIVATE
     SELECTA_META_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
