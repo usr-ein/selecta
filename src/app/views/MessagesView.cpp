@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/MessagesView.h"
 
+#include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
 #include "core/EngineHost.h"
@@ -172,7 +173,8 @@ QWidget *MessagesView::createConversationsPage()
 {
     m_to->setObjectName(u"messages.to"_s);
     m_to->setPlaceholderText(tr("Message a user…"));
-    m_to->setClearButtonEnabled(true);
+    m_to->setAccessibleName(tr("Message a user"));
+    a11y::addClearButton(m_to);
     m_to->setToolTip(tr("Type a Soulseek username and press Return to write to them"));
     connect(m_to, &QLineEdit::returnPressed, this, &MessagesView::startTyped);
 
@@ -188,6 +190,8 @@ QWidget *MessagesView::createConversationsPage()
         }
     });
     connect(m_list, &QTreeView::customContextMenuRequested, this, &MessagesView::conversationsMenu);
+    m_list->setAccessibleName(tr("Conversations"));
+    a11y::addMenuKey(m_list);
 
     auto *left = new QWidget(this);
     auto *leftLayout = new QVBoxLayout(left);
@@ -277,12 +281,14 @@ QWidget *MessagesView::createThread()
     m_thread->setObjectName(u"messages.thread"_s);
     m_thread->setFrameShape(QFrame::NoFrame);
     m_thread->setOpenLinks(false); // messages are shown as typed, links included
+    m_thread->setAccessibleName(tr("Messages"));
     m_problem->setObjectName(u"messages.problem"_s);
     m_problem->setWordWrap(true);
     m_problem->setForegroundRole(QPalette::PlaceholderText);
     m_problem->hide();
     m_input->setObjectName(u"messages.input"_s);
     m_input->setMaxLength(core::SocialService::kMaxTextLength);
+    m_input->setAccessibleName(tr("Your message"));
     m_input->installEventFilter(this);
     m_send->setObjectName(u"messages.send"_s);
     connect(m_input, &QLineEdit::returnPressed, this, &MessagesView::send);
@@ -322,8 +328,10 @@ QWidget *MessagesView::createPeoplePage()
 {
     m_person->setObjectName(u"people.user"_s);
     m_person->setPlaceholderText(tr("Soulseek username"));
-    m_person->setClearButtonEnabled(true);
+    m_person->setAccessibleName(tr("Soulseek username"));
+    a11y::addClearButton(m_person);
     m_listChoice->setObjectName(u"people.list"_s);
+    m_listChoice->setAccessibleName(tr("List to add them to"));
     m_listChoice->addItem(tr("Buddies"), static_cast<int>(core::UserList::Buddy));
     m_listChoice->addItem(tr("Ignored"), static_cast<int>(core::UserList::Ignored));
     m_listChoice->addItem(tr("Banned"), static_cast<int>(core::UserList::Banned));
@@ -350,6 +358,9 @@ QWidget *MessagesView::createPeoplePage()
     m_peopleTable->setColumnWidth(StatusColumn, 110);
     m_peopleTable->setColumnWidth(AddedColumn, 140);
     connect(m_peopleTable, &QTreeView::customContextMenuRequested, this, &MessagesView::peopleMenu);
+    m_peopleTable->setAccessibleName(tr("People"));
+    m_peopleTable->installEventFilter(this); // Return opens the conversation, as a double-click does
+    a11y::addMenuKey(m_peopleTable);
     connect(m_peopleTable, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
         const QString peer = index.siblingAtColumn(UserColumn).data(kPeerRole).toString();
         if (!peer.isEmpty()) {
@@ -577,6 +588,7 @@ void MessagesView::refreshThreadBar()
     m_peerState->setVisible(!state.isEmpty());
     m_buddy->setText(listed && listed->list == core::UserList::Buddy ? tr("Remove from Buddies")
                                                                      : tr("Add to Buddies"));
+    m_thread->setAccessibleName(tr("Messages with %1").arg(m_peer));
     const bool online = m_engine.networkStatus().state == core::NetworkStatus::State::Online;
     m_input->setPlaceholderText(online ? tr("Message %1").arg(m_peer) : tr("Not connected to Soulseek"));
     m_send->setEnabled(online && !m_sending);
@@ -709,12 +721,23 @@ void MessagesView::showEvent(QShowEvent *event)
 
 bool MessagesView::eventFilter(QObject *watched, QEvent *event)
 {
-    // Escape in the reply field leaves it for the list.
+    // Escape in the reply field leaves it for the list; Return in People opens the conversation.
     if (watched == m_input && event->type() == QEvent::KeyPress) {
         const auto *key = dynamic_cast<const QKeyEvent *>(event);
         if (key && key->key() == Qt::Key_Escape && key->modifiers() == Qt::NoModifier) {
             m_list->setFocus();
             return true;
+        }
+    }
+    if (watched == m_peopleTable && event->type() == QEvent::KeyPress) {
+        const auto *key = dynamic_cast<const QKeyEvent *>(event);
+        if (key && (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
+            key->modifiers() == Qt::NoModifier) {
+            const QString peer = m_peopleTable->currentIndex().siblingAtColumn(UserColumn).data(kPeerRole).toString();
+            if (!peer.isEmpty()) {
+                openConversation(peer);
+                return true;
+            }
         }
     }
     return QWidget::eventFilter(watched, event);

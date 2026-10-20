@@ -3,6 +3,8 @@
 
 #include "app/Icons.h"
 
+#include <QLocale>
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
@@ -60,8 +62,11 @@ QVariant NavModel::data(const QModelIndex &index, int role) const
     switch (role) {
     case Qt::DisplayRole:
     case Qt::ToolTipRole:
-    case Qt::AccessibleTextRole:
         return entry.title;
+    case Qt::AccessibleTextRole:
+        return accessibleText(entry);
+    case Qt::AccessibleDescriptionRole:
+        return entry.closable ? tr("Delete closes it.") : QString();
     case Qt::DecorationRole:
         return entry.icon;
     case IdRole:
@@ -98,6 +103,26 @@ int NavModel::rowOf(const QString &id) const
         }
     }
     return -1;
+}
+
+QString NavModel::accessibleText(const Item &entry) const
+{
+    // What the delegate draws beside the title, in words (UI-5): "Messages, 3 unread", "neon rain, 214 files,
+    // searching".
+    QStringList parts{entry.title};
+    const int count = entry.isHeader ? 0 : m_counts.value(entry.id, 0);
+    const QString number = QLocale().toString(count);
+    if (count > 0 && (entry.id == u"messages"_s || entry.id == u"rooms"_s)) {
+        parts.append(tr("%1 unread").arg(number));
+    } else if (count > 0 && entry.id == u"wishlist"_s) {
+        parts.append(count == 1 ? tr("1 new file") : tr("%1 new files").arg(number));
+    } else if (count > 0) {
+        parts.append(count == 1 ? tr("1 file") : tr("%1 files").arg(number));
+    }
+    if (m_busy.contains(entry.id)) {
+        parts.append(searchOfItem(entry.id) > 0 ? tr("searching") : tr("loading"));
+    }
+    return parts.join(u", "_s);
 }
 
 QString NavModel::idAt(int row) const
@@ -143,7 +168,7 @@ void NavModel::setCount(const QString &id, int count)
         m_counts.insert(id, clamped);
     }
     const QModelIndex changed = index(row);
-    Q_EMIT dataChanged(changed, changed, {CountRole});
+    Q_EMIT dataChanged(changed, changed, {CountRole, Qt::AccessibleTextRole});
 }
 
 QString NavModel::searchItemId(qint64 searchId)

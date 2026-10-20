@@ -103,6 +103,7 @@ HistoryView::HistoryView(storage::Database &db, int currentSession, QWidget *par
 
     m_model->setHorizontalHeaderLabels({tr("Session or download"), tr("Quality"), tr("From"), tr("Where it is now")});
     m_table->setObjectName(u"history.sessions"_s);
+    m_table->setAccessibleName(tr("Sessions and their downloads"));
     m_table->setModel(m_model);
     m_table->setUniformRowHeights(true);
     m_table->setAlternatingRowColors(true);
