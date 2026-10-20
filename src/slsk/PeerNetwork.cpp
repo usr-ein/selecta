@@ -14,6 +14,7 @@
 #include <QFutureWatcher>
 #include <QHash>
 #include <QMetaMethod>
+#include <QNetworkInterface>
 #include <QPointer>
 #include <QPromise>
 #include <QSet>
@@ -211,6 +212,7 @@ public:
     void onCantConnect(quint32 token);
     void onConnectToPeerRequested(const fromserver::ConnectToPeerRequest &request);
     void dialDirect(Attempt &attempt, const QHostAddress &address, quint16 port);
+    QHostAddress reachable(const QHostAddress &address);
     void maybeFail(quint64 attemptId);
     std::optional<Attempt> takeAttempt(quint64 attemptId); // forgets it without a word
     void failAttempt(quint64 attemptId, PeerError error);
@@ -267,7 +269,9 @@ public:
     TokenGenerator connectTokens;
     TokenGenerator folderTokens;
     quint64 nextId = 1;
-    quint64 starting = 0; // the attempt whose permit startAttempt() is asking for
+    quint64 starting = 0;                // the attempt whose permit startAttempt() is asking for
+    QList<QHostAddress> ownAddresses;    // this machine's interface addresses, for reachable()
+    QDeadlineTimer ownAddressesFresh{0}; // when to read them again
 };
 
 // --- bookkeeping -----------------------------------------------------------------------------------------------------
@@ -613,7 +617,21 @@ void PeerNetworkPrivate::dialDirect(Attempt &attempt, const QHostAddress &addres
     c.attemptId = attemptId;
     c.deadline.setRemainingTime(timeouts.connect);
     attempt.directConnection = id;
-    socket->connectToHost(address, port);
+    socket->connectToHost(reachable(address), port);
+}
+
+QHostAddress PeerNetworkPrivate::reachable(const QHostAddress &address)
+{
+    // A peer at one of this machine's own addresses is on this machine: reach it over loopback. A local server
+    // (Soulfind) hands out the LAN address for clients that log in from 127.0.0.1, and the host's firewall may drop
+    // connections to that address from programs it doesn't know.
+    if (ownAddressesFresh.hasExpired()) {
+        ownAddresses = QNetworkInterface::allAddresses();
+        ownAddressesFresh.setRemainingTime(std::chrono::minutes(1));
+    }
+    const bool own =
+        !address.isLoopback() && address.protocol() == QAbstractSocket::IPv4Protocol && ownAddresses.contains(address);
+    return own ? QHostAddress(QHostAddress::LocalHost) : address;
 }
 
 void PeerNetworkPrivate::maybeFail(quint64 attemptId)
@@ -778,7 +796,7 @@ void PeerNetworkPrivate::onConnectToPeerRequested(const fromserver::ConnectToPee
     c.pierceToken = request.token;
     c.openedByPeer = true; // the peer asked for this connection
     c.deadline.setRemainingTime(timeouts.connect);
-    socket->connectToHost(ipv4Address(request.ip), static_cast<quint16>(request.port));
+    socket->connectToHost(reachable(ipv4Address(request.ip)), static_cast<quint16>(request.port));
 }
 
 // --- socket events ---------------------------------------------------------------------------------------------------

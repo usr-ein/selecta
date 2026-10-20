@@ -1,0 +1,10 @@
+# The Soulfind build devenv/ uses (ADR-013): upstream's rolling release "latest" at the commit below, pinned by each
+# platform's GitHub asset id and SHA-256 (from the release's own digests, checked again after download). Upstream
+# replaces the build under the same tag from time to time: the old asset id then stops resolving and
+# fetch-soulfind.sh fails loudly, never with a different binary. To move the pin, see README.md ("Updating Soulfind").
+commit=5a256f5c9845d362c2bfbdcb26a8355ad1f395fc
+published=2026-10-14T22:18:55Z
+macos-arm64=641849828 2d122873f0dc2b3c399f597c75ce883c2bb0a6d43d37b021ea1ceaa3f74c257b
+macos-x86_64=641849831 727f4d32bca096cf54c16de38162aa024ac1cd24a770f37fcbb87e7909146470
+linux-x86_64=641849824 6d4892fe612499596f362aa1b4fb45c3c96b27a18733954e3087323e41a015e7
+linux-arm64=641849829 3d58baba2f76a22324c6ee550ba585ef395b41246fe4c6506646afed5d2eb23e

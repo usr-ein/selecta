@@ -20,7 +20,9 @@ qt_add_library(selecta_slsk STATIC
     Providers.h
     PeerNetwork.h PeerNetwork.cpp
     MetaTypes.h MetaTypes.cpp
-    TransferManager.h TransferManager.cpp)
+    TransferManager.h TransferManager.cpp
+    DistributedNode.h DistributedNode.cpp
+    Client.h Client.cpp)
 add_library(Selecta::Slsk ALIAS selecta_slsk)
 target_link_libraries(selecta_slsk
     PUBLIC selecta_base selecta_governor Qt6::Core Qt6::Network

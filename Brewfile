@@ -6,5 +6,6 @@ brew "ffmpeg"
 brew "lame"
 brew "libsoxr"
 brew "taglib"
+brew "sqlite" # devenv/: Soulfind needs it on macOS
 brew "clang-format"
 brew "ccache"
