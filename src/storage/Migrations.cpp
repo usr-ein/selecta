@@ -296,8 +296,8 @@ constexpr std::array kMigrations{
         ALTER TABLE wishlist ADD COLUMN filter TEXT NOT NULL DEFAULT '';
     )sql"},
     // The spectrum check of an Inbox item's file as downloaded (PRD PREV-9): whether it ran, what it found
-    // (audio::findingName() names, comma-separated), the cut-off and the bitrate it suggests, and the analysis-cache key
-    // of the full report with its spectrogram ('' when it wasn't cached).
+    // (audio::findingName() names, comma-separated), the cut-off and the bitrate it suggests, and the analysis-cache
+    // key of the full report with its spectrogram ('' when it wasn't cached).
     Migration{16, R"sql(
         ALTER TABLE inbox_items ADD COLUMN quality_checked INTEGER NOT NULL DEFAULT 0 CHECK (quality_checked IN (0, 1));
         ALTER TABLE inbox_items ADD COLUMN quality_findings TEXT NOT NULL DEFAULT '';

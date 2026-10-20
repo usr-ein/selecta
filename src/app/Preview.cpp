@@ -204,7 +204,7 @@ void PreviewController::startQualityCheck()
     if (!m_source) {
         return;
     }
-    auto cancel = std::make_shared<audio::CancellationFlag>();
+    const auto cancel = std::make_shared<audio::CancellationFlag>();
     m_qualityCancel = cancel;
     const auto promise = std::make_shared<QPromise<std::optional<audio::QualityReport>>>();
     QFuture<std::optional<audio::QualityReport>> future = promise->future();

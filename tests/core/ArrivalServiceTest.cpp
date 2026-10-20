@@ -351,7 +351,6 @@ TEST_F(ArrivalServiceTest, AFileFarFromTheLengthTheSearchShowedIsFlagged)
     EXPECT_TRUE(fine.warning.isEmpty()) << fine.warning.toStdString();
 }
 
-
 // PREV-9: every arrival's original is checked before conversion; what it finds stays with the Inbox item, and the
 // report with its spectrogram goes into the analysis cache.
 TEST_F(ArrivalServiceTest, ALosslessFileLowPassedAt16kHzArrivesWithTheFinding)
@@ -359,9 +358,9 @@ TEST_F(ArrivalServiceTest, ALosslessFileLowPassedAt16kHzArrivesWithTheFinding)
     const auto cache = std::make_shared<selecta::audio::AnalysisCache>(dir.filePath(u"analysis"_s));
     makeArrival(cache);
     // Noise with nothing above 16 kHz, as a lossy encoder leaves it, stored as a 16-bit FLAC.
-    const Download download = downloaded(
-        1, u"okuma drift - neon rain.flac"_s,
-        synth::makeFlac(synth::quantised(synth::brickwallNoise(16000.0, 6.0, 7, 44100, 2, 0.1), 16)));
+    const Download download =
+        downloaded(1, u"okuma drift - neon rain.flac"_s,
+                   synth::makeFlac(synth::quantised(synth::brickwallNoise(16000.0, 6.0, 7, 44100, 2, 0.1), 16)));
     const ArrivalResult result = arrive(download);
     ASSERT_TRUE(result.ok) << result.message.toStdString();
 
@@ -448,9 +447,9 @@ TEST_F(ArrivalServiceTest, AGenuineLosslessFileArrivesCheckedWithoutFindings)
 
 TEST_F(ArrivalServiceTest, WithoutACacheTheFindingsStayWithTheItem)
 {
-    const ArrivalResult result = arrive(downloaded(
-        5, u"low.flac"_s,
-        synth::makeFlac(synth::quantised(synth::brickwallNoise(16000.0, 6.0, 5, 44100, 2, 0.1), 16))));
+    const ArrivalResult result = arrive(
+        downloaded(5, u"low.flac"_s,
+                   synth::makeFlac(synth::quantised(synth::brickwallNoise(16000.0, 6.0, 5, 44100, 2, 0.1), 16))));
     ASSERT_TRUE(result.ok) << result.message.toStdString();
     const auto item = selecta::library::InboxStore(db).find(result.inboxItem);
     ASSERT_TRUE(item.has_value());
@@ -466,13 +465,12 @@ TEST_F(ArrivalServiceTest, AFileTooShortToJudgeIsCheckedWithoutVerdict)
     selecta::meta::Release release = neonRain();
     release.durationMs = 1'000;
     const ArrivalResult result = arrive(downloaded(
-        6, u"short.flac"_s, synth::makeFlac(synth::quantised(synth::whiteNoise(1.0, 2, 44100, 2, 0.3), 16)),
-        release));
+        6, u"short.flac"_s, synth::makeFlac(synth::quantised(synth::whiteNoise(1.0, 2, 44100, 2, 0.3), 16)), release));
     ASSERT_TRUE(result.ok) << result.message.toStdString();
     const auto item = selecta::library::InboxStore(db).find(result.inboxItem);
     ASSERT_TRUE(item.has_value());
     EXPECT_TRUE(item->qualityChecked);
     EXPECT_TRUE(item->qualityFindings.isEmpty());
     EXPECT_FALSE(item->qualityCutoffHz.has_value()); // under 2 s: no cut-off measured
-    EXPECT_FALSE(item->qualityKey.isEmpty());       // the spectrogram is still there to look at
+    EXPECT_FALSE(item->qualityKey.isEmpty());        // the spectrogram is still there to look at
 }

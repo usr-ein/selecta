@@ -30,8 +30,8 @@ Pcm tones(std::initializer_list<double> frequencies, double seconds, int sampleR
           double amplitude = 0.25);
 Pcm logSweep(double from, double to, double seconds, int sampleRate = 44100, int channels = 2, double amplitude = 0.5);
 Pcm whiteNoise(double seconds, unsigned seed, int sampleRate = 44100, int channels = 2, double amplitude = 0.3);
-// White noise with nothing at or above `cutoffHz`, an exact low-pass like a lossy encoder's: random phases (from `seed`)
-// on every bin below it of a 2^17-point inverse real FFT, repeated to `seconds` and scaled to `rms`.
+// White noise with nothing at or above `cutoffHz`, an exact low-pass like a lossy encoder's: random phases (from
+// `seed`) on every bin below it of a 2^17-point inverse real FFT, repeated to `seconds` and scaled to `rms`.
 Pcm brickwallNoise(double cutoffHz, double seconds, unsigned seed, int sampleRate = 44100, int channels = 2,
                    double rms = 0.1);
 Pcm silence(double seconds, int sampleRate = 44100, int channels = 2);
