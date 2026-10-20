@@ -74,7 +74,7 @@ TEST(SearchResultsModelTest, FiltersAndCountsWhyResultsAreHidden)
     EXPECT_EQ(model.counts().total, 5);
     EXPECT_EQ(model.counts().hidden.at(static_cast<std::size_t>(selecta::core::HiddenReason::NotAudio)), 1);
 
-    model.setFilter(selecta::core::presetFilter(selecta::core::QualityWanted::Mp3_320OrLossless));
+    model.setFilter(selecta::core::builtInPreset(selecta::core::kMp3OrLosslessPreset).value().filter);
     EXPECT_EQ(model.rowCount(), 3); // the 192 kbps MP3 goes
     EXPECT_EQ(model.counts().shown, 3);
     EXPECT_EQ(model.counts().hidden.at(static_cast<std::size_t>(selecta::core::HiddenReason::Bitrate)), 1);

@@ -66,6 +66,9 @@ public:
     // Finds the best file for these lines (all lines still to find when empty), paced by the governor.
     void findTracks(const QList<qint64> &ids = {});
     void stopFindingTracks();
+    // The list's filter preset (BATCH-2, SRCH-8): lines already found are ranked again under it. Kept across engine
+    // restarts.
+    void setGetTracksFilter(const SearchFilter &filter);
     // Downloads the chosen file of these lines (every ticked line when empty) into the Inbox, converted and tagged.
     void downloadTracks(const QList<qint64> &ids = {});
     void cancelTrackDownloads(const QList<qint64> &ids);
@@ -152,7 +155,9 @@ public:
     QList<SearchResult> browseResults(const QString &peer) const { return m_browseResults.value(peer); }
 
     // --- the wishlist (SRCH-14) ---
-    void addToWishlist(const QString &text);
+    // Saves a search with the filter preset it runs with (SRCH-8); saving it again changes its preset.
+    void addToWishlist(const QString &text, const QString &preset = {}, const SearchFilter &filter = {});
+    void setWishlistPreset(qint64 id, const QString &preset, const SearchFilter &filter);
     void removeFromWishlist(qint64 id);
     // The user looked at what an entry found.
     void markWishlistSeen(qint64 id);
@@ -291,7 +296,8 @@ private:
     QList<SupersedeFlag> m_supersedeFlags;
     CacheStatus m_cacheStatus;
     QList<WishlistItem> m_wishlist;
-    QMap<QString, Browse> m_browses; // by peer
+    std::optional<SearchFilter> m_getTracksFilter; // applied again whenever the engine starts
+    QMap<QString, Browse> m_browses;               // by peer
     QList<Conversation> m_conversations;
     QList<ListedUser> m_userLists;
     QList<RoomListing> m_roomList;

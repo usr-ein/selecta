@@ -289,6 +289,12 @@ constexpr std::array kMigrations{
             joined_ms INTEGER NOT NULL -- Unix time, ms
         ) STRICT;
     )sql"},
+    // Each Wishlist search keeps the filter preset it runs with (PRD SRCH-8, SRCH-14): its name, and the filter as JSON
+    // (core::filterToJson). Empty: any audio file, as before.
+    Migration{15, R"sql(
+        ALTER TABLE wishlist ADD COLUMN preset TEXT NOT NULL DEFAULT '';
+        ALTER TABLE wishlist ADD COLUMN filter TEXT NOT NULL DEFAULT '';
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)
