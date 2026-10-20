@@ -32,8 +32,9 @@ public:
 
     struct Hit
     {
-        int weight = 0; // 0 = not found
-        int edits = 0;  // 0 for an exact hit on the key, its squashed form or one member of the artist set
+        int weight = 0;          // 0 = not found
+        int edits = 0;           // 0 for an exact hit on the squashed key or on one member of the artist set
+        bool memberOnly = false; // only one member of a multi-artist name matched ("Love" of "Love & Rockets")
         bool found() const { return weight > 0; }
         bool exact() const { return found() && edits == 0; }
     };
@@ -46,9 +47,10 @@ public:
     ArtistDictionary(ArtistDictionary &&) noexcept;
     ArtistDictionary &operator=(ArtistDictionary &&) noexcept;
 
-    // Looks up an artist as written: the whole squashed artist key, then each member of its artist set, exactly;
-    // then fuzzily within the token rules and field budget (§17.3). Returns the best hit (exact before fuzzy, then
-    // the highest weight).
+    // Looks up an artist as written: the whole squashed artist key, then each member of its artist set (members of
+    // three or more characters), exactly; then fuzzily within the token rules and field budget (§17.3), leaving out
+    // fuzzy hits that would need corroboration. Returns the best hit: exact before fuzzy (fewer edits first), then
+    // whole-name before member-only, then the highest weight.
     Hit lookup(QStringView artist) const;
 
     qsizetype size() const;

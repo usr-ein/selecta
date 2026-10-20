@@ -146,12 +146,11 @@ public:
     static constexpr qsizetype kMaxSiblings = 2000;
 
     // Parses one path. `siblingNames` may include the file itself.
-    static ParsedRemote parse(QStringView path, const QStringList &siblingNames = {}, const ParseContext &context = {});
+    static ParsedRemote parse(QStringView path, const QStringList &siblingNames = {}, ParseContext context = {});
 
     // Parses every file of one remote folder (names or full paths) together: the folder is analysed once, so this is
     // the efficient call for a search response. `folder` is the folder's path; results are in the order of `files`.
-    static QList<ParsedRemote> parseFolder(QStringView folder, const QStringList &files,
-                                           const ParseContext &context = {});
+    static QList<ParsedRemote> parseFolder(QStringView folder, const QStringList &files, ParseContext context = {});
 
     static FileKind fileKind(QStringView extension);
 };

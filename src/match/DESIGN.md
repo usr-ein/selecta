@@ -118,8 +118,15 @@ Benchmark numbers: pending (X3).
 
 ## Progress
 
-- Done: public headers and this design (first commit, approved by the head implementer).
-- Next: X1 — lexicon, Normalizer, VersionClassifier, their tests.
+- Done: public headers and this design (approved); X1 normaliser, version classifier, lexicon (merged to main as
+  8d21dcf); token rules, field alignment, token index, artist dictionary; X2 remote path parser (380 tests).
+- Parser notes: hand-written scanners in `detail/RemoteName` (cleaning, numbering) and `RemotePathParser.cpp`
+  (folders, sibling facts, artist/title order as log-odds evidence: prior 1.4, sibling constant 3.0, folder artist
+  2.0, known artist 2.5 + up to 1.0 by weight, member-only 1.5, fuzzy 1.2, release artist 2.5, title features 1.0;
+  ambiguous below 1.0). A number prefix the rules would keep is stripped when the dictionary knows the name only
+  without it ("101 Artist - Title"); "(Artist - Title) Remixer Remix" names are unwrapped. Folders literally named
+  "Album" or "Albums" are generic containers.
+- Next: X3 — MatchIndex, Matcher (hybrid scoring), AlbumMatcher, Duration and Quality; then the benchmark.
 - Open questions: none (Q-M1 and Q-M2 answered, decisions 11 and 13).
 - Working rules from the head implementer: `tools/lint.sh src/match tests/match` before each commit; a note to
   `main` at each milestone; `Matcher` and everything else safe to call concurrently on one shared index.
