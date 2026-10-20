@@ -783,6 +783,68 @@ bool better(const Scored &a, const Scored &b, const IndexData &data)
     return a.record < b.record;
 }
 
+namespace {
+
+void consider(std::optional<Scored> &best, std::optional<Scored> &runnerUp, const Scored &candidate,
+              const IndexData &data)
+{
+    if (!best || better(candidate, *best, data)) {
+        runnerUp = std::move(best);
+        best = candidate;
+    } else if (!runnerUp || better(candidate, *runnerUp, data)) {
+        runnerUp = candidate;
+    }
+}
+
+// Two likely-or-better candidates of different versions, and the remote's version doesn't single one out: the
+// choice is a guess, so it can't be exact (note §9 ambiguity rule).
+void capAmbiguous(std::optional<Scored> &best, const std::optional<Scored> &runnerUp, const IndexData &data,
+                  QStringList *explanation)
+{
+    if (!best || !runnerUp || best->tier != Tier::Exact || runnerUp->tier == Tier::None ||
+        best->version == VersionCompatibility::Same) {
+        return;
+    }
+    const QString bestVersion = data.metas[data.records[best->record].meta].version.key();
+    const QString otherVersion = data.metas[data.records[runnerUp->record].meta].version.key();
+    if (bestVersion != otherVersion) {
+        best->tier = Tier::Likely;
+        if (explanation != nullptr) {
+            explanation->append(u"two candidates of different versions both match: capped at likely"_s);
+        }
+    }
+}
+
+} // namespace
+
+BestMatches bestOf(const IndexData &data, const Query &query, const QList<quint32> &candidates, bool explain,
+                   QStringList *explanation)
+{
+    BestMatches best;
+    std::optional<Scored> collectionRunnerUp;
+    std::optional<Scored> inboxRunnerUp;
+    for (const quint32 candidate : candidates) {
+        const Scored scored = score(data, query, candidate, explain);
+        if (scored.relation == Relation::OtherVersion) {
+            if (!best.otherVersion || better(scored, *best.otherVersion, data)) {
+                best.otherVersion = scored;
+            }
+            continue;
+        }
+        if (scored.tier == Tier::None) {
+            continue;
+        }
+        if (data.records[candidate].source == Source::Inbox) {
+            consider(best.inbox, inboxRunnerUp, scored, data);
+        } else {
+            consider(best.collection, collectionRunnerUp, scored, data);
+        }
+    }
+    capAmbiguous(best.collection, collectionRunnerUp, data, explanation);
+    capAmbiguous(best.inbox, inboxRunnerUp, data, explanation);
+    return best;
+}
+
 RecordMatch toRecordMatch(const IndexData &data, const Scored &scored)
 {
     const TrackRecord &record = data.records[scored.record];

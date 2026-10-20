@@ -41,46 +41,6 @@ QList<quint64> historyHits(const detail::IndexData &data, const RemoteFile &file
     return ids;
 }
 
-// The best record per source and the best "other version", with the ambiguity cap (note §9).
-struct Best
-{
-    std::optional<detail::Scored> collection;
-    std::optional<detail::Scored> collectionRunnerUp;
-    std::optional<detail::Scored> inbox;
-    std::optional<detail::Scored> inboxRunnerUp;
-    std::optional<detail::Scored> otherVersion;
-};
-
-void consider(std::optional<detail::Scored> &best, std::optional<detail::Scored> &runnerUp,
-              const detail::Scored &candidate, const detail::IndexData &data)
-{
-    if (!best || detail::better(candidate, *best, data)) {
-        runnerUp = std::move(best);
-        best = candidate;
-    } else if (!runnerUp || detail::better(candidate, *runnerUp, data)) {
-        runnerUp = candidate;
-    }
-}
-
-// Two likely-or-better candidates of different versions, and the remote's version doesn't single one out: the
-// choice is a guess, so it can't be exact (note §9 ambiguity rule).
-void capAmbiguous(std::optional<detail::Scored> &best, const std::optional<detail::Scored> &runnerUp,
-                  const detail::IndexData &data, QStringList *explanation)
-{
-    if (!best || !runnerUp || best->tier != Tier::Exact || runnerUp->tier == Tier::None ||
-        best->version == VersionCompatibility::Same) {
-        return;
-    }
-    const QString bestVersion = data.metas[data.records[best->record].meta].version.key();
-    const QString otherVersion = data.metas[data.records[runnerUp->record].meta].version.key();
-    if (bestVersion != otherVersion) {
-        best->tier = Tier::Likely;
-        if (explanation != nullptr) {
-            explanation->append(u"two candidates of different versions both match: capped at likely"_s);
-        }
-    }
-}
-
 } // namespace
 
 Matcher::Matcher(std::shared_ptr<const MatchIndex> index)
@@ -122,26 +82,7 @@ MatchResult Matcher::match(const ParsedRemote &parsed, const RemoteFile &file, M
                      query.keys.title.version.key().isEmpty() ? u"unspecified"_s : query.keys.title.version.key())
                 .arg(candidates.size()));
     }
-    Best best;
-    for (const quint32 candidate : candidates) {
-        const detail::Scored scored = detail::score(data, query, candidate, options.explain);
-        if (scored.relation == Relation::OtherVersion) {
-            if (!best.otherVersion || detail::better(scored, *best.otherVersion, data)) {
-                best.otherVersion = scored;
-            }
-            continue;
-        }
-        if (scored.tier == Tier::None) {
-            continue;
-        }
-        if (data.records[candidate].source == Source::Inbox) {
-            consider(best.inbox, best.inboxRunnerUp, scored, data);
-        } else {
-            consider(best.collection, best.collectionRunnerUp, scored, data);
-        }
-    }
-    capAmbiguous(best.collection, best.collectionRunnerUp, data, explanation);
-    capAmbiguous(best.inbox, best.inboxRunnerUp, data, explanation);
+    const detail::BestMatches best = detail::bestOf(data, query, candidates, options.explain, explanation);
     if (best.collection) {
         result.collection = detail::toRecordMatch(data, *best.collection);
     }

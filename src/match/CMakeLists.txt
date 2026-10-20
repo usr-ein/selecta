@@ -16,10 +16,12 @@ qt_add_library(selecta_match STATIC
     RemotePathParser.h RemotePathParser.cpp
     MatchIndex.h MatchIndex.cpp
     Matcher.h Matcher.cpp
+    AlbumMatcher.h AlbumMatcher.cpp
     ReleaseScorer.h ReleaseScorer.cpp
     QueryPlanner.h QueryPlanner.cpp
     Tracklist.h Tracklist.cpp
     detail/Alignment.h detail/Alignment.cpp
+    detail/Hungarian.h detail/Hungarian.cpp
     detail/IndexData.h
     detail/Scoring.h detail/Scoring.cpp
     detail/RemoteName.h detail/RemoteName.cpp
