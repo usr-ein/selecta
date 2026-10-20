@@ -70,3 +70,8 @@ foreach(_module IN LISTS _selecta_library_tests)
         add_subdirectory(${_module})
     endif()
 endforeach()
+
+# Head implementer's media-dependent modules.
+if(SELECTA_WITH_MEDIA)
+    add_subdirectory(playback)
+endif()

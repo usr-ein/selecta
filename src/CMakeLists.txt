@@ -20,4 +20,7 @@ endforeach()
 
 add_subdirectory(library)
 add_subdirectory(core)
+if(SELECTA_WITH_MEDIA)
+    add_subdirectory(playback)
+endif()
 add_subdirectory(app)
