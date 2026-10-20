@@ -66,6 +66,12 @@ struct ScanOptions
     // Absolute folders under the roots that are never scanned (Selecta's own Inbox and caches). Known files under them
     // are reported as removed: they aren't part of the collection.
     QStringList excludedFolders;
+    // Folder roles (PRD LIB-1, FolderRoles): of a tracks folder only the files lying in it are scanned, never its
+    // subfolders; of an albums folder only its subfolders, never the files lying in it. Absolute folders, applied
+    // wherever the walk meets them, as a root or below one; a folder in both lists is scanned whole (loose tracks and
+    // album folders side by side). Known files these rules leave out are reported as removed.
+    QStringList tracksFolders;
+    QStringList albumsFolders;
     qint64 maxFiles = 1'000'000; // more audio files than this: the rest aren't scanned, and nothing is removed
     int maxDepth = 64;           // folders nested deeper aren't scanned (reported as unreadable)
 };
@@ -76,8 +82,9 @@ struct ScanOptions
 // convert::readTags (TagLib on a read-only stream, options.tags bounds) and their stream facts through
 // audio::Decoder::open() on the header alone. Paths are compared normalised to NFC (macOS may report NFD), results
 // carry the real on-disk path. Skipped: hidden files and folders, AppleDouble files, temporary files (*.selecta-part,
-// *.part, *.tmp, …), non-audio extensions, excluded folders, symlinks that point outside the roots; folders and files
-// are visited once by (device, inode), so loops are never followed.
+// *.part, *.tmp, …), non-audio extensions, excluded folders, what the folder roles leave out (subfolders of a tracks
+// folder, files lying in an albums folder), symlinks that point outside the roots; folders and files are visited once
+// by (device, inode), so loops are never followed.
 //
 // Blocking. Reads on up to options.readers threads of its own; `progress(done, total)` is called on the calling thread
 // as files are read (total: the files to read). `cancel` is polled between files: a cancelled scan returns at once

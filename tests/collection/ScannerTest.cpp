@@ -426,6 +426,77 @@ TEST(Scanner, RemovedFilesAreOnlyThoseUnderTheRoots)
     EXPECT_EQ(result.removed, QStringList{underRoot});
 }
 
+// --- Folder roles (PRD LIB-1) ----------------------------------------------------------------------------------------
+
+TEST(Scanner, ATracksFolderGivesItsLooseFilesOnly)
+{
+    TestTree tree;
+    const QString loose = tree.add(u"Tracks/Artist - Loose.mp3"_s);
+    const QString nested = tree.add(u"Tracks/Old album/01 - Nested.mp3"_s);
+    tree.addBytes(u"Tracks/Broken/02 - Corrupt.mp3"_s, QByteArray(4096, 'x')); // never opened: subfolders are left out
+    ScanOptions options;
+    options.tracksFolders = {tree.path(u"Tracks"_s)};
+    const ScanResult first = selecta::collection::scan({tree.path(u"Tracks"_s)}, {}, options);
+    EXPECT_EQ(paths(first.added), QStringList{loose});
+    EXPECT_TRUE(first.unreadable.isEmpty());
+    // A file known from before (a scan of the folder as a whole) is no longer part of the collection.
+    QHash<QString, FileSignature> known = signaturesOf(first);
+    known.insert(nested, {nested, QFileInfo(nested).size(), 1});
+    const ScanResult second = selecta::collection::scan({tree.path(u"Tracks"_s)}, known, options);
+    EXPECT_EQ(second.removed, QStringList{nested});
+    EXPECT_TRUE(second.added.isEmpty());
+    EXPECT_TRUE(second.changed.isEmpty());
+}
+
+TEST(Scanner, AnAlbumsFolderGivesItsSubfoldersOnly)
+{
+    TestTree tree;
+    const QString loose = tree.add(u"Albums/Artist - Loose.mp3"_s);
+    const QString first = tree.add(u"Albums/Bicep - Isles/01 - Atlas.mp3"_s);
+    const QString disc = tree.add(u"Albums/Moderat - II/CD2/01 - Bad Kingdom.flac"_s, Format::Flac16);
+    tree.addFolder(u"Albums/Empty"_s);
+    ScanOptions options;
+    options.albumsFolders = {tree.path(u"Albums"_s)};
+    const ScanResult scanned = selecta::collection::scan({tree.path(u"Albums"_s)}, {}, options);
+    EXPECT_EQ(paths(scanned.added), (QStringList{first, disc}));
+    // A loose file known from before goes.
+    QHash<QString, FileSignature> known = signaturesOf(scanned);
+    known.insert(loose, {loose, QFileInfo(loose).size(), 1});
+    const ScanResult again = selecta::collection::scan({tree.path(u"Albums"_s)}, known, options);
+    EXPECT_EQ(again.removed, QStringList{loose});
+    EXPECT_TRUE(again.added.isEmpty());
+    // A rescan of one album folder (a Watcher report) takes all of it: the albums folder's rule is for its own files.
+    const ScanResult album = selecta::collection::scan({tree.path(u"Albums/Moderat - II"_s)}, {}, options);
+    EXPECT_EQ(paths(album.added), QStringList{disc});
+}
+
+TEST(Scanner, RolesApplyWhereverTheWalkMeetsTheirFolders)
+{
+    TestTree tree;
+    const QString plain = tree.add(u"Music/Artist - Plain.mp3"_s);
+    const QString track = tree.add(u"Music/Tracks/Artist - Track.mp3"_s);
+    tree.add(u"Music/Tracks/Sub/Artist - Left out.mp3"_s);
+    tree.add(u"Music/Albums/Artist - Loose.mp3"_s);
+    const QString albumTrack = tree.add(u"Music/Albums/Artist - Album/01 - One.mp3"_s);
+    ScanOptions options;
+    options.tracksFolders = {tree.path(u"Music/Tracks"_s)};
+    options.albumsFolders = {tree.path(u"Music/Albums"_s)};
+    const ScanResult result = selecta::collection::scan({tree.path(u"Music"_s)}, {}, options);
+    EXPECT_EQ(paths(result.added), (QStringList{albumTrack, plain, track})); // sorted by path
+}
+
+TEST(Scanner, AFolderWithBothRolesIsScannedWhole)
+{
+    TestTree tree;
+    const QString loose = tree.add(u"Music/Artist - Loose.mp3"_s);
+    const QString albumTrack = tree.add(u"Music/Artist - Album/01 - One.mp3"_s);
+    ScanOptions options;
+    options.tracksFolders = {tree.path(u"Music"_s)};
+    options.albumsFolders = {tree.path(u"Music/"_s)};
+    const ScanResult result = selecta::collection::scan({tree.path(u"Music"_s)}, {}, options);
+    EXPECT_EQ(paths(result.added), (QStringList{albumTrack, loose}));
+}
+
 // --- Corrupt files, bounds, cancellation -----------------------------------------------------------------------------
 
 TEST(Scanner, CorruptFilesAreReportedAndTheScanGoesOn)
