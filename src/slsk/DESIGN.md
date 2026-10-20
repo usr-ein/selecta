@@ -174,9 +174,25 @@ straight to `Completed`; states never go backwards.
 
 ## Distributed network
 
-See `DistributedNode.h`. Parent selection is the Nicotine+/SoulseekQt rule (P-4); children ≤ 10 by Nicotine+'s
-formula (P-5); `DistribSearch` with an identifier other than 49 is rejected (Nicotine+); forwarding uses the raw
-payload; code 93 from the server or a parent is unpacked identically.
+See `DistributedNode.h`; protocol §8.
+
+- After login: `HaveNoParent(true)`, `BranchRoot(self)`, `BranchLevel(0)`, `AcceptChildren(false)`, in that order.
+- `PossibleParents`: a `D` connection to each candidate (at most 10 at a time, each asking the `PermitSource`,
+  purpose `Distributed`). The first candidate that sends a search once its level and root are known becomes the
+  parent (Nicotine+, SoulseekQt); a level-0 candidate is its own root. The others are closed, as is a candidate with
+  a negative level. Then `HaveNoParent(false)`, `BranchLevel(parent + 1)`, `BranchRoot(parent's root)`, and later
+  changes from the parent are passed on to the server and the children.
+- Only the parent (and candidates) may send distributed messages; anyone else is closed. `Ping` and `ChildDepth` are
+  ignored from anyone.
+- Searches go to every child as the raw bytes received (unknown trailing fields travel on), then to core/; the same
+  search twice in a row is dropped. `EmbeddedMessage` (93) wrapping a search, from the server (only without a peer
+  parent: we are then a branch root) or from the parent, is unpacked the same way; anything else inside is ignored.
+- Children: while we have a parent or are a root, up to `min(avgspeed / ParentSpeedRatio / 100, 10)` once our
+  server-side average speed (from `WatchUser`/`GetUserStats` on ourselves) reaches `ParentMinSpeed` (Nicotine+), and
+  only if `setChildrenAllowed()`. A child gets our level and root at once and on every change. `AcceptChildren`
+  follows whether there is room; dial-back requests for `D` are accepted on the same rule.
+- Losing the parent: back to step one; children are kept and hear level 0. `ResetDistributed`: parent, candidates
+  and children all go. A new login, or the session ending, starts the tree over.
 
 ## Integration points for core/
 
@@ -189,8 +205,11 @@ payload; code 93 from the server or a parent is unpacked identically.
 4. `peers().listen(port)` before login; on failure, tell the user.
 5. Searches: `Client::search(query, permit)` with `Decision::cleanedQuery`; results via
    `peers().searchResponseReceived`; `stopSearch(token)` when the SRCH-16 window ends.
-6. Answering: implement `ShareProvider` and `UserInfoProvider`; answer `Client::searchRequestReceived` with
-   `peers().sendSearchResponse()` (apply excluded phrases, caps and the ≥ 3-character rule in core/).
+6. Answering: implement `ShareProvider` and `UserInfoProvider` (browse, folder contents, user info) and set them
+   on `peers()`. `Client::searchRequestReceived(IncomingSearch)` carries every search from both routes (server code
+   26, distributed); skip your own username, apply excluded phrases, caps and the ≥ 3-character rule, look the
+   query up in the share index, and answer with `Client::answerSearch(search, hits, {slotFree, averageSpeed,
+   queueLength})`.
 7. Transfers: implement `DownloadStorage`; `transfers().download(request, permit)` returns the stable id to map to
    a Get tracks line; `downloadChanged` (state, error, rejection) and `downloadProgress(id, done, total)` (~4/s)
    update it. Feed the governor from `downloadChanged` (queued/started/finished/withdrawn, `rejection` →
@@ -258,9 +277,12 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
     `SendUploadSpeed`, `UploadFailed`/`UploadDenied`, downloader-opened `F` connections), stable ids, coalesced
     progress, ordered signals, every wait timed; 38 tests (PeerNetwork now 44). The fixtures are a static library,
     `selecta_slsk_testing` (`#include "fixtures/FakeServer.h"` …), for core/'s end-to-end tests.
+  - S5 `DistributedNode` and `Client`: parent selection, branch reports, raw forwarding to children with the
+    duplicate guard, branch roots, child limits, reset; the facade with search tokens, both search routes merged into
+    `IncomingSearch`, and `answerSearch()`; 15 tests.
   - `selecta-devnet` (see above), with `FakePeer` streaming uploads from files at a set speed, a search hook, and
     queue control, and `FakeServer` on a chosen port with an optional single account; 19 tests, one of which writes
     a corpus with ffmpeg (skipped without it) and checks every format probes as planned. S4 merged into main as
     `974a017`.
-- **Next:** S5 (`DistributedNode`, and the `Client` facade with the share-index answering hooks), S6 devenv, S7 CLI.
+- **Next:** S6 devenv (pinned Soulfind on 127.0.0.1, `devenv`-labelled tests), S7 selecta-cli commands.
 - **Open questions:** none blocking.

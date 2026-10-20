@@ -35,6 +35,8 @@ selecta_add_test_suite(selecta_slsk_tests
         ServerSessionTest.cpp
         PeerNetworkTest.cpp
         TransferManagerTest.cpp
+        DistributedNodeTest.cpp
+        ClientTest.cpp
         DevnetTest.cpp
     LIBRARIES selecta_slsk_testing selecta_devnet_core)
 

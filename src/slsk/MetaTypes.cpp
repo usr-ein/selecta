@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "slsk/MetaTypes.h"
 
+#include "slsk/Client.h"
+#include "slsk/DistributedNode.h"
 #include "slsk/PeerNetwork.h"
 #include "slsk/ServerSession.h"
 #include "slsk/TransferManager.h"
@@ -64,6 +66,8 @@ void registerMetaTypes()
         qRegisterMetaType<TransferError>();
         qRegisterMetaType<DownloadInfo>();
         qRegisterMetaType<UploadInfo>();
+        qRegisterMetaType<distrib::Search>();
+        qRegisterMetaType<IncomingSearch>();
     });
 }
 

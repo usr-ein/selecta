@@ -34,15 +34,28 @@ struct IncomingSearch
 
 // The whole protocol stack, wired together: one ServerSession, PeerNetwork, TransferManager and DistributedNode.
 // core/ uses the components through the accessors; the Client adds search bookkeeping (tokens and which ones still
-// accept results) and merges incoming searches from both routes.
+// accept results), merges incoming searches from both routes, and answers them.
+//
+// Answering searches (SHARE-2): searchRequestReceived() gives every search that reached us (core/ skips its own
+// username, applies the excluded phrases and the >= 3-character rule, and looks the query up in its share index);
+// answerSearch() sends the hits. Browses, folder listings and user info are answered through the ShareProvider and
+// UserInfoProvider set on peers().
 //
 // Threading: lives on the engine thread and is used only from it. Ownership: owns the four components (QObject
-// children). Not owned: the PermitSource, which must outlive the Client.
+// children, destroyed in reverse order). Not owned: the PermitSource, which must outlive the Client.
 class Client : public QObject
 {
     Q_OBJECT
 
 public:
+    // What a search answer says about our uploads besides the files.
+    struct UploadAvailability
+    {
+        bool slotFree = true;     // an upload slot is free now
+        quint32 averageSpeed = 0; // bytes per second, the server's figure for us
+        quint32 queueLength = 0;  // uploads waiting in our queue
+    };
+
     explicit Client(PermitSource &permits, QObject *parent = nullptr);
     ~Client() override;
     Client(const Client &) = delete;
@@ -61,6 +74,12 @@ public:
     // Stops accepting results for `token` (SRCH-16: core/ decides when collecting ends).
     void stopSearch(quint32 token);
 
+    // Answers `search` with `results` (full virtual paths, as in our share index) and our upload state. Unbudgeted,
+    // as answers are, though a new connection asks the PermitSource (purpose SearchResponse). False, with nothing
+    // sent, when there is nothing to send or no session; `done` reports the delivery otherwise.
+    bool answerSearch(const IncomingSearch &search, const QList<FileEntry> &results, UploadAvailability uploads,
+                      PeerNetwork::SendCallback done = {});
+
     // Registers the metatypes of every value type slsk signals carry, for queued connections across threads. Safe to
     // call more than once and from any thread.
     static void registerMetaTypes();
@@ -70,6 +89,8 @@ Q_SIGNALS:
 
 private:
     quint32 nextSearchToken();
+    template <typename Send>
+    quint32 startSearch(const governor::Permit &permit, Send send);
 
     ServerSession *m_server;
     PeerNetwork *m_peers;
