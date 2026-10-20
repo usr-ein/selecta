@@ -199,6 +199,12 @@ int runSelecta(int argc, char *argv[])
     engineOptions.startPaused = settings.networkPaused();
     engineOptions.library = settings.libraryConfig();
     engineOptions.network = settings.networkConfig();
+    // Downloads arrive in Application Support (not the caches, which macOS may empty under a partial download).
+    engineOptions.incomingDir = dataDir + u"/Downloads/Incoming"_s;
+    engineOptions.stagingDir = dataDir + u"/Downloads/Converting"_s;
+    if (session > 0) {
+        engineOptions.session = session;
+    }
     if (!options.isolated) {
         engineOptions.tokenStore = [] {
             return std::make_unique<selecta::meta::KeychainTokenStore>(u"io.github.usr-ein.Selecta"_s);

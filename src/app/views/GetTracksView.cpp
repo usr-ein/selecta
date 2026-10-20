@@ -39,6 +39,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     , m_note(new QLabel(this))
     , m_add(new QPushButton(tr("Add Tracks…"), this))
     , m_find(new QPushButton(tr("Find Them"), this))
+    , m_get(new QPushButton(tr("Get"), this))
     , m_progress(new QLabel(this))
     , m_countdown(new QTimer(this))
 {
@@ -126,6 +127,30 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
             return;
         }
         QMenu menu(this);
+        bool canGet = false;
+        bool downloading = false;
+        for (const qint64 id : ids) {
+            const int row = m_model->rowOf(id);
+            if (row < 0) {
+                continue;
+            }
+            const core::GetLine &line = m_model->lines().at(row);
+            using DownloadState = core::GetLine::DownloadState;
+            canGet = canGet || (line.best && (line.downloadState == DownloadState::None ||
+                                              line.downloadState == DownloadState::Failed));
+            downloading = downloading || line.downloadState == DownloadState::Queued ||
+                          line.downloadState == DownloadState::Transferring ||
+                          line.downloadState == DownloadState::Converting;
+        }
+        if (canGet) {
+            menu.addAction(tr("Get"), this, [this, ids] { m_engine.downloadTracks(ids); });
+        }
+        if (downloading) {
+            menu.addAction(tr("Cancel Download"), this, [this, ids] { m_engine.cancelTrackDownloads(ids); });
+        }
+        if (canGet || downloading) {
+            menu.addSeparator();
+        }
         menu.addAction(tr("Look Up Again"), this, [this, ids] { m_engine.retryTracks(ids); });
         menu.addAction(tr("Copy"), this, [this] {
             QStringList lines;
@@ -164,6 +189,10 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
             m_engine.findTracks();
         }
     });
+    m_get->setObjectName(u"get.get"_s);
+    m_get->setToolTip(tr("Download the ticked tracks. Each one lands in your Inbox as an MP3 320 with its tags and "
+                         "cover."));
+    connect(m_get, &QPushButton::clicked, this, [this] { m_engine.downloadTracks(); });
     m_progress->setObjectName(u"get.progress"_s);
     m_progress->setForegroundRole(QPalette::PlaceholderText);
     m_countdown->setInterval(1000);
@@ -183,6 +212,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     bar->addWidget(m_summary, 1);
     bar->addWidget(m_progress);
     bar->addWidget(m_find);
+    bar->addWidget(m_get);
     auto *noteBox = new QHBoxLayout;
     noteBox->setContentsMargins(16, 0, 16, 8);
     noteBox->addWidget(m_note);
@@ -317,10 +347,22 @@ void GetTracksView::refreshProgress()
             ++finding;
         }
     }
+    int toGet = 0;
+    for (const core::GetLine &line : m_model->lines()) {
+        using DownloadState = core::GetLine::DownloadState;
+        if (line.ticked && line.best &&
+            (line.downloadState == DownloadState::None || line.downloadState == DownloadState::Failed)) {
+            ++toGet;
+        }
+    }
     m_find->setVisible(m_model->rowCount() > 0);
     m_find->setText(finding > 0 ? tr("Stop") : tr("Find Them"));
     m_find->setEnabled(finding > 0 || toFind > 0);
-    m_find->setDefault(finding == 0 && toFind > 0);
+    m_find->setDefault(finding == 0 && toFind > 0 && toGet == 0);
+    m_get->setVisible(m_model->rowCount() > 0);
+    m_get->setEnabled(toGet > 0);
+    m_get->setText(toGet > 1 ? tr("Get %1").arg(toGet) : tr("Get"));
+    m_get->setDefault(toGet > 0);
 
     if (finding == 0) {
         m_progress->clear();

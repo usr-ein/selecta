@@ -122,7 +122,9 @@ QString GetTracksModel::statusText(const GetLine &line)
     case DownloadState::Queued:
         return tr("Queued at the peer");
     case DownloadState::Transferring:
-        return tr("Downloading");
+        return line.downloadProgress >= 0.0
+                   ? tr("Downloading %1 %").arg(static_cast<int>(line.downloadProgress * 100.0))
+                   : tr("Downloading");
     case DownloadState::Converting:
         return tr("Converting");
     case DownloadState::Arrived:

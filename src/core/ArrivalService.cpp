@@ -160,6 +160,11 @@ ArrivalService::ArrivalService(storage::Database &db, InboxService &inbox, Activ
         m_options.maxConcurrent > 0 ? m_options.maxConcurrent : std::clamp(QThread::idealThreadCount() / 2, 1, 4);
     m_pool.setMaxThreadCount(workers);
     m_pool.setObjectName(u"selecta-arrival"_s);
+    // Leftovers of conversions a quit or a crash interrupted: every arrival starts its own folder afresh anyway.
+    if (!m_options.stagingDir.isEmpty() && QFileInfo::exists(m_options.stagingDir) &&
+        !QDir(m_options.stagingDir).removeRecursively()) {
+        qCWarning(lcArrival) << "couldn't clear" << m_options.stagingDir;
+    }
 }
 
 ArrivalService::~ArrivalService()

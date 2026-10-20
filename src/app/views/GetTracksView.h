@@ -62,6 +62,7 @@ private:
     QLabel *m_note;
     QPushButton *m_add;
     QPushButton *m_find;
+    QPushButton *m_get;
     QLabel *m_progress;
     QTimer *m_countdown;
     int m_waiting = 0;     // searches waiting for the governor
