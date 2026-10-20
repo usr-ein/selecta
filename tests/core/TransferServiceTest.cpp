@@ -422,7 +422,7 @@ TEST_F(TransferServiceTest, APeerThatNeverSaysItsQueueIsStuckAfterTwoMinutes)
     const std::optional<qint64> id = service->enqueue(spec(*silent, "held.flac", 1000));
     ASSERT_TRUE(reaches(*id, State::Queued));
     ASSERT_TRUE(waitFor([&] { return silent->receivedOf<PlaceInQueueRequest>().size() == 1; }));
-    now += 2 * kMinuteMs - 1000;
+    now += (2 * kMinuteMs) - 1000;
     QTest::qWait(200);
     EXPECT_FALSE(service->download(*id)->queue.isStuck());
     now += 1000;
