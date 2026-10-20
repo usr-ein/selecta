@@ -105,6 +105,21 @@ Types ── Normalizer ── VersionClassifier ── Lexicon (all word lists,
     terms more than 2 units longer or shorter before verifying them (no rule matches beyond that); single-member
     artists are normalised once. The benchmark asks for a performance core (QoS user-interactive) so the numbers
     measure the code, not the scheduler.
+19. **Album matching (§8).** The folder's album is the most common parsed album, folder artist (or the track artist
+    at least half the files agree on) and year. Candidates: the albums holding the tracks owned, the album key and
+    most album-title words, and the duration signature (same count ± 3 tracks, neighbouring 8 s bands, ≥ 5 lengths
+    paired within ±3 s). A file fits a track by its §9 score, or by half of the length agreement when its name says
+    nothing (unparseable, another script), whichever is higher; pairs with no evidence at all stay unmapped (missing
+    and extra). A full signature (same count ≥ 5, every sorted length within ±3 s) makes the album likely in
+    collection by itself (T48) unless artist and title both contradict it (similarity < 0.5); its pairs within ±3 s
+    count as likely. "As singles" means owned outside the best album. The best album: in collection, tier, tracks
+    vouched for, distance, collection before Inbox.
+20. **Duration consensus (§9.1, T51).** Clusters join results at most 3 s apart and span at most 6 s, so a chain
+    never merges two versions; peers count once per cluster. A cluster is named by the explicit version most of its
+    labelled results carry, so one mislabelled file doesn't rename it. "Confident" (BATCH-6) needs ≥ 3 peers in the
+    preferred cluster and no other cluster that could be the wanted version backed by two peers or more: a single
+    peer's odd length (a truncated file) is noise, two unlabelled lengths for an unversioned line are a guess. With
+    T51's data an unversioned line has no preferred cluster (both are named by non-original versions).
 
 ## Integration points
 
@@ -166,8 +181,14 @@ letters, two fuzzy fields, an uncorroborated short-word edit), not retrieval: pr
   ambiguous below 1.0). A number prefix the rules would keep is stripped when the dictionary knows the name only
   without it ("101 Artist - Title"); "(Artist - Title) Remixer Remix" names are unwrapped. Folders literally named
   "Album" or "Albums" are generic containers.
-- Next: AlbumMatcher (X3), DurationConsensus (X4), SupersedeDecider (X5). Memory could drop further by interning
-  artist sets and versions apart (records now intern one meta per artist set × version × extra text).
+- Done since: AlbumMatcher (X3, decision 19) with a Hungarian assignment tested against brute force, and a TSan test
+  of one AlbumMatcher shared by many threads; Matcher and AlbumMatcher share `detail::bestOf`.
+- Supersede API, revised with the head implementer (2026-10-20): `decideArrival` for core's arrival pipeline returns
+  its own `SupersedeArrivalDecision`; `LocalTrackFacts::quality` is the best evidence of the real quality (the
+  source quality from the history, since downloads become MP3 320); every decision carries a one-line `summary`.
+- Done since: DurationConsensus (X4, decision 20), so X4 is complete.
+- Next: SupersedeDecider (X5). Memory could drop further by interning artist sets and versions apart (records now
+  intern one meta per artist set × version × extra text).
 - Open questions: none (Q-M1 and Q-M2 answered, decisions 11 and 13).
 - Working rules from the head implementer: `tools/lint.sh src/match tests/match` before each commit; a note to
   `main` at each milestone; `Matcher` and everything else safe to call concurrently on one shared index.

@@ -175,7 +175,7 @@ DeleteHashes deleteHashes(QStringView text, int budget)
     return out;
 }
 
-constexpr quint8 kLongTerm = 255;
+constexpr int kLongTerm = 255;
 
 quint8 storedLength(qsizetype length)
 {

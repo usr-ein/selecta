@@ -36,10 +36,21 @@ struct LocalTrackFacts
     QString artist;
     QString title; // with its version text
     qint64 durationMs = 0;
+    // The best evidence of the audio's real quality, ranked as given (qualityRank). Every Selecta download is converted
+    // to MP3 320 on arrival (PRD D29), so core passes the source quality recorded in the download history (a FLAC
+    // transcoded to MP3 320 ranks as the FLAC), and the file's own format only when nothing better is known.
     AudioQuality quality;
 };
 
 struct SupersedeAlbumTrack
+{
+    quint64 id = 0;
+    LocalTrackFacts track;
+};
+
+// A copy that has just arrived in the Inbox (scanned, or the parsed result's artist, title and length with the file's
+// quality): it may replace an older copy of the same track (core's arrival pipeline).
+struct SupersedeArrival
 {
     quint64 id = 0;
     LocalTrackFacts track;
@@ -74,6 +85,7 @@ enum class SupersedeReason : quint8 {
     SingleBusy,          // defer
     SingleChanged,       // recheck (T41)
     VersionDiffers,      // another version of the same title: no supersede (T40)
+    SameQuality,         // arrival: the new copy is no better than the one already there: flag the duplicate
 };
 
 struct SupersedePair
@@ -83,7 +95,20 @@ struct SupersedePair
     Tier tier = Tier::None;
     SupersedeAction action = SupersedeAction::None;
     SupersedeReason reason = SupersedeReason::VersionDiffers;
-    QStringList explanation;
+    QString summary;         // one line for the activity log: the decision and why
+    QStringList explanation; // every guard that was checked, for the inspector
+};
+
+// The arrival pipeline's decision for one pair: Trash means "replace the copy already there by the arrived one".
+struct SupersedeArrivalDecision
+{
+    quint64 arrivedId = 0;
+    quint64 existingId = 0;
+    Tier tier = Tier::None;
+    SupersedeAction action = SupersedeAction::None;
+    SupersedeReason reason = SupersedeReason::VersionDiffers;
+    QString summary;         // one line for the activity log: the decision and why
+    QStringList explanation; // every guard that was checked, for the inspector
 };
 
 struct SupersedeDecision
@@ -104,6 +129,10 @@ struct SupersedeDecision
 // Trash. Then the circuit breaker looks at all Trash pairs of the event: they stay Trash, and needsConfirmation tells
 // core to ask the user first.
 //
+// The arrival pipeline uses the same matching and guards for one pair: a copy that has just arrived against an older
+// copy of the same track. The older copy is replaced (Trash) only when the new one is strictly better on the filing
+// scale (qualityRank); the same quality flags the duplicate, a worse one flags too.
+//
 // Threading: pure static functions; any thread. Failure modes: none.
 class SupersedeDecider final
 {
@@ -118,6 +147,10 @@ public:
     // None and action None when nothing matches.
     static SupersedePair decidePair(AlbumDownloadState state, const SupersedeAlbumTrack &albumTrack,
                                     const SupersedeSingle &single);
+
+    // Arrival pipeline: a better copy may have arrived for `existing` (a lossless or 320 version of something already
+    // in the Inbox at lower quality). `existing.arrivedAfterAlbum` is ignored.
+    static SupersedeArrivalDecision decideArrival(const SupersedeArrival &arrived, const SupersedeSingle &existing);
 };
 
 } // namespace selecta::match
