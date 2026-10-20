@@ -167,6 +167,11 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
         menu.exec(m_table->viewport()->mapToGlobal(position));
     });
     m_table->installEventFilter(this); // ⌫ and ⌦ remove the selected lines
+    connect(m_table, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
+        if (index.isValid() && index.column() != GetTracksModel::TickColumn) {
+            Q_EMIT previewRequested();
+        }
+    });
 
     // Bars.
     m_add->setObjectName(u"get.add"_s);
@@ -289,6 +294,34 @@ QString GetTracksView::summary() const
         parts.append(counts.released == 1 ? tr("1 release found") : tr("%1 releases found").arg(counts.released));
     }
     return parts.join(u" · "_s);
+}
+
+std::optional<GetTracksView::PreviewTarget> GetTracksView::previewTarget() const
+{
+    const QModelIndex current = m_table->currentIndex();
+    const QList<qint64> selected = selectedIds();
+    qint64 id = current.isValid()
+                    ? current.siblingAtColumn(GetTracksModel::TrackColumn).data(GetTracksModel::LineIdRole).toLongLong()
+                    : 0;
+    if (id == 0 || !selected.contains(id)) {
+        if (selected.isEmpty()) {
+            return std::nullopt;
+        }
+        id = selected.constFirst();
+    }
+    const int row = m_model->rowOf(id);
+    if (row < 0) {
+        return std::nullopt;
+    }
+    const core::GetLine &line = m_model->lines().at(row);
+    PreviewTarget target;
+    target.lineId = id;
+    if (line.best) {
+        target.peer = line.best->peer;
+        target.identity = u"peer|%1|%2|%3"_s.arg(line.best->peer, QString::fromLatin1(line.best->remotePath.toBase64()))
+                              .arg(line.best->size);
+    }
+    return target;
 }
 
 QList<qint64> GetTracksView::selectedIds() const

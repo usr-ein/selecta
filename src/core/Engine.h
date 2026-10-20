@@ -49,6 +49,7 @@ struct EngineOptions
     // Empty: downloads can't be stored (tests that don't download).
     QString incomingDir;
     QString stagingDir;
+    QString previewDir;         // previews, emptied at start
     std::optional<int> session; // this run's session number, recorded with downloads
 };
 
@@ -82,6 +83,11 @@ public:
     // (BATCH-1, META-3). tracksAdded() reports each part as it completes.
     void addTracks(const QString &text);
 
+    // Previews a Get tracks line's chosen file (PREV-1): previewStarted() hands over the source to play while the
+    // file arrives, or previewRefused() says why it can't. The preview playing before stops.
+    void previewLine(qint64 lineId);
+    void stopPreview();
+
     // "Pause network activity" (SAFE-5): no new Soulseek operations until resumed.
     void setPaused(bool paused);
     bool isPaused() const;
@@ -113,6 +119,12 @@ Q_SIGNALS:
     void networkStatusChanged(const selecta::core::NetworkStatus &status);
     // Searches waiting for the governor, collecting results, and the wait before the next one.
     void searchQueueChanged(int waiting, int collecting, qint64 nextInMs);
+    // A preview started: the source to play (it grows while the file arrives), a stable identity for the analysis
+    // cache, and what to call it.
+    void previewStarted(qint64 lineId, qint64 previewId, const std::shared_ptr<selecta::audio::ByteSource> &source,
+                        const QString &identity, const QString &title, const QString &artist, const QString &label);
+    void previewRefused(qint64 lineId, const QString &why);
+    void previewChanged(const selecta::core::Preview &preview);
 
 private:
     bool fail(const QString &error);
@@ -135,6 +147,7 @@ private:
     std::unique_ptr<SearchService> m_search;
     std::unique_ptr<TransferService> m_transfers;
     std::unique_ptr<ArrivalService> m_arrival;
+    qint64 m_previewId = 0; // the preview playing
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     bool m_started = false;

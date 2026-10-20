@@ -63,6 +63,9 @@ public:
     // Downloads the chosen file of these lines (every ticked line when empty) into the Inbox, converted and tagged.
     void downloadTracks(const QList<qint64> &ids = {});
     void cancelTrackDownloads(const QList<qint64> &ids);
+    // Previews a line's chosen file while it arrives (previewStarted / previewRefused); stops the one playing.
+    void previewTrack(qint64 lineId);
+    void stopPreview();
     QList<GetLine> getLines() const { return m_getLines; }
 
     // --- the Soulseek network (Settings → Network) ---
@@ -98,6 +101,10 @@ Q_SIGNALS:
     void tracksAdded(int added, int duplicates, int unidentified, const QString &note);
     void networkStatusChanged(const selecta::core::NetworkStatus &status);
     void searchQueueChanged(int waiting, int collecting, qint64 nextInMs);
+    void previewStarted(qint64 lineId, qint64 previewId, const std::shared_ptr<selecta::audio::ByteSource> &source,
+                        const QString &identity, const QString &title, const QString &artist, const QString &label);
+    void previewRefused(qint64 lineId, const QString &why);
+    void previewChanged(const selecta::core::Preview &preview);
 
 private:
     EngineOptions m_options;

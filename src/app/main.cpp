@@ -123,7 +123,7 @@ QString buildType()
 
 namespace {
 
-int runSelecta(int argc, char *argv[])
+int runSelecta(int argc, char **argv)
 {
     const QApplication app(argc, argv);
     // Cover art comes from untrusted files and services: cap what any single image decode may allocate (process-wide;
@@ -202,6 +202,7 @@ int runSelecta(int argc, char *argv[])
     // Downloads arrive in Application Support (not the caches, which macOS may empty under a partial download).
     engineOptions.incomingDir = dataDir + u"/Downloads/Incoming"_s;
     engineOptions.stagingDir = dataDir + u"/Downloads/Converting"_s;
+    engineOptions.previewDir = paths::cacheDir() + u"/Previews"_s; // a session's previews only
     if (session > 0) {
         engineOptions.session = session;
     }
@@ -277,12 +278,13 @@ int main(int argc, char *argv[])
     try {
         return runSelecta(argc, argv);
     } catch (const std::exception &error) {
-        if (std::fputs("Selecta stopped on an unexpected error: ", stderr) != EOF) {
-            std::fputs(error.what(), stderr);
-            std::fputs("\n", stderr);
+        if (std::fprintf(stderr, "Selecta stopped on an unexpected error: %s\n", error.what()) < 0) {
+            return 1; // stderr is closed: nothing more to say
         }
     } catch (...) {
-        std::fputs("Selecta stopped on an unexpected error\n", stderr);
+        if (std::fputs("Selecta stopped on an unexpected error\n", stderr) == EOF) {
+            return 1;
+        }
     }
     return 1;
 }

@@ -28,7 +28,7 @@ void TickDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
     background.text.clear();
     background.icon = {};
     const QWidget *widget = option.widget;
-    QStyle *style = widget ? widget->style() : QApplication::style();
+    const QStyle *style = widget ? widget->style() : QApplication::style();
     style->drawControl(QStyle::CE_ItemViewItem, &background, painter, widget);
     if (!checkable(index)) {
         return;

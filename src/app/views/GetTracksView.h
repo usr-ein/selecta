@@ -2,7 +2,10 @@
 #pragma once
 
 #include <QList>
+#include <QString>
 #include <QWidget>
+
+#include <optional>
 
 class QElapsedTimer;
 class QLabel;
@@ -37,6 +40,15 @@ public:
     QString summary() const;
     QList<qint64> selectedIds() const;
 
+    // What Space or a double-click previews: the current line's chosen file.
+    struct PreviewTarget
+    {
+        qint64 lineId = 0;
+        QString identity; // as the engine names the preview (peer, path, size); empty without a file
+        QString peer;
+    };
+    std::optional<PreviewTarget> previewTarget() const;
+
 public Q_SLOTS:
     // Opens the "Add tracks" sheet.
     void addTracks();
@@ -46,6 +58,7 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     void summaryChanged();
+    void previewRequested(); // a double-click on a line
 
 private:
     void refresh();

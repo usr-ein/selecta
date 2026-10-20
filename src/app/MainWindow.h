@@ -109,6 +109,7 @@ private:
     void refreshTitle();
     void refreshNetworkState();
     void previewInboxSelection(bool toggleIfLoaded);
+    void previewGetTracksLine(bool toggleIfLoaded);
 
     AppServices m_services;
     Appearance m_appearance;
@@ -133,6 +134,8 @@ private:
     QList<QAction *> m_goActions;
     QList<QAction *> m_playbackActions;
     std::optional<bool> m_shownPaused; // what the pause action shows
+    qint64 m_askedPreviewLine = 0;     // the Get tracks line a preview was asked for
+    qint64 m_previewId = 0;            // the engine's preview playing, if any
     QList<View> m_views;
     QHash<QString, qsizetype> m_viewIndex;
     QString m_currentId;

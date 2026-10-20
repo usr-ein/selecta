@@ -27,6 +27,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<GetLine>();
     qRegisterMetaType<QList<GetLine>>();
     qRegisterMetaType<NetworkStatus>();
+    qRegisterMetaType<Preview>();
+    qRegisterMetaType<std::shared_ptr<audio::ByteSource>>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -68,6 +70,9 @@ void EngineHost::start()
     connect(engine, &Engine::inboxOperationFinished, this, &EngineHost::inboxOperationFinished);
     connect(engine, &Engine::tracksAdded, this, &EngineHost::tracksAdded);
     connect(engine, &Engine::searchQueueChanged, this, &EngineHost::searchQueueChanged);
+    connect(engine, &Engine::previewStarted, this, &EngineHost::previewStarted);
+    connect(engine, &Engine::previewRefused, this, &EngineHost::previewRefused);
+    connect(engine, &Engine::previewChanged, this, &EngineHost::previewChanged);
     connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
         m_networkStatus = status;
         Q_EMIT networkStatusChanged(status);
@@ -215,6 +220,16 @@ void EngineHost::retryTracks(const QList<qint64> &ids)
             engine.getTracks().retry(ids);
         }
     });
+}
+
+void EngineHost::previewTrack(qint64 lineId)
+{
+    post([lineId](Engine &engine) { engine.previewLine(lineId); });
+}
+
+void EngineHost::stopPreview()
+{
+    post([](Engine &engine) { engine.stopPreview(); });
 }
 
 void EngineHost::downloadTracks(const QList<qint64> &ids)

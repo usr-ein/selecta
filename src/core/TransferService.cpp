@@ -111,6 +111,67 @@ private:
     TransferService &m_service;
 };
 
+namespace {
+
+// Appends a preview's bytes to its file and publishes them to the GrowingFile a player reads, after each write. Its
+// size() is the resume offset, as DownloadStorage requires.
+// A QIODevice only for the TransferManager's writes: no signals, slots or parent.
+class PreviewWriter final : public QIODevice // clazy:exclude=missing-qobject-macro,ctor-missing-parent-argument
+{
+public:
+    PreviewWriter(const QString &path, std::shared_ptr<audio::GrowingFile> target)
+        : m_file(path)
+        , m_target(std::move(target))
+    {}
+
+    bool openForAppend()
+    {
+        if (!m_file.open(QIODevice::WriteOnly | QIODevice::Append)) {
+            return false;
+        }
+        m_target->setAvailable(m_file.size());
+        return QIODevice::open(QIODevice::WriteOnly);
+    }
+    qint64 size() const override { return m_file.size(); }
+    void close() override
+    {
+        m_file.close();
+        QIODevice::close();
+    }
+
+protected:
+    qint64 readData(char *data, qint64 maxSize) override
+    {
+        Q_UNUSED(data)
+        Q_UNUSED(maxSize)
+        return -1;
+    }
+    qint64 writeData(const char *data, qint64 size) override
+    {
+        const qint64 written = m_file.write(data, size);
+        if (written > 0 && m_file.flush()) {
+            m_target->setAvailable(m_file.size()); // only bytes that reached the file are readable
+        }
+        return written;
+    }
+
+private:
+    QFile m_file;
+    std::shared_ptr<audio::GrowingFile> m_target;
+};
+
+} // namespace
+
+struct TransferService::PreviewSlot
+{
+    Preview info;
+    std::shared_ptr<audio::GrowingFile> source;
+    QString path;
+    slsk::TransferId transfer = 0;
+    bool active = false;       // the governor counts it as started
+    bool finishWanted = false; // stopped near the end: it completes, for a Get to reuse
+};
+
 TransferService::TransferService(storage::Database &db, governor::Governor &governor, NetworkService &network,
                                  ActivityLog &activity, Options options, WallClock now, QObject *parent)
     : QObject(parent)
@@ -127,6 +188,11 @@ TransferService::TransferService(storage::Database &db, governor::Governor &gove
     qRegisterMetaType<Download>();
     if (m_options.retryDelaysMs.isEmpty()) {
         m_options.retryDelaysMs = defaultRetryDelays();
+    }
+    if (!m_options.previewDir.isEmpty()) {
+        // Previews are for this session only: whatever an earlier one left goes.
+        QDir(m_options.previewDir).removeRecursively();
+        QDir().mkpath(m_options.previewDir);
     }
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &TransferService::startWaiting);
@@ -154,6 +220,7 @@ TransferService::~TransferService()
         m_network.transfers().setDownloadStorage(nullptr);
     }
     qDeleteAll(m_files);
+    qDeleteAll(m_previewWriters);
 }
 
 void TransferService::shutdown()
@@ -226,6 +293,9 @@ std::optional<qint64> TransferService::enqueue(const DownloadSpec &spec)
         if (live.peer == spec.peer && live.remotePath == spec.remotePath) {
             return live.id; // already wanted
         }
+    }
+    if (std::optional<Download> reused = reusePreview(spec)) {
+        return reused->id; // previewed to the end already: straight to the arrival pipeline
     }
     Download download;
     download.peer = spec.peer;
@@ -416,6 +486,10 @@ void TransferService::tryStart(Download &download)
 
 void TransferService::transferChanged(const slsk::DownloadInfo &info)
 {
+    if (const auto preview = m_previewOf.constFind(info.id); preview != m_previewOf.cend()) {
+        previewTransferChanged(preview.value(), info);
+        return;
+    }
     const qint64 id = m_downloadOf.value(info.id);
     const auto found = m_live.find(id);
     if (id == 0 || found == m_live.end()) {
@@ -495,6 +569,13 @@ void TransferService::failed(Download &download, const slsk::DownloadInfo &info)
 
 void TransferService::transferProgress(slsk::TransferId id, quint64 done, quint64 total)
 {
+    if (const auto preview = m_previewOf.constFind(id); preview != m_previewOf.cend()) {
+        if (const std::shared_ptr<PreviewSlot> slot = m_previews.value(preview.value())) {
+            slot->info.received = static_cast<qint64>(done);
+            Q_EMIT previewChanged(slot->info);
+        }
+        return;
+    }
     const qint64 downloadId = m_downloadOf.value(id);
     const auto found = m_live.find(downloadId);
     if (downloadId == 0 || found == m_live.end()) {
@@ -621,6 +702,20 @@ QString TransferService::partialPathOf(const Download &download) const
 
 QIODevice *TransferService::openFile(const slsk::DownloadInfo &info)
 {
+    if (const auto preview = m_previewOf.constFind(info.id); preview != m_previewOf.cend()) {
+        const std::shared_ptr<PreviewSlot> slot = m_previews.value(preview.value());
+        if (m_shutDown || !slot) {
+            return nullptr;
+        }
+        auto writer = std::make_unique<PreviewWriter>(slot->path, slot->source);
+        if (!writer->openForAppend()) {
+            qCWarning(lcTransfers) << "can't write the preview" << slot->path;
+            return nullptr;
+        }
+        QIODevice *device = writer.release();
+        m_previewWriters.insert(info.id, device);
+        return device;
+    }
     const qint64 id = m_downloadOf.value(info.id);
     const auto found = m_live.find(id);
     if (m_shutDown || id == 0 || found == m_live.end() || m_options.incomingDir.isEmpty()) {
@@ -644,6 +739,20 @@ QIODevice *TransferService::openFile(const slsk::DownloadInfo &info)
 
 void TransferService::closeFile(const slsk::DownloadInfo &info, QIODevice *device)
 {
+    if (QIODevice *writer = m_previewWriters.take(info.id)) {
+        writer->close();
+        delete writer;
+        const qint64 id = m_previewOf.value(info.id);
+        if (const std::shared_ptr<PreviewSlot> slot = m_previews.value(id)) {
+            if (info.state == slsk::DownloadState::Completed) {
+                slot->source->setComplete();
+                m_completedPreviews.insert(previewKey(slot->info.peer, slot->info.remotePath), slot->path);
+            } else {
+                slot->source->setFailed(); // what arrived stays playable
+            }
+        }
+        return;
+    }
     QFile *file = m_files.take(info.id);
     if (file == nullptr || file != device) {
         qCWarning(lcTransfers) << "asked to close a file Selecta didn't open, transfer" << info.id;
@@ -667,6 +776,262 @@ void TransferService::closeFile(const slsk::DownloadInfo &info, QIODevice *devic
     if (const auto found = m_live.find(id); found != m_live.end()) {
         found->localPath = std::move(complete);
     }
+}
+
+QString TransferService::previewKey(const QString &peer, const QByteArray &remotePath)
+{
+    return peer + u'\n' + QString::fromLatin1(remotePath.toBase64());
+}
+
+std::optional<TransferService::PreviewStart> TransferService::startPreview(const DownloadSpec &spec, QString *why)
+{
+    const auto refuse = [why](const QString &reason) -> std::optional<PreviewStart> {
+        if (why != nullptr) {
+            *why = reason;
+        }
+        return std::nullopt;
+    };
+    if (m_shutDown || spec.peer.isEmpty() || spec.remotePath.isEmpty()) {
+        return refuse(tr("There is no file to preview."));
+    }
+    // The same file, playing or played already.
+    for (const std::shared_ptr<PreviewSlot> &slot : std::as_const(m_previews)) {
+        if (slot->info.peer == spec.peer && slot->info.remotePath == spec.remotePath &&
+            slot->info.state != Preview::State::Failed && slot->info.state != Preview::State::Cancelled &&
+            slot->source) {
+            return PreviewStart{slot->info.id, slot->source};
+        }
+    }
+    // One preview at a time: the one playing gives way, and finished ones are forgotten (complete files stay cached).
+    const QList<qint64> running = m_previews.keys();
+    for (const qint64 id : running) {
+        stopPreview(id);
+    }
+    m_previews.removeIf([](const auto &entry) { return entry.value()->info.isFinished(); });
+
+    const qint64 id = m_nextPreviewId++;
+    const auto slot = std::make_shared<PreviewSlot>();
+    slot->info.id = id;
+    slot->info.peer = spec.peer;
+    slot->info.remotePath = spec.remotePath;
+    slot->info.size = spec.size;
+    slot->info.getLine = spec.getLine;
+
+    const QString cached = m_completedPreviews.value(previewKey(spec.peer, spec.remotePath));
+    if (!cached.isEmpty() && QFileInfo::exists(cached)) {
+        if (audio::Result<std::shared_ptr<audio::FileSource>> file = audio::FileSource::open(cached); file) {
+            slot->path = cached;
+            slot->info.state = Preview::State::Complete;
+            slot->info.received = QFileInfo(cached).size();
+            slot->info.message = tr("Previewed before");
+            const std::shared_ptr<audio::ByteSource> source = file.takeValue();
+            m_previews.insert(id, slot);
+            Q_EMIT previewChanged(slot->info);
+            return PreviewStart{id, source};
+        }
+    }
+    if (spec.size <= 0) {
+        return refuse(tr("%1 didn't say how big the file is, so it can't be previewed.").arg(spec.peer));
+    }
+    for (const Download &live : std::as_const(m_live)) {
+        if (live.peer == spec.peer && live.remotePath == spec.remotePath) {
+            return refuse(tr("This file is downloading already."));
+        }
+    }
+    if (!m_network.isOnline()) {
+        return refuse(tr("Not connected to Soulseek."));
+    }
+    if (m_options.previewDir.isEmpty()) {
+        return refuse(tr("Previews have nowhere to go."));
+    }
+    governor::Request request;
+    request.peer = spec.peer;
+    request.preview = true;
+    governor::Decision decision = m_governor.request(governor::Operation::QueueDownload, request);
+    if (!decision.permit) {
+        return refuse(decision.explanation);
+    }
+    Download named;
+    named.remotePath = spec.remotePath;
+    const QString name = library::naming::safeComponent(named.remoteFileName());
+    slot->path = QDir(m_options.previewDir).filePath(u"%1-%2"_s.arg(id).arg(name.isEmpty() ? u"preview"_s : name));
+    {
+        QFile create(slot->path); // GrowingFile reads an existing file
+        if (!create.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            return refuse(tr("Selecta can't write the preview: %1").arg(create.errorString()));
+        }
+    }
+    audio::Result<std::shared_ptr<audio::GrowingFile>> growing = audio::GrowingFile::open(slot->path, spec.size);
+    if (!growing) {
+        QFile::remove(slot->path);
+        return refuse(growing.error().message);
+    }
+    slot->source = growing.takeValue();
+    slsk::DownloadRequest transfer;
+    transfer.username = spec.peer;
+    transfer.path = slsk::RemotePath(spec.remotePath);
+    transfer.expectedSize = static_cast<quint64>(spec.size);
+    transfer.preview = true;
+    const slsk::TransferId transferId = m_network.transfers().download(transfer, std::move(*decision.permit));
+    if (transferId == 0 || m_downloadOf.contains(transferId)) {
+        slot->source->setFailed();
+        QFile::remove(slot->path);
+        return refuse(tr("Selecta couldn't ask %1 for a preview.").arg(spec.peer));
+    }
+    slot->transfer = transferId;
+    slot->info.message = tr("Asking %1").arg(spec.peer);
+    m_previewOf.insert(transferId, id);
+    m_previews.insert(id, slot);
+    m_governor.downloadQueued(spec.peer);
+    Q_EMIT previewChanged(slot->info);
+    return PreviewStart{id, slot->source};
+}
+
+void TransferService::stopPreview(qint64 id)
+{
+    const std::shared_ptr<PreviewSlot> slot = m_previews.value(id);
+    if (!slot || slot->info.isFinished() || slot->finishWanted) {
+        return;
+    }
+    const qint64 finishAt = slot->info.size * governor::limits::kPreviewFinishPercent / 100;
+    if (slot->info.state == Preview::State::Transferring && slot->info.received >= finishAt) {
+        slot->finishWanted = true; // nearly there: let it complete for a Get to reuse
+        return;
+    }
+    const slsk::TransferId transfer = slot->transfer;
+    releasePreview(*slot, slot->info.received);
+    if (transfer != 0) {
+        m_network.transfers().cancelDownload(transfer); // its late report finds nothing to act on
+    }
+    finishPreview(*slot, Preview::State::Cancelled, tr("Stopped"));
+}
+
+std::optional<Preview> TransferService::preview(qint64 id) const
+{
+    if (const std::shared_ptr<PreviewSlot> slot = m_previews.value(id)) {
+        return slot->info;
+    }
+    return std::nullopt;
+}
+
+void TransferService::previewTransferChanged(qint64 id, const slsk::DownloadInfo &info)
+{
+    const std::shared_ptr<PreviewSlot> slot = m_previews.value(id);
+    if (!slot) {
+        return;
+    }
+    const auto bytes = static_cast<qint64>(info.startOffset + info.received);
+    switch (info.state) {
+    case slsk::DownloadState::Queued:
+        slot->info.message = info.placeInQueue
+                                 ? tr("Queued at %1, place %2").arg(slot->info.peer).arg(*info.placeInQueue)
+                                 : tr("Queued at %1").arg(slot->info.peer);
+        Q_EMIT previewChanged(slot->info);
+        break;
+    case slsk::DownloadState::Requested:
+    case slsk::DownloadState::Connecting:
+    case slsk::DownloadState::Transferring: {
+        if (!slot->active) {
+            slot->active = true;
+            m_governor.downloadStarted(slot->info.peer);
+        }
+        const bool flowing = info.state == slsk::DownloadState::Transferring;
+        slot->info.state = flowing ? Preview::State::Transferring : Preview::State::Queued;
+        slot->info.message =
+            flowing ? tr("Previewing from %1").arg(slot->info.peer) : tr("Connecting to %1").arg(slot->info.peer);
+        Q_EMIT previewChanged(slot->info);
+        break;
+    }
+    case slsk::DownloadState::Completed:
+        m_governor.downloadFinished(slot->info.peer, bytes, true);
+        m_previewOf.remove(slot->transfer);
+        slot->transfer = 0;
+        slot->active = false;
+        slot->info.received = bytes;
+        finishPreview(*slot, Preview::State::Complete, tr("Previewed from %1").arg(slot->info.peer));
+        break;
+    case slsk::DownloadState::Failed:
+        releasePreview(*slot, bytes);
+        if (info.error == slsk::TransferError::Denied && info.rejection) {
+            m_governor.peerDenied(slot->info.peer, info.rejection->text);
+        }
+        finishPreview(*slot, Preview::State::Failed, failureText(info));
+        break;
+    case slsk::DownloadState::Cancelled:
+        releasePreview(*slot, bytes);
+        finishPreview(*slot, Preview::State::Cancelled, tr("Stopped"));
+        break;
+    }
+}
+
+void TransferService::releasePreview(PreviewSlot &slot, qint64 bytes)
+{
+    if (slot.transfer == 0) {
+        return;
+    }
+    if (slot.active) {
+        m_governor.downloadFinished(slot.info.peer, bytes, false);
+    } else {
+        m_governor.downloadWithdrawn(slot.info.peer);
+    }
+    m_previewOf.remove(slot.transfer);
+    slot.transfer = 0;
+    slot.active = false;
+}
+
+void TransferService::finishPreview(PreviewSlot &slot, Preview::State state, const QString &message)
+{
+    slot.info.state = state;
+    slot.info.message = message;
+    if (state != Preview::State::Complete && slot.source) {
+        slot.source->setFailed();
+        if (state == Preview::State::Cancelled) {
+            QFile::remove(slot.path); // a player reading it keeps its open handle until it lets go
+        }
+    }
+    Q_EMIT previewChanged(slot.info);
+}
+
+std::optional<Download> TransferService::reusePreview(const DownloadSpec &spec)
+{
+    const QString previewed = m_completedPreviews.value(previewKey(spec.peer, spec.remotePath));
+    if (previewed.isEmpty() || !QFileInfo::exists(previewed) || m_options.incomingDir.isEmpty()) {
+        return std::nullopt;
+    }
+    Download download;
+    download.peer = spec.peer;
+    download.remotePath = spec.remotePath;
+    download.size = std::max<qint64>(0, spec.size);
+    download.file = spec.file;
+    download.release = spec.release;
+    download.getLine = spec.getLine;
+    download.state = State::Converting;
+    download.message = tr("Converting");
+    download.createdAt = m_now();
+    download.updatedAt = download.createdAt;
+    const std::optional<qint64> id = m_store.add(download);
+    if (!id) {
+        return std::nullopt;
+    }
+    download.id = *id;
+    const QString name = library::naming::safeComponent(download.remoteFileName());
+    const QString target = QDir(folderOf(download.id)).filePath(name.isEmpty() ? u"download"_s : name);
+    // A copy, not a move: the preview may still be playing from its file.
+    if (!QDir().mkpath(folderOf(download.id)) || !QFile::copy(previewed, target)) {
+        download.state = State::Waiting;
+        download.message.clear();
+        m_live.insert(download.id, download);
+        save(m_live[download.id]);
+        tryStart(m_live[download.id]);
+        return m_live.value(download.id);
+    }
+    download.localPath = target;
+    download.received = QFileInfo(target).size();
+    m_live.insert(download.id, download);
+    m_activity.record(u"download"_s, download.peer, u"from-preview"_s, download.remoteFileName());
+    save(m_live[download.id]);
+    Q_EMIT completed(m_live.value(download.id));
+    return m_live.value(download.id);
 }
 
 } // namespace selecta::core

@@ -88,6 +88,7 @@ protected:
     {
         TransferService::Options options;
         options.incomingDir = dir.filePath(u"incoming"_s);
+        options.previewDir = dir.filePath(u"previews"_s);
         options.retryDelaysMs = {100, 100, 100};
         options.pacedRetryMs = 100;
         service = std::make_unique<TransferService>(db, governor, *network, log, options, [this] { return now; });
@@ -404,4 +405,100 @@ TEST_F(TransferServiceTest, GetTracksMovesOnToTheNextPeersCopy)
     line = getTracks.lines().constFirst();
     EXPECT_EQ(line.downloadState, selecta::core::GetLine::DownloadState::Converting);
     EXPECT_EQ(line.best->peer, sharer.username());
+}
+
+TEST_F(TransferServiceTest, APreviewPlaysTheFileWhileItArrives)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    const QByteArray bytes = content(600'000, 21);
+    ghost->files.insert("preview.flac", FakePeer::Upload{.content = bytes});
+    ghost->uploadRate = 400'000; // about 1.5 s for the whole file
+    QString why;
+    const std::optional<TransferService::PreviewStart> started =
+        service->startPreview(spec(*ghost, "preview.flac", bytes.size()), &why);
+    ASSERT_TRUE(started.has_value()) << why.toStdString();
+    ASSERT_TRUE(started->source);
+    EXPECT_EQ(started->source->totalSize(), bytes.size());
+    // Readable as it grows…
+    ASSERT_TRUE(waitFor([&] {
+        const qint64 available = started->source->available();
+        return available > 0 && available < bytes.size();
+    }));
+    QByteArray head(1000, '\0');
+    ASSERT_EQ(started->source->read(0, head.data(), head.size()), head.size());
+    EXPECT_EQ(head, bytes.left(1000));
+    // …and complete at the end.
+    ASSERT_TRUE(waitFor([&] { return started->source->snapshot().isComplete(); }, 10s));
+    ASSERT_TRUE(service->preview(started->id).has_value());
+    EXPECT_EQ(service->preview(started->id)->state, selecta::core::Preview::State::Complete);
+    EXPECT_EQ(governor.peerToday(u"vinyl_ghost"_s).files, 1); // previews count towards the peer's totals
+    EXPECT_EQ(governor.peerActive(u"vinyl_ghost"_s), 0);
+}
+
+TEST_F(TransferServiceTest, GettingAFilePreviewedToTheEndDoesntDownloadItAgain)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    const QByteArray bytes = content(50'000, 22);
+    ghost->files.insert("again.mp3", FakePeer::Upload{.content = bytes});
+    const std::optional<TransferService::PreviewStart> started =
+        service->startPreview(spec(*ghost, "again.mp3", bytes.size()));
+    ASSERT_TRUE(started.has_value());
+    ASSERT_TRUE(waitFor([&] { return started->source->snapshot().isComplete(); }));
+
+    const QSignalSpy completed(service.get(), &TransferService::completed);
+    const std::optional<qint64> id = service->enqueue(spec(*ghost, "again.mp3", bytes.size()));
+    ASSERT_TRUE(id.has_value());
+    ASSERT_EQ(completed.size(), 1); // at once: no second transfer
+    const auto done = completed.at(0).at(0).value<Download>();
+    EXPECT_EQ(readFile(done.localPath), bytes);
+    EXPECT_EQ(governor.peerToday(u"vinyl_ghost"_s).files, 1);
+}
+
+TEST_F(TransferServiceTest, StoppingAPreviewCancelsItAndFreesThePeer)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    ghost->files.insert("long.flac", FakePeer::Upload{.content = content(2'000'000, 23)});
+    ghost->uploadRate = 100'000; // 20 s
+    const std::optional<TransferService::PreviewStart> started =
+        service->startPreview(spec(*ghost, "long.flac", 2'000'000));
+    ASSERT_TRUE(started.has_value());
+    ASSERT_TRUE(waitFor([&] { return started->source->available() > 0; }));
+    service->stopPreview(started->id);
+    EXPECT_EQ(service->preview(started->id)->state, selecta::core::Preview::State::Cancelled);
+    EXPECT_EQ(started->source->snapshot().state, selecta::audio::SourceState::Failed);
+    EXPECT_EQ(governor.peerActive(u"vinyl_ghost"_s), 0);
+    EXPECT_EQ(governor.peerQueued(u"vinyl_ghost"_s), 0);
+}
+
+TEST_F(TransferServiceTest, ANewPreviewReplacesTheOneThatWasPlaying)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    auto lena = peer(u"lossless_lena"_s);
+    ghost->files.insert("first.flac", FakePeer::Upload{.content = content(2'000'000, 24)});
+    ghost->uploadRate = 100'000;
+    lena->files.insert("second.flac", FakePeer::Upload{.content = content(20'000, 25)});
+    const std::optional<TransferService::PreviewStart> first =
+        service->startPreview(spec(*ghost, "first.flac", 2'000'000));
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(waitFor([&] { return first->source->available() > 0; }));
+    // The same file again is the same preview.
+    EXPECT_EQ(service->startPreview(spec(*ghost, "first.flac", 2'000'000))->id, first->id);
+
+    const std::optional<TransferService::PreviewStart> second =
+        service->startPreview(spec(*lena, "second.flac", 20'000));
+    ASSERT_TRUE(second.has_value());
+    EXPECT_NE(second->id, first->id);
+    EXPECT_FALSE(service->preview(first->id).has_value()); // stopped, then forgotten
+    ASSERT_TRUE(waitFor([&] { return second->source->snapshot().isComplete(); }));
+}
+
+TEST_F(TransferServiceTest, APreviewNeedsTheConnectionAndAKnownSize)
+{
+    const auto ghost = peer(u"vinyl_ghost"_s);
+    QString why;
+    EXPECT_FALSE(service->startPreview(spec(*ghost, "unknown.mp3", 0), &why).has_value());
+    EXPECT_TRUE(why.contains(u"how big"_s)) << why.toStdString();
+    network->disconnectNow();
+    EXPECT_FALSE(service->startPreview(spec(*ghost, "offline.mp3", 100), &why).has_value());
+    EXPECT_TRUE(why.contains(u"Not connected"_s)) << why.toStdString();
 }

@@ -141,6 +141,7 @@ bool Engine::start()
     // Downloads, then the arrival pipeline that turns each complete file into an Inbox item (D27, D29).
     TransferService::Options transferOptions;
     transferOptions.incomingDir = m_options.incomingDir;
+    transferOptions.previewDir = m_options.previewDir;
     m_transfers = std::make_unique<TransferService>(*m_db, *m_governor, *m_network, *m_activity,
                                                     std::move(transferOptions), m_options.wallClock);
     ArrivalService::Options arrivalOptions;
@@ -167,6 +168,7 @@ bool Engine::start()
     m_getTracks->setTransfers(m_transfers.get());
     connect(m_transfers.get(), &TransferService::changed, m_getTracks.get(), &GetTracksService::downloadChanged);
     connect(m_transfers.get(), &TransferService::progress, m_getTracks.get(), &GetTracksService::downloadProgress);
+    connect(m_transfers.get(), &TransferService::previewChanged, this, &Engine::previewChanged);
 
     pruneActivity();
     m_pruneTimer = new QTimer(this);
@@ -217,6 +219,59 @@ void Engine::stop()
     if (m_started) {
         m_started = false;
         qCInfo(lcEngine) << "engine stopped";
+    }
+}
+
+void Engine::previewLine(qint64 lineId)
+{
+    if (!m_started) {
+        return;
+    }
+    std::optional<GetLine> line;
+    const QList<GetLine> lines = m_getTracks->lines();
+    for (const GetLine &candidate : lines) {
+        if (candidate.id == lineId) {
+            line = candidate;
+        }
+    }
+    if (!line || !line->best) {
+        Q_EMIT previewRefused(lineId, tr("Find the track first: there is no file to preview yet."));
+        return;
+    }
+    const FileChoice &file = *line->best;
+    DownloadSpec spec;
+    spec.peer = file.peer;
+    spec.remotePath = file.remotePath;
+    spec.size = file.size;
+    spec.file = file;
+    spec.release = line->release;
+    spec.getLine = lineId;
+    QString why;
+    const std::optional<TransferService::PreviewStart> started = m_transfers->startPreview(spec, &why);
+    if (!started) {
+        Q_EMIT previewRefused(lineId, why);
+        return;
+    }
+    m_previewId = started->id;
+    const QString identity =
+        u"peer|%1|%2|%3"_s.arg(file.peer, QString::fromLatin1(file.remotePath.toBase64())).arg(file.size);
+    const QString title = line->release ? line->release->title : line->title;
+    const QString artist = line->release ? line->release->artist() : line->artist;
+    QString quality = file.extension.toUpper();
+    if (file.bitDepth && file.sampleRate) {
+        quality += u" %1/%2"_s.arg(*file.bitDepth).arg(*file.sampleRate / 1000.0, 0, 'g', 3);
+    } else if (file.bitrate) {
+        quality += u' ' + QString::number(*file.bitrate);
+    }
+    Q_EMIT previewStarted(lineId, started->id, started->source, identity, title, artist,
+                          tr("%1 from %2").arg(quality, file.peer));
+}
+
+void Engine::stopPreview()
+{
+    if (m_started && m_previewId != 0) {
+        m_transfers->stopPreview(m_previewId);
+        m_previewId = 0;
     }
 }
 

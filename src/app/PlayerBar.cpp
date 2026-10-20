@@ -174,6 +174,9 @@ void PlayerBar::refresh()
     const playback::Player &player = m_preview.player();
     const playback::PlayerTrack &track = player.track();
     const State state = player.state();
+    if (state == State::Playing) {
+        m_message.clear(); // "Asking vinyl_ghost…" and the like are over once it plays
+    }
     const bool loaded = player.isActive() || state == State::Ended;
 
     if (!loaded && state != State::Failed) {

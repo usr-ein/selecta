@@ -192,6 +192,32 @@ void MainWindow::createViews()
         }
     });
     connect(m_inboxView, &InboxView::previewRequested, this, [this] { previewInboxSelection(false); });
+    connect(m_getTracksView, &GetTracksView::previewRequested, this, [this] { previewGetTracksLine(false); });
+    connect(&m_services.engine, &core::EngineHost::previewStarted, this,
+            [this](qint64 lineId, qint64 previewId, const std::shared_ptr<audio::ByteSource> &source,
+                   const QString &identity, const QString &title, const QString &artist, const QString &label) {
+                if (lineId != m_askedPreviewLine) {
+                    return; // the user asked for something else meanwhile
+                }
+                m_previewId = previewId;
+                m_services.preview.preview({source, {title, artist, label}, identity});
+            });
+    connect(&m_services.engine, &core::EngineHost::previewRefused, this, [this](qint64 lineId, const QString &why) {
+        if (lineId == m_askedPreviewLine) {
+            m_askedPreviewLine = 0;
+            m_player->showMessage(why);
+        }
+    });
+    connect(&m_services.engine, &core::EngineHost::previewChanged, this, [this](const core::Preview &preview) {
+        if (preview.id != m_previewId) {
+            return;
+        }
+        // While nothing plays yet, say what the peer is doing; a failure always.
+        const bool waiting = m_services.preview.player().state() == playback::Player::State::Loading;
+        if (preview.state == core::Preview::State::Failed || (waiting && !preview.isFinished())) {
+            m_player->showMessage(preview.message);
+        }
+    });
     addView(u"wishlist"_s,
             emptyState(u"star"_s, u"starred"_s, tr("No saved searches"),
                        tr("Searches saved here run again on their own and tell you when something new turns up."),
@@ -360,7 +386,14 @@ void MainWindow::createActions()
     auto *stop = new QAction(tr("Stop"), this);
     stop->setObjectName(u"action.stopPreview"_s);
     stop->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Period));
-    connect(stop, &QAction::triggered, &m_services.preview, &PreviewController::stop);
+    connect(stop, &QAction::triggered, this, [this] {
+        m_services.preview.stop();
+        m_askedPreviewLine = 0;
+        if (m_previewId != 0) {
+            m_services.engine.stopPreview(); // a nearly complete preview still finishes, for a Get to reuse
+            m_previewId = 0;
+        }
+    });
     m_playbackActions.append(stop);
 
     const std::array go{std::pair{u"get"_s, Qt::Key_1},        std::pair{u"inbox"_s, Qt::Key_2},
@@ -546,7 +579,33 @@ void MainWindow::playOrPause()
         previewInboxSelection(true);
         return;
     }
+    if (m_currentId == u"get"_s && m_getTracksView->previewTarget()) {
+        previewGetTracksLine(true);
+        return;
+    }
     m_services.preview.toggle();
+}
+
+void MainWindow::previewGetTracksLine(bool toggleIfLoaded)
+{
+    const std::optional<GetTracksView::PreviewTarget> target = m_getTracksView->previewTarget();
+    if (!target) {
+        return;
+    }
+    PreviewController &preview = m_services.preview;
+    const playback::Player::State state = preview.player().state();
+    const bool loaded = preview.player().isActive() || state == playback::Player::State::Ended;
+    if (toggleIfLoaded && loaded && !target->identity.isEmpty() && target->identity == preview.identity()) {
+        preview.toggle();
+        return;
+    }
+    if (target->identity.isEmpty()) {
+        m_player->showMessage(tr("Find the track first: there is no file to preview yet."));
+        return;
+    }
+    m_askedPreviewLine = target->lineId;
+    m_player->showMessage(tr("Asking %1 for a preview…").arg(target->peer));
+    m_services.engine.previewTrack(target->lineId);
 }
 
 void MainWindow::previewInboxSelection(bool toggleIfLoaded)
@@ -566,6 +625,11 @@ void MainWindow::previewInboxSelection(bool toggleIfLoaded)
     if (toggleIfLoaded && loaded && local.request->identity == preview.identity()) {
         preview.toggle();
         return;
+    }
+    m_askedPreviewLine = 0; // a peer preview playing gives way
+    if (m_previewId != 0) {
+        m_services.engine.stopPreview();
+        m_previewId = 0;
     }
     preview.preview(*local.request);
 }
