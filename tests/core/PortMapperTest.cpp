@@ -138,8 +138,8 @@ TEST_F(PortMapperTest, ARetransmittedRequestIsNotANewOne)
 {
     natPmpFake.loseFirstAnswers = true; // the router acts on each request; its first answer never comes back
     PortMapper::Options o = options(true, false);
-    o.timing.natPmpFirstWait = 200ms; // asked again after 200 ms, then waits 400 + 800 ms
-    o.timing.natPmpTries = 3;
+    o.timing.natPmpFirstWait = 200ms; // asked again after 200 ms, then waits 400 + 800 + 1600 ms
+    o.timing.natPmpTries = 4;
     const auto copies = [&](bool removal) {
         int n = 0;
         for (const FakeNatPmp::Request &request : std::as_const(natPmpFake.requests)) {
