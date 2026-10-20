@@ -103,7 +103,8 @@ TEST(SearchResultsModelTest, BestMatchPutsTheReleaseFirst)
     model.setReleaseChosen(true, 372'000);
     const QList<int> order = shownOrder(model);
     ASSERT_EQ(order.size(), 4);
-    // The FLAC of this release, then its MP3 (lower quality), then another version and another track.
+    // The two files of this release first: the FLAC's peer has a free slot, the MP3's a queue. Then another version
+    // and another track.
     EXPECT_EQ(order.at(0), 2);
     EXPECT_EQ(order.at(1), 0);
     EXPECT_EQ(model.index(0, SearchResultsModel::LengthColumn).data().toString(), u"6:13 ✓"_s);
@@ -232,7 +233,10 @@ TEST(SearchResultsModelTest, ExpectedWaitCombinesSpeedSlotAndQueue)
     EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 40)), 10.0);
     // Each queued file counts as a typical track ahead of ours.
     EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 3)),
-                     ((3.0 * selecta::core::kTypicalQueuedFileBytes) + 10'000'000) / 1'000'000);
+                     4.0 * selecta::core::kTypicalQueuedFileBytes / 1'000'000);
+    // The file's own size doesn't count: the files of one peer tie, and the tie-breakers decide.
+    EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 0, 3'000'000)),
+                     expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 0, 90'000'000)));
     // No free slot and no queue: still one file ahead.
     EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 0)),
                      expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 1)));
@@ -389,4 +393,53 @@ TEST(SearchResultsModelTest, PeersShowTheirCountrysFlag)
     // Sorting by peer goes by name, not by flag.
     model.sort(SearchResultsModel::PeerColumn, Qt::AscendingOrder);
     EXPECT_EQ(shownOrder(model), (QList<int>{1, 0}));
+}
+
+TEST(SearchResultsModelTest, OnePeersFilesGoByQuality)
+{
+    // The same track from one peer: the FLAC is larger, and still first.
+    const QList<SearchResult> analysed = selecta::core::analyzeHits(
+        {
+            hit(u"bassbin"_s, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, 320, 372),
+            hit(u"bassbin"_s, u"@@b\\Okuma Drift - Neon Rain.flac"_s, 0, 372),
+        },
+        0, {}, {});
+    ASSERT_LT(analysed.at(0).hit.size, analysed.at(1).hit.size);
+    SearchResultsModel model;
+    model.reset(analysed);
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0}));
+}
+
+TEST(SearchResultsModelTest, OnePeersFilesGoByFitToTheRelease)
+{
+    // Neither fits the release (6:12): the longer file is 7 s off, the shorter 32 s off. The closer one is first,
+    // though it is larger.
+    const QList<SearchResult> analysed = selecta::core::analyzeHits(
+        {
+            hit(u"bassbin"_s, u"@@b\\short\\Okuma Drift - Neon Rain.mp3"_s, 320, 340),
+            hit(u"bassbin"_s, u"@@b\\long\\Okuma Drift - Neon Rain.mp3"_s, 320, 379),
+        },
+        0, {}, neonRain());
+    ASSERT_TRUE(analysed.at(0).fit && analysed.at(1).fit);
+    ASSERT_FALSE(analysed.at(0).fitsRelease() || analysed.at(1).fitsRelease());
+    ASSERT_GT(selecta::match::ReleaseScorer::compareIdentity(*analysed.at(0).fit, *analysed.at(1).fit), 0);
+    SearchResultsModel model;
+    model.reset(analysed);
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    model.setReleaseChosen(true, 372'000);
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0}));
+}
+
+TEST(SearchResultsModelTest, EqualPeersGoByFewestDownloadsToday)
+{
+    QList<SearchResult> analysed = selecta::core::analyzeHits(
+        {peerHit(u"busy_today"_s, 1'000'000, true, 0, 9'000'000), peerHit(u"fresh"_s, 1'000'000, true, 0, 12'000'000)},
+        0, {}, {});
+    analysed[0].peerFilesToday = 4;
+    analysed[1].peerFilesToday = 0;
+    SearchResultsModel model;
+    model.reset(analysed);
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0})); // spread the load (FAIR-5)
 }

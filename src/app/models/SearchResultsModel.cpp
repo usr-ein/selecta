@@ -718,7 +718,10 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
         if (column == TitleColumn) {
             return folder.path;
         }
-        return lead ? resultData(*lead, column, role) : QVariant();
+        // A folder is one peer's: its peer, queue and speed are its first file's; nothing else speaks for every file.
+        return lead && (column == PeerColumn || column == QueueColumn || column == SpeedColumn)
+                   ? resultData(*lead, column, role)
+                   : QVariant();
     case Qt::ForegroundRole:
     case Qt::TextAlignmentRole:
     case QueueLevelRole:

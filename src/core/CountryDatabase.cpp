@@ -7,8 +7,12 @@
 
 #include <cstring>
 #include <maxminddb.h>
+#ifdef _WIN32
+#include <ws2tcpip.h>
+#else
 #include <netinet/in.h>
 #include <sys/socket.h>
+#endif
 
 using namespace Qt::StringLiterals;
 
