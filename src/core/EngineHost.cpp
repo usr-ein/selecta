@@ -357,6 +357,15 @@ void EngineHost::signInToSpotify()
     });
 }
 
+void EngineHost::reopenSpotifySignIn()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.meta().reopenSpotifySignIn();
+        }
+    });
+}
+
 void EngineHost::signOutOfSpotify()
 {
     post([](Engine &engine) {

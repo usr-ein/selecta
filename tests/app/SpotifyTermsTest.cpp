@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // PRD META-4, D30: the one-time notice on Spotify's terms, before Spotify is first used, and nothing from Spotify
-// without a yes.
+// without a yes; then the browser sign-in, whose page can be opened again while it waits.
 #include "app/AppSettings.h"
 #include "app/MainWindow.h"
 #include "app/Preview.h"
@@ -22,6 +22,7 @@
 #include <atomic>
 #include <gtest/gtest.h>
 #include <memory>
+#include <mutex>
 
 using namespace Qt::StringLiterals;
 using selecta::app::AppSettings;
@@ -61,7 +62,9 @@ protected:
         options.databasePath = dir.filePath(u"engine.sqlite3"_s);
         options.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // tests never reach real services
         options.spotifyAllowed = settings->spotifyTermsAccepted();
-        options.openUrl = [this](const QUrl &) { // on the engine thread
+        options.openUrl = [this](const QUrl &url) { // on the engine thread
+            const std::scoped_lock lock(openedMutex);
+            opened.append(url);
             browserOpened = true;
             return true;
         };
@@ -121,6 +124,14 @@ protected:
     std::unique_ptr<selecta::core::EngineHost> engine;
     std::unique_ptr<selecta::app::PreviewController> preview;
     std::atomic<bool> browserOpened = false;
+    std::mutex openedMutex;
+    QList<QUrl> opened; // guarded by openedMutex: the fake browser runs on the engine thread
+
+    QList<QUrl> pagesOpened()
+    {
+        const std::scoped_lock lock(openedMutex);
+        return opened;
+    }
 };
 
 } // namespace
@@ -208,4 +219,32 @@ TEST_F(SpotifyTermsTest, CredentialsSavedBeforeTheNoticeWaitForAnAnswer)
     ASSERT_TRUE(QTest::qWaitFor([this] { return browserOpened.load(); }, 5000));
     ASSERT_TRUE(QTest::qWaitFor([this] { return engine->spotifyStatus().state == State::Authorizing; }, 5000));
     EXPECT_FALSE(state->text().contains(u"not in use"_s)) << state->text().toStdString();
+}
+
+TEST_F(SpotifyTermsTest, TheSignInPageCanBeOpenedAgainWhileTheSignInWaits)
+{
+    settings->setSpotifyTermsAccepted(true);
+    ASSERT_NO_FATAL_FAILURE(startEngine(kClientId));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return engine->spotifyStatus().state == State::SignedOut; }, 5000));
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"settings"_s));
+    auto *signIn = window->findChild<QPushButton *>(u"settings.spotify.signIn"_s);
+    ASSERT_NE(signIn, nullptr);
+    EXPECT_EQ(signIn->text(), u"Sign In in the Browser…"_s);
+
+    // Signing in opens the page (the fake accounts service here, never Spotify), and the sign-in waits for it.
+    signIn->click();
+    ASSERT_TRUE(QTest::qWaitFor([this] { return pagesOpened().size() == 1; }, 5000));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return engine->spotifyStatus().state == State::Authorizing; }, 5000));
+    EXPECT_EQ(pagesOpened().constFirst().host(), u"127.0.0.1"_s);
+
+    // Its tab was closed: the button opens the same page again, for the same sign-in.
+    ASSERT_TRUE(QTest::qWaitFor([&] { return signIn->text() == u"Open Sign-In Page Again"_s; }, 5000));
+    EXPECT_TRUE(signIn->isEnabled());
+    signIn->click();
+    ASSERT_TRUE(QTest::qWaitFor([this] { return pagesOpened().size() == 2; }, 5000));
+    EXPECT_EQ(pagesOpened().at(1), pagesOpened().at(0));
+    QTest::qWait(100);
+    EXPECT_EQ(engine->spotifyStatus().state, State::Authorizing);
+    EXPECT_EQ(pagesOpened().size(), 2); // no new sign-in started
 }

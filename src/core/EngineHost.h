@@ -54,6 +54,8 @@ public:
     // --- Spotify (Settings → Spotify) ---
     void setSpotifyCredentials(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
     void signInToSpotify();
+    // Opens the page of the sign-in waiting in the browser again (its tab was closed or lost).
+    void reopenSpotifySignIn();
     void signOutOfSpotify();
     // The user accepted the notice on Spotify's terms (D30): Spotify may be used from now on.
     void allowSpotify();

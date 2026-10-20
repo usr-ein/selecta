@@ -40,7 +40,8 @@ protected:
         options.tokens = std::move(store);
         options.openUrl = [this](const QUrl &url) {
             opened = url;
-            return true;
+            ++opens;
+            return openable;
         };
         // Nothing listens on port 1: any request fails at once, and nothing ever reaches Spotify.
         options.endpoints = selecta::core::MetaEndpoints::unreachable();
@@ -63,6 +64,8 @@ protected:
     selecta::meta::InMemoryTokenStore *tokens = nullptr;
     std::unique_ptr<MetaServices> services;
     QUrl opened;
+    int opens = 0;
+    bool openable = true; // the browser opens
 };
 
 } // namespace
@@ -183,4 +186,36 @@ TEST_F(MetaServicesTest, SignInOpensTheBrowser)
     ASSERT_TRUE(settle([this] { return opened.isValid(); }));
     EXPECT_EQ(opened.host(), u"127.0.0.1"_s); // the fake accounts service, never Spotify
     EXPECT_EQ(services->spotifyStatus().state, State::Authorizing);
+}
+
+TEST_F(MetaServicesTest, TheSignInPageOpensAgainWhileTheSignInWaits)
+{
+    services->reopenSpotifySignIn(); // no sign-in: nothing to open
+    EXPECT_EQ(opens, 0);
+    services->setSpotifyCredentials(kClientId, {}, false);
+    ASSERT_TRUE(settle([this] { return services->spotifyStatus().state == State::SignedOut; }));
+    services->signInToSpotify();
+    ASSERT_TRUE(settle([this] { return opens == 1; }));
+    const QUrl page = opened;
+    ASSERT_EQ(services->spotifyStatus().state, State::Authorizing);
+
+    // The same page, the same sign-in: its state and the listener it answers stay.
+    services->reopenSpotifySignIn();
+    EXPECT_EQ(opens, 2);
+    EXPECT_EQ(opened, page);
+    EXPECT_EQ(services->spotifyStatus().state, State::Authorizing);
+
+    // A browser that doesn't open says so, and the sign-in still waits.
+    openable = false;
+    services->reopenSpotifySignIn();
+    EXPECT_EQ(opens, 3);
+    EXPECT_EQ(services->spotifyStatus().error, u"Selecta couldn't open your browser."_s);
+    EXPECT_EQ(services->spotifyStatus().state, State::Authorizing);
+
+    // Once the sign-in is over, there's no page to open.
+    openable = true;
+    services->spotifyAuth().cancelSignIn();
+    ASSERT_TRUE(settle([this] { return services->spotifyStatus().state == State::SignedOut; }));
+    services->reopenSpotifySignIn();
+    EXPECT_EQ(opens, 3);
 }

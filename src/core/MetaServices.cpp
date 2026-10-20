@@ -29,8 +29,15 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
 {
     Q_ASSERT(m_tokens);
     qRegisterMetaType<SpotifyStatus>();
+    m_openUrl = std::move(options.openUrl);
     meta::SpotifyAuth::Config config;
-    config.openUrl = std::move(options.openUrl);
+    if (m_openUrl) {
+        // The page is kept, so it can be opened again while the sign-in waits (reopenSpotifySignIn()).
+        config.openUrl = [this](const QUrl &url) {
+            m_signInPage = url;
+            return m_openUrl(url);
+        };
+    }
     if (!options.endpoints.spotifyAccounts.isEmpty()) {
         config.accountsUrl = options.endpoints.spotifyAccounts;
     }
@@ -61,7 +68,12 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
     }
     // Spotify data cached for a sign-in goes with it (Developer Policy §I.2).
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::signedOut, this, [this] { m_cache.removePrefix(u"spotify"_s); });
-    connect(m_spotifyAuth.get(), &meta::SpotifyAuth::stateChanged, this, &MetaServices::publish);
+    connect(m_spotifyAuth.get(), &meta::SpotifyAuth::stateChanged, this, [this](meta::SpotifyAuth::State state) {
+        if (state != meta::SpotifyAuth::State::Authorizing) {
+            m_signInPage.clear(); // that sign-in is over
+        }
+        publish();
+    });
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::persistFailed, this, [this](const meta::MetaError &error) {
         m_error = tr("Signed in, but the sign-in couldn't be saved: %1").arg(error.message);
         publish();
@@ -163,6 +175,17 @@ void MetaServices::signInToSpotify()
         finished(r);
     });
     publish();
+}
+
+void MetaServices::reopenSpotifySignIn()
+{
+    if (m_spotifyAuth->state() != meta::SpotifyAuth::State::Authorizing || m_signInPage.isEmpty()) {
+        return;
+    }
+    if (!m_openUrl(m_signInPage)) {
+        m_error = tr("Selecta couldn't open your browser.");
+        publish();
+    }
 }
 
 void MetaServices::signOutOfSpotify()
