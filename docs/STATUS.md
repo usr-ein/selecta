@@ -10,11 +10,11 @@ maintainer reviews the **Decisions taken autonomously** and **Waiting for the ma
 | M0 Definition and design | ✅ | PRD v0.4 (D1–D33), PLAN v0.4, research synthesis, ADR-001…013, mock |
 | M1 Foundations | 🟡 almost | Build system, static deps, app shell, storage, governor, lint, sanitizers, debug tools, devenv ✅ · CI workflow ⏳ |
 | M2 Protocol core and governor | ✅ | slsk S1–S7 merged (codec, server, peers, transfers, distributed, devnet, CLI) · core NetworkService, governor bookkeeping ✅ |
-| M3 Search experience | 🟡 | SearchService + FileRanking ✅ · Search view (manual searches) ⏳ |
-| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanner merged ✅ · core integration (index, Owned/In Inbox states, watcher) ⏳ |
-| M5 Preview and waveform | 🟡 most | Player (decoder thread, lock-free ring, CoreAudio AUHAL), rekordbox-style waveform, transport, Inbox previews ✅ · Get tracks previews (peer file, yt-dlp, clips) ⏳ |
+| M3 Search experience | 🟡 most | SearchService, FileRanking ✅ · **Search view** ✅ (release first, streamed results, filters and presets, why hidden, ownership badges, 24 h SQLite cache, preview and download from results) · search history (P1) ⏳ |
+| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanned, watched and matched ("you have it" in Get tracks and Search) ✅ · Inbox inspector (tags, release picking) ⏳ |
+| M5 Preview and waveform | 🟡 most | Player (decoder thread, lock-free ring, CoreAudio AUHAL), rekordbox-style waveform, transport ✅ · previews from the Inbox, from peers (Get tracks, Search) and from YouTube through the user's yt-dlp ✅ · Keep, analysis cache, preview source setting ⏳ |
 | M6 Converter and arrival pipeline | 🟡 most | Arrival pipeline: MusicBrainz label/genre, cover, MP3 320 (verified) or keep lossy, Inbox + history ✅ · media C1–C3, A3 merged ✅ · Converter view ⏳ |
-| M7 Sharing and fairness | ⏳ | slsk answering hooks ready; share index, upload queue ⏳ |
+| M7 Sharing and fairness | 🟡 | slsk answering hooks ready · share library (index, upload queue) being built by its agent · core wiring ⏳ |
 | M8 Get tracks, wishlist, browse, messages, rooms | 🟡 | **Get tracks end to end ✅** (paste → release lookup → find → tick → Get → download with retries and resume → converted, tagged MP3 320 in the Inbox; verified against selecta-devnet) · wishlist, browse, messages, rooms ⏳ |
 | M9 Live-network beta | ⛔ maintainer only | never automated (CLAUDE.md) |
 | M10 v1.0 | ⏳ | |
@@ -29,11 +29,18 @@ All four library contracts are delivered and merged.
 | meta | `lib/meta` | [contracts/meta.md](contracts/meta.md) | M1–M6 ✅ merged (Spotify, MusicBrainz, covers, Deezer, resolver, yt-dlp, clips, CLI; one manual smoke run) |
 | media | `lib/media` | [contracts/media.md](contracts/media.md) | A1–A3, C1–C3 ✅ merged, plus `probeStreamInfo` (header-only probe) |
 | match | `lib/match`, `lib/collection` | [contracts/match.md](contracts/match.md), [contracts/collection.md](contracts/collection.md) | X1–X5 ✅ and the collection scanner ✅ merged |
+| share | `lib/share` | [contracts/share.md](contracts/share.md) | 🟡 in progress: share index, safe opening for uploads, upload queue |
 
 ## Decisions taken autonomously (for review)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-20 | A result that would be an "Upgrade" over a collection copy that is already MP3 320 (or lossless) shows "In collection" | Every download arrives as MP3 320 (D29): it would only make the same file again |
+| 2026-10-20 | Search results only claim "Upgrade" or "In collection" for sure matches; an unclear version shows "Likely owned" | To a DJ another mix is another track |
+| 2026-10-20 | Searches that found nothing aren't kept in the search cache | An empty answer is worth asking again later; the governor still keeps a repeat quiet for 10 minutes |
+| 2026-10-20 | Free text that covers the release's artist and title words picks the release by itself, like "Artist - Title" does | SRCH-17: the query names the track either way |
+| 2026-10-20 | Searching again keeps the results on screen until the new answers arrive | A refused or empty repeat (the governor's 10-minute quiet) shouldn't lose what was found |
+| 2026-10-20 | Shares: audio, covers and text companions only; banned users get `Banned`; no buddy-only folders in v1; incoming searches match with diacritics folded | The sharing note's recommendations (D-S1, D-S2, D-S4, D-S7) |
 | 2026-10-20 | Downloads and conversions live in Application Support (`Downloads/Incoming`, `Downloads/Converting`), not the caches | macOS may empty caches under a partial download |
 | 2026-10-20 | A Get tracks line whose peer refuses or fails for good moves on to the next peer's copy the search found; a file that arrived but couldn't be converted doesn't | The first failure is the peer's; the second isn't |
 | 2026-10-20 | Transient download failures retry after 3, 10 and 30 minutes and resume the partial file; denials marked retryable by slsk (queue full) too | DL-2; the governor's back-off still applies on top |
