@@ -4,6 +4,7 @@
 selecta_add_test_suite(selecta_match_tests
     SOURCES
         MatchTestSupport.h
+        ConcurrencyTest.cpp
         DurationQualityTest.cpp
         MatcherTest.cpp
         NormalizerTest.cpp
