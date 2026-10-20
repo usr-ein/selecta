@@ -28,6 +28,20 @@ mapfile -t files < <(git ls-files --cached --others --exclude-standard -- "${pat
 mapfile -t sources < <(printf '%s\n' "${files[@]}" | grep -E '\.(cpp|mm)$' || true)
 [[ ${#files[@]} -gt 0 ]] || { echo "no sources under: ${paths[*]}"; exit 0; }
 [[ -f "$build/compile_commands.json" ]] || { echo "missing $build/compile_commands.json (configure first)" >&2; exit 2; }
+# The analysers check what this build compiles. A file of a target it doesn't configure (an optional test suite) has
+# no compile command, and the analysers would guess its flags.
+declare -A compiled=()
+while IFS= read -r unit; do
+    compiled["$unit"]=1
+done < <(sed -n 's/^ *"file": *"\(.*\)",\{0,1\}$/\1/p' "$build/compile_commands.json")
+units=()
+for source in "${sources[@]}"; do
+    if [[ -n "${compiled[$root/$source]:-}" ]]; then
+        units+=("$source")
+    fi
+done
+not_built=""
+[[ ${#units[@]} -eq ${#sources[@]} ]] || not_built=", $((${#sources[@]} - ${#units[@]})) not in this build"
 
 echo "== clang-format (${#files[@]} files)"
 if [[ $fix -eq 1 ]]; then
@@ -36,10 +50,11 @@ else
     clang-format --dry-run --Werror "${files[@]}"
 fi
 
-echo "== clang-tidy (${#sources[@]} translation units)"
+echo "== clang-tidy (${#units[@]} translation units$not_built)"
 tidy_args=(-quiet -j "$jobs" -p "$build" -clang-tidy-binary "$clang_tidy")
 [[ $fix -eq 1 ]] && tidy_args+=(-fix)
-"$run_clang_tidy" "${tidy_args[@]}" "${sources[@]/#/$root/}" > "$build/clang-tidy.log" 2>&1 || true
+: > "$build/clang-tidy.log"
+[[ ${#units[@]} -eq 0 ]] || "$run_clang_tidy" "${tidy_args[@]}" "${units[@]/#/$root/}" > "$build/clang-tidy.log" 2>&1 || true
 # Diagnostics are lines starting with a file path; progress and summary lines are not.
 if grep -E '^/[^:]+:[0-9]+:[0-9]+: (warning|error):' "$build/clang-tidy.log"; then exit 1; fi
 
@@ -48,7 +63,7 @@ clazy_out="$build/clazy.log"
 # One translation unit per process, as run-clang-tidy does; LINT_JOBS of them at a time (default: one per core).
 export build resource_dir
 : > "$clazy_out"
-[[ ${#sources[@]} -eq 0 ]] || printf '%s\0' "${sources[@]}" | xargs -0 -n 1 -P "$jobs" bash -c '
+[[ ${#units[@]} -eq 0 ]] || printf '%s\0' "${units[@]}" | xargs -0 -n 1 -P "$jobs" bash -c '
     clazy-standalone -p "$build/compile_commands.json" --header-filter=".*/(src|tests|tools)/.*" \
         --extra-arg="-resource-dir=$resource_dir" --extra-arg=-Wno-missing-designated-field-initializers \
         --checks=level0,level1,level2,no-qstring-allocations,no-non-pod-global-static,no-copyable-polymorphic,no-returning-void-expression \
