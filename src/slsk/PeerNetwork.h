@@ -73,7 +73,9 @@ enum class PeerRequest {
 //
 // Threading: lives on the engine thread and is used only from it. Ownership: a QObject; owns its sockets until it hands
 // an `F` socket over. Not owned: the ServerSession and PermitSource (they must outlive it) and the providers.
-// Failures are reported per request (requestFailed) or per send (the `done` callbacks); nothing fails silently.
+// Failures are reported per request (requestFailed) or per send (the `done` callbacks); nothing fails silently. A call
+// that starts work never reports from inside itself: a failure known at once arrives on a later event-loop turn.
+// closeAll() is the exception: it reports every cancellation before it returns.
 class PeerNetwork : public QObject
 {
     Q_OBJECT
@@ -103,9 +105,11 @@ public:
 
     // --- listener ----------------------------------------------------------------------------------------------------
 
-    // Listens on all IPv4 interfaces. Port 0 picks a free port (tests). False, with `error` set, when the port can't be
-    // bound. The caller reports the port to the server (ServerSession::setListenPort()).
+    // Listens on all IPv4 interfaces (the protocol is IPv4 only). Port 0 picks a free port. False, with `error` set,
+    // when the port can't be bound. The caller reports the port to the server (ServerSession::setListenPort()).
     bool listen(quint16 port, QString *error = nullptr);
+    // Listens on one address only (tests use loopback).
+    bool listen(quint16 port, const QHostAddress &address, QString *error = nullptr);
     void stopListening();
     bool isListening() const;
     quint16 listenPort() const;
@@ -133,7 +137,7 @@ public:
     // --- generic `P` sends (TransferManager) -------------------------------------------------------------------------
 
     // Sends a framed peer message, opening a connection if needed.
-    void sendPeerMessage(const QString &username, const QByteArray &frame, ConnectPurpose purpose,
+    void sendPeerMessage(const QString &username, const QByteArray &bytes, ConnectPurpose purpose,
                          SendCallback done = {});
     // True while a `P` connection to `username` is established or being set up.
     bool hasPeerConnection(const QString &username) const;
@@ -141,8 +145,9 @@ public:
     // --- `F` connections (TransferManager) ---------------------------------------------------------------------------
 
     // Opens a file connection to `username` (uploads; purpose Transfer). Returns an id; fileConnectionReady() or
-    // fileConnectionFailed() follows with it.
+    // fileConnectionFailed() follows with it, never before this returns.
     quint64 openFileConnection(const QString &username);
+    // Gives up on an openFileConnection() id that hasn't been reported yet. Nothing more is heard of it.
     void cancelFileConnection(quint64 id);
     // Whether to dial back when `username` asks for an `F` connection through the server (only for transfers we
     // expect). Without a filter, such requests are refused.
@@ -153,7 +158,7 @@ public:
     // Connects to a parent candidate at a known address: direct dial raced against ConnectToPeer (purpose
     // Distributed). distributedConnected() or distributedConnectFailed() follows.
     void openDistributedConnection(const QString &username, const QHostAddress &address, quint16 port);
-    void sendDistributedMessage(const QString &username, const QByteArray &frame);
+    void sendDistributedMessage(const QString &username, const QByteArray &bytes);
     void closeDistributedConnection(const QString &username);
     // Whether to dial back when `username` asks for a `D` connection through the server. Without a filter, refused.
     void setDistributedConnectionFilter(std::function<bool(const QString &username)> filter);

@@ -4,6 +4,7 @@
 #include "app/Appearance.h"
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
+#include "core/NetworkService.h"
 
 #include <QWidget>
 
@@ -13,6 +14,7 @@ class QLabel;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
+class QSpinBox;
 
 namespace selecta::app {
 
@@ -34,7 +36,8 @@ class SettingsView : public QWidget
     Q_OBJECT
 
 public:
-    SettingsView(const BuildInfo &info, Appearance appearance, core::LibraryConfig library, QWidget *parent = nullptr);
+    SettingsView(const BuildInfo &info, Appearance appearance, core::LibraryConfig library,
+                 core::NetworkConfig networkConfig, QWidget *parent = nullptr);
 
     // Reflects an appearance chosen elsewhere (menu, toolbar) without emitting appearanceRequested.
     void setAppearance(Appearance appearance);
@@ -46,6 +49,9 @@ public:
 
     // Shows the engine's view of the Spotify set-up.
     void setSpotifyStatus(const core::SpotifyStatus &status);
+    // Shows the connection to the Soulseek server.
+    void setNetworkStatus(const core::NetworkStatus &status);
+    core::NetworkConfig networkConfig() const { return m_network; }
 
 Q_SIGNALS:
     void appearanceRequested(selecta::app::Appearance appearance);
@@ -54,11 +60,17 @@ Q_SIGNALS:
     void spotifyCredentialsSubmitted(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
     void spotifySignInRequested();
     void spotifySignOutRequested();
+    void networkConfigChanged(const selecta::core::NetworkConfig &config);
+    void networkPasswordSubmitted(const QString &password);
+    void connectRequested();
+    void disconnectRequested();
 
 private:
     QWidget *createLibraryBox(QWidget *parent);
     QWidget *createFilingBox(QWidget *parent);
     QWidget *createSpotifyBox(QWidget *parent);
+    QWidget *createNetworkBox(QWidget *parent);
+    void submitNetwork();
     void submitSpotify();
     void showLibrary();
     void refreshPreview();
@@ -87,6 +99,17 @@ private:
     QPushButton *m_spotifySave = nullptr;
     QPushButton *m_spotifySignIn = nullptr;
     QPushButton *m_spotifySignOut = nullptr;
+    core::NetworkConfig m_network;
+    core::NetworkStatus m_networkStatus;
+    QLabel *m_networkState = nullptr;
+    QLineEdit *m_networkHost = nullptr;
+    QSpinBox *m_networkPort = nullptr;
+    QLineEdit *m_networkUser = nullptr;
+    QLineEdit *m_networkPassword = nullptr;
+    QSpinBox *m_listenPort = nullptr;
+    QCheckBox *m_connectAtLaunch = nullptr;
+    QPushButton *m_networkSave = nullptr;
+    QPushButton *m_networkConnect = nullptr;
 };
 
 } // namespace selecta::app

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/GetTracksService.h"
 
+#include "core/SearchService.h"
 #include "match/Normalizer.h"
 #include "match/Tracklist.h"
 #include "storage/Database.h"
@@ -83,8 +84,14 @@ GetTracksService::~GetTracksService()
 
 void GetTracksService::load()
 {
-    // Lines whose resolution a quit interrupted are still Pending, so they resolve again once a resolver is set.
+    // Lines whose resolution a quit interrupted are still Pending, so they resolve again once a resolver is set;
+    // searches a quit interrupted start over when the user finds again.
     m_lines = m_store.all();
+    for (GetLine &line : m_lines) {
+        if (line.findState == GetLine::FindState::Queued || line.findState == GetLine::FindState::Searching) {
+            line.findState = GetLine::FindState::Idle;
+        }
+    }
 }
 
 void GetTracksService::setResolver(ResolveFunction resolve)
@@ -178,6 +185,13 @@ void GetTracksService::remove(const QList<qint64> &ids)
             it->cancel();
             m_resolving.erase(it);
         }
+        if (const auto it = m_finding.find(id); it != m_finding.end()) {
+            if (m_search) {
+                m_search->cancel(*it);
+            }
+            m_finding.erase(it);
+        }
+        m_findAfterLookup.remove(id);
     }
     const QSet<qint64> gone(ids.cbegin(), ids.cend());
     m_lines.removeIf([&gone](const GetLine &line) { return gone.contains(line.id); });
@@ -195,6 +209,13 @@ void GetTracksService::clear()
         resolution.cancel();
     }
     m_resolving.clear();
+    if (m_search) {
+        for (const quint64 search : std::as_const(m_finding)) {
+            m_search->cancel(search);
+        }
+    }
+    m_finding.clear();
+    m_findAfterLookup.clear();
     m_lines.clear();
     Q_EMIT linesReset(m_lines);
 }
@@ -308,8 +329,134 @@ void GetTracksService::resolved(qint64 id, const meta::Result<meta::Resolution> 
             line->message.clear();
         }
         store(*line);
+        if (m_findAfterLookup.remove(id)) {
+            startFinding(*line);
+        }
     }
     resolveNext();
+}
+
+void GetTracksService::setSearch(SearchService *search, std::function<QStringList()> excludedPhrases)
+{
+    m_search = search;
+    m_excludedPhrases = std::move(excludedPhrases);
+}
+
+void GetTracksService::find(const QList<qint64> &ids)
+{
+    if (!m_search) {
+        return;
+    }
+    const QSet<qint64> only(ids.cbegin(), ids.cend());
+    for (GetLine &line : m_lines) {
+        if (!only.isEmpty() && !only.contains(line.id)) {
+            continue;
+        }
+        const bool idle = line.findState == GetLine::FindState::Idle ||
+                          (!only.isEmpty() && (line.findState == GetLine::FindState::NotFound ||
+                                               line.findState == GetLine::FindState::Check ||
+                                               line.findState == GetLine::FindState::Ready));
+        if (!idle || line.downloadState != GetLine::DownloadState::None || m_finding.contains(line.id)) {
+            continue;
+        }
+        if (line.releaseState == ReleaseState::Pending && m_resolve) {
+            // The release decides the query and the ranking: search once the lookup is done.
+            m_findAfterLookup.insert(line.id);
+            line.findState = GetLine::FindState::Queued;
+            store(line);
+            continue;
+        }
+        startFinding(line);
+    }
+}
+
+void GetTracksService::startFinding(GetLine &line)
+{
+    QString why;
+    const QString query = FileRanking::query(line, m_excludedPhrases ? m_excludedPhrases() : QStringList(), &why);
+    if (query.isEmpty()) {
+        line.findState = GetLine::FindState::NotFound;
+        line.message = std::move(why);
+        store(line);
+        return;
+    }
+    const qint64 id = line.id;
+    const QPointer<GetTracksService> self(this);
+    const quint64 search = m_search->enqueue(
+        query, governor::SearchSource::GetTracks,
+        [self, id](const SearchOutcome &outcome) {
+            if (self) {
+                self->found(id, outcome);
+            }
+        },
+        [self, id] {
+            if (GetLine *started = self ? self->lineWithId(id) : nullptr) {
+                started->findState = GetLine::FindState::Searching;
+                self->store(*started);
+            }
+        });
+    m_finding.insert(id, search);
+    line.findState = GetLine::FindState::Queued;
+    line.message.clear();
+    store(line);
+}
+
+void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
+{
+    m_finding.remove(id);
+    GetLine *line = lineWithId(id);
+    if (!line) {
+        return;
+    }
+    if (!outcome.error.isEmpty()) {
+        line->findState = GetLine::FindState::NotFound;
+        line->message = outcome.error;
+        line->best.reset();
+        line->alternatives.clear();
+        store(*line);
+        return;
+    }
+    const RankedChoices choices = FileRanking::rank(*line, outcome, m_wanted);
+    line->message.clear();
+    if (choices.files.isEmpty()) {
+        line->best.reset();
+        line->alternatives.clear();
+        line->ticked = false;
+        line->findState = GetLine::FindState::NotFound;
+        if (choices.considered > 0 && choices.candidates == 0) {
+            line->message = tr("%1 files found, but none in the quality wanted.").arg(choices.considered);
+        } else if (choices.candidates > 0) {
+            line->message = tr("%1 files found, but none of this release.").arg(choices.candidates);
+        }
+    } else {
+        line->best = choices.files.constFirst();
+        line->alternatives = choices.files.mid(1);
+        const bool confident = line->best->fitsRelease;
+        line->findState = confident ? GetLine::FindState::Ready : GetLine::FindState::Check;
+        line->ticked = confident; // confident matches are pre-ticked (BATCH-5)
+    }
+    store(*line);
+}
+
+void GetTracksService::stopFinding()
+{
+    for (auto it = m_finding.cbegin(); it != m_finding.cend(); ++it) {
+        if (m_search) {
+            m_search->cancel(it.value());
+        }
+        if (GetLine *line = lineWithId(it.key())) {
+            line->findState = GetLine::FindState::Idle;
+            store(*line);
+        }
+    }
+    m_finding.clear();
+    for (const qint64 id : std::as_const(m_findAfterLookup)) {
+        if (GetLine *line = lineWithId(id)) {
+            line->findState = GetLine::FindState::Idle;
+            store(*line);
+        }
+    }
+    m_findAfterLookup.clear();
 }
 
 void GetTracksService::store(const GetLine &line)

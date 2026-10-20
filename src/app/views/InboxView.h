@@ -2,9 +2,12 @@
 #pragma once
 
 #include "core/InboxService.h"
+#include "playback/Player.h"
 
 #include <QList>
 #include <QWidget>
+
+#include <optional>
 
 class QLabel;
 class QPushButton;
@@ -33,6 +36,14 @@ public:
     QString summary() const;
     QList<qint64> selectedIds() const;
 
+    // What Space or a double-click previews: the current row's file, or an album folder (its first track plays).
+    struct PreviewTarget
+    {
+        QString path;
+        playback::PlayerTrack track;
+    };
+    std::optional<PreviewTarget> previewTarget() const;
+
 public Q_SLOTS:
     void fileSelected();
     void trashSelected();
@@ -40,6 +51,7 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     void summaryChanged();
+    void previewRequested(); // a double-click on an item
 
 protected:
     void showEvent(QShowEvent *event) override;

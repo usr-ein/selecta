@@ -224,8 +224,16 @@ void FfmpegBackend::fillInfo()
     const AVCodecDescriptor *descriptor = avcodec_descriptor_get(parameters->codec_id);
     m_info.lossless = descriptor != nullptr && hasFlag(descriptor->props, AV_CODEC_PROP_LOSSLESS);
     if (m_info.lossless) {
-        m_info.bitsPerSample = parameters->bits_per_raw_sample > 0 ? parameters->bits_per_raw_sample
-                                                                   : av_get_bits_per_sample(parameters->codec_id);
+        // The container's figure, else the opened decoder's (ALAC's depth is in its magic cookie, which only the
+        // decoder reads), else the PCM codec's own width.
+        const AVCodecContext *codec = m_codec.context();
+        if (parameters->bits_per_raw_sample > 0) {
+            m_info.bitsPerSample = parameters->bits_per_raw_sample;
+        } else if (codec != nullptr && codec->bits_per_raw_sample > 0) {
+            m_info.bitsPerSample = codec->bits_per_raw_sample;
+        } else {
+            m_info.bitsPerSample = av_get_bits_per_sample(parameters->codec_id);
+        }
     }
     m_info.floatingPoint =
         parameters->codec_id == AV_CODEC_ID_PCM_F32LE || parameters->codec_id == AV_CODEC_ID_PCM_F32BE ||

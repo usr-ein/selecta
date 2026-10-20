@@ -120,6 +120,8 @@ TEST(Decoder, AlacAndOggFlacThroughFfmpeg)
     ASSERT_EQ(alac.last, DecodeStatus::EndOfStream) << alac.error.toString().toStdString();
     EXPECT_EQ(alac.info.codec, Codec::Alac);
     EXPECT_EQ(alac.info.container, Container::Mp4);
+    EXPECT_TRUE(alac.info.lossless);
+    EXPECT_EQ(alac.info.bitsPerSample, 16); // from the decoder: the depth is in ALAC's magic cookie
     expectExact(alac.pcm, source);
     const Decoded ogg = decodeAll(makeOggFlac(source), native());
     ASSERT_EQ(ogg.last, DecodeStatus::EndOfStream) << ogg.error.toString().toStdString();
@@ -444,6 +446,20 @@ TEST(Decoder, TruncatedFilesDecodeWhatIsThere)
     const Decoded f = decodeAll(flac.left(flac.size() / 2), native());
     EXPECT_EQ(f.last, DecodeStatus::EndOfStream);
     EXPECT_GT(f.pcm.frames(), 0);
+    EXPECT_TRUE(f.stats.truncated); // fewer samples than STREAMINFO announced
+
+    // Cut exactly between MP3 frames: no partial frame, but fewer frames than the LAME tag counts.
+    const Decoded whole = decodeAll(mp3, native());
+    EXPECT_FALSE(whole.stats.truncated);
+    // Walk the frames from the Info frame at offset 0: 320 kbps at 44.1 kHz is 1044 bytes plus the padding bit.
+    qsizetype cut = 0;
+    while (cut < mp3.size() / 2) {
+        const bool padded = (static_cast<quint8>(mp3[cut + 2]) & 0x02U) != 0;
+        cut += 1044 + (padded ? 1 : 0);
+    }
+    const Decoded between = decodeAll(mp3.left(cut), native());
+    EXPECT_EQ(between.last, DecodeStatus::EndOfStream);
+    EXPECT_TRUE(between.stats.truncated);
 }
 
 TEST(Decoder, GarbageEmptyAndTinyInputs)

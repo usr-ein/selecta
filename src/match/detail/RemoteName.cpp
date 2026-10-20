@@ -279,7 +279,7 @@ QStringList splitTopLevel(QStringView text, QStringView separator)
             ++depth;
         } else if (isCloseBracket(text[i]) && depth > 0) {
             --depth;
-        } else if (depth == 0 && text.sliced(i).startsWith(separator)) {
+        } else if (depth == 0 && text[i] == separator.front() && text.sliced(i).startsWith(separator)) {
             parts.append(text.sliced(start, i - start).trimmed().toString());
             i += separator.size() - 1;
             start = i + 1;

@@ -33,6 +33,7 @@ class InboxView;
 class Inspector;
 class NavModel;
 class PlayerBar;
+class PreviewController;
 class Sidebar;
 
 // What the main window needs from the rest of the app. The referenced objects outlive the window.
@@ -46,6 +47,8 @@ struct AppServices
     AppSettings &settings;
     // cppcheck-suppress uninitMemberVarNoCtor
     core::EngineHost &engine;
+    // cppcheck-suppress uninitMemberVarNoCtor
+    PreviewController &preview;
     BuildInfo build;
     qint64 sessionStartedAtMs = 0;
 };
@@ -77,6 +80,10 @@ public:
     // Writes window state and preferences to the settings file. Called on close and on quit; safe to call twice.
     void saveState();
 
+    // Space: previews what is selected in the current view, or plays and pauses what is loaded.
+    void playOrPause();
+    PreviewController &preview() { return m_services.preview; }
+
 Q_SIGNALS:
     void viewChanged(const QString &id);
 
@@ -100,6 +107,7 @@ private:
     void restoreSavedState();
     void refreshTitle();
     void refreshNetworkState();
+    void previewInboxSelection(bool toggleIfLoaded);
 
     AppServices m_services;
     Appearance m_appearance;
@@ -122,6 +130,7 @@ private:
     GetTracksView *m_getTracksView = nullptr;
     QActionGroup *m_appearanceGroup = nullptr;
     QList<QAction *> m_goActions;
+    QList<QAction *> m_playbackActions;
     QList<View> m_views;
     QHash<QString, qsizetype> m_viewIndex;
     QString m_currentId;

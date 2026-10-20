@@ -28,6 +28,8 @@ public:
     std::optional<qint64> lineId() const;
 
 private:
+    void showRelease(const core::GetLine &line);
+    void showFile(const core::GetLine &line);
     void addRow(QFormLayout *form, const QString &label, QLabel *&value, const QString &objectName);
 
     QStackedWidget *m_pages;

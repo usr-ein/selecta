@@ -204,9 +204,46 @@ with `ResamplerQuality::VeryHigh`.
 Reproduce: configure a Release tree with tests on, build `selecta_audio_bench`, run it with `--benchmark_min_time=1s`.
 The CLI gives a quick check on any file: `selecta-cli media-analyze <file>`.
 
+## Quality checks (A3)
+
+`analyzeQuality(source)` decodes a complete file once, at its own rate and layout, and runs two checks on the way.
+
+- **Word length (exact).** Every sample of a 20/24-bit or float file is tested against the 16-bit grid
+  (`x × 32768` integral; a float holds 24-bit samples exactly, so there is no rounding). All on the grid, and not
+  all silence: `effectiveBitDepth = 16`, finding LikelyPadded24Bit. 32-bit integer files aren't checked: a float
+  sample can't hold them exactly.
+- **Spectrum (heuristic).** About 200 Hann-windowed 4096-point FFTs (FFmpeg's `av_tx` RDFT) of the mono mix at evenly
+  spaced positions, averaged into a long-term power spectrum and smoothed over 250 Hz. The cut-off is the highest
+  frequency within 24 dB of the 14–16 kHz reference band; above 48 kHz, the content bandwidth is the highest within
+  70 dB. Not measured under 2 s, below 32 kHz, in silence, or when the reference band is only noise floor (80 dB or
+  more below the loudest band): no reference, no verdict.
+
+Calibration on LAME 3.100 encodes of broadband noise (`tests/audio/QualityCheckTest.cpp`):
+
+| Source | LAME lowpass | Measured cut-off |
+|---|---|---|
+| WAV 16/44.1 | — | 22 050 Hz (Nyquist) |
+| MP3 128 / 160 / 192 CBR | 17 000 / 17 500 / 18 600 | 16 742 / 17 453 / 18 831 |
+| MP3 224 / 256 / 320 CBR | 19 400 / 19 700 / 20 500 | 19 531 / 19 541 / 20 241 |
+| MP3 V0 / V2 / V4 | none / 18 500 / 17 500 | 22 050 / 18 820 / 17 410 |
+| 96 kHz genuine / upsampled from 44.1 / from a 192 kbps MP3 | — | content to 48 000 / 21 844 / 19 219 |
+
+Findings, always worded "likely": a lossless file cut at ≤ 19.2 kHz (LikelyFromLossy, with the nearest LAME
+bitrate); an MP3 of ≥ 256 kbps cut at ≤ 17.8 kHz (LikelyUpconvertedMp3); an MP3 whose LAME tag records a lowpass
+more than 1.5 kHz above the measured cut-off (LikelyReencoded; tags at or above Nyquist, such as V0's, mean no
+lowpass and aren't compared); a file above 48 kHz with no content above 24.5 kHz (LikelyUpsampled). Known limits:
+V0 and good AAC leave no cut-off, so a FLAC made from them passes; dark masters and old recordings can look band-
+limited, which is why the wording says "likely" and the UI offers the spectrum for a human to judge.
+
 ## Progress
 
 - **Done:** A1 (decoder, merged into main), A2 (band analyzer, chunked parallel and progressive analysis,
   `WaveformJob`, two-tier cache, benchmark, `media-analyze`). 96 audio tests; dev, asan, tsan and lint clean.
-- **Next:** C1–C3 in `convert/`, then A3 (quality checks).
+- **Changed for C2:** `StreamInfo::bitsPerSample` for ALAC comes from the opened decoder (the depth is in the magic
+  cookie, not in the container's sample entry); `DecoderStats::truncated` is also set when a complete FLAC holds fewer
+  samples than STREAMINFO announced, or a LAME-tagged MP3 fewer frames than the tag counts (an interrupted download
+  cut between frames).
+- **Done (A3):** `analyzeQuality()` (exact word length, spectral cut-off and content bandwidth, five findings,
+  `describeFinding()`), calibrated against LAME and covered by 8 tests.
+- **Next:** C3 in `convert/` (the advisor uses these checks).
 - **Open questions:** none.

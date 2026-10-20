@@ -50,13 +50,10 @@ public:
     class VirtualUser
     {
     public:
-        VirtualUser() = default;
-        VirtualUser(const VirtualUser &) = delete;
-        VirtualUser &operator=(const VirtualUser &) = delete;
-        virtual ~VirtualUser();
+        virtual ~VirtualUser() = default;
         virtual void connectToPeerRequested(const fromserver::ConnectToPeerRequest &request) = 0;
-        virtual void searchRequested(const fromserver::SearchRequest &request);
-        virtual void cantConnectToPeer(quint32 token);
+        virtual void searchRequested(const fromserver::SearchRequest &request) = 0;
+        virtual void cantConnectToPeer(quint32 token) = 0;
     };
 
     // What the server sends right after a successful login (official order, protocol §4.3).
@@ -96,7 +93,9 @@ public:
     FakeServer(const FakeServer &) = delete;
     FakeServer &operator=(const FakeServer &) = delete;
 
-    bool start();
+    // Listens on 127.0.0.1 (only), on `port` or any free one.
+    bool start(quint16 port = 0);
+    QString errorString() const;
     QHostAddress address() const;
     quint16 port() const;
 
@@ -104,6 +103,9 @@ public:
     void setGreeting(const QString &greeting) { m_greeting = greeting; }
     void setWelcome(const Welcome &welcome) { m_welcome = welcome; }
     void setSearchRouting(SearchRouting routing) { m_routing = routing; }
+    // Only this account may log in: another name is refused with INVALIDUSERNAME, a wrong password with INVALIDPASS.
+    // By default any name and password are accepted.
+    void setAccount(const QString &username, const QString &password);
 
     void addVirtualUser(const QString &username, const QHostAddress &address, quint16 port, VirtualUser *user);
     void removeVirtualUser(const QString &username);
@@ -141,6 +143,8 @@ public:
 
 Q_SIGNALS:
     void messageReceived(const QString &username, const selecta::slsk::ToServerMessage &message);
+    // Every frame written to a client (`username` is empty before its login).
+    void frameSent(const QString &username, const QByteArray &frame);
     void clientLoggedIn(const QString &username);
     void clientDisconnected(const QString &username);
 
@@ -183,6 +187,7 @@ private:
     QString m_greeting = QStringLiteral("Welcome to the fake Soulseek server");
     Welcome m_welcome;
     SearchRouting m_routing = SearchRouting::Direct;
+    std::optional<std::pair<QString, QString>> m_account;
     quint32 m_nextMessageId = 1;
 };
 

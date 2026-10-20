@@ -4,6 +4,7 @@
 
 #include "MatchTestSupport.h"
 #include "match/Normalizer.h"
+#include "match/detail/Alignment.h"
 
 #include <gtest/gtest.h>
 
@@ -238,6 +239,74 @@ TEST(FieldMatcher, SimilarityIsSymmetric) // property test (contract)
         ASSERT_EQ(forward.exact, backward.exact);
         ASSERT_GE(forward.similarity, 0.0);
         ASSERT_LE(forward.similarity, 1.0);
+    }
+}
+
+// One random edit of §17.3's kinds (insertion, deletion, substitution, adjacent transposition, a doubled letter).
+QString typo(const QString &word, selecta::match::test::Random &random)
+{
+    QString out = word;
+    const qsizetype at = random.below(out.size());
+    const QChar letter = QChar(u'a' + static_cast<char16_t>(random.below(26)));
+    switch (random.below(5)) {
+    case 0:
+        out.insert(at, letter);
+        break;
+    case 1:
+        out.remove(at, 1);
+        break;
+    case 2:
+        out[at] = letter;
+        break;
+    case 3:
+        if (at + 1 < out.size()) {
+            std::swap(out[at], out[at + 1]);
+        }
+        break;
+    default:
+        out.insert(at, out.at(at));
+        break;
+    }
+    return out;
+}
+
+// The matcher prunes candidates on these tests, so "can't reach" must never be wrong (property test).
+TEST(FieldMatcher, PruningNeverRejectsAReachableScore)
+{
+    namespace detail = selecta::match::detail;
+    const QStringList words{u"leave"_s,      u"the"_s,         u"world"_s,  u"behind"_s,   u"okuma"_s,    u"drift"_s,
+                            u"okumadrift"_s, u"lights"_s,      u"galaxy"_s, u"bicep"_s,    u"glue"_s,     u"love"_s,
+                            u"story"_s,      u"firestarter"_s, u"182"_s,    u"deadmau5"_s, u"deadmaus"_s, u"l0ve"_s,
+                            u"mix"_s,        u"a"_s,           u"strobe"_s, u"ghosts"_s,   u"n"_s,        u"stuff"_s};
+    selecta::match::test::Random random(4242);
+    const auto field = [&](qsizetype count) {
+        QStringList out;
+        for (qsizetype k = 0; k < count; ++k) {
+            const QString &word = words.at(random.below(words.size()));
+            out.append(random.below(3) == 0 && word.size() > 1 ? typo(word, random) : word);
+        }
+        return out.join(random.below(4) == 0 ? QString() : u" "_s); // sometimes squashed together
+    };
+    for (int i = 0; i < 20000; ++i) {
+        const selecta::match::FieldKey keyA = Normalizer::fieldKey(field(1 + random.below(5)), FieldKind::Title);
+        const selecta::match::FieldKey keyB = Normalizer::fieldKey(field(1 + random.below(5)), FieldKind::Title);
+        const detail::FieldView a = detail::fieldView(keyA);
+        const detail::FieldView b = detail::fieldView(keyB);
+        const FieldMatchOptions options{random.below(2) == 0};
+        const double similarity = detail::compareFields(a, b, options, false).similarity;
+        const std::span<const detail::AlignToken> spanA(a.tokens.data(), static_cast<std::size_t>(a.tokens.size()));
+        const std::span<const detail::AlignToken> spanB(b.tokens.data(), static_cast<std::size_t>(b.tokens.size()));
+        const double coverage = detail::align(spanA, spanB, options).coverageA();
+        for (const double threshold : {similarity, coverage, 0.5, 0.85, 0.97}) {
+            if (similarity >= threshold) {
+                ASSERT_TRUE(detail::similarityMayReach(a, b, threshold))
+                    << keyA.key.toStdString() << " / " << keyB.key.toStdString() << " at " << threshold;
+            }
+            if (coverage >= threshold) {
+                ASSERT_TRUE(detail::coverageMayReach(spanA, spanB, threshold))
+                    << keyA.key.toStdString() << " / " << keyB.key.toStdString() << " at " << threshold;
+            }
+        }
     }
 }
 

@@ -3,6 +3,9 @@
 
 #include "base/Paths.h"
 
+#include <algorithm>
+#include <cmath>
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
@@ -15,6 +18,7 @@ const QString kSidebar = u"window/sidebarShown"_s;
 const QString kInspector = u"window/inspectorShown"_s;
 const QString kLastView = u"window/lastView"_s;
 const QString kNetworkPaused = u"network/paused"_s;
+const QString kPreviewVolume = u"player/volume"_s;
 const QString kInboxDir = u"library/inbox"_s;
 const QString kCollectionRoots = u"library/collections"_s;
 const QString kSinglesFolder = u"library/singlesFolder"_s;
@@ -24,6 +28,19 @@ const QString kAlbumFolderTemplate = u"filing/albumFolder"_s;
 const QString kAlbumTrackTemplate = u"filing/albumTrack"_s;
 const QString kCleanNames = u"filing/clean"_s;
 const QString kSeparator = u"filing/separator"_s;
+const QString kServerHost = u"soulseek/host"_s;
+const QString kServerPort = u"soulseek/port"_s;
+const QString kUsername = u"soulseek/username"_s;
+const QString kListenPort = u"soulseek/listenPort"_s;
+const QString kConnectAtLaunch = u"soulseek/connectAtLaunch"_s;
+const QString kLiveAllowed = u"soulseek/liveAllowed"_s;
+
+quint16 portFrom(const QVariant &value, quint16 fallback)
+{
+    bool ok = false;
+    const int port = value.toInt(&ok);
+    return ok && port >= 0 && port <= 65535 ? static_cast<quint16>(port) : fallback;
+}
 
 // A folder name typed in Settings: one plain component, or the default.
 QString folderName(const QString &value, const QString &fallback)
@@ -111,6 +128,18 @@ void AppSettings::setNetworkPaused(bool paused)
     m_settings.setValue(kNetworkPaused, paused);
 }
 
+double AppSettings::previewVolume() const
+{
+    bool ok = false;
+    const double volume = m_settings.value(kPreviewVolume, 0.8).toDouble(&ok);
+    return ok && std::isfinite(volume) ? std::clamp(volume, 0.0, 1.0) : 0.8;
+}
+
+void AppSettings::setPreviewVolume(double volume)
+{
+    m_settings.setValue(kPreviewVolume, std::clamp(volume, 0.0, 1.0));
+}
+
 core::LibraryConfig AppSettings::libraryConfig() const
 {
     core::LibraryConfig config;
@@ -146,6 +175,31 @@ void AppSettings::setLibraryConfig(const core::LibraryConfig &config)
     m_settings.setValue(kAlbumTrackTemplate, config.templates.albumTrack);
     m_settings.setValue(kCleanNames, config.cleaner.enabled);
     m_settings.setValue(kSeparator, QString(config.cleaner.separator));
+}
+
+core::NetworkConfig AppSettings::networkConfig() const
+{
+    core::NetworkConfig config;
+    const QString host = m_settings.value(kServerHost).toString().trimmed();
+    if (!host.isEmpty()) {
+        config.host = host;
+    }
+    config.port = portFrom(m_settings.value(kServerPort), config.port);
+    config.username = m_settings.value(kUsername).toString().trimmed();
+    config.listenPort = portFrom(m_settings.value(kListenPort), config.listenPort);
+    config.connectAtLaunch = m_settings.value(kConnectAtLaunch, config.connectAtLaunch).toBool();
+    config.liveAllowedByUser = m_settings.value(kLiveAllowed, false).toBool();
+    return config;
+}
+
+void AppSettings::setNetworkConfig(const core::NetworkConfig &config)
+{
+    m_settings.setValue(kServerHost, config.host);
+    m_settings.setValue(kServerPort, config.port);
+    m_settings.setValue(kUsername, config.username);
+    m_settings.setValue(kListenPort, config.listenPort);
+    m_settings.setValue(kConnectAtLaunch, config.connectAtLaunch);
+    m_settings.setValue(kLiveAllowed, config.liveAllowedByUser);
 }
 
 bool AppSettings::sync()

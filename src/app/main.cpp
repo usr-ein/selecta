@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/AppSettings.h"
 #include "app/MainWindow.h"
+#include "app/Preview.h"
+#include "audio/AnalysisCache.h"
 #include "base/DebugProtocol.h"
 #include "base/Logging.h"
 #include "base/Paths.h"
@@ -9,6 +11,7 @@
 #include "governor/ServerGuard.h"
 #include "meta/KeychainTokenStore.h"
 #include "meta/TokenStore.h"
+#include "playback/AudioOutput.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
@@ -27,6 +30,7 @@
 #include <QMessageBox>
 
 #include <cstdio>
+#include <exception>
 #include <memory>
 
 using namespace Qt::StringLiterals;
@@ -40,7 +44,8 @@ namespace {
 
 struct Options
 {
-    bool isolated = false; // --data-dir: nothing outside that folder, not even the Keychain
+    bool isolated = false;        // --data-dir: nothing outside that folder, not even the Keychain
+    bool metadataNetwork = false; // --metadata-network: let an isolated run reach Spotify, Deezer and the rest
     bool headless = false;
     bool debugServer = false;
     QString debugSocket;
@@ -63,13 +68,17 @@ Options parseOptions(const QApplication &app)
                                          u"Accept inspection commands from `selecta-cli app` on a local socket."_s);
     const QCommandLineOption debugSocket(u"debug-socket"_s, u"Name of the debug socket."_s, u"name"_s,
                                          QString(selecta::base::debugprotocol::kSocketName));
-    parser.addOptions({dataDir, headless, debugServer, debugSocket});
+    const QCommandLineOption metadataNetwork(
+        u"metadata-network"_s,
+        u"With --data-dir, still look releases up on Spotify, Deezer and MusicBrainz (isolated runs don't)."_s);
+    parser.addOptions({dataDir, headless, debugServer, debugSocket, metadataNetwork});
     parser.process(app);
 
     if (parser.isSet(dataDir)) {
         paths::setRootOverride(parser.value(dataDir));
     }
-    return {parser.isSet(dataDir), parser.isSet(headless), parser.isSet(debugServer), parser.value(debugSocket)};
+    return {parser.isSet(dataDir), parser.isSet(metadataNetwork), parser.isSet(headless), parser.isSet(debugServer),
+            parser.value(debugSocket)};
 }
 
 // Tells the user why Selecta can't start: a dialog normally, stderr when headless.
@@ -112,7 +121,9 @@ QString buildType()
 
 } // namespace
 
-int main(int argc, char *argv[])
+namespace {
+
+int runSelecta(int argc, char *argv[])
 {
     const QApplication app(argc, argv);
     // Cover art comes from untrusted files and services: cap what any single image decode may allocate (process-wide;
@@ -187,10 +198,13 @@ int main(int argc, char *argv[])
     engineOptions.databasePath = paths::databaseFile();
     engineOptions.startPaused = settings.networkPaused();
     engineOptions.library = settings.libraryConfig();
+    engineOptions.network = settings.networkConfig();
     if (!options.isolated) {
         engineOptions.tokenStore = [] {
             return std::make_unique<selecta::meta::KeychainTokenStore>(u"io.github.usr-ein.Selecta"_s);
         };
+    } else if (!options.metadataNetwork) {
+        engineOptions.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // nothing leaves the machine
     } // isolated runs keep secrets in memory only
     engineOptions.openUrl = [](const QUrl &url) {
         // Called on the engine thread; the browser is opened from the UI thread.
@@ -210,7 +224,16 @@ int main(int argc, char *argv[])
                      });
     engine.start();
 
-    selecta::app::MainWindow window({database, sessions, settings, engine, build, startedAt});
+    // Previews play on the main thread's player; headless runs (automated inspection) stay silent.
+    const QString analysisDir = paths::cacheDir() + u"/analysis"_s;
+    if (!paths::ensureDir(analysisDir)) {
+        qCWarning(lcApp) << "can't create the waveform cache" << analysisDir;
+    }
+    selecta::app::PreviewController preview(options.headless ? selecta::playback::AudioOutput::createSilent()
+                                                             : selecta::playback::AudioOutput::createDefault(),
+                                            std::make_shared<selecta::audio::AnalysisCache>(analysisDir));
+
+    selecta::app::MainWindow window({database, sessions, settings, engine, preview, build, startedAt});
     if (options.headless) {
         window.setAttribute(Qt::WA_DontShowOnScreen);
     }
@@ -238,4 +261,22 @@ int main(int argc, char *argv[])
     qCInfo(lcApp) << "Selecta quit with code" << exitCode;
     selecta::base::uninstallFileLogger();
     return exitCode;
+}
+
+} // namespace
+
+int main(int argc, char *argv[])
+{
+    // Anything thrown this far is a bug: say so on the way out instead of aborting without a word.
+    try {
+        return runSelecta(argc, argv);
+    } catch (const std::exception &error) {
+        if (std::fputs("Selecta stopped on an unexpected error: ", stderr) != EOF) {
+            std::fputs(error.what(), stderr);
+            std::fputs("\n", stderr);
+        }
+    } catch (...) {
+        std::fputs("Selecta stopped on an unexpected error\n", stderr);
+    }
+    return 1;
 }

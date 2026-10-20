@@ -84,6 +84,42 @@ Types ── Normalizer ── VersionClassifier ── Lexicon (all word lists,
 14. **Out of scope here:** T52 (scanner read-only open: `library/`), the trash/Undo/notification side of T36–T42
     (core); the decision side of T36–T42 is tested. Aliases (LIB-6) are not built: the alias table belongs to storage
     and can be applied when building `MatchIndexInput`.
+15. **Retrieval (§10).** One group per query word (its exact term, or up to 8 vocabulary terms within its typo budget)
+    plus the title's squashed key. The two rarest *seed* groups (title and artist words, the title's squashed key) are
+    united, and a third while there are fewer than 32 candidates: two, so one stray word can't keep the true record
+    out. Every other group then narrows a list of more than 64 to its records (never to nothing) or boosts the ones it
+    holds; body-only words and the artist's squashed key read as a title (reversed names) only boost. The 200
+    heaviest records that aren't mixes are scored. Copy and layout recall on the benchmark: 100 %.
+16. **Lossless pruning.** Every positive tier and the "other version" relation need a title of 0.85 or more. Before
+    any alignment, the matcher asks whether the title similarity or the token-bag coverage could still reach 0.85,
+    crediting each token with the best score it could get from lengths and first letters alone and stopping at the
+    first token whose loss settles it; candidates that can't are dropped. Property-tested: "can't reach" is never
+    wrong (20 000 random field pairs with typos, joins and leet forms), so results are the same as without pruning.
+17. **Ties.** At equal tier and score the same version wins, so a named version beats an unversioned twin. The §9
+    ambiguity cap (two fitting versions, the choice is a guess → likely) applies only when the best isn't the same
+    version.
+18. **Index layout for speed.** Term texts sit in one pool behind an open-addressing table (no allocation per lookup);
+    the symmetric-delete and leet hashes are 32-bit, sorted, with a bucket directory; delete variants are hashed
+    without building strings; per-term facts (length, light word, digits) are precomputed so scoring scans nothing.
+    ASCII names skip NFKD/NFC in the normaliser (property-tested against the general path); the fuzzy lookup drops
+    terms more than 2 units longer or shorter before verifying them (no rule matches beyond that); single-member
+    artists are normalised once. The benchmark asks for a performance core (QoS user-interactive) so the numbers
+    measure the code, not the scheduler.
+19. **Album matching (§8).** The folder's album is the most common parsed album, folder artist (or the track artist
+    at least half the files agree on) and year. Candidates: the albums holding the tracks owned, the album key and
+    most album-title words, and the duration signature (same count ± 3 tracks, neighbouring 8 s bands, ≥ 5 lengths
+    paired within ±3 s). A file fits a track by its §9 score, or by half of the length agreement when its name says
+    nothing (unparseable, another script), whichever is higher; pairs with no evidence at all stay unmapped (missing
+    and extra). A full signature (same count ≥ 5, every sorted length within ±3 s) makes the album likely in
+    collection by itself (T48) unless artist and title both contradict it (similarity < 0.5); its pairs within ±3 s
+    count as likely. "As singles" means owned outside the best album. The best album: in collection, tier, tracks
+    vouched for, distance, collection before Inbox.
+20. **Duration consensus (§9.1, T51).** Clusters join results at most 3 s apart and span at most 6 s, so a chain
+    never merges two versions; peers count once per cluster. A cluster is named by the explicit version most of its
+    labelled results carry, so one mislabelled file doesn't rename it. "Confident" (BATCH-6) needs ≥ 3 peers in the
+    preferred cluster and no other cluster that could be the wanted version backed by two peers or more: a single
+    peer's odd length (a truncated file) is noise, two unlabelled lengths for an unversioned line are a guess. With
+    T51's data an unversioned line has no preferred cluster (both are named by non-original versions).
 
 ## Integration points
 
@@ -114,19 +150,45 @@ See the constants in `Duration.h`, `Matcher.h`, `AlbumMatcher.h`, `ReleaseScorer
 cases (T52 excepted, see above); property tests (idempotent normalisation, symmetric field similarity, no fuzzy
 3-letter tokens); concurrency test under TSan; Google Benchmark on a synthetic 200 k-track library.
 
-Benchmark numbers: pending (X3).
+Benchmark (`selecta_match_benchmark`, Release, Apple M-series, performance core; 5 runs, median; load average
+below 3 from other agents' builds):
+
+| Synthetic library | 200 000 tracks, 20 000 artists, 30 000-word Zipf vocabulary, versions, albums |
+|---|---|
+| `MatchIndex::build` | 1.1–1.3 s |
+| Index memory | 91.6 MB (`memoryUsage()`, ≈ 0.46 KB per track); RSS growth of the first build ≈ 104 MB |
+| Parse + match per result | p50 38 µs, **p95 78 µs**, p99 123 µs |
+| Match only (`Matcher::match`) | p50 20 µs, **p95 58 µs** |
+| Parse only (`RemotePathParser::parse` with the artist dictionary) | p50 18 µs, p95 29 µs |
+| `ReleaseScorer::score` | 2.0 µs |
+| Quality (10 000 results) | exact copies found 100 %, other layouts 100 %, a typo in both artist and title 83 %, not-owned names matched 0.1 % |
+
+The contract's p95 < 100 µs holds for parse + match together. On a saturated machine (load average 8 on 12 cores)
+the same run measures parse + match p95 at 115–140 µs, even on the CPU clock: shared caches and lower clocks, not the
+code. The 17 % of double-typo results that aren't found are the §17.3 rules at work (a typo in a word of ≤ 3
+letters, two fuzzy fields, an uncorroborated short-word edit), not retrieval: precision comes first.
 
 ## Progress
 
 - Done: public headers and this design (approved); X1 normaliser, version classifier, lexicon (merged to main as
-  8d21dcf); token rules, field alignment, token index, artist dictionary; X2 remote path parser (380 tests).
+  8d21dcf); token rules, field alignment, token index, artist dictionary; X2 remote path parser; X4 TracklistParser,
+  ReleaseScorer (rank(): identity, then quality, availability only as a tie-breaker) and QueryPlanner; X3 MatchIndex
+  and Matcher (merged as cc3e064); the benchmark and the performance work of decisions 15–18 (match p95 1.5 ms →
+  58 µs, parse + match p95 78 µs, index 104 → 92 MB); 533 tests.
 - Parser notes: hand-written scanners in `detail/RemoteName` (cleaning, numbering) and `RemotePathParser.cpp`
   (folders, sibling facts, artist/title order as log-odds evidence: prior 1.4, sibling constant 3.0, folder artist
   2.0, known artist 2.5 + up to 1.0 by weight, member-only 1.5, fuzzy 1.2, release artist 2.5, title features 1.0;
   ambiguous below 1.0). A number prefix the rules would keep is stripped when the dictionary knows the name only
   without it ("101 Artist - Title"); "(Artist - Title) Remixer Remix" names are unwrapped. Folders literally named
   "Album" or "Albums" are generic containers.
-- Next: X3 — MatchIndex, Matcher (hybrid scoring), AlbumMatcher, Duration and Quality; then the benchmark.
+- Done since: AlbumMatcher (X3, decision 19) with a Hungarian assignment tested against brute force, and a TSan test
+  of one AlbumMatcher shared by many threads; Matcher and AlbumMatcher share `detail::bestOf`.
+- Supersede API, revised with the head implementer (2026-10-20): `decideArrival` for core's arrival pipeline returns
+  its own `SupersedeArrivalDecision`; `LocalTrackFacts::quality` is the best evidence of the real quality (the
+  source quality from the history, since downloads become MP3 320); every decision carries a one-line `summary`.
+- Done since: DurationConsensus (X4, decision 20), so X4 is complete.
+- Next: SupersedeDecider (X5). Memory could drop further by interning artist sets and versions apart (records now
+  intern one meta per artist set × version × extra text).
 - Open questions: none (Q-M1 and Q-M2 answered, decisions 11 and 13).
 - Working rules from the head implementer: `tools/lint.sh src/match tests/match` before each commit; a note to
   `main` at each milestone; `Matcher` and everything else safe to call concurrently on one shared index.

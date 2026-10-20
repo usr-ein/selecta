@@ -10,6 +10,7 @@
 // Declares the members every wire message struct has (ServerMessages.h, PeerMessages.h, DistributedMessages.h):
 //
 //   static constexpr kCode               its message code
+//   static constexpr kName               the struct's name, for logs
 //   QByteArray encode() const            the payload: no length and no code (Frame.h adds them)
 //   static std::optional<T> decode(...)  the message, or nullopt when the payload is malformed. Never throws and never
 //                                        reads out of bounds. Optional trailing fields are read only if bytes remain;
@@ -20,6 +21,7 @@
 // bytes (RemotePath).
 #define SELECTA_SLSK_MESSAGE(Type, codeValue)                                                                          \
     static constexpr auto kCode = codeValue;                                                                           \
+    static constexpr const char *kName = #Type;                                                                        \
     QByteArray encode() const;                                                                                         \
     static std::optional<Type> decode(QByteArrayView payload);                                                         \
     friend bool operator==(const Type &, const Type &) = default

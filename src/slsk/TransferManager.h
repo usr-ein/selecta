@@ -27,8 +27,8 @@ using TransferId = quint64; // never 0
 
 enum class DownloadState {
     Queued,       // QueueUpload sent; we wait in the peer's queue (possibly for hours)
-    Requested,    // the peer sent TransferRequest and we allowed it; waiting for its `F` connection
-    Connecting,   // the `F` connection is up: token and resume offset being exchanged
+    Requested,    // the peer sent TransferRequest and we allowed it; waiting for its `F` connection and token
+    Connecting,   // the `F` connection is up and has our resume offset; waiting for the first bytes
     Transferring, // file bytes are flowing
     Completed,    // terminal: every byte arrived
     Failed,       // terminal: see TransferError
@@ -114,7 +114,8 @@ struct UploadInfo
 
 // Where downloads are written. Implemented by core/, which owns the files (slsk never touches files directly).
 //
-// Threading: called synchronously on the engine thread. Ownership: core/ owns the devices.
+// Threading: called synchronously on the engine thread; it must not call back into the TransferManager. Ownership:
+// core/ owns the devices; the storage outlives the TransferManager (or is unset first).
 class DownloadStorage
 {
 public:
@@ -127,7 +128,8 @@ public:
     // resume offset sent to the uploader. nullptr refuses: the transfer is declined ("Cancelled") and the download
     // fails with LocalError.
     virtual QIODevice *openDownload(const DownloadInfo &download) = 0;
-    // The download no longer writes to `device` (it reached a terminal state). Flush and close it.
+    // The download no longer writes to `device` (it reached a terminal state, or the manager is being destroyed).
+    // Flush and close it.
     virtual void closeDownload(const DownloadInfo &download, QIODevice *device) = 0;
 };
 
@@ -147,7 +149,13 @@ public:
 // stream from the device core/ opened, and wait for the downloader to close. A completed upload reports its speed to
 // the server (SendUploadSpeed); a broken one tells the downloader (UploadFailed).
 //
-// Progress signals are throttled to protocol::kProgressInterval per transfer. Every wait has a timeout.
+// Progress is coalesced: at most one progress signal per transfer every protocol::kProgressInterval (~4 a second),
+// carrying the latest numbers (a trailing one too, so a stall still shows where it stopped), and a final one when a
+// transfer completes; none after a transfer's terminal signal. Every wait has a timeout.
+//
+// Slots may call back into the manager (cancel, start another transfer), and every receiver still sees the changes in
+// the order they happened: a signal caused inside a slot is delivered once the current one has reached every
+// receiver. Destroying the manager emits nothing.
 //
 // Threading: lives on the engine thread and is used only from it. Ownership: a QObject; owns its `F` sockets. Not
 // owned: the PeerNetwork and ServerSession (they must outlive it), the DownloadStorage, and upload devices (core/
@@ -187,6 +195,7 @@ public:
     bool requestPlaceInQueue(TransferId id, governor::Permit placeInQueue);
     // Cancels at any time. A transfer in progress stops at once (its `F` connection closes).
     void cancelDownload(TransferId id);
+    // nullopt once the download is terminal: the last downloadChanged() carried its final state.
     std::optional<DownloadInfo> downloadInfo(TransferId id) const;
     QList<DownloadInfo> downloads() const; // the ones not yet terminal
 
@@ -198,8 +207,9 @@ public:
     // Stops an upload. With a reason, the downloader is told with UploadDenied (e.g. "Cancelled", "Banned"), which
     // also tells it not to re-queue; without one, with UploadFailed (it may re-queue).
     void cancelUpload(TransferId id, const QString &denyReason = {});
+    // nullopt once the upload is terminal: the last uploadChanged() carried its final state.
     std::optional<UploadInfo> uploadInfo(TransferId id) const;
-    QList<UploadInfo> uploads() const;
+    QList<UploadInfo> uploads() const; // the ones not yet terminal
 
     // Answers to queue requests (core/'s upload queue decides).
     void denyUpload(const QString &username, const RemotePath &path, const QString &reason);
@@ -207,9 +217,11 @@ public:
 
 Q_SIGNALS:
     void downloadChanged(const selecta::slsk::DownloadInfo &info); // every state change and place-in-queue answer
-    void downloadProgress(selecta::slsk::TransferId id, quint64 received, quint64 size);
+    // Bytes of the file we have (a resumed part included) and its size (0 when unknown). Coalesced, see above.
+    void downloadProgress(selecta::slsk::TransferId id, quint64 bytesDone, quint64 bytesTotal);
     void uploadChanged(const selecta::slsk::UploadInfo &info);
-    void uploadProgress(selecta::slsk::TransferId id, quint64 sent, quint64 size);
+    // Bytes of the file sent to the downloader (its resume offset included) and the file's size. Coalesced.
+    void uploadProgress(selecta::slsk::TransferId id, quint64 bytesDone, quint64 bytesTotal);
 
     // A peer wants a file from us: QueueUpload, or (legacy) TransferRequest direction 0, already answered "Queued".
     // core/ checks the share index and its limits, then denyUpload() or, when a slot frees, startUpload().

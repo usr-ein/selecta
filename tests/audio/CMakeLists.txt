@@ -18,9 +18,15 @@ selecta_add_test_suite(selecta_audio_tests
         ByteSourceTest.cpp
         DecoderTest.cpp
         ParserTest.cpp
+        QualityCheckTest.cpp
         WaveformJobTest.cpp
         WaveformTest.cpp
     LIBRARIES selecta_audio selecta_media_test_support)
+# selecta_audio exports vcpkg's include root (FFmpeg's headers live there), which also holds vcpkg's GoogleTest headers.
+# Sanitizer builds compile GoogleTest from source instead, so its own headers must come first or the tests compile
+# against one GoogleTest and link another.
+target_include_directories(selecta_audio_tests SYSTEM BEFORE PRIVATE
+    $<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>)
 
 # Analysis speed (NFR-2). Not a CTest test: run it from a Release build and record the numbers in src/audio/DESIGN.md.
 find_package(benchmark CONFIG REQUIRED)

@@ -71,6 +71,9 @@ struct RecordFields
     FieldView album;
 };
 RecordFields recordFields(const IndexData &data, quint32 record);
+FieldView recordTitle(const IndexData &data, quint32 record);
+FieldView recordArtist(const IndexData &data, quint32 record);
+FieldView recordAlbum(const IndexData &data, quint32 record);
 
 // Candidate records for a query (note §10): squashed-key postings, then the rarest word groups (typos through the
 // fuzzy token index), best first, at most `limit`. Mixes are never candidates.
@@ -90,8 +93,20 @@ struct Scored
 // Scores one record (note §9 with the §17.5 B token bag as a second opinion). `explain` fills the explanation.
 Scored score(const IndexData &data, const Query &query, quint32 record, bool explain);
 
-// Orders scored candidates: tier, then score, then collection before Inbox, then record index.
+// Orders scored candidates: tier, then score, then the same version first, then collection before Inbox, then record
+// index.
 bool better(const Scored &a, const Scored &b, const IndexData &data);
+
+// The best record per source at tier ≥ likely and the best "other version" among a query's candidates, with the §9
+// ambiguity cap (two fitting versions, the remote's version singling out neither: likely). Matcher and AlbumMatcher.
+struct BestMatches
+{
+    std::optional<Scored> collection;
+    std::optional<Scored> inbox;
+    std::optional<Scored> otherVersion;
+};
+BestMatches bestOf(const IndexData &data, const Query &query, const QList<quint32> &candidates, bool explain,
+                   QStringList *explanation);
 
 // The match fields of a scored record.
 RecordMatch toRecordMatch(const IndexData &data, const Scored &scored);

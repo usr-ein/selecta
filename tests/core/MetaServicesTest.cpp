@@ -41,7 +41,7 @@ protected:
             return true;
         };
         // Nothing listens on port 1: any request fails at once, and nothing ever reaches Spotify.
-        options.spotifyAccountsUrl = QUrl(u"http://127.0.0.1:1"_s);
+        options.endpoints = selecta::core::MetaEndpoints::unreachable();
         services = std::make_unique<MetaServices>(governor, log, clock, std::move(options));
         tokens = dynamic_cast<selecta::meta::InMemoryTokenStore *>(&services->tokens()); // the store given above
         ASSERT_NE(tokens, nullptr);

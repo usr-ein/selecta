@@ -2,6 +2,7 @@
 #include "app/MainWindow.h"
 
 #include "app/AppSettings.h"
+#include "app/Preview.h"
 #include "core/EngineHost.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
@@ -24,7 +25,9 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTreeView>
+#include <QtEndian>
 
+#include <cmath>
 #include <gtest/gtest.h>
 #include <memory>
 
@@ -47,7 +50,10 @@ protected:
         settings = std::make_unique<AppSettings>(dir.filePath(u"settings.ini"_s));
         selecta::core::EngineOptions options;
         options.databasePath = dir.filePath(u"engine.sqlite3"_s);
-        engine = std::make_unique<selecta::core::EngineHost>(options); // started only by the tests that need it
+        options.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // tests never reach real services
+        engine = std::make_unique<selecta::core::EngineHost>(options);       // started only by the tests that need it
+        preview = std::make_unique<selecta::app::PreviewController>(selecta::playback::AudioOutput::createSilent(),
+                                                                    nullptr); // never the real audio device
     }
 
     std::unique_ptr<MainWindow> makeWindow()
@@ -55,8 +61,8 @@ protected:
         selecta::app::BuildInfo build;
         build.version = u"0.0.0-test"_s;
         build.session = session;
-        auto window =
-            std::make_unique<MainWindow>(selecta::app::AppServices{db, sessions, *settings, *engine, build, 1'000});
+        auto window = std::make_unique<MainWindow>(
+            selecta::app::AppServices{db, sessions, *settings, *engine, *preview, build, 1'000});
         window->setAttribute(Qt::WA_DontShowOnScreen);
         window->show();
         return window;
@@ -68,6 +74,7 @@ protected:
     int session = 0;
     std::unique_ptr<AppSettings> settings;
     std::unique_ptr<selecta::core::EngineHost> engine;
+    std::unique_ptr<selecta::app::PreviewController> preview;
 };
 
 } // namespace
@@ -239,6 +246,7 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
     selecta::core::EngineOptions options;
     options.databasePath = engineDb;
     options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
     engine = std::make_unique<selecta::core::EngineHost>(options);
     QSignalSpy changed(engine.get(), &selecta::core::EngineHost::inboxChanged);
     engine->start();
@@ -264,6 +272,115 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
     EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
     EXPECT_TRUE(QFileInfo::exists(library.collectionRoots.first() + u"/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s));
     QTRY_COMPARE_WITH_TIMEOUT(window->currentSubtitle(), u"Nothing waiting"_s, 5000);
+    engine->stop();
+}
+
+namespace {
+
+// A mono 16-bit PCM WAV of a 440 Hz tone.
+QByteArray toneWav(double seconds, int rate = 44'100)
+{
+    const auto frames = static_cast<quint32>(seconds * rate);
+    QByteArray data;
+    data.reserve(static_cast<qsizetype>(frames) * 2);
+    for (quint32 i = 0; i < frames; ++i) {
+        const auto sample = static_cast<qint16>(8000.0 * std::sin(2.0 * M_PI * 440.0 * i / rate));
+        const auto bits = static_cast<quint16>(sample);
+        data.append(static_cast<char>(bits & 0xFFU));
+        data.append(static_cast<char>(bits >> 8U));
+    }
+    const auto le32 = [](quint32 value) {
+        QByteArray bytes(4, '\0');
+        qToLittleEndian(value, bytes.data());
+        return bytes;
+    };
+    const auto le16 = [](quint16 value) {
+        QByteArray bytes(2, '\0');
+        qToLittleEndian(value, bytes.data());
+        return bytes;
+    };
+    const auto size = static_cast<quint32>(data.size());
+    return "RIFF" + le32(36 + size) + "WAVEfmt " + le32(16) + le16(1) + le16(1) + le32(rate) + le32(rate * 2) +
+           le16(2) + le16(16) + "data" + le32(size) + data;
+}
+
+} // namespace
+
+TEST_F(MainWindowTest, InboxItemsPreviewWithSpaceAndDoubleClick)
+{
+    selecta::core::LibraryConfig library;
+    library.inboxRoot = dir.filePath(u"Inbox"_s);
+    ASSERT_TRUE(QDir().mkpath(library.inboxRoot + u"/Singles"_s));
+    {
+        QFile song(library.inboxRoot + u"/Singles/Okuma Drift - Neon Rain.wav"_s);
+        const QByteArray wav = toneWav(3.0);
+        ASSERT_TRUE(song.open(QIODevice::WriteOnly) && song.write(wav) == wav.size());
+    }
+    settings->setLibraryConfig(library);
+    const QString engineDb = dir.filePath(u"engine.sqlite3"_s);
+    {
+        selecta::storage::Database setup;
+        ASSERT_TRUE(setup.open(engineDb));
+        ASSERT_TRUE(selecta::storage::migrate(setup, selecta::storage::selectaMigrations()).ok());
+        selecta::library::InboxItem item;
+        item.relativePath = u"Singles/Okuma Drift - Neon Rain.wav"_s;
+        item.state = selecta::library::InboxItem::State::Ready;
+        item.artist = u"Okuma Drift"_s;
+        item.title = u"Neon Rain"_s;
+        item.format = u"WAV"_s;
+        item.createdAt = 1000;
+        ASSERT_TRUE(selecta::library::InboxStore(setup).add(item).has_value());
+    }
+    selecta::core::EngineOptions options;
+    options.databasePath = engineDb;
+    options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy changed(engine.get(), &selecta::core::EngineHost::inboxChanged);
+    engine->start();
+    ASSERT_TRUE(changed.wait(5000));
+
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"inbox"_s));
+    auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
+    ASSERT_NE(table, nullptr);
+    const QModelIndex row = table->model()->index(0, 0, table->model()->index(0, 0));
+    ASSERT_TRUE(row.isValid());
+    table->setCurrentIndex(row);
+    table->selectionModel()->select(row, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+
+    using State = selecta::playback::Player::State;
+    const selecta::playback::Player &player = preview->player();
+    window->playOrPause(); // what Space does
+    EXPECT_TRUE(preview->identity().startsWith(u"file|"_s));
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), State::Playing, 5000);
+    auto *title = window->findChild<QLabel *>(u"player.title"_s);
+    ASSERT_NE(title, nullptr);
+    EXPECT_EQ(title->text(), u"Neon Rain"_s);
+    QTRY_VERIFY_WITH_TIMEOUT(!preview->waveform().isNull(), 5000); // analysed alongside
+
+    window->playOrPause(); // the same item again: pause, not restart
+    EXPECT_EQ(player.state(), State::Paused);
+    window->playOrPause();
+    EXPECT_EQ(player.state(), State::Playing);
+
+    auto *stop = window->findChild<QAction *>(u"action.stopPreview"_s);
+    ASSERT_NE(stop, nullptr);
+    stop->trigger();
+    EXPECT_EQ(player.state(), State::Idle);
+    EXPECT_EQ(title->text(), u"Nothing playing"_s);
+
+    QTest::mouseDClick(table->viewport(), Qt::LeftButton, {}, table->visualRect(row).center());
+    QTRY_COMPARE_WITH_TIMEOUT(player.state(), State::Playing, 5000);
+
+    // A file that went missing says so instead of playing.
+    preview->stop();
+    ASSERT_TRUE(QFile::remove(library.inboxRoot + u"/Singles/Okuma Drift - Neon Rain.wav"_s));
+    window->playOrPause();
+    EXPECT_EQ(player.state(), State::Idle);
+    auto *subtitle = window->findChild<QLabel *>(u"player.subtitle"_s);
+    ASSERT_NE(subtitle, nullptr);
+    EXPECT_TRUE(subtitle->text().contains(u"isn't there any more"_s)) << subtitle->text().toStdString();
     engine->stop();
 }
 

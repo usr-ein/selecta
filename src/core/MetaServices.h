@@ -2,7 +2,9 @@
 #pragma once
 
 #include "core/GovernorPacer.h"
+#include "meta/DeezerClient.h"
 #include "meta/MetaCache.h"
+#include "meta/ReleaseResolver.h"
 #include "meta/SpotifyAuth.h"
 #include "meta/SpotifyClient.h"
 
@@ -33,6 +35,22 @@ namespace selecta::core {
 
 class ActivityLog;
 
+// Where the metadata services are. Empty: the real services. Tests and isolated runs point them at a closed loopback
+// port so nothing leaves the machine.
+struct MetaEndpoints
+{
+    QUrl spotifyAccounts;
+    QUrl spotifyApi;
+    QUrl deezerApi;
+
+    // Every service on 127.0.0.1:1, where nothing listens: requests fail at once.
+    static MetaEndpoints unreachable()
+    {
+        const QUrl closed(QStringLiteral("http://127.0.0.1:1"));
+        return {.spotifyAccounts = closed, .spotifyApi = closed, .deezerApi = closed};
+    }
+};
+
 // What Settings shows about Spotify. The Client ID is shown in its field; the secret never leaves the engine (the UI
 // only learns whether one is saved).
 struct SpotifyStatus
@@ -60,8 +78,7 @@ public:
         std::unique_ptr<meta::TokenStore> tokens; // required
         // Opens the browser for a Spotify sign-in; called on the engine thread (the app forwards it to the UI thread).
         std::function<bool(const QUrl &)> openUrl;
-        QUrl spotifyAccountsUrl; // tests point it at a fake; empty: the real accounts service
-        QUrl spotifyApiUrl;      // likewise for the Web API
+        MetaEndpoints endpoints;
     };
 
     // Token-store accounts for the credentials. Spotify Client IDs are 32 hex digits, so these can't collide with the
@@ -90,6 +107,9 @@ public:
     SpotifyStatus spotifyStatus() const;
     meta::SpotifyAuth &spotifyAuth() { return *m_spotifyAuth; }
     meta::SpotifyClient &spotify() { return *m_spotifyClient; }
+    meta::DeezerClient &deezer() { return *m_deezer; }
+    // Line → release candidates, from Spotify when signed in and from Deezer (keyless) otherwise.
+    meta::ReleaseResolver &resolver() { return *m_resolver; }
     meta::MetaCache &cache() { return m_cache; }
     QNetworkAccessManager &network() { return *m_network; }
     meta::RequestPacer &pacer() { return m_pacer; }
@@ -109,6 +129,8 @@ private:
     meta::MemoryMetaCache m_cache;
     std::unique_ptr<meta::SpotifyAuth> m_spotifyAuth;
     std::unique_ptr<meta::SpotifyClient> m_spotifyClient;
+    std::unique_ptr<meta::DeezerClient> m_deezer;
+    std::unique_ptr<meta::ReleaseResolver> m_resolver;
     QByteArray m_secret; // in memory only while set; never logged
     QString m_error;
 };
