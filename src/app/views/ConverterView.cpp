@@ -22,6 +22,7 @@
 #include <QMimeData>
 #include <QProcess>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -51,9 +52,24 @@ constexpr std::array kTargets{
     Target{"aiff", QT_TRANSLATE_NOOP("selecta::app::ConverterView", "AIFF")},
     Target{"wav", QT_TRANSLATE_NOOP("selecta::app::ConverterView", "WAV")},
     Target{"flac", QT_TRANSLATE_NOOP("selecta::app::ConverterView", "FLAC")},
+    Target{"alac", QT_TRANSLATE_NOOP("selecta::app::ConverterView", "ALAC (Apple Lossless)")},
 };
 
 constexpr std::array kArtwork{800, 1000, 600, 0};
+
+// The formats whose sample rate and bit depth can be chosen (CONV-1); MP3's follow the source (D-4).
+bool isLossless(convert::OutputFormat format)
+{
+    return format == convert::OutputFormat::Aiff || format == convert::OutputFormat::Wav ||
+           format == convert::OutputFormat::Flac || format == convert::OutputFormat::Alac;
+}
+
+// "44.1 kHz", "96 kHz".
+QString kiloHertz(int hz)
+{
+    return hz % 1000 == 0 ? ConverterView::tr("%1 kHz").arg(hz / 1000)
+                          : ConverterView::tr("%1 kHz").arg(hz / 1000.0, 0, 'f', 1);
+}
 
 bool isAudio(const QString &path)
 {
@@ -96,6 +112,8 @@ ConverterView::ConverterView(core::EngineHost &engine, AppSettings &settings, QW
     , m_model(new ConverterModel(this))
     , m_inspector(new ConverterInspector(this))
     , m_target(new QComboBox(this))
+    , m_sampleRate(new QComboBox(this))
+    , m_bitDepth(new QComboBox(this))
     , m_id3(new QComboBox(this))
     , m_artwork(new QComboBox(this))
     , m_destination(new QComboBox(this))
@@ -169,10 +187,23 @@ QWidget *ConverterView::createBar()
         m_target->addItem(tr(target.label), QString::fromLatin1(target.id));
     }
     m_target->setCurrentIndex(std::max(0, m_target->findData(state.target)));
+    m_sampleRate->setObjectName(u"converter.sampleRate"_s);
+    m_sampleRate->addItem(tr("Automatic rate"), 0);
+    for (const int rate : AppSettings::kConverterSampleRates) {
+        m_sampleRate->addItem(kiloHertz(rate), rate);
+    }
+    m_bitDepth->setObjectName(u"converter.bitDepth"_s);
+    m_bitDepth->addItem(tr("Automatic bit depth"), 0);
+    for (const int depth : AppSettings::kConverterBitDepths) {
+        m_bitDepth->addItem(tr("%1-bit").arg(depth), depth);
+    }
+    m_losslessRate = state.sampleRate;
+    m_losslessDepth = state.bitDepth;
     m_id3->setObjectName(u"converter.id3"_s);
     m_id3->addItem(tr("ID3v2.3 (best for DJ gear)"));
     m_id3->addItem(tr("ID3v2.4"));
     m_id3->setCurrentIndex(state.id3v24 ? 1 : 0);
+    fitChoicesToTarget();
     m_artwork->setObjectName(u"converter.artwork"_s);
     for (const int side : kArtwork) {
         m_artwork->addItem(side > 0 ? tr("Cover at most %1 px").arg(side) : tr("Cover as it is"), side);
@@ -193,7 +224,18 @@ QWidget *ConverterView::createBar()
     m_status->setObjectName(u"converter.status"_s);
     m_status->setForegroundRole(QPalette::PlaceholderText);
 
-    connect(m_target, &QComboBox::currentIndexChanged, this, &ConverterView::optionsEdited);
+    connect(m_target, &QComboBox::currentIndexChanged, this, [this] {
+        fitChoicesToTarget();
+        optionsEdited();
+    });
+    connect(m_sampleRate, &QComboBox::currentIndexChanged, this, [this] {
+        m_losslessRate = m_sampleRate->currentData().toInt();
+        optionsEdited();
+    });
+    connect(m_bitDepth, &QComboBox::currentIndexChanged, this, [this] {
+        m_losslessDepth = m_bitDepth->currentData().toInt();
+        optionsEdited();
+    });
     connect(m_id3, &QComboBox::currentIndexChanged, this, &ConverterView::optionsEdited);
     connect(m_artwork, &QComboBox::currentIndexChanged, this, &ConverterView::optionsEdited);
     connect(m_destination, &QComboBox::activated, this, [this](int index) {
@@ -217,6 +259,8 @@ QWidget *ConverterView::createBar()
     convertTo->setBuddy(m_target);
     first->addWidget(convertTo);
     first->addWidget(m_target);
+    first->addWidget(m_sampleRate);
+    first->addWidget(m_bitDepth);
     first->addWidget(m_id3);
     first->addWidget(m_artwork);
     first->addStretch(1);
@@ -246,6 +290,10 @@ core::ConverterOptions ConverterView::options() const
 {
     core::ConverterOptions options;
     options.target = targetFor(m_target->currentData().toString());
+    if (isLossless(options.target.format)) {
+        options.target.sampleRate = m_losslessRate;
+        options.target.bitDepth = m_losslessDepth;
+    }
     options.id3 = m_id3->currentIndex() == 1 ? convert::Id3Version::V24 : convert::Id3Version::V23;
     options.artworkMax = m_artwork->currentData().toInt();
     options.outputFolder = m_outputFolder;
@@ -269,22 +317,55 @@ convert::EncodeSettings ConverterView::targetFor(const QString &id)
         settings.format = convert::OutputFormat::Wav;
     } else if (id == u"flac"_s) {
         settings.format = convert::OutputFormat::Flac;
+    } else if (id == u"alac"_s) {
+        settings.format = convert::OutputFormat::Alac;
     }
     return settings;
+}
+
+void ConverterView::fitChoicesToTarget()
+{
+    const convert::OutputFormat format = targetFor(m_target->currentData().toString()).format;
+    const bool lossless = isLossless(format);
+    const QSignalBlocker blockRate(m_sampleRate);
+    const QSignalBlocker blockDepth(m_bitDepth);
+    m_sampleRate->setEnabled(lossless);
+    m_sampleRate->setCurrentIndex(lossless ? std::max(0, m_sampleRate->findData(m_losslessRate)) : 0);
+    m_sampleRate->setToolTip(
+        lossless
+            ? tr("Automatic keeps the source's rate up to 96 kHz, the most CDJ-3000 and CDJ-2000NXS2 players play; "
+                 "a higher rate becomes 88.2 or 96 kHz.")
+            : tr("MP3 keeps the source's rate when it can store it (32, 44.1 or 48 kHz); any other becomes "
+                 "44.1 kHz."));
+    m_bitDepth->setEnabled(lossless);
+    m_bitDepth->setCurrentIndex(lossless ? std::max(0, m_bitDepth->findData(m_losslessDepth)) : 0);
+    m_bitDepth->setToolTip(lossless ? tr("Automatic keeps 16-bit sources at 16 bits and makes the others 24-bit. "
+                                         "Reducing to 16 bits adds TPDF dither.")
+                                    : tr("MP3 has no bit depth."));
+    // ID3 doesn't apply to FLAC (Vorbis comments) or ALAC (MP4 atoms).
+    m_id3->setEnabled(format != convert::OutputFormat::Flac && format != convert::OutputFormat::Alac);
+    if (format == convert::OutputFormat::Flac) {
+        m_id3->setToolTip(tr("FLAC keeps its tags as Vorbis comments."));
+    } else if (format == convert::OutputFormat::Alac) {
+        m_id3->setToolTip(tr("ALAC keeps its tags as MP4 atoms."));
+    } else {
+        m_id3->setToolTip({});
+    }
 }
 
 void ConverterView::optionsEdited()
 {
     AppSettings::ConverterState state;
     state.target = m_target->currentData().toString();
+    state.sampleRate = m_losslessRate;
+    state.bitDepth = m_losslessDepth;
     state.id3v24 = m_id3->currentIndex() == 1;
     state.artworkMax = m_artwork->currentData().toInt();
     state.outputFolder = m_outputFolder;
     m_settings.setConverterState(state);
-    // ID3 doesn't apply to FLAC.
-    m_id3->setEnabled(options().target.format != convert::OutputFormat::Flac);
     m_engine.setConverterOptions(options());
     showSelection();
+    Q_EMIT summaryChanged();
 }
 
 void ConverterView::chooseFolder()
@@ -408,7 +489,15 @@ QString ConverterView::summary() const
     if (items.isEmpty()) {
         return tr("Drop files to convert");
     }
-    const QString target = m_target->currentText();
+    // "AIFF, 24-bit, 96 kHz": the format with the choices made for it.
+    const convert::EncodeSettings chosen = options().target;
+    QString target = m_target->currentText();
+    if (chosen.bitDepth > 0) {
+        target += u", "_s + tr("%1-bit").arg(chosen.bitDepth);
+    }
+    if (chosen.sampleRate > 0) {
+        target += u", "_s + kiloHertz(chosen.sampleRate);
+    }
     return items.size() == 1 ? tr("1 file → %1").arg(target) : tr("%1 files → %2").arg(items.size()).arg(target);
 }
 

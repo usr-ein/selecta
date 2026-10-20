@@ -71,11 +71,13 @@ struct ConverterItem
 };
 
 // The manual converter (PRD CONV-1…7) on the engine thread: any file becomes a new file in another format, with its
-// tags mapped (Vorbis comments, ID3v2.3 or 2.4), missing fields filled from the folder and file names, the folder's
-// cover embedded when it has none, and the quality warnings of the advisor before anything happens. Each output is
-// made in Selecta's staging folder, verified (it decodes whole, its length and tags are right), then placed next to
-// the original or in the chosen folder as a new file: nothing is ever overwritten, and originals are never touched. A
-// file made from a quarantined download keeps the original's quarantine attribute (NFR-4).
+// tags mapped (Vorbis comments, ID3v2.3 or 2.4, MP4 atoms), missing fields filled from the folder and file names, the
+// folder's cover embedded when it has none, and the quality warnings of the advisor before anything happens. A file
+// already in the format asked for (an MP3 320 for MP3 320) isn't re-encoded: its audio is copied as it is, with the
+// tags completed (CONV-2). Each output is made in Selecta's staging folder, verified (it decodes whole, its length and
+// tags are right), then placed next to the original or in the chosen folder as a new file: nothing is ever
+// overwritten, and originals are never touched. A file made from a quarantined download keeps the original's
+// quarantine attribute (NFR-4).
 //
 // Threading: engine thread; reading and converting run on a pool of its own and come back through a mutex-guarded
 // mailbox. Ownership: the destructor cancels conversions in flight and waits for them.
@@ -132,6 +134,7 @@ private:
         ConverterItem item;
         std::shared_ptr<const Source> source;
         std::shared_ptr<audio::CancellationFlag> cancel;
+        bool keepAudio = false; // the advisor keeps its audio as it is (CONV-2): copied, only the tags rewritten
     };
     struct Message
     {

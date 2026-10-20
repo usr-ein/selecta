@@ -101,6 +101,7 @@ if(SELECTA_WITH_MEDIA)
     add_subdirectory(playback)
     selecta_add_test_suite(selecta_ui_tests GUI
         SOURCES
+            app/ConverterViewTest.cpp
             app/FormatTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp
@@ -109,5 +110,5 @@ if(SELECTA_WITH_MEDIA)
             app/TickDelegateTest.cpp
             app/TransfersModelTest.cpp
             app/WaveformViewTest.cpp
-        LIBRARIES selecta_app)
+        LIBRARIES selecta_app selecta_media_test_support)
 endif()

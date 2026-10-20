@@ -25,6 +25,8 @@ const QString kYtDlpPath = u"player/ytDlp"_s;
 const QString kSpotifyTermsAccepted = u"spotify/termsAccepted"_s;
 const QString kRecentSearchesKey = u"search/recent"_s;
 const QString kConverterTarget = u"converter/target"_s;
+const QString kConverterSampleRateKey = u"converter/sampleRate"_s;
+const QString kConverterBitDepthKey = u"converter/bitDepth"_s;
 const QString kConverterId3v24 = u"converter/id3v24"_s;
 const QString kConverterArtwork = u"converter/artworkMax"_s;
 const QString kConverterFolder = u"converter/outputFolder"_s;
@@ -235,14 +237,22 @@ void AppSettings::addRecentSearch(const QString &text)
 AppSettings::ConverterState AppSettings::converterState() const
 {
     ConverterState state;
-    static const QStringList kTargets{u"mp3-320"_s, u"mp3-256"_s, u"mp3-192"_s, u"mp3-v0"_s,
-                                      u"mp3-v2"_s,  u"aiff"_s,    u"wav"_s,     u"flac"_s};
+    static const QStringList kTargets{u"mp3-320"_s, u"mp3-256"_s, u"mp3-192"_s, u"mp3-v0"_s, u"mp3-v2"_s,
+                                      u"aiff"_s,    u"wav"_s,     u"flac"_s,    u"alac"_s};
     const QString target = m_settings.value(kConverterTarget).toString();
     if (kTargets.contains(target)) {
         state.target = target;
     }
-    state.id3v24 = m_settings.value(kConverterId3v24, false).toBool();
     bool ok = false;
+    const int sampleRate = m_settings.value(kConverterSampleRateKey).toInt(&ok);
+    if (ok && std::ranges::find(kConverterSampleRates, sampleRate) != kConverterSampleRates.end()) {
+        state.sampleRate = sampleRate;
+    }
+    const int bitDepth = m_settings.value(kConverterBitDepthKey).toInt(&ok);
+    if (ok && std::ranges::find(kConverterBitDepths, bitDepth) != kConverterBitDepths.end()) {
+        state.bitDepth = bitDepth;
+    }
+    state.id3v24 = m_settings.value(kConverterId3v24, false).toBool();
     const int artwork = m_settings.value(kConverterArtwork).toInt(&ok);
     if (ok && artwork >= 0 && artwork <= 3000) {
         state.artworkMax = artwork;
@@ -254,6 +264,8 @@ AppSettings::ConverterState AppSettings::converterState() const
 void AppSettings::setConverterState(const ConverterState &state)
 {
     m_settings.setValue(kConverterTarget, state.target);
+    m_settings.setValue(kConverterSampleRateKey, state.sampleRate);
+    m_settings.setValue(kConverterBitDepthKey, state.bitDepth);
     m_settings.setValue(kConverterId3v24, state.id3v24);
     m_settings.setValue(kConverterArtwork, state.artworkMax);
     if (state.outputFolder.isEmpty()) {
