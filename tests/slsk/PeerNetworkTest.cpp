@@ -236,6 +236,21 @@ TEST_F(PeerNetworkTest, APeerAtOurOwnAddressIsReachedOverLoopback)
     EXPECT_EQ(infos.at(0).at(1).value<peer::UserInfoResponse>().description, u"same machine"_s);
 }
 
+TEST_F(PeerNetworkTest, AClientThatDoesntListenStillReachesPeers)
+{
+    // We tell the server port 0: a peer can't dial us back (and mustn't trip over trying), but our direct connection
+    // to it works.
+    session.setListenPort(0);
+    ASSERT_TRUE(waitFor([&] { return server.client(u"selecta"_s)->listenPort == 0; }));
+    const auto alice = makePeer(u"alice"_s); // answers indirect requests
+    alice->reportCantConnect = true;
+    const QSignalSpy infos(&peers, &PeerNetwork::userInfoReceived);
+    ASSERT_TRUE(peers.requestUserInfo(u"alice"_s, permit(Operation::UserInfo)));
+    ASSERT_TRUE(waitFor([&] { return infos.size() == 1; }));
+    EXPECT_EQ(alice->indirectRequests, 1);
+    EXPECT_TRUE(alice->pierceTokens.isEmpty());
+}
+
 TEST_F(PeerNetworkTest, RequestsToOnePeerShareOneConnectionAndOneLookup)
 {
     const auto alice = makePeer(u"alice"_s);

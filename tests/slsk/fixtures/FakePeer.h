@@ -210,6 +210,7 @@ private:
     };
 
     quint64 add(QTcpSocket *socket, bool outbound);
+    quint64 dial(const QString &user, const QHostAddress &address, quint16 port, const QByteArray &first, Mode mode);
     void onReadyRead(quint64 id);
     void onClosed(quint64 id);
     void identify(quint64 id, Mode mode, const QString &peer);
