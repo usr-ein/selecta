@@ -222,6 +222,12 @@ TEST(ReleaseResolverTable, IsrcMakesItExact)
     const Resolution r = ReleaseResolver::rank(query, {radioEdit(), extendedMix()});
     EXPECT_EQ(best(r), u"Glass Harbour - Extended Mix"_s);
     EXPECT_EQ(r.confidence, Confidence::Exact);
+    // An ISRC-only line (meta-isrc, a playlist item without text) scores the match as certain.
+    ResolveQuery isrcOnly;
+    isrcOnly.isrc = u"GBXYZ2600101"_s;
+    const Resolution byIsrc = ReleaseResolver::rank(isrcOnly, {extendedMix()});
+    EXPECT_EQ(byIsrc.confidence, Confidence::Exact);
+    EXPECT_DOUBLE_EQ(byIsrc.candidates.first().score, 1.0);
     // An ISRC whose length disagrees is no proof.
     query.durationMs = 300000;
     EXPECT_NE(ReleaseResolver::rank(query, {extendedMix()}).confidence, Confidence::Exact);
@@ -299,6 +305,34 @@ TEST(ReleaseResolverTable, AMergedCandidateShowsTheOriginalAlbumNotACompilation)
     EXPECT_EQ(chosen.spotifyId, u"singleCopy"_s);
     EXPECT_EQ(chosen.album, u"Glass Harbour"_s);
     EXPECT_EQ(chosen.deezerId, u"3135553"_s);
+}
+
+TEST(ReleaseResolverTable, CompilationCopiesUnderOtherIsrcsLeaveTheOriginalConfident)
+{
+    // Seen in the smoke run: a single and compilations carrying the same track under their own ISRCs.
+    Release compilation = release(u"Glass Harbour"_s, {kKestrel}, 270000, u"ESXYZ2600001"_s);
+    compilation.album = u"Terrace Mix 7"_s;
+    compilation.albumType = u"compilation"_s;
+    Release single = release(u"Glass Harbour"_s, {kKestrel}, 269000, u"GBXYZ2600301"_s);
+    single.albumType = u"single"_s;
+    const Resolution r = ReleaseResolver::rank(line(kKestrel, u"Glass Harbour"_s), {compilation, single});
+    EXPECT_EQ(r.confidence, Confidence::Confident);
+    EXPECT_EQ(r.candidates.first().release.isrc, u"GBXYZ2600301"_s); // the single, though listed second
+    // The same title at a clearly different length is another version: no confidence without a length on the line.
+    Release edit = release(u"Glass Harbour"_s, {kKestrel}, 241000, u"ESXYZ2600002"_s);
+    edit.albumType = u"compilation"_s;
+    EXPECT_EQ(ReleaseResolver::rank(line(kKestrel, u"Glass Harbour"_s), {single, edit}).confidence, Confidence::Likely);
+}
+
+TEST(ReleaseResolverTable, StreamingMixesAreDjMixSegments)
+{
+    const Candidate segment = ReleaseResolver::score(
+        line(kKestrel, u"Glass Harbour"_s),
+        release(u"Glass Harbour - [Harbourland 2019 Streaming Mix]"_s, {kKestrel}, 183000, u"BEXYZ1900001"_s));
+    EXPECT_LT(segment.score, 0.35);
+    EXPECT_TRUE(segment.reasons.join(u" "_s).contains(u"DJ-mix"_s));
+    EXPECT_TRUE(detail::analyseTitle(u"Glass Harbour (Continuous Mix)"_s).djMix);
+    EXPECT_FALSE(detail::analyseTitle(u"Glass Harbour (Club Mix)"_s).djMix);
 }
 
 TEST(ReleaseResolverTable, FreeTextLinesWithoutAnArtist)
