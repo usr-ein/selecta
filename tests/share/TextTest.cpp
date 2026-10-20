@@ -50,9 +50,9 @@ TEST(ShareText, HiddenTemporaryAndJunkNames)
     EXPECT_TRUE(detail::isHiddenName(u"._01 Track.mp3")); // AppleDouble
     EXPECT_FALSE(detail::isHiddenName(u"Track.mp3"));
 
-    for (const QString &name : {u"a.mp3.selecta-part"_s, u"a.mp3.part"_s, u"a.mp3.PART"_s, u"a.partial"_s, u"a.tmp"_s,
-                                u"a.temp"_s, u"a.crdownload"_s, u"a.download"_s, u"a.!qB"_s, u"~$a.mp3"_s,
-                                u"a.mp3~"_s}) {
+    for (const QString &name :
+         {u"a.mp3.selecta-part"_s, u"a.mp3.part"_s, u"a.mp3.PART"_s, u"a.partial"_s, u"a.tmp"_s, u"a.temp"_s,
+          u"a.crdownload"_s, u"a.download"_s, u"a.!qB"_s, u"~$a.mp3"_s, u"a.mp3~"_s}) {
         EXPECT_TRUE(detail::isTemporaryName(name)) << name.toStdString();
     }
     EXPECT_FALSE(detail::isTemporaryName(u"Departure.mp3"));
@@ -134,7 +134,7 @@ TEST(ShareText, WordsSplitAsRespondersSplitThem)
     EXPECT_EQ(detail::searchWords(u"Ke$ha_Tik.Tok"), QStringList({u"ke"_s, u"ha"_s, u"tik"_s, u"tok"_s}));
     EXPECT_EQ(detail::searchWords(u"Don't [Stop]"), QStringList({u"don"_s, u"t"_s, u"stop"_s}));
     EXPECT_EQ(detail::searchWords(u"a–b—c"), QStringList({u"a"_s, u"b"_s, u"c"_s})); // en and em dashes
-    EXPECT_EQ(detail::searchWords(u"AC＼DC"), QStringList({u"ac"_s, u"dc"_s}));     // the replaced separator splits
+    EXPECT_EQ(detail::searchWords(u"AC＼DC"), QStringList({u"ac"_s, u"dc"_s}));      // the replaced separator splits
     EXPECT_TRUE(detail::searchWords(u" -_- ").isEmpty());
 }
 
@@ -146,8 +146,7 @@ TEST(ShareText, WordsFoldCaseAndDiacritics)
               QStringList({u"royksopp"_s}));
     EXPECT_EQ(detail::searchWords(u"Beyoncé Sigur Rós"), QStringList({u"beyonce"_s, u"sigur"_s, u"ros"_s}));
     EXPECT_EQ(detail::searchWords(u"Mø Ærø Œuvre Straße Łódź Đorđe Þór Ħal"),
-              QStringList({u"mo"_s, u"aero"_s, u"oeuvre"_s, u"strasse"_s, u"lodz"_s, u"dorde"_s, u"thor"_s,
-                           u"hal"_s}));
+              QStringList({u"mo"_s, u"aero"_s, u"oeuvre"_s, u"strasse"_s, u"lodz"_s, u"dorde"_s, u"thor"_s, u"hal"_s}));
     EXPECT_EQ(detail::searchWords(u"ﬁx ＦＵＬＬ"), QStringList({u"fix"_s, u"full"_s})); // compatibility forms
     EXPECT_EQ(detail::searchWords(u"Кино Ελλάδα"), QStringList({u"кино"_s, u"ελλαδα"_s}));
     EXPECT_EQ(detail::searchWords(u"日本語"), QStringList({u"日本語"_s}));

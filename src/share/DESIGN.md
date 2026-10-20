@@ -84,7 +84,7 @@ UploadQueue.h UploadQueue: per-user FIFOs, turns between users, slots, limits, p
   On enqueue, slot freed and every few seconds: `while (auto n = queue.next())` → `lookup` + `open()` →
   `startUpload(…, device)` + `queue.started()`, or `queue.remove()` + `denyUpload(…, opened.error)`. Terminal
   `uploadChanged` → `queue.finished()`. `PlaceInQueueRequest` → `queue.placeInQueue()`. Search answers and user info
-  report `queue.slotFree()`, `queue.queued()` and `options().slots`.
+  report `queue.slotFree()`, `queue.queued()` and `options().uploadSlots`.
 
 ## Benchmark
 

@@ -164,7 +164,7 @@ private:
             }
         }
         // Word ids become ranks in the sorted dictionary.
-        const std::size_t count = static_cast<std::size_t>(m_words.size());
+        const auto count = static_cast<std::size_t>(m_words.size());
         std::vector<quint32> order(count);
         std::iota(order.begin(), order.end(), 0U);
         std::ranges::sort(order, [this](quint32 a, quint32 b) {

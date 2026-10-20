@@ -3,18 +3,21 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace selecta::share {
 
 namespace {
 
-UploadQueue::Options clamped(const UploadQueue::Options &options)
+// next() starts one upload per user and no more: the governor's number is the protocol's constraint.
+static_assert(governor::limits::kUploadsPerUser == 1);
+
+UploadQueue::Options clamped(UploadQueue::Options options)
 {
-    UploadQueue::Options result = options;
-    result.slots = std::max(0, result.slots);
-    result.maxFilesPerUser = std::clamp(result.maxFilesPerUser, 0, UploadQueue::kMaxEntries);
-    result.maxBytesPerUser = std::max<qint64>(0, result.maxBytesPerUser);
-    return result;
+    options.uploadSlots = std::max(0, options.uploadSlots);
+    options.maxFilesPerUser = std::clamp(options.maxFilesPerUser, 0, UploadQueue::kMaxEntries);
+    options.maxBytesPerUser = std::max<qint64>(0, options.maxBytesPerUser);
+    return options;
 }
 
 template <typename Entries>
@@ -35,11 +38,11 @@ UploadQueue::UploadQueue()
     : UploadQueue(Options{})
 {}
 
-UploadQueue::UploadQueue(const Options &options)
+UploadQueue::UploadQueue(Options options)
     : m_options(clamped(options))
 {}
 
-void UploadQueue::setOptions(const Options &options)
+void UploadQueue::setOptions(Options options)
 {
     m_options = clamped(options);
 }
@@ -59,7 +62,7 @@ UploadQueue::Decision UploadQueue::enqueue(const QString &user, const slsk::Remo
     if (queuedFiles >= m_options.maxFilesPerUser || m_queued + m_active >= kMaxEntries) {
         return refused(slsk::RejectionReason::TooManyFiles);
     }
-    if (queuedBytes >= static_cast<quint64>(m_options.maxBytesPerUser)) {
+    if (std::cmp_greater_equal(queuedBytes, m_options.maxBytesPerUser)) {
         return refused(slsk::RejectionReason::TooManyMegabytes);
     }
     if (it == m_users.end()) {
@@ -77,7 +80,7 @@ UploadQueue::Decision UploadQueue::enqueue(const QString &user, const slsk::Remo
 
 std::optional<UploadQueue::Next> UploadQueue::next() const
 {
-    if (m_active >= m_options.slots) {
+    if (m_active >= m_options.uploadSlots) {
         return std::nullopt;
     }
     const User *chosen = nullptr;

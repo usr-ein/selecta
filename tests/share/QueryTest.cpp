@@ -5,8 +5,8 @@
 #include <gtest/gtest.h>
 
 using namespace Qt::StringLiterals;
-using selecta::share::detail::parseQuery;
 using selecta::share::detail::ParsedQuery;
+using selecta::share::detail::parseQuery;
 
 namespace {
 

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // build() (docs/contracts/share.md): what the walk shares and skips, aliases, roots, attributes, and the share list as
 // slsk's own decoder reads it.
-#include "share/ShareIndex.h"
-
 #include "ShareTestSupport.h"
 #include "SyntheticAudio.h"
+#include "share/ShareIndex.h"
 #include "share/detail/Attributes.h"
 #include "share/detail/IndexBuilder.h"
 #include "share/detail/Walk.h"
@@ -24,7 +23,6 @@ using selecta::share::BuildOptions;
 using selecta::share::BuildResult;
 using selecta::share::ShareIndex;
 using selecta::share::ShareRoot;
-using selecta::share::test::buildRoots;
 using selecta::share::test::buildTree;
 using selecta::share::test::decodedList;
 using selecta::share::test::listedEntry;
@@ -255,7 +253,8 @@ TEST(ShareBuild, RootsThatArentFoldersOrArentAbsoluteAreReported)
 {
     Tree tree;
     const QString file = tree.file(u"a.mp3"_s);
-    const BuildResult result = build({{file, u"File"_s}, {u"relative/Music"_s, u"Relative"_s}, {QString(), u"E"_s}}, {});
+    const BuildResult result =
+        build({{file, u"File"_s}, {u"relative/Music"_s, u"Relative"_s}, {QString(), u"E"_s}}, {});
     EXPECT_EQ(unreadablePaths(result), QStringList({u"relative/Music"_s, QString(), file}));
     EXPECT_EQ(result.index->counts(), (ShareIndex::Counts{0, 0}));
     EXPECT_FALSE(result.cancelled);
@@ -356,7 +355,8 @@ TEST(ShareBuild, NestingDeeperThanTheLimitIsReported)
     EXPECT_TRUE(result.unreadable.at(0).second.contains(u"deep"_s));
 }
 
-// --- Limits, placeholders and cancellation (the walk itself) ----------------------------------------------------------
+// --- Limits, placeholders and cancellation (the walk itself)
+// ----------------------------------------------------------
 
 detail::Walk walkTree(const Tree &tree, const detail::WalkOptions &options,
                       const selecta::audio::CancellationFlag *cancel = nullptr)
@@ -626,12 +626,11 @@ TEST(ShareBuild, TheShareListDecodesToExactlyWhatWasIndexed)
     trackAttributes.vbr = false;
     expected.directories = {
         slsk::SharedDirectory{slsk::RemotePath::fromText(u"Music"_s), {}},
-        slsk::SharedDirectory{slsk::RemotePath::fromText(u"Music\\Artist"_s),
-                              {entry("notes.txt", 10, u"txt"_s, {})}},
-        slsk::SharedDirectory{slsk::RemotePath::fromText(u"Music\\Artist\\Album"_s),
-                              {entry("01 Track.MP3", static_cast<quint64>(test::mp3Cbr320().size()), u"mp3"_s,
-                                     trackAttributes),
-                               entry("cover.jpg", 1234, u"jpg"_s, {})}},
+        slsk::SharedDirectory{slsk::RemotePath::fromText(u"Music\\Artist"_s), {entry("notes.txt", 10, u"txt"_s, {})}},
+        slsk::SharedDirectory{
+            slsk::RemotePath::fromText(u"Music\\Artist\\Album"_s),
+            {entry("01 Track.MP3", static_cast<quint64>(test::mp3Cbr320().size()), u"mp3"_s, trackAttributes),
+             entry("cover.jpg", 1234, u"jpg"_s, {})}},
     };
     EXPECT_EQ(decodedList(*result.index), expected);
 }

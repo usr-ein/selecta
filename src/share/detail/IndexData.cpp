@@ -24,7 +24,10 @@ int compareBytes(QByteArrayView a, QByteArrayView b)
             return c;
         }
     }
-    return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
+    if (a.size() == b.size()) {
+        return 0;
+    }
+    return a.size() < b.size() ? -1 : 1;
 }
 
 int compareReversed(QStringView a, QStringView b)
@@ -47,7 +50,8 @@ int compareReversed(QStringView a, QStringView b)
 QByteArray IndexData::localPath(const FileRecord &file) const
 {
     const FolderRecord &folder = folders[file.folder];
-    const QByteArrayView name = file.localBytes == 0 ? fileName(file) : bytes(file.name + file.nameBytes, file.localBytes);
+    const QByteArrayView name =
+        file.localBytes == 0 ? fileName(file) : bytes(file.name + file.nameBytes, file.localBytes);
     QByteArray path;
     path.reserve(folder.localBytes + 1 + name.size());
     path.append(bytes(folder.local, folder.localBytes));
@@ -84,8 +88,9 @@ qint64 IndexData::findFolder(QStringView virtualPath) const
     const QString folded = virtualPath.toString().toCaseFolded();
     qint64 first = -1;
     for (auto it = folderByFoldedPath.constFind(folded); it != folderByFoldedPath.cend() && it.key() == folded; ++it) {
-        if (first < 0 || it.value() < first) {
-            first = it.value();
+        const qint64 folder = it.value();
+        if (first < 0 || folder < first) {
+            first = folder;
         }
     }
     return first;
@@ -96,11 +101,12 @@ qsizetype IndexData::measure() const
     // Per hash entry: the node, its share of the bucket array and the key's array header.
     constexpr qsizetype kEntryOverhead = 48;
     qsizetype total = pool.capacity() + sharedFileList.capacity();
-    total += static_cast<qsizetype>((folders.capacity() * sizeof(FolderRecord)) + (files.capacity() * sizeof(FileRecord)));
+    total +=
+        static_cast<qsizetype>((folders.capacity() * sizeof(FolderRecord)) + (files.capacity() * sizeof(FileRecord)));
     total += static_cast<qsizetype>(wordChars.capacity() * sizeof(char16_t));
-    total += static_cast<qsizetype>((wordStart.capacity() + postingStart.capacity() + postings.capacity() +
-                                     byReversed.capacity()) *
-                                    sizeof(quint32));
+    total += static_cast<qsizetype>(
+        (wordStart.capacity() + postingStart.capacity() + postings.capacity() + byReversed.capacity()) *
+        sizeof(quint32));
     for (auto it = folderByPath.cbegin(); it != folderByPath.cend(); ++it) {
         total += kEntryOverhead + it.key().capacity();
     }

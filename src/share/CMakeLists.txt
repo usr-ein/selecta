@@ -15,5 +15,6 @@ qt_add_library(selecta_share STATIC
     detail/Walk.h detail/Walk.cpp)
 add_library(Selecta::Share ALIAS selecta_share)
 target_include_directories(selecta_share PUBLIC "${PROJECT_SOURCE_DIR}/src")
-target_link_libraries(selecta_share PUBLIC selecta_slsk selecta_collection selecta_audio selecta_match Qt6::Core)
+target_link_libraries(selecta_share
+    PUBLIC selecta_slsk selecta_governor selecta_collection selecta_audio selecta_match Qt6::Core)
 selecta_set_warnings(selecta_share)

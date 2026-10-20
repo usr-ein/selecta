@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // ShareIndex::search(): Nicotine+'s matching (sharing note §4.2 table), excluded phrases, bounds and the cap.
-#include "share/ShareIndex.h"
-
 #include "ShareTestSupport.h"
+#include "share/ShareIndex.h"
 
 #include <gtest/gtest.h>
 
@@ -31,7 +30,8 @@ protected:
     static void SetUpTestSuite()
     {
         s_tree = new Tree();
-        for (const QString &path : {kOneMoreTime, kAerodynamic, kRobotRock, kSoEasy, kFanRemix, kElectronic, kHalo, kU2}) {
+        for (const QString &path :
+             {kOneMoreTime, kAerodynamic, kRobotRock, kSoEasy, kFanRemix, kElectronic, kHalo, kU2}) {
             QString relative = path.sliced(u"Music\\"_s.size());
             relative.replace(u'\\', u'/');
             s_tree->file(relative);
@@ -39,7 +39,8 @@ protected:
         const QString track = s_tree->path(u"Daft Punk/Discovery (2001)/01 - One More Time.mp3"_s);
         const collection::ScannedFile facts =
             selecta::share::test::scanned(track, {selecta::match::Codec::Mp3, 320, false, 44100, 0}, 320'000);
-        s_index = new std::shared_ptr<const ShareIndex>(selecta::share::test::buildTree(*s_tree, {{track, facts}}).index);
+        s_index =
+            new std::shared_ptr<const ShareIndex>(selecta::share::test::buildTree(*s_tree, {{track, facts}}).index);
     }
 
     static void TearDownTestSuite()
@@ -108,7 +109,7 @@ TEST_F(ShareSearch, AStarMatchesWordEndings)
     EXPECT_EQ(search(u"music *ROCK"_s), QStringList({kRobotRock}));
     EXPECT_EQ(search(u"daft *e"_s), QStringList({kRobotRock, kOneMoreTime})); // "alive", "live"; "one", "time"
     EXPECT_TRUE(search(u"music *zzz"_s).isEmpty());
-    EXPECT_TRUE(search(u"*tronic"_s).isEmpty()); // a word ending alone gets no answer
+    EXPECT_TRUE(search(u"*tronic"_s).isEmpty());                             // a word ending alone gets no answer
     EXPECT_EQ(search(u"music *aerodynamic"_s), QStringList({kAerodynamic})); // a whole word ends with itself
 }
 
@@ -167,6 +168,8 @@ TEST_F(ShareSearch, TheCapBoundsAnswers)
     EXPECT_EQ(search(u"music"_s, {}, 1).size(), 1);
     EXPECT_TRUE(search(u"music"_s, {}, 0).isEmpty());
     EXPECT_TRUE(search(u"music"_s, {}, -1).isEmpty());
+    EXPECT_EQ(search(u"music"_s, {}, 1'000'000).size(),
+              8); // clamped to the governor's ceiling, which 8 files don't reach
     // Files dropped for a phrase don't take a place under the cap.
     EXPECT_EQ(search(u"daft punk"_s, {u"robot"_s}, 1), QStringList({kOneMoreTime}));
 }

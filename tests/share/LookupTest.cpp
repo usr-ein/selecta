@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // ShareIndex::lookup() and folderContents(): the only ways from a peer's string to a shared file or folder.
-#include "share/ShareIndex.h"
-
 #include "ShareTestSupport.h"
+#include "share/ShareIndex.h"
 #include "slsk/PeerMessages.h"
 
 #include <QDir>
@@ -78,10 +77,10 @@ TEST_F(ShareLookup, FallsBackToIgnoringCase)
 TEST_F(ShareLookup, FindsNothingElse)
 {
     for (const QString &path :
-         {u"Music\\Artist\\Album\\missing.mp3"_s, u"Music\\Artist\\Album"_s, u"Music\\Artist\\Album\\"_s,
-          u"Music"_s, u"\\Music\\Artist\\Album\\01 Track.mp3"_s, u"Music/Artist/Album/01 Track.mp3"_s,
-          u"Music\\Artist\\..\\Artist\\Album\\01 Track.mp3"_s, u"Other\\Artist\\Album\\01 Track.mp3"_s,
-          m_track, u"01 Track.mp3"_s, QString()}) {
+         {u"Music\\Artist\\Album\\missing.mp3"_s, u"Music\\Artist\\Album"_s, u"Music\\Artist\\Album\\"_s, u"Music"_s,
+          u"\\Music\\Artist\\Album\\01 Track.mp3"_s, u"Music/Artist/Album/01 Track.mp3"_s,
+          u"Music\\Artist\\..\\Artist\\Album\\01 Track.mp3"_s, u"Other\\Artist\\Album\\01 Track.mp3"_s, m_track,
+          u"01 Track.mp3"_s, QString()}) {
         EXPECT_FALSE(index().lookup(remote(path)).has_value()) << path.toStdString();
     }
 }
@@ -170,8 +169,8 @@ TEST_F(ShareLookup, FolderPathsIgnoreCaseAndAnswerWithTheIndexsSpelling)
 
 TEST_F(ShareLookup, UnknownFoldersListNothing)
 {
-    for (const QString &path : {u"Music\\Artist\\Nope"_s, u"Music\\Artist\\Album\\"_s, u"Music\\Artist\\Album\\01 Track.mp3"_s,
-                                u"Nope"_s, QString(), m_tree.root()}) {
+    for (const QString &path : {u"Music\\Artist\\Nope"_s, u"Music\\Artist\\Album\\"_s,
+                                u"Music\\Artist\\Album\\01 Track.mp3"_s, u"Nope"_s, QString(), m_tree.root()}) {
         EXPECT_TRUE(index().folderContents(remote(path)).isEmpty()) << path.toStdString();
     }
 }

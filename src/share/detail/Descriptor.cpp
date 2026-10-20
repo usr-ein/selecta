@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <unistd.h>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -28,13 +29,22 @@ bool isDataless([[maybe_unused]] const struct stat &status)
 #endif
 }
 
+quint64 deviceOf(const struct stat &status)
+{
+    return static_cast<quint64>(status.st_dev);
+}
+
+quint64 inodeOf(const struct stat &status)
+{
+    return static_cast<quint64>(status.st_ino);
+}
+
 OpenFailure verify(const struct stat &status, const FileIdentity &expected)
 {
-    if (!S_ISREG(status.st_mode) || static_cast<quint64>(status.st_dev) != expected.device ||
-        static_cast<quint64>(status.st_ino) != expected.inode) {
+    if (!S_ISREG(status.st_mode) || deviceOf(status) != expected.device || inodeOf(status) != expected.inode) {
         return OpenFailure::Replaced;
     }
-    if (status.st_size < 0 || static_cast<quint64>(status.st_size) != expected.size) {
+    if (!std::cmp_equal(status.st_size, expected.size)) {
         return OpenFailure::Changed;
     }
     if (isDataless(status)) {
@@ -79,7 +89,7 @@ CheckedDescriptor openChecked(const QByteArray &nativePath, const FileIdentity &
         return result;
     }
     // Reads of a regular file never block on O_NONBLOCK's account, but whoever reads later expects a plain descriptor.
-    const int flags = ::fcntl(fd, F_GETFL); // NOLINT(*-vararg)
+    const int flags = ::fcntl(fd, F_GETFL);                            // NOLINT(*-vararg)
     if (flags < 0 || ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) != 0) { // NOLINT(*-vararg, *-signed-bitwise)
         result.error = errno;
         result.failure = OpenFailure::Unreadable;

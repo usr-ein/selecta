@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // One ShareIndex answers from many threads at once; build() runs on several workers at once (run under TSan).
+#include "ShareTestSupport.h"
 #include "share/Open.h"
 #include "share/ShareIndex.h"
-
-#include "ShareTestSupport.h"
 
 #include <atomic>
 #include <gtest/gtest.h>
@@ -48,8 +47,8 @@ TEST(ShareConcurrency, ManyReadersShareOneIndex)
                 const bool ok = index->search(u"artist track"_s, {u"nothing like this"_s}).size() == 40 &&
                                 index->search(u"music *ack -album"_s, {}).isEmpty() &&
                                 index->folderContents(folder).size() == 1 && !index->sharedFileList().isEmpty() &&
-                                index->counts().files == 40 && index->roots().size() == 1 &&
-                                index->memoryBytes() > 0 && index->lookup(lower).has_value();
+                                index->counts().files == 40 && index->roots().size() == 1 && index->memoryBytes() > 0 &&
+                                index->lookup(lower).has_value();
                 const std::optional<selecta::share::SharedFile> file = index->lookup(path);
                 const bool opened = file.has_value() && selecta::share::open(*file).ok();
                 if (!ok || !opened) {
@@ -74,8 +73,8 @@ TEST(ShareConcurrency, BuildsRunSideBySide)
     std::vector<BuildResult> results(kThreads);
     std::vector<std::thread> threads;
     threads.reserve(kThreads);
-    for (std::size_t t = 0; t < results.size(); ++t) {
-        threads.emplace_back([&results, &tree, &known, t] { results[t] = buildTree(tree, known); });
+    for (BuildResult &result : results) {
+        threads.emplace_back([&result, &tree, &known] { result = buildTree(tree, known); });
     }
     for (std::thread &thread : threads) {
         thread.join();

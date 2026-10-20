@@ -31,6 +31,9 @@ enum class OpenFailure {
 
 // A file whose data lives only in the cloud (iCloud Drive, a File Provider): reading it starts a download.
 bool isDataless(const struct stat &status);
+// st_dev and st_ino as the index keeps them.
+quint64 deviceOf(const struct stat &status);
+quint64 inodeOf(const struct stat &status);
 
 // What fstat(2) says about an open file, against the identity it should have.
 OpenFailure verify(const struct stat &status, const FileIdentity &expected);

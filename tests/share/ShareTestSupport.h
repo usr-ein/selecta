@@ -49,9 +49,6 @@ QByteArray flac(int bits);
 // What the collection would report for `path` (its current size and modification time) with these facts.
 collection::ScannedFile scanned(const QString &path, const match::AudioQuality &quality, qint64 durationMs);
 
-// build() over the given roots (absolute paths) with their base names as aliases.
-BuildResult buildRoots(const QStringList &roots, const QHash<QString, collection::ScannedFile> &knownAudio = {},
-                       const BuildOptions &options = {});
 // build() over one tree's root, aliased "Music".
 BuildResult buildTree(const Tree &tree, const QHash<QString, collection::ScannedFile> &knownAudio = {},
                       const BuildOptions &options = {});

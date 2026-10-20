@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "governor/Limits.h"
 #include "slsk/Types.h"
 
 #include <QHash>
@@ -31,13 +32,14 @@ public:
     // Files the queue holds at most, queued and active, all users together.
     static constexpr int kMaxEntries = 10'000;
 
+    // Defaults: the governor's sharing numbers (governor/Limits.h, Nicotine+'s defaults).
     struct Options
     {
-        int slots = 3;             // uploads at once (Nicotine+'s default); 0 starts nothing
-        int maxFilesPerUser = 100; // queued files per user, at most
-        // Queued bytes per user: a request is refused once a user's queued files reach this (Nicotine+'s 10 000 MB),
-        // so the last file accepted may take a queue past it.
-        qint64 maxBytesPerUser = 10'000'000'000;
+        int uploadSlots = governor::limits::kUploadSlots;                 // uploads at once; 0 starts nothing
+        int maxFilesPerUser = governor::limits::kUploadQueueFilesPerUser; // queued files per user, at most
+        // Queued bytes per user (10 000 MiB): a request is refused once a user's queued files reach this, so the last
+        // file accepted may take a queue past it.
+        qint64 maxBytesPerUser = governor::limits::kUploadQueueBytesPerUser;
 
         friend bool operator==(const Options &, const Options &) = default;
     };
@@ -62,10 +64,10 @@ public:
 
     // Out-of-range options are clamped: slots and limits to 0 and up, maxFilesPerUser to kMaxEntries.
     UploadQueue();
-    explicit UploadQueue(const Options &options);
+    explicit UploadQueue(Options options);
 
     // New limits apply to later decisions; files already queued stay.
-    void setOptions(const Options &options);
+    void setOptions(Options options);
     const Options &options() const { return m_options; }
 
     // A peer asks for `path` (its raw bytes, the queue's key with `user`), `size` bytes. Accepted and appended to the
@@ -75,10 +77,11 @@ public:
     // `privileged`: whether the user is privileged now (see setPrivileged()).
     Decision enqueue(const QString &user, const slsk::RemotePath &path, quint64 size, bool privileged);
 
-    // The file to start now: nullopt when no slot is free (active() >= slots) or every user with queued files already
-    // has an active upload (one per user: Soulseek NS can't take two from one source). Otherwise the first file in
-    // the order (class comment) whose user has no active upload. Changes nothing: call started() once the upload is
-    // started, or remove() when it can't be (the file isn't shared any more), or next() keeps returning it.
+    // The file to start now: nullopt when no slot is free (active() >= uploadSlots) or every user with queued files
+    // already has an active upload (one per user, governor::limits::kUploadsPerUser: Soulseek NS can't take two from
+    // one source). Otherwise the first file in the order (class comment) whose user has no active upload. Changes
+    // nothing: call started() once the upload is started, or remove() when it can't be (the file isn't shared any
+    // more), or next() keeps returning it.
     std::optional<Next> next() const;
 
     // The upload of a queued file started: it becomes active and its user's turn is spent. False (nothing changes)
@@ -103,7 +106,7 @@ public:
 
     int queued() const { return m_queued; } // files waiting, all users (QueueLength in search answers)
     int active() const { return m_active; } // files uploading
-    bool slotFree() const { return m_active < m_options.slots; }
+    bool slotFree() const { return m_active < m_options.uploadSlots; }
 
 private:
     struct Entry

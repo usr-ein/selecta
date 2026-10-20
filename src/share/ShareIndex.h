@@ -3,6 +3,7 @@
 
 #include "audio/Error.h"
 #include "collection/Scanner.h"
+#include "governor/Limits.h"
 #include "slsk/Types.h"
 
 #include <QByteArray>
@@ -26,8 +27,9 @@ struct IndexData;
 class IndexBuilder;
 } // namespace detail
 
-// At most this many files per search answer by default (Nicotine+'s 300).
-inline constexpr int kDefaultSearchCap = 300;
+// Files per search answer: 300 by default (Nicotine+), never more than the governor's ceiling of 500.
+inline constexpr int kDefaultSearchCap = governor::limits::kAnswerMaxFiles;
+inline constexpr int kMaxSearchCap = governor::limits::kAnswerMaxFilesCeiling;
 // Longer queries get no answer (contract: security).
 inline constexpr qsizetype kMaxQueryChars = 256;
 // Longer folder and file paths from peers find nothing (contract: security).
@@ -162,7 +164,8 @@ public:
     // - at least one plain word of 3 or more characters is needed, otherwise there is no answer;
     // - a query containing one of `excludedPhrases` (the server's list; case-insensitive) gets no answer, and a file
     //   whose virtual path contains one is never in an answer;
-    // - a query over kMaxQueryChars characters gets no answer; `cap` <= 0 gives none.
+    // - a query over kMaxQueryChars characters gets no answer; `cap` <= 0 gives none, and a cap over kMaxSearchCap
+    //   counts as kMaxSearchCap.
     // Cost: an inverted word index; well under a millisecond for a typical query at 100 000 files (DESIGN.md).
     QList<slsk::FileEntry> search(QStringView query, const QStringList &excludedPhrases,
                                   int cap = kDefaultSearchCap) const;

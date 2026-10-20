@@ -30,10 +30,10 @@ struct WalkedFile
 
 struct WalkedFolder
 {
-    QByteArray nativePath; // full local path: the root as given (QFile::encodeName), then names byte for byte
-    QString virtualPath;   // <alias>\<folders…>
-    QString segment;       // its own virtual name; the alias for a root folder
-    qsizetype parent = -1; // index in Walk::folders; -1 for a root folder
+    QByteArray nativePath;         // full local path: the root as given (QFile::encodeName), then names byte for byte
+    QString virtualPath;           // <alias>\<folders…>
+    QString segment;               // its own virtual name; the alias for a root folder
+    qsizetype parent = -1;         // index in Walk::folders; -1 for a root folder
     std::vector<WalkedFile> files; // sorted by virtual name bytes; virtual names are distinct
 };
 
@@ -55,7 +55,7 @@ struct Walk
 // but never fetched.
 inline constexpr qsizetype kMaxVirtualPathBytes = 4096;
 // Strings the index holds at most (its pool offsets are 32-bit); the walk stops beyond, as at kMaxFiles.
-inline constexpr qsizetype kMaxPoolBytes = qsizetype{1} << 30;
+inline constexpr qsizetype kMaxPoolBytes = qsizetype{1024} * 1024 * 1024;
 
 struct WalkOptions
 {

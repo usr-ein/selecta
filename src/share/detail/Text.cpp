@@ -108,11 +108,11 @@ bool isTemporaryName(QStringView name)
 
 bool isJunkFolderName(QStringView name)
 {
-    static constexpr std::array<QStringView, 7> kJunk{u"$RECYCLE.BIN", u"System Volume Information",
-                                                      u"@eaDir",       u"#recycle",
-                                                      u"#snapshot",    u"Network Trash Folder",
-                                                      u"Temporary Items"};
-    return std::ranges::any_of(kJunk, [name](QStringView junk) { return name.compare(junk, Qt::CaseInsensitive) == 0; });
+    static constexpr std::array<QStringView, 7> kJunk{
+        u"$RECYCLE.BIN", u"System Volume Information", u"@eaDir",         u"#recycle",
+        u"#snapshot",    u"Network Trash Folder",      u"Temporary Items"};
+    return std::ranges::any_of(kJunk,
+                               [name](QStringView junk) { return name.compare(junk, Qt::CaseInsensitive) == 0; });
 }
 
 LocalName localName(QByteArrayView nativeName)

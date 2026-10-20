@@ -44,7 +44,7 @@ struct NodeIdHash
 
 NodeId nodeOf(const struct stat &status)
 {
-    return {static_cast<quint64>(status.st_dev), static_cast<quint64>(status.st_ino)};
+    return {deviceOf(status), inodeOf(status)};
 }
 
 qint64 modifiedMs(const struct stat &status)
@@ -146,7 +146,7 @@ private:
     // What one folder listing collects.
     struct Listing
     {
-        QSet<QString> folderNames; // virtual names taken by subfolders
+        QSet<QString> folderNames;  // virtual names taken by subfolders
         QSet<QByteArray> fileNames; // virtual names taken by files
         std::vector<WalkedFile> files;
         std::vector<Pending> children;
@@ -198,7 +198,7 @@ private:
         const QByteArray aliasBytes = root.alias.toUtf8();
         std::vector<Pending> stack{{native, root.path, root.alias, aliasBytes.size(), root.alias, -1, 0}};
         while (!stack.empty() && !stopped()) {
-            Pending folder = std::move(stack.back());
+            const Pending folder = std::move(stack.back());
             stack.pop_back();
             std::vector<Pending> children = listFolder(folder);
             // Depth first, names in order: push the children in reverse so the first name is walked first.
@@ -223,7 +223,7 @@ private:
         // One DIR stream per call, used by this thread only: readdir is safe across streams (macOS, glibc).
         errno = 0;
         while (const dirent *entry = ::readdir(directory)) { // NOLINT(concurrency-mt-unsafe)
-            if (entry->d_name[0] != '.') { // ".", "..", dot files and folders, AppleDouble "._x"
+            if (entry->d_name[0] != '.') {                   // ".", "..", dot files and folders, AppleDouble "._x"
                 names.emplace_back(entry->d_name);
             }
             errno = 0;
@@ -342,11 +342,11 @@ private:
             return;
         }
         listing.fileNames.insert(virtualName);
-        const FileIdentity identity{static_cast<quint64>(status.st_dev), static_cast<quint64>(status.st_ino),
-                                    static_cast<quint64>(status.st_size)};
+        const FileIdentity identity{deviceOf(status), inodeOf(status), static_cast<quint64>(status.st_size)};
         Attributes attributes;
         if (kind == FileKind::Audio) {
-            attributes = m_attributes.audio(folder.keyPath + u'/' + local.key, nativePath, identity, modifiedMs(status));
+            attributes =
+                m_attributes.audio(folder.keyPath + u'/' + local.key, nativePath, identity, modifiedMs(status));
         }
         m_poolBytes += virtualName.size() + name.size();
         listing.files.push_back({name, std::move(virtualName), identity, attributes});

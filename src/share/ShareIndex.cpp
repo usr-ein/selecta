@@ -61,8 +61,9 @@ private:
 // The id of a whole word, by binary search in the sorted dictionary.
 std::optional<quint32> findWord(const IndexData &d, QStringView word)
 {
+    const std::size_t count = d.wordCount();
     std::size_t low = 0;
-    std::size_t high = static_cast<std::size_t>(d.wordCount());
+    std::size_t high = count;
     while (low < high) {
         const std::size_t middle = low + ((high - low) / 2);
         if (d.word(static_cast<quint32>(middle)).compare(word) < 0) {
@@ -71,7 +72,7 @@ std::optional<quint32> findWord(const IndexData &d, QStringView word)
             high = middle;
         }
     }
-    if (low < static_cast<std::size_t>(d.wordCount()) && d.word(static_cast<quint32>(low)).compare(word) == 0) {
+    if (low < count && d.word(static_cast<quint32>(low)).compare(word) == 0) {
         return static_cast<quint32>(low);
     }
     return std::nullopt;
@@ -80,10 +81,9 @@ std::optional<quint32> findWord(const IndexData &d, QStringView word)
 // The files with a word ending with `suffix`, as a bitmap over file ids. Empty when no word ends so.
 std::vector<quint64> filesEndingWith(const IndexData &d, QStringView suffix)
 {
-    const auto first = std::lower_bound(d.byReversed.begin(), d.byReversed.end(), suffix,
-                                        [&d](quint32 id, QStringView s) {
-                                            return detail::compareReversed(d.word(id), s) < 0;
-                                        });
+    const auto first = std::ranges::lower_bound(
+        d.byReversed, suffix, [](QStringView a, QStringView b) { return detail::compareReversed(a, b) < 0; },
+        [&d](quint32 id) { return d.word(id); });
     const auto last = std::partition_point(first, d.byReversed.end(),
                                            [&d, suffix](quint32 id) { return d.word(id).endsWith(suffix); });
     if (first == last) {
@@ -267,7 +267,7 @@ QList<slsk::FileEntry> ShareIndex::search(QStringView query, const QStringList &
     if (!parsed.isAnswerable()) {
         return {};
     }
-    return evaluate(*d, parsed, phrases, cap);
+    return evaluate(*d, parsed, phrases, std::min(cap, kMaxSearchCap));
 }
 
 std::optional<SharedFile> ShareIndex::lookup(const slsk::RemotePath &path) const

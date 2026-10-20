@@ -142,7 +142,7 @@ BenchTree makeTree(int files, std::unique_ptr<QTemporaryDir> &throwaway)
         const bool flac = path.endsWith(u".flac"_s);
         scanned.quality = flac ? selecta::match::AudioQuality{selecta::match::Codec::Flac, 1000, {}, 44100, 16}
                                : selecta::match::AudioQuality{selecta::match::Codec::Mp3, 320, false, 44100, 0};
-        scanned.durationMs = 180'000 + (i % 240) * 1000;
+        scanned.durationMs = 180'000 + ((i % 240) * 1000);
         tree.known.insert(path, scanned);
     }
     if (!built) {
@@ -211,7 +211,7 @@ void BM_FirstBuild(benchmark::State &state)
     BuildResult result;
     QElapsedTimer timer;
     qint64 elapsedMs = 0;
-    for (auto _ : state) {
+    while (state.KeepRunning()) {
         timer.start();
         result = buildOf(tree);
         elapsedMs = timer.elapsed();
@@ -232,7 +232,7 @@ void BM_IndexMemory(benchmark::State &state)
         state.SkipWithError("can't build the search tree");
         return;
     }
-    for (auto _ : state) {
+    while (state.KeepRunning()) {
         benchmark::DoNotOptimize(built.index->counts());
     }
     state.counters["files"] = built.index->counts().files;
@@ -253,7 +253,7 @@ void searchBenchmark(benchmark::State &state, const QStringList &queries)
     const QStringList phrases{u"excluded phrase one"_s, u"another banned phrase"_s};
     qsizetype i = 0;
     qint64 results = 0;
-    for (auto _ : state) {
+    while (state.KeepRunning()) {
         QList<slsk::FileEntry> found = built.index->search(queries.at(i % queries.size()), phrases);
         results += found.size();
         benchmark::DoNotOptimize(found);
@@ -300,7 +300,7 @@ void BM_Lookup(benchmark::State &state)
     }
     qsizetype i = 0;
     qint64 found = 0;
-    for (auto _ : state) {
+    while (state.KeepRunning()) {
         found += built.index->lookup(paths.at(i % paths.size())).has_value() ? 1 : 0;
         ++i;
     }
@@ -318,7 +318,7 @@ void BM_FolderContents(benchmark::State &state)
     QString folder = QFileInfo(trackPath(u"Music"_s, searchTree().files / 2)).path();
     folder.replace(u'/', u'\\');
     const slsk::RemotePath path = slsk::RemotePath::fromText(folder);
-    for (auto _ : state) {
+    while (state.KeepRunning()) {
         benchmark::DoNotOptimize(built.index->folderContents(path));
     }
 }

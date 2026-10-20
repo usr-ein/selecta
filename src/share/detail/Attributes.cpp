@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <utility>
 
 #ifdef Q_OS_DARWIN
 #include <sys/resource.h>
@@ -18,9 +19,20 @@ namespace selecta::share::detail {
 
 namespace {
 
+// This thread's materialisation policy, or -1 when it can't be read (or there is none: not macOS).
+int threadPolicy()
+{
+#ifdef Q_OS_DARWIN
+    return ::getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD);
+#else
+    return -1;
+#endif
+}
+
 quint32 positive32(qint64 value)
 {
-    return value > 0 && value <= std::numeric_limits<quint32>::max() ? static_cast<quint32>(value) : 0;
+    return value > 0 && std::cmp_less_equal(value, std::numeric_limits<quint32>::max()) ? static_cast<quint32>(value)
+                                                                                        : 0;
 }
 
 } // namespace
@@ -52,7 +64,7 @@ Attributes attributesOf(const match::AudioQuality &quality, qint64 durationMs)
     attributes.duration = positive32(durationMs / 1000);
     if (quality.bitDepth > 0) {
         attributes.sampleRate = positive32(quality.sampleRateHz);
-        attributes.bitDepth = quality.bitDepth <= std::numeric_limits<quint8>::max()
+        attributes.bitDepth = std::cmp_less_equal(quality.bitDepth, std::numeric_limits<quint8>::max())
                                   ? static_cast<quint8>(quality.bitDepth)
                                   : quint8{0};
     } else {
@@ -90,12 +102,10 @@ const collection::ScannedFile *AttributeSource::known(const QString &keyPath)
 Attributes AttributeSource::audio(const QString &keyPath, const QByteArray &nativePath, const FileIdentity &identity,
                                   qint64 modifiedMs)
 {
-    if (const collection::ScannedFile *file = known(keyPath)) {
-        // A file changed since the collection read it has other facts: an entry is only used while it is current.
-        if (file->file.size >= 0 && static_cast<quint64>(file->file.size) == identity.size &&
-            file->file.modifiedMs == modifiedMs) {
-            return attributesOf(file->quality, file->durationMs);
-        }
+    // A file changed since the collection read it has other facts: an entry is only used while it is current.
+    const collection::ScannedFile *file = known(keyPath);
+    if (file != nullptr && std::cmp_equal(file->file.size, identity.size) && file->file.modifiedMs == modifiedMs) {
+        return attributesOf(file->quality, file->durationMs);
     }
     return probe(nativePath, identity);
 }
@@ -118,9 +128,9 @@ Attributes probe(const QByteArray &nativePath, const FileIdentity &identity)
 }
 
 MaterializationOff::MaterializationOff()
+    : m_previous(threadPolicy())
 {
 #ifdef Q_OS_DARWIN
-    m_previous = ::getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD);
     if (m_previous >= 0) {
         (void)::setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD,
                                IOPOL_MATERIALIZE_DATALESS_FILES_OFF);

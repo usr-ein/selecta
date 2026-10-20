@@ -24,7 +24,7 @@ Tree::Tree()
 
 QString Tree::file(const QString &relative, const QByteArray &bytes) const
 {
-    const QString absolute = path(relative);
+    QString absolute = path(relative);
     if (!QDir().mkpath(QFileInfo(absolute).path())) {
         ADD_FAILURE() << "can't create the folder of " << absolute.toStdString();
         return {};
@@ -39,7 +39,7 @@ QString Tree::file(const QString &relative, const QByteArray &bytes) const
 
 QByteArray Tree::nativeFile(const QByteArray &relative, const QByteArray &bytes) const
 {
-    const QByteArray absolute = QFile::encodeName(root()) + '/' + relative;
+    QByteArray absolute = QFile::encodeName(root()) + '/' + relative;
     const int fd = ::open(absolute.constData(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644); // NOLINT(*-vararg)
     if (fd < 0) {
         ADD_FAILURE() << "can't create " << absolute.toStdString();
@@ -115,16 +115,6 @@ collection::ScannedFile scanned(const QString &path, const match::AudioQuality &
     file.quality = quality;
     file.durationMs = durationMs;
     return file;
-}
-
-BuildResult buildRoots(const QStringList &roots, const QHash<QString, collection::ScannedFile> &knownAudio,
-                       const BuildOptions &options)
-{
-    QList<ShareRoot> shareRoots;
-    for (const QString &root : roots) {
-        shareRoots.append({root, QFileInfo(root).fileName()});
-    }
-    return build(shareRoots, knownAudio, options);
 }
 
 BuildResult buildTree(const Tree &tree, const QHash<QString, collection::ScannedFile> &knownAudio,

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "share/detail/Query.h"
 
+#include "governor/Limits.h"
 #include "share/detail/Text.h"
 
 #include <algorithm>
@@ -9,7 +10,7 @@ namespace selecta::share::detail {
 
 namespace {
 
-constexpr qsizetype kMinPlainWordCodePoints = 3;
+constexpr qsizetype kMinPlainWordCodePoints = governor::limits::kAnswerMinChars;
 
 void addTerm(QStringView term, ParsedQuery &parsed)
 {

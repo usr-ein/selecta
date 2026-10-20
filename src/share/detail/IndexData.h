@@ -69,27 +69,25 @@ struct IndexData
     ShareIndex::Counts counts;
     qsizetype memoryBytes = 0; // measured once built
 
-    QByteArrayView bytes(quint32 offset, quint32 size) const
-    {
-        return QByteArrayView(pool.constData() + offset, size);
-    }
+    QByteArrayView bytes(quint32 offset, quint32 size) const { return {pool.constData() + offset, size}; }
     QByteArrayView folderPath(const FolderRecord &folder) const { return bytes(folder.path, folder.pathBytes); }
     QByteArrayView fileName(const FileRecord &file) const { return bytes(file.name, file.nameBytes); }
     // The file's local path, the file system's bytes.
     QByteArray localPath(const FileRecord &file) const;
 
-    qsizetype wordCount() const { return static_cast<qsizetype>(wordStart.empty() ? 0 : wordStart.size() - 1); }
+    std::size_t wordCount() const { return wordStart.empty() ? 0 : wordStart.size() - 1; }
     QStringView word(quint32 id) const
     {
-        return QStringView(wordChars.data() + wordStart[id], static_cast<qsizetype>(wordStart[id + 1] - wordStart[id]));
+        return {wordChars.data() + wordStart[id], static_cast<qsizetype>(wordStart[id + 1] - wordStart[id])};
     }
     std::span<const quint32> postingsOf(quint32 word) const
     {
-        return std::span<const quint32>(postings).subspan(postingStart[word], postingStart[word + 1] - postingStart[word]);
+        return std::span<const quint32>(postings).subspan(postingStart[word],
+                                                          postingStart[word + 1] - postingStart[word]);
     }
 
     // A file as answers carry it: the full virtual path (search answers, lookups) or the bare name (listings).
-    slsk::FileEntry entry(quint32 file, bool fullPath) const;
+    slsk::FileEntry entry(quint32 id, bool fullPath) const;
     // The folder with this virtual path: exactly, then ignoring case (the first in index order). -1 when none.
     qint64 findFolder(QStringView virtualPath) const;
     // The approximate heap bytes of everything above.
