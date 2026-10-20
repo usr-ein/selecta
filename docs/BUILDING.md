@@ -50,7 +50,7 @@ Markdown files doesn't start it. A newer push to the same branch cancels the run
 | Job | Runner | What it checks |
 |---|---|---|
 | macOS · build, tests, static linking | `macos-26` | The `dev` preset with warnings as errors, the whole suite, and that the app and `selecta-cli` load only system libraries |
-| macOS · lint | `macos-26` | `tools/lint.sh` over `src`, `tests` and `tools`. It needs the generated sources only, not a build |
+| macOS · lint | `macos-26` | `tools/lint.sh` over `src`, `tests` and `tools`. It needs the generated sources only, not a build. About 50 minutes, most of it clang-tidy |
 | macOS · asan, macOS · tsan | `macos-26` | The whole suite under AddressSanitizer + UBSan, and under ThreadSanitizer. Not on pull requests. A tsan failure doesn't fail the run yet: the prebuilt Qt isn't instrumented, so data passed through Qt's event queue or thread pool shows as a race |
 | Linux · build, tests | `ubuntu-26.04` | The `linux` preset with GCC and warnings as errors, then the suite in a network namespace that has only loopback |
 | Windows · build, tests (experimental) | `windows-2025` | The `windows` preset with MSVC, without the media libraries, warnings not fatal. Its failure doesn't fail the run |
@@ -66,8 +66,21 @@ anything else. CI has no secrets.
 **Caches.** Each job restores vcpkg's binary archives for its triplet and its own ccache folder, both kept in
 `build/cache` (actions/cache refuses paths with `..`). The archive key is a hash of `vcpkg.json`, `cmake/vcpkg-triplets`
 and `cmake/vcpkg-ports`. A change to any of them, or a new compiler on the runner image, rebuilds the dependencies once:
-about 30 minutes, mostly Qt. The macOS, Linux and Windows build jobs save the new archives. Lint and the sanitizer jobs
-only restore them.
+about 25 minutes on macOS and Linux and 35 on Windows, mostly Qt. The macOS, Linux and Windows build jobs save the new
+archives. Lint and the sanitizer jobs only restore them.
+
+**Windows (experimental).** vcpkg builds every dependency with MSVC (triplet `x64-windows-selecta`: static
+libraries on the dynamic CRT, about 35 minutes cold), and base, governor, storage, slsk and the devnet tool compile.
+The build stops at two portability bugs:
+- `src/match` (`Lexicon.cpp`, `Normalizer.cpp`) takes a `std::array` iterator for a pointer (`const auto *it`), and
+  MSVC's array iterators aren't pointers;
+- `src/library/FileOps.cpp` calls `strerror_r`.
+
+The build hasn't reached the code that is POSIX-only by design:
+- meta's `ToolProcess` (process groups, `kill`);
+- `unistd.h` in `YtDlpRunner.cpp`;
+- the tests' `/bin/sh` fake yt-dlp;
+- with the media libraries on, the directory walkers in collection and share (`openat`, `fdopendir`).
 
 **Reading a failure.** Builds keep going after an error (`ninja -k 0`), so one run lists every compile error.
 
