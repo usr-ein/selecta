@@ -9,6 +9,7 @@
 #include "app/Preview.h"
 #include "app/Sidebar.h"
 #include "app/views/ActivityView.h"
+#include "app/views/CollectionView.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/GetTracksInspector.h"
 #include "app/views/GetTracksView.h"
@@ -223,12 +224,14 @@ void MainWindow::createViews()
                        tr("Searches saved here run again on their own and tell you when something new turns up."),
                        tr("Not built yet (milestone M8).")),
             fixed(tr("No saved searches")));
-    addView(u"collection"_s,
-            emptyState(u"music.note.list"_s, u"folder-music"_s, tr("No collection yet"),
-                       tr("Selecta will index your music folders to know what you already own. It never changes "
-                          "those files."),
-                       tr("Not built yet (milestone M4).")),
-            fixed(tr("No folders indexed")));
+    auto *collectionView = new CollectionView(m_services.engine, m_stack);
+    addView(u"collection"_s, collectionView, [collectionView] { return collectionView->summary(); });
+    connect(collectionView, &CollectionView::summaryChanged, this, [this] {
+        if (m_currentId == u"collection"_s) {
+            refreshTitle();
+        }
+    });
+    connect(collectionView, &CollectionView::settingsRequested, this, [this] { navigateTo(u"settings"_s); });
 
     auto *history = new HistoryView(m_services.database, m_services.build.session, m_stack);
     // Filing and trashing change where downloads are; arrivals add new ones.

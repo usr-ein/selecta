@@ -66,6 +66,10 @@ public:
     // Previews a line's chosen file while it arrives (previewStarted / previewRefused); stops the one playing.
     void previewTrack(qint64 lineId);
     void stopPreview();
+
+    // --- the collection ---
+    void scanCollection();
+    CollectionStatus collectionStatus() const { return m_collectionStatus; }
     QList<GetLine> getLines() const { return m_getLines; }
 
     // --- the Soulseek network (Settings → Network) ---
@@ -105,6 +109,7 @@ Q_SIGNALS:
                         const QString &identity, const QString &title, const QString &artist, const QString &label);
     void previewRefused(qint64 lineId, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
+    void collectionStatusChanged(const selecta::core::CollectionStatus &status);
 
 private:
     EngineOptions m_options;
@@ -116,6 +121,7 @@ private:
     SpotifyStatus m_spotifyStatus;
     QList<GetLine> m_getLines;
     NetworkStatus m_networkStatus;
+    CollectionStatus m_collectionStatus;
 };
 
 } // namespace selecta::core

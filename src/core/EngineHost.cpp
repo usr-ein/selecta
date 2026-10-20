@@ -28,6 +28,7 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<QList<GetLine>>();
     qRegisterMetaType<NetworkStatus>();
     qRegisterMetaType<Preview>();
+    qRegisterMetaType<CollectionStatus>();
     qRegisterMetaType<std::shared_ptr<audio::ByteSource>>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
@@ -73,6 +74,10 @@ void EngineHost::start()
     connect(engine, &Engine::previewStarted, this, &EngineHost::previewStarted);
     connect(engine, &Engine::previewRefused, this, &EngineHost::previewRefused);
     connect(engine, &Engine::previewChanged, this, &EngineHost::previewChanged);
+    connect(engine, &Engine::collectionStatusChanged, this, [this](const CollectionStatus &status) {
+        m_collectionStatus = status;
+        Q_EMIT collectionStatusChanged(status);
+    });
     connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
         m_networkStatus = status;
         Q_EMIT networkStatusChanged(status);
@@ -122,7 +127,7 @@ void EngineHost::setLibraryConfig(const LibraryConfig &config)
     m_options.library = config; // used if the engine (re)starts
     post([config](Engine &engine) {
         if (engine.isStarted()) {
-            engine.inbox().setConfig(config);
+            engine.setLibraryConfig(config);
         }
     });
 }
@@ -218,6 +223,15 @@ void EngineHost::retryTracks(const QList<qint64> &ids)
     post([ids](Engine &engine) {
         if (engine.isStarted()) {
             engine.getTracks().retry(ids);
+        }
+    });
+}
+
+void EngineHost::scanCollection()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.collection().scanNow();
         }
     });
 }

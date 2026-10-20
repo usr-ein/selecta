@@ -3,6 +3,7 @@
 
 #include "core/ActivityLog.h"
 #include "core/ArrivalService.h"
+#include "core/CollectionService.h"
 #include "core/GetTracksService.h"
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
@@ -49,8 +50,9 @@ struct EngineOptions
     // Empty: downloads can't be stored (tests that don't download).
     QString incomingDir;
     QString stagingDir;
-    QString previewDir;         // previews, emptied at start
-    std::optional<int> session; // this run's session number, recorded with downloads
+    QString previewDir;          // previews, emptied at start
+    bool watchCollection = true; // follow changes in the collection folders (tests turn it off)
+    std::optional<int> session;  // this run's session number, recorded with downloads
 };
 
 // The services on the engine thread (PLAN §2.3, the network thread): the governor and its saved state and the
@@ -88,6 +90,9 @@ public:
     void previewLine(qint64 lineId);
     void stopPreview();
 
+    // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
+    void setLibraryConfig(const LibraryConfig &config);
+
     // "Pause network activity" (SAFE-5): no new Soulseek operations until resumed.
     void setPaused(bool paused);
     bool isPaused() const;
@@ -102,6 +107,7 @@ public:
     SearchService &search() { return *m_search; }
     TransferService &transfers() { return *m_transfers; }
     ArrivalService &arrival() { return *m_arrival; }
+    CollectionService &collection() { return *m_collection; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -125,6 +131,7 @@ Q_SIGNALS:
                         const QString &identity, const QString &title, const QString &artist, const QString &label);
     void previewRefused(qint64 lineId, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
+    void collectionStatusChanged(const selecta::core::CollectionStatus &status);
 
 private:
     bool fail(const QString &error);
@@ -147,6 +154,7 @@ private:
     std::unique_ptr<SearchService> m_search;
     std::unique_ptr<TransferService> m_transfers;
     std::unique_ptr<ArrivalService> m_arrival;
+    std::unique_ptr<CollectionService> m_collection;
     qint64 m_previewId = 0; // the preview playing
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;

@@ -166,6 +166,31 @@ bool Engine::start()
         }
     });
     m_getTracks->setTransfers(m_transfers.get());
+
+    // What the user owns: the collection index, with the Inbox and the history, for "you have it".
+    CollectionService::Options collectionOptions;
+    collectionOptions.watch = m_options.watchCollection;
+    m_collection = std::make_unique<CollectionService>(*m_db, collectionOptions, m_options.wallClock);
+    connect(m_collection.get(), &CollectionService::statusChanged, this, &Engine::collectionStatusChanged);
+    connect(m_collection.get(), &CollectionService::indexChanged, m_getTracks.get(),
+            [getTracks = m_getTracks.get()](const std::shared_ptr<const match::MatchIndex> &index) {
+                getTracks->setLibraryIndex(index);
+            });
+    connect(m_inbox.get(), &InboxService::changed, m_collection.get(),
+            [collection = m_collection.get()](const QList<InboxEntry> &entries) {
+                QList<library::InboxItem> items;
+                items.reserve(entries.size());
+                for (const InboxEntry &entry : entries) {
+                    items.append(entry.item);
+                }
+                collection->setInbox(items);
+            });
+    connect(m_arrival.get(), &ArrivalService::finished, m_collection.get(),
+            [this](qint64 /*downloadId*/, const ArrivalResult &result) {
+                if (result.ok) {
+                    m_collection->setHistory(library::HistoryStore(*m_db).downloads());
+                }
+            });
     connect(m_transfers.get(), &TransferService::changed, m_getTracks.get(), &GetTracksService::downloadChanged);
     connect(m_transfers.get(), &TransferService::progress, m_getTracks.get(), &GetTracksService::downloadProgress);
     connect(m_transfers.get(), &TransferService::previewChanged, this, &Engine::previewChanged);
@@ -183,7 +208,9 @@ bool Engine::start()
     if (m_options.startPaused) {
         setPaused(true);
     }
-    m_inbox->reconcile();
+    m_collection->setHistory(library::HistoryStore(*m_db).downloads());
+    m_inbox->reconcile(); // publishes the Inbox, which the collection index takes in
+    setLibraryConfig(m_options.library);
     m_meta->restore();
     m_network->start(m_options.network);
     m_transfers->load();
@@ -202,7 +229,8 @@ void Engine::stop()
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
     m_getTracks.reset();
-    m_arrival.reset(); // cancels conversions in flight (they run again at the next launch) and records finished ones
+    m_collection.reset(); // cancels a scan in flight; what it read is read again next time
+    m_arrival.reset();    // cancels conversions in flight (they run again at the next launch) and records finished ones
     m_search.reset();
     m_searchNetwork.reset();
     if (m_transfers) {
@@ -220,6 +248,23 @@ void Engine::stop()
         m_started = false;
         qCInfo(lcEngine) << "engine stopped";
     }
+}
+
+void Engine::setLibraryConfig(const LibraryConfig &config)
+{
+    if (!m_inbox || !m_collection) {
+        return;
+    }
+    m_options.library = config;
+    m_inbox->setConfig(config);
+    // Selecta's own folders are never part of the collection, even when they sit inside it.
+    QStringList excluded{config.inboxRoot};
+    for (const QString &own : {m_options.incomingDir, m_options.stagingDir, m_options.previewDir}) {
+        if (!own.isEmpty()) {
+            excluded.append(own);
+        }
+    }
+    m_collection->setRoots(config.collectionRoots, excluded);
 }
 
 void Engine::previewLine(qint64 lineId)

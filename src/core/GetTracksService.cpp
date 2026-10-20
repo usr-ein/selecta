@@ -3,6 +3,7 @@
 
 #include "core/SearchService.h"
 #include "core/TransferService.h"
+#include "match/Matcher.h"
 #include "match/Normalizer.h"
 #include "match/Tracklist.h"
 #include "storage/Database.h"
@@ -135,6 +136,11 @@ GetTracksService::AddResult GetTracksService::add(const QString &text)
     result.duplicates = static_cast<int>(candidates.size() - added.size());
     if (!added.isEmpty()) {
         m_lines.append(added);
+        for (qsizetype i = m_lines.size() - added.size(); i < m_lines.size(); ++i) {
+            if (checkOwnership(m_lines[i]) && !m_store.update(m_lines[i])) {
+                qCWarning(lcGetTracks) << "couldn't save line" << m_lines[i].id << ':' << m_db.lastError();
+            }
+        }
         Q_EMIT linesReset(m_lines);
         resolveNext();
     }
@@ -167,6 +173,11 @@ GetTracksService::AddResult GetTracksService::addReleases(const QList<meta::Rele
     result.duplicates = static_cast<int>(candidates.size() - added.size());
     if (!added.isEmpty()) {
         m_lines.append(added);
+        for (qsizetype i = m_lines.size() - added.size(); i < m_lines.size(); ++i) {
+            if (checkOwnership(m_lines[i]) && !m_store.update(m_lines[i])) {
+                qCWarning(lcGetTracks) << "couldn't save line" << m_lines[i].id << ':' << m_db.lastError();
+            }
+        }
         Q_EMIT linesReset(m_lines);
     }
     return result;
@@ -337,8 +348,9 @@ void GetTracksService::resolved(qint64 id, const meta::Result<meta::Resolution> 
             }
             line->message.clear();
         }
+        checkOwnership(*line); // the release may say it's owned
         store(*line);
-        if (m_findAfterLookup.remove(id)) {
+        if (m_findAfterLookup.remove(id) && line->findState == GetLine::FindState::Queued) {
             startFinding(*line);
         }
     }
@@ -361,10 +373,10 @@ void GetTracksService::find(const QList<qint64> &ids)
         if (!only.isEmpty() && !only.contains(line.id)) {
             continue;
         }
+        // Every line still to find; asked for by name, also lines found before or owned (to look for a better copy).
         const bool idle = line.findState == GetLine::FindState::Idle ||
-                          (!only.isEmpty() && (line.findState == GetLine::FindState::NotFound ||
-                                               line.findState == GetLine::FindState::Check ||
-                                               line.findState == GetLine::FindState::Ready));
+                          (!only.isEmpty() && line.findState != GetLine::FindState::Queued &&
+                           line.findState != GetLine::FindState::Searching);
         if (!idle || line.downloadState != GetLine::DownloadState::None || m_finding.contains(line.id)) {
             continue;
         }
@@ -664,6 +676,71 @@ void GetTracksService::downloadsRestored(const QList<Download> &unfinished)
             store(line);
         }
     }
+}
+
+void GetTracksService::setLibraryIndex(std::shared_ptr<const match::MatchIndex> index)
+{
+    m_index = std::move(index);
+    for (GetLine &line : m_lines) {
+        if (checkOwnership(line)) {
+            store(line);
+        }
+    }
+}
+
+bool GetTracksService::checkOwnership(GetLine &line)
+{
+    using FindState = GetLine::FindState;
+    if (!m_index || line.downloadState != GetLine::DownloadState::None || line.findState == FindState::Queued ||
+        line.findState == FindState::Searching) {
+        return false;
+    }
+    match::LocalTrackQuery query;
+    query.artist = line.release ? line.release->artist() : line.artist;
+    query.title = line.release ? line.release->title : line.title;
+    query.album = line.release ? line.release->album : QString();
+    query.durationMs =
+        line.release && line.release->durationMs ? *line.release->durationMs : line.durationHintMs.value_or(0);
+    if (query.title.isEmpty()) {
+        return false;
+    }
+    const QList<match::RecordMatch> matches = match::Matcher(m_index).matchLocal(query, 8);
+    const auto owned = [&matches](match::Source source) -> const match::RecordMatch * {
+        for (const match::RecordMatch &candidate : matches) {
+            const bool same =
+                candidate.relation == match::Relation::Same || candidate.relation == match::Relation::Upgrade;
+            if (candidate.source == source && same && candidate.tier != match::Tier::None) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    };
+    const match::RecordMatch *inCollection = owned(match::Source::Collection);
+    const match::RecordMatch *inInbox = inCollection ? nullptr : owned(match::Source::Inbox);
+    if (const match::RecordMatch *found = inCollection ? inCollection : inInbox) {
+        const FindState state = inCollection ? FindState::Owned : FindState::InInbox;
+        const bool likely = found->tier == match::Tier::Likely;
+        QString message;
+        if (inCollection) {
+            message = likely ? tr("Probably in your collection already") : tr("In your collection already");
+        } else {
+            message = likely ? tr("Probably in your Inbox already") : tr("In your Inbox already");
+        }
+        if (line.findState == state && line.message == message && !line.ticked) {
+            return false;
+        }
+        line.findState = state;
+        line.message = std::move(message);
+        line.ticked = false;
+        return true;
+    }
+    if (line.findState == FindState::Owned || line.findState == FindState::InInbox) {
+        // The copy went away (deleted, filed elsewhere, a folder removed from Settings): find it again.
+        line.findState = line.best ? FindState::Ready : FindState::Idle;
+        line.message.clear();
+        return true;
+    }
+    return false;
 }
 
 GetLine *GetTracksService::lineWithId(qint64 id)

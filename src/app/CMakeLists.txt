@@ -19,6 +19,7 @@ qt_add_library(selecta_app STATIC
     models/GetTracksModel.h models/GetTracksModel.cpp
     views/ActivityView.h views/ActivityView.cpp
     views/AddTracksDialog.h views/AddTracksDialog.cpp
+    views/CollectionView.h views/CollectionView.cpp
     views/EmptyStateView.h views/EmptyStateView.cpp
     views/GetTracksInspector.h views/GetTracksInspector.cpp
     views/GetTracksView.h views/GetTracksView.cpp

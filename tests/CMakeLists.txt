@@ -64,6 +64,7 @@ if(SELECTA_WITH_MEDIA)
         SOURCES
             core/ActivityLogTest.cpp
             core/ArrivalServiceTest.cpp
+            core/CollectionServiceTest.cpp
             core/DownloadsTest.cpp
             core/EngineTest.cpp
             core/FileRankingTest.cpp

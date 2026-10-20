@@ -150,6 +150,32 @@ constexpr std::array kMigrations{
             WHERE state NOT IN ('arrived', 'failed', 'cancelled');
         CREATE INDEX downloads_by_line ON downloads(get_line);
     )sql"},
+    Migration{5, R"sql(
+        -- The collection index (PRD LIB-1, LIB-2): every audio file found under the collection folders, with its tags
+        -- and stream facts, as the last scan saw it. Selecta never writes to these files; this is only what it knows.
+        CREATE TABLE collection_files (
+            id            INTEGER PRIMARY KEY,
+            path          TEXT NOT NULL UNIQUE,      -- as found on disk
+            path_key      TEXT NOT NULL UNIQUE,      -- collection::comparisonKey(path): cleaned, NFC
+            size          INTEGER NOT NULL CHECK (size >= 0),
+            modified_ms   INTEGER NOT NULL,          -- last modification, ms since the epoch
+            artist        TEXT NOT NULL DEFAULT '',
+            title         TEXT NOT NULL DEFAULT '',  -- with its version text, as tagged
+            album         TEXT NOT NULL DEFAULT '',
+            album_artist  TEXT NOT NULL DEFAULT '',
+            track_number  INTEGER NOT NULL DEFAULT 0,
+            disc_number   INTEGER NOT NULL DEFAULT 0,
+            year          INTEGER NOT NULL DEFAULT 0,
+            duration_ms   INTEGER NOT NULL DEFAULT 0,
+            codec         INTEGER NOT NULL DEFAULT 0, -- match::Codec
+            bitrate       INTEGER NOT NULL DEFAULT 0, -- kbps
+            vbr           INTEGER,                    -- 1, 0, or NULL when unknown
+            sample_rate   INTEGER NOT NULL DEFAULT 0,
+            bit_depth     INTEGER NOT NULL DEFAULT 0,
+            isrc          TEXT NOT NULL DEFAULT '',
+            names_from_file_name INTEGER NOT NULL DEFAULT 0 CHECK (names_from_file_name IN (0, 1))
+        ) STRICT;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

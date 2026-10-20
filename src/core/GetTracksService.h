@@ -4,6 +4,7 @@
 #include "core/Downloads.h"
 #include "core/FileRanking.h"
 #include "core/GetTracks.h"
+#include "match/MatchIndex.h"
 #include "meta/ReleaseResolver.h"
 
 #include <QFuture>
@@ -97,6 +98,11 @@ public:
     // After the TransferService restored its queue: lines a quit left downloading without a download are reset.
     void downloadsRestored(const QList<selecta::core::Download> &unfinished);
 
+    // --- what the user owns (BATCH-3, DL-11) ---
+    // The collection, Inbox and history snapshot. Lines found in the collection become "You have it", lines in the
+    // Inbox "In your Inbox", and both are unticked; a line whose copy went away goes back to be found.
+    void setLibraryIndex(std::shared_ptr<const match::MatchIndex> index);
+
     QList<GetLine> lines() const { return m_lines; }
     int resolvingCount() const { return static_cast<int>(m_resolving.size()); }
 
@@ -113,6 +119,7 @@ private:
     void store(const GetLine &line);
     GetLine *lineWithId(qint64 id);
     void startDownload(GetLine &line);
+    bool checkOwnership(GetLine &line);
     bool tryAlternative(GetLine &line, const QString &reason);
     void cancelDownloadOf(const GetLine &line);
 
@@ -128,6 +135,7 @@ private:
     QHash<qint64, quint64> m_finding; // line id → its queued or running search
     QSet<qint64> m_findAfterLookup;   // lines to search once their release lookup ends
     TransferService *m_transfers = nullptr;
+    std::shared_ptr<const match::MatchIndex> m_index;
 };
 
 } // namespace selecta::core

@@ -1,0 +1,173 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "app/views/CollectionView.h"
+
+#include "app/Icons.h"
+#include "app/views/EmptyStateView.h"
+#include "core/EngineHost.h"
+
+#include <QDateTime>
+#include <QDir>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QListWidget>
+#include <QLocale>
+#include <QProgressBar>
+#include <QPushButton>
+#include <QStackedWidget>
+#include <QVBoxLayout>
+
+using namespace Qt::StringLiterals;
+
+namespace selecta::app {
+
+CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
+    : QWidget(parent)
+    , m_engine(engine)
+    , m_pages(new QStackedWidget(this))
+    , m_headline(new QLabel(this))
+    , m_details(new QLabel(this))
+    , m_message(new QLabel(this))
+    , m_progress(new QProgressBar(this))
+    , m_scan(new QPushButton(tr("Scan Now"), this))
+    , m_unreadableTitle(new QLabel(this))
+    , m_unreadable(new QListWidget(this))
+{
+    setObjectName(u"view.collection"_s);
+
+    // No folders yet: the one thing to do.
+    auto *empty = new QWidget(m_pages);
+    auto *emptyLayout = new QVBoxLayout(empty);
+    emptyLayout->setContentsMargins(0, 0, 0, 0);
+    emptyLayout->addWidget(new EmptyStateView(icons::symbol(u"music.note.list"_s, u"folder-music"_s),
+                                              tr("No collection yet"),
+                                              tr("Tell Selecta where your music is, and Get tracks will know what "
+                                                 "you already have. It reads those folders and never changes a file "
+                                                 "in them."),
+                                              {}, empty),
+                           1);
+    auto *choose = new QPushButton(tr("Choose Folders…"), empty);
+    choose->setObjectName(u"collection.choose"_s);
+    choose->setDefault(true);
+    connect(choose, &QPushButton::clicked, this, &CollectionView::settingsRequested);
+    auto *chooseRow = new QHBoxLayout;
+    chooseRow->addStretch(1);
+    chooseRow->addWidget(choose);
+    chooseRow->addStretch(1);
+    emptyLayout->addLayout(chooseRow);
+    emptyLayout->addSpacing(48);
+    m_pages->addWidget(empty);
+
+    // The index.
+    auto *page = new QWidget(m_pages);
+    m_headline->setObjectName(u"collection.headline"_s);
+    QFont headlineFont = m_headline->font();
+    headlineFont.setPointSizeF(headlineFont.pointSizeF() + 3.0);
+    headlineFont.setWeight(QFont::DemiBold);
+    m_headline->setFont(headlineFont);
+    m_details->setObjectName(u"collection.details"_s);
+    m_details->setForegroundRole(QPalette::PlaceholderText);
+    m_details->setWordWrap(true);
+    m_details->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_message->setObjectName(u"collection.message"_s);
+    m_message->setWordWrap(true);
+    m_message->hide();
+    m_progress->setObjectName(u"collection.progress"_s);
+    m_progress->setTextVisible(false);
+    m_progress->setMaximumHeight(6);
+    m_progress->hide();
+    m_scan->setObjectName(u"collection.scan"_s);
+    m_scan->setToolTip(tr("Look through the folders again now. Changes are also picked up as they happen."));
+    connect(m_scan, &QPushButton::clicked, &m_engine, &core::EngineHost::scanCollection);
+    auto *folders = new QPushButton(tr("Folders…"), page);
+    folders->setObjectName(u"collection.folders"_s);
+    connect(folders, &QPushButton::clicked, this, &CollectionView::settingsRequested);
+    m_unreadableTitle->setObjectName(u"collection.unreadableTitle"_s);
+    m_unreadable->setObjectName(u"collection.unreadable"_s);
+    m_unreadable->setSelectionMode(QAbstractItemView::NoSelection);
+    m_unreadable->setFrameShape(QFrame::NoFrame);
+
+    auto *buttons = new QHBoxLayout;
+    buttons->addWidget(m_headline, 1);
+    buttons->addWidget(folders);
+    buttons->addWidget(m_scan);
+    auto *layout = new QVBoxLayout(page);
+    layout->setContentsMargins(24, 20, 24, 16);
+    layout->setSpacing(8);
+    layout->addLayout(buttons);
+    layout->addWidget(m_details);
+    layout->addWidget(m_progress);
+    layout->addWidget(m_message);
+    layout->addSpacing(8);
+    layout->addWidget(m_unreadableTitle);
+    layout->addWidget(m_unreadable, 1);
+    layout->addStretch(0);
+    m_pages->addWidget(page);
+
+    auto *outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->addWidget(m_pages);
+
+    connect(&m_engine, &core::EngineHost::collectionStatusChanged, this, &CollectionView::show);
+    show(m_engine.collectionStatus());
+}
+
+QString CollectionView::summary() const
+{
+    if (m_status.roots.isEmpty()) {
+        return tr("No folders indexed");
+    }
+    if (m_status.scanning) {
+        return tr("Scanning…");
+    }
+    return m_status.tracks == 1 ? tr("1 track") : tr("%1 tracks").arg(QLocale().toString(m_status.tracks));
+}
+
+void CollectionView::show(const core::CollectionStatus &status)
+{
+    m_status = status;
+    m_pages->setCurrentIndex(status.roots.isEmpty() ? 0 : 1);
+    const QLocale locale;
+    m_headline->setText(status.tracks == 1 ? tr("1 track") : tr("%1 tracks").arg(locale.toString(status.tracks)));
+
+    QStringList details;
+    if (status.albums > 0) {
+        details.append(status.albums == 1 ? tr("1 album") : tr("%1 albums").arg(locale.toString(status.albums)));
+    }
+    QStringList folders;
+    for (const QString &root : status.roots) {
+        folders.append(QDir::toNativeSeparators(root));
+    }
+    details.append(folders.size() == 1 ? tr("in %1").arg(folders.constFirst())
+                                       : tr("in %1 folders: %2").arg(folders.size()).arg(folders.join(u", "_s)));
+    if (status.scanning) {
+        details.append(status.total > 0 ? tr("reading %1 of %2 new or changed files")
+                                              .arg(locale.toString(status.done), locale.toString(status.total))
+                                        : tr("looking through the folders"));
+    } else if (status.lastScanMs > 0) {
+        details.append(
+            tr("last scanned %1")
+                .arg(locale.toString(QDateTime::fromMSecsSinceEpoch(status.lastScanMs), QLocale::ShortFormat)));
+    }
+    m_details->setText(details.join(u" · "_s));
+
+    m_progress->setVisible(status.scanning);
+    m_progress->setRange(0, status.total > 0 ? status.total : 0); // 0…0: busy
+    m_progress->setValue(status.done);
+    m_scan->setEnabled(!status.scanning);
+    m_message->setText(status.message);
+    m_message->setVisible(!status.message.isEmpty());
+
+    m_unreadable->clear();
+    for (const auto &[path, reason] : status.unreadableSample) {
+        auto *item = new QListWidgetItem(QDir::toNativeSeparators(path) + u"\n"_s + reason, m_unreadable);
+        item->setToolTip(reason);
+    }
+    m_unreadableTitle->setText(status.unreadable == 1
+                                   ? tr("1 file couldn't be read")
+                                   : tr("%1 files couldn't be read").arg(locale.toString(status.unreadable)));
+    m_unreadableTitle->setVisible(status.unreadable > 0);
+    m_unreadable->setVisible(status.unreadable > 0);
+    Q_EMIT summaryChanged();
+}
+
+} // namespace selecta::app
