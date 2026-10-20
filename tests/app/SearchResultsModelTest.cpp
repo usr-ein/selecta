@@ -360,3 +360,30 @@ TEST(SearchResultsModelTest, FolderRowsShowTheirPeersQueueAndSpeed)
     EXPECT_TRUE(queue.data(Qt::ToolTipRole).toString().contains(u"30"_s));
     EXPECT_EQ(model.index(0, SearchResultsModel::SpeedColumn).data().toString(), selecta::app::format::speed(1'200'000));
 }
+
+TEST(SearchResultsModelTest, PeersShowTheirCountrysFlag)
+{
+    EXPECT_EQ(SearchResultsModel::flagText(u"FR"_s), u"🇫🇷"_s);
+    EXPECT_EQ(SearchResultsModel::flagText(u"JP"_s), u"🇯🇵"_s);
+    EXPECT_TRUE(SearchResultsModel::flagText(u"ZZ"_s).isEmpty());
+    EXPECT_TRUE(SearchResultsModel::flagText(u"fr"_s).isEmpty());
+    EXPECT_TRUE(SearchResultsModel::flagText({}).isEmpty());
+
+    SearchHit french = peerHit(u"paris"_s, 1'000'000, true, 0);
+    french.country = u"FR"_s;
+    SearchResultsModel model;
+    model.reset(selecta::core::analyzeHits({french, peerHit(u"nowhere"_s, 900'000, true, 0)}, 0, {}, {}));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    const QModelIndex paris = model.indexOfResult(0, SearchResultsModel::PeerColumn);
+    const QModelIndex nowhere = model.indexOfResult(1, SearchResultsModel::PeerColumn);
+    EXPECT_EQ(paris.data().toString(), u"🇫🇷 paris"_s);
+    EXPECT_EQ(nowhere.data().toString(), u"nowhere"_s); // no flag when unknown
+    // VoiceOver says the country; the tooltip too, with DB-IP's credit.
+    EXPECT_EQ(paris.data(Qt::AccessibleTextRole).toString(), u"paris, France"_s);
+    EXPECT_TRUE(paris.data(Qt::ToolTipRole).toString().contains(u"France"_s));
+    EXPECT_TRUE(paris.data(Qt::ToolTipRole).toString().contains(u"DB-IP"_s));
+    EXPECT_FALSE(nowhere.data(Qt::ToolTipRole).toString().contains(u"DB-IP"_s));
+    // Sorting by peer goes by name, not by flag.
+    model.sort(SearchResultsModel::PeerColumn, Qt::AscendingOrder);
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0}));
+}

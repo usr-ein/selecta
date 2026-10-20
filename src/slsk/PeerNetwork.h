@@ -171,8 +171,10 @@ public:
     int connectionCount(ConnectionType type) const;
 
 Q_SIGNALS:
-    // Answers to our requests.
-    void searchResponseReceived(const QString &username, const selecta::slsk::peer::FileSearchResponse &response);
+    // Answers to our requests. `address` is the remote end of the connection the results came on (null when unknown),
+    // for the peer's country flag (P-002); nothing else asks the server for it.
+    void searchResponseReceived(const QString &username, const selecta::slsk::peer::FileSearchResponse &response,
+                                const QHostAddress &address);
     void sharedFileListReceived(const QString &username, const selecta::slsk::SharedFileList &list);
     void sharedFileListProgress(const QString &username, qint64 received, qint64 total);
     void userInfoReceived(const QString &username, const selecta::slsk::peer::UserInfoResponse &info);

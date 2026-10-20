@@ -82,6 +82,9 @@ public:
     static QString statusText(core::Ownership ownership);
     static QString qualityText(const core::SearchResult &result);
     static QString titleText(const core::SearchResult &result);
+    // A country's flag as text: the two regional indicator symbols of its ISO code ("FR" → 🇫🇷); empty for anything
+    // that isn't a country code.
+    static QString flagText(const QString &countryCode);
 
     QModelIndex index(int row, int column, const QModelIndex &parent = {}) const override;
     QModelIndex parent(const QModelIndex &child) const override;

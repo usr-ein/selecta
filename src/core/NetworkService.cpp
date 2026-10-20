@@ -150,9 +150,10 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
         Q_EMIT statusChanged(m_status);
     });
     connect(m_peers.get(), &slsk::PeerNetwork::searchResponseReceived, this,
-            [this](const QString &username, const slsk::peer::FileSearchResponse &response) {
+            [this](const QString &username, const slsk::peer::FileSearchResponse &response,
+                   const QHostAddress &address) {
                 if (m_openSearches.contains(response.token)) {
-                    Q_EMIT searchResponseReceived(response.token, username, response);
+                    Q_EMIT searchResponseReceived(response.token, username, response, address);
                 }
             });
 }

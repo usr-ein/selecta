@@ -213,12 +213,14 @@ bool SearchService::sendFront(std::deque<Pending> &queue)
     }
 }
 
-void SearchService::received(quint32 token, const QString &username, const slsk::peer::FileSearchResponse &response)
+void SearchService::received(quint32 token, const QString &username, const slsk::peer::FileSearchResponse &response,
+                             const QHostAddress &address)
 {
     const auto found = m_running.find(token);
     if (found == m_running.end()) {
         return;
     }
+    const QString country = m_countries && !address.isNull() ? m_countries->countryOf(address) : QString();
     Running &running = found->second;
     running.peers.insert(username);
     const qsizetype before = running.hits.size();
@@ -234,7 +236,8 @@ void SearchService::received(quint32 token, const QString &username, const slsk:
                                           .attributes = file.attributes,
                                           .freeSlot = response.slotFree,
                                           .queueLength = response.queueLength,
-                                          .averageSpeed = response.averageSpeed});
+                                          .averageSpeed = response.averageSpeed,
+                                          .country = country});
         }
     };
     add(response.results); // private results are shared with some users only: not offered for download

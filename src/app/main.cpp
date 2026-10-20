@@ -266,6 +266,12 @@ int runSelecta(int argc, char **argv)
     } else if (!options.metadataNetwork) {
         engineOptions.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // nothing leaves the machine
     } // isolated runs keep secrets in memory only
+    if (!options.isolated || options.metadataNetwork) {
+        // Peers' flags (P-002): DB-IP's country database, downloaded at the first run; isolated runs stay offline.
+        engineOptions.countries = selecta::core::CountryDatabaseOptions{
+            .path = dataDir + u"/GeoIP/dbip-country-lite.mmdb"_s,
+            .sources = selecta::core::dbIpCountryLiteSources(QDateTime::currentDateTimeUtc().date())};
+    }
     if (options.portMapping) {
         engineOptions.portMapping = selecta::core::PortMapper::Options{}; // NET-3; isolated runs leave the router alone
     }

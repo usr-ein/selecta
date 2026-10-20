@@ -2,12 +2,14 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "core/CountryDatabase.h"
 #include "governor/Governor.h"
 #include "governor/Limits.h"
 #include "slsk/PeerMessages.h"
 
 #include <QByteArray>
 #include <QHash>
+#include <QHostAddress>
 #include <QList>
 #include <QObject>
 #include <QSet>
@@ -64,6 +66,9 @@ struct SearchHit
     bool freeSlot = false;
     quint32 queueLength = 0;
     quint32 averageSpeed = 0; // bytes per second
+    // The peer's country (ISO 3166-1 alpha-2, "FR") from the address its results came from, for its flag (P-002);
+    // empty when unknown. Not kept in the search cache across launches.
+    QString country;
 };
 
 struct SearchOutcome
@@ -125,13 +130,17 @@ public:
     // Where finished searches are kept across launches (SRCH-12); null keeps them in memory only, for
     // kCacheLifetime. Not owned; it must outlive this service or be unset first.
     void setStore(SearchCacheStore *store) { m_store = store; }
+    // Where peers' countries come from (P-002); null (the default): no countries. Any thread may hold it too.
+    void setCountries(std::shared_ptr<const CountryDatabase> countries) { m_countries = std::move(countries); }
     // Drops a queued search, or stops collecting a running one (its `done` doesn't run).
     void cancel(quint64 id);
     int waiting() const { return static_cast<int>(m_manual.size() + m_batch.size()); }
     int collecting() const { return static_cast<int>(m_running.size()); }
 
     // --- fed by the network ---
-    void received(quint32 token, const QString &username, const slsk::peer::FileSearchResponse &response);
+    // `address`: where the results came from (null when unknown), looked up for the peer's country.
+    void received(quint32 token, const QString &username, const slsk::peer::FileSearchResponse &response,
+                  const QHostAddress &address = {});
     // Online or offline; paused or resumed. Retries what was waiting.
     void networkChanged();
 
@@ -184,6 +193,7 @@ private:
     std::map<quint32, Running> m_running; // token → collection
     QHash<QString, Cached> m_cache;       // query key → recent results
     SearchCacheStore *m_store = nullptr;
+    std::shared_ptr<const CountryDatabase> m_countries;
     QTimer *m_retry = nullptr;
     quint64 m_nextId = 1;
     qint64 m_nextInMs = 0;

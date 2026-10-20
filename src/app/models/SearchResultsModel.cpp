@@ -3,10 +3,12 @@
 
 #include "app/Format.h"
 #include "app/Icons.h"
+#include "core/CountryDatabase.h"
 
 #include <QFont>
 #include <QGuiApplication>
 #include <QHash>
+#include <QLocale>
 #include <QPalette>
 #include <QRegularExpression>
 
@@ -57,6 +59,15 @@ QFont queueFont()
     return font;
 }
 
+// "France" for "FR", in the user's language; empty when unknown.
+QString countryName(const QString &code)
+{
+    if (!core::isCountryCode(code)) {
+        return {};
+    }
+    return QLocale::territoryToString(QLocale::codeToTerritory(code));
+}
+
 QString lastComponents(const QString &folder, int count)
 {
     QStringList parts = folder.split(QRegularExpression(u"[\\\\/]"_s), Qt::SkipEmptyParts);
@@ -88,7 +99,7 @@ QString speedText(const core::SearchHit &hit)
 
 QString speedToolTip(const core::SearchHit &hit)
 {
-    return hit.averageSpeed > 0 ? SearchResultsModel::tr("The peer's upload speed, as the server reports it")
+    return hit.averageSpeed > 0 ? SearchResultsModel::tr("The upload speed the peer reports")
                                 : SearchResultsModel::tr("The peer's upload speed isn't known yet");
 }
 
@@ -150,6 +161,20 @@ QString SearchResultsModel::statusText(core::Ownership ownership)
         break;
     }
     return {};
+}
+
+QString SearchResultsModel::flagText(const QString &countryCode)
+{
+    if (!core::isCountryCode(countryCode)) {
+        return {};
+    }
+    constexpr char32_t kRegionalIndicatorA = 0x1F1E6;
+    QString flag;
+    for (const QChar letter : countryCode) {
+        const char32_t symbol = kRegionalIndicatorA + (letter.unicode() - u'A');
+        flag += QString::fromUcs4(&symbol, 1);
+    }
+    return flag;
 }
 
 QString SearchResultsModel::titleText(const core::SearchResult &result)
@@ -558,13 +583,20 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
                 return tr("The peer didn't say what quality this is; ≈ is estimated from its size and length");
             }
             return {};
-        case PeerColumn:
+        case PeerColumn: {
+            QString tip;
             if (result.peerBackoffMs > 0) {
-                return tr("Selecta is holding off %1 after a refusal").arg(result.hit.peer);
+                tip = tr("Selecta is holding off %1 after a refusal").arg(result.hit.peer);
+            } else {
+                tip = result.peerFilesToday == 1
+                          ? tr("1 download from %1 today").arg(result.hit.peer)
+                          : tr("%1 downloads from %2 today").arg(result.peerFilesToday).arg(result.hit.peer);
             }
-            return result.peerFilesToday == 1
-                       ? tr("1 download from %1 today").arg(result.hit.peer)
-                       : tr("%1 downloads from %2 today").arg(result.peerFilesToday).arg(result.hit.peer);
+            if (const QString country = countryName(result.hit.country); !country.isEmpty()) {
+                tip += u'\n' + tr("In %1, by its address (IP Geolocation by DB-IP)").arg(country);
+            }
+            return tip;
+        }
         case QueueColumn:
             return queueToolTip(result.hit);
         case SpeedColumn:
@@ -602,11 +634,15 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         }
         return text;
     }
-    case PeerColumn:
+    case PeerColumn: {
+        // The flag before the name, so the names stay aligned when some peers have none.
+        const QString flag = flagText(result.hit.country);
+        const QString peer = flag.isEmpty() ? result.hit.peer : flag + u' ' + result.hit.peer;
         if (result.peerFilesToday > 0) {
-            return u"%1 · %2"_s.arg(result.hit.peer).arg(result.peerFilesToday);
+            return u"%1 · %2"_s.arg(peer).arg(result.peerFilesToday);
         }
-        return result.hit.peer;
+        return peer;
+    }
     case QueueColumn:
         return queueText(result.hit);
     case SpeedColumn:
@@ -637,13 +673,15 @@ QString SearchResultsModel::accessibleText(const core::SearchResult &result, int
                    ? tr("%1, same length as the release").arg(length)
                    : tr("%1, %2 against the release").arg(length, format::lengthDelta(delta));
     }
-    case PeerColumn:
+    case PeerColumn: {
+        const QString country = countryName(result.hit.country);
+        const QString peer = country.isEmpty() ? result.hit.peer : tr("%1, %2").arg(result.hit.peer, country);
         if (result.peerFilesToday > 0) {
-            return result.peerFilesToday == 1
-                       ? tr("%1, 1 download today").arg(result.hit.peer)
-                       : tr("%1, %2 downloads today").arg(result.hit.peer).arg(result.peerFilesToday);
+            return result.peerFilesToday == 1 ? tr("%1, 1 download today").arg(peer)
+                                              : tr("%1, %2 downloads today").arg(peer).arg(result.peerFilesToday);
         }
-        return result.hit.peer;
+        return peer;
+    }
     case QueueColumn:
         return queueToolTip(result.hit);
     case SpeedColumn:
