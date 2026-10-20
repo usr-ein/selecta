@@ -175,7 +175,11 @@ TEST(Albums, NothingInNothingOut)
 
 // --- Albums by folder role (albumsOf) ----------------------------------------------------------------------------
 
-const FolderRoles kRoles(u"/Music/tracks"_s, u"/Music/albums"_s);
+// The tracks and albums folders of the tests below.
+FolderRoles roles()
+{
+    return {u"/Music/tracks"_s, u"/Music/albums"_s};
+}
 
 // The maintainer's "4 albums in ~/Music" (beta feedback): loose tracks, several from the same releases, and an empty
 // albums folder. Guessing from tags made albums out of the loose tracks; the folder roles make none.
@@ -197,7 +201,7 @@ TEST(Albums, LooseTracksAndAnEmptyAlbumsFolderMakeNoAlbum)
     const QList<ScannedFile> files = looseTracks();
     EXPECT_FALSE(groupAlbums(files, nullptr).isEmpty()); // the guess that counted albums in a folder of loose tracks
     QHash<QString, quint64> ids;
-    EXPECT_TRUE(albumsOf(files, kRoles, &ids).isEmpty());
+    EXPECT_TRUE(albumsOf(files, roles(), &ids).isEmpty());
     EXPECT_TRUE(ids.isEmpty());
 }
 
@@ -208,7 +212,7 @@ TEST(Albums, EachSubfolderOfTheAlbumsFolderIsOneAlbum)
     files.append(file(u"/Music/albums/Live at Home/Intro.mp3"_s, u"Okuma Drift"_s, u"Intro"_s));
     files.append(file(u"/Music/albums/Live at Home/Outro.mp3"_s, u"Okuma Drift"_s, u"Outro"_s));
     QHash<QString, quint64> ids;
-    const QList<LibraryAlbum> albums = albumsOf(files, kRoles, &ids);
+    const QList<LibraryAlbum> albums = albumsOf(files, roles(), &ids);
     ASSERT_EQ(albums.size(), 2);
     EXPECT_EQ(albums.at(0).title, u"Isles"_s); // sorted by folder: "Bicep - Isles", "Live at Home"
     EXPECT_EQ(albums.at(0).artist, u"Bicep"_s);
@@ -229,7 +233,7 @@ TEST(Albums, TagsNeverSplitAnAlbumFolder)
     files.append(file(u"/Music/albums/Isles/Glue.mp3"_s, u"Bicep"_s, u"Glue"_s, u"Bicep"_s));
     files.append(file(u"/Music/albums/Isles/Untagged.mp3"_s, u"Bicep"_s, u"Untagged"_s));
     QHash<QString, quint64> ids;
-    const QList<LibraryAlbum> albums = albumsOf(files, kRoles, &ids);
+    const QList<LibraryAlbum> albums = albumsOf(files, roles(), &ids);
     ASSERT_EQ(albums.size(), 1);
     EXPECT_EQ(albums.front().title, u"Isles"_s); // the most common album tag
     EXPECT_EQ(ids.size(), 5);
@@ -245,7 +249,7 @@ TEST(Albums, EverythingUnderAnAlbumFolderBelongsToIt)
     files.append(file(u"/Music/albums/Bicep/Isles/01 Atlas.mp3"_s, u"Bicep"_s, u"Atlas"_s, u"Isles"_s, 1));
     files.append(file(u"/Music/albums/Bicep/Bicep/01 Glue.mp3"_s, u"Bicep"_s, u"Glue"_s, u"Bicep"_s, 1));
     QHash<QString, quint64> ids;
-    const QList<LibraryAlbum> albums = albumsOf(files, kRoles, &ids);
+    const QList<LibraryAlbum> albums = albumsOf(files, roles(), &ids);
     ASSERT_EQ(albums.size(), 2);
     EXPECT_EQ(albums.at(0).artist, u"Bicep"_s);
     EXPECT_EQ(albums.at(1).title, u"II"_s);
@@ -256,9 +260,9 @@ TEST(Albums, EverythingUnderAnAlbumFolderBelongsToIt)
 
 TEST(Albums, LooseFilesInTheAlbumsFolderAreInNoAlbum)
 {
-    QList<ScannedFile> files = islesFolder(u"/Music/albums"_s); // three tagged files lying in the albums folder
+    const QList<ScannedFile> files = islesFolder(u"/Music/albums"_s); // three tagged files lying in the albums folder
     QHash<QString, quint64> ids;
-    EXPECT_TRUE(albumsOf(files, kRoles, &ids).isEmpty());
+    EXPECT_TRUE(albumsOf(files, roles(), &ids).isEmpty());
     EXPECT_TRUE(ids.isEmpty());
 }
 
@@ -266,7 +270,7 @@ TEST(Albums, AnAlbumFolderNamesWhatItsTagsDont)
 {
     const QList<ScannedFile> files{file(u"/Music/albums/Bicep - Isles (2021)/Atlas.flac"_s, {}, u"Atlas"_s),
                                    file(u"/Music/albums/Bicep - Isles (2021)/Saku.flac"_s, {}, u"Saku"_s)};
-    const QList<LibraryAlbum> albums = albumsOf(files, kRoles, nullptr);
+    const QList<LibraryAlbum> albums = albumsOf(files, roles(), nullptr);
     ASSERT_EQ(albums.size(), 1);
     EXPECT_EQ(albums.front().title, u"Isles"_s);
     EXPECT_EQ(albums.front().artist, u"Bicep"_s);
@@ -281,7 +285,7 @@ TEST(Albums, CompilationsInTheAlbumsFolderAreMarked)
         files.append(file(u"/Music/albums/Summer/%1.mp3"_s.arg(i), artists.at(i), u"Song %1"_s.arg(i), u"Summer"_s,
                           static_cast<int>(i) + 1));
     }
-    const QList<LibraryAlbum> albums = albumsOf(files, kRoles, nullptr);
+    const QList<LibraryAlbum> albums = albumsOf(files, roles(), nullptr);
     ASSERT_EQ(albums.size(), 1);
     EXPECT_TRUE(albums.front().variousArtists);
     EXPECT_EQ(albums.front().artist, u"Various Artists"_s);
@@ -290,16 +294,16 @@ TEST(Albums, CompilationsInTheAlbumsFolderAreMarked)
 TEST(Albums, AlbumFolderIdsAreStable)
 {
     const QList<ScannedFile> isles = islesFolder(u"/Music/albums/Isles"_s);
-    const quint64 alone = albumsOf(isles, kRoles, nullptr).constFirst().id;
+    const quint64 alone = albumsOf(isles, roles(), nullptr).constFirst().id;
     const QList<ScannedFile> both = islesFolder(u"/Music/albums/Deluxe"_s) + isles;
-    const QList<LibraryAlbum> albums = albumsOf(both, kRoles, nullptr);
+    const QList<LibraryAlbum> albums = albumsOf(both, roles(), nullptr);
     ASSERT_EQ(albums.size(), 2);
     EXPECT_NE(albums.at(0).id, albums.at(1).id);
     EXPECT_EQ(albums.at(1).id, alone); // "Isles" sorts after "Deluxe"; the same folder, the same id
     // The id doesn't depend on how the folder's name is normalised (macOS may report NFD).
     const QList<ScannedFile> nfc = islesFolder(u"/Music/albums/Bj\u00F6rk"_s);
     const QList<ScannedFile> nfd = islesFolder(u"/Music/albums/Bjo\u0308rk"_s);
-    EXPECT_EQ(albumsOf(nfc, kRoles, nullptr).constFirst().id, albumsOf(nfd, kRoles, nullptr).constFirst().id);
+    EXPECT_EQ(albumsOf(nfc, roles(), nullptr).constFirst().id, albumsOf(nfd, roles(), nullptr).constFirst().id);
 }
 
 TEST(Albums, NoAlbumsFolderNoAlbums)
