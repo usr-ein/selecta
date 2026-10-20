@@ -71,6 +71,19 @@ EncodeSettings mp3(int kbps = 320)
     return settings;
 }
 
+EncodeSettings mp3At(int rate, int kbps = 320)
+{
+    EncodeSettings settings = mp3(kbps);
+    settings.sampleRate = rate;
+    return settings;
+}
+
+SourceQuality at(SourceQuality source, int rate)
+{
+    source.sampleRate = rate;
+    return source;
+}
+
 EncodeSettings vbr(int quality)
 {
     EncodeSettings settings;
@@ -312,6 +325,192 @@ TEST(Advisor, NoticeCopy)
                                 Notice::WavTags, Notice::Resample, Notice::Dither, Notice::LosslessReduction}) {
         EXPECT_FALSE(describeNotice(notice, hiRes, mp3(), resample).shortText.isEmpty());
     }
+}
+
+// R1: raising the rate gains nothing, so an MP3 above the source's rate asks first (W-UPSAMPLE), whether the rate was
+// chosen or the source is below what MP3 stores (D-4 takes it to 44.1 kHz). Lowering it is only information.
+TEST(Advisor, Mp3AboveTheSourceRateAsks)
+{
+    const SourceQuality low = lossless(16, 22050);
+    for (const Advice &advice : {filing(low, mp3()), manual(low, mp3()), manual(low, vbr(0)), filing(low, mp3(128))}) {
+        EXPECT_EQ(advice.sourceClass, SourceClass::LosslessGenuine);
+        EXPECT_EQ(advice.action, Action::Ask);
+        EXPECT_EQ(advice.notices, QList<Notice>{Notice::Upsample});
+        EXPECT_EQ(advice.outputSampleRate, 44100);
+        EXPECT_EQ(advice.outputBitDepth, 0);
+    }
+    for (const int rate : {8000, 11025, 16000, 24000, 37800}) {
+        const Advice advice = filing(lossless(16, rate), mp3());
+        EXPECT_EQ(advice.action, Action::Ask) << rate;
+        EXPECT_EQ(advice.notices, QList<Notice>{Notice::Upsample}) << rate;
+    }
+    const Advice to32 = manual(low, mp3At(32000));
+    EXPECT_EQ(to32.action, Action::Ask);
+    EXPECT_EQ(to32.notices, QList<Notice>{Notice::Upsample});
+    EXPECT_EQ(to32.outputSampleRate, 32000);
+    // The rates MP3 stores are kept as they are.
+    for (const int rate : {32000, 44100, 48000}) {
+        const Advice advice = filing(lossless(16, rate), mp3());
+        EXPECT_EQ(advice.action, Action::Convert) << rate;
+        EXPECT_TRUE(advice.notices.isEmpty()) << rate;
+        EXPECT_EQ(advice.outputSampleRate, rate);
+    }
+    // Chosen rates: above the source's asks, below it informs, the source's own is silent.
+    const Advice up = manual(lossless(16, 44100), mp3At(48000));
+    EXPECT_EQ(up.action, Action::Ask);
+    EXPECT_EQ(up.notices, QList<Notice>{Notice::Upsample});
+    EXPECT_EQ(up.outputSampleRate, 48000);
+    const Advice down = manual(lossless(16, 48000), mp3At(44100));
+    EXPECT_EQ(down.action, Action::Convert);
+    EXPECT_EQ(down.notices, QList<Notice>{Notice::Resample});
+    const Advice same = manual(lossless(16, 44100), mp3At(44100));
+    EXPECT_EQ(same.action, Action::Convert);
+    EXPECT_TRUE(same.notices.isEmpty());
+    const Advice hiRes = manual(lossless(24, 96000), mp3At(48000));
+    EXPECT_EQ(hiRes.action, Action::Convert);
+    EXPECT_EQ(hiRes.notices, QList<Notice>{Notice::Resample});
+
+    // Suspect and unplayable lossless sources keep their own warnings.
+    const SourceQuality fromLossy = withFinding(low, QualityFinding::LikelyFromLossy, 7900, 32);
+    const Advice suspect = filing(fromLossy, mp3());
+    EXPECT_EQ(suspect.action, Action::Ask);
+    EXPECT_EQ(suspect.notices, (QList<Notice>{Notice::Suspect, Notice::Upsample}));
+    SourceQuality wavpack = lossless(16, 22050, Container::Other, Codec::Other);
+    wavpack.codecName = u"wavpack"_s;
+    const Advice other = filing(wavpack, mp3());
+    EXPECT_EQ(other.sourceClass, SourceClass::OtherLossless);
+    EXPECT_EQ(other.action, Action::Ask);
+    EXPECT_EQ(other.notices, (QList<Notice>{Notice::NotPlayable, Notice::Upsample}));
+
+    // Lossy sources: filing keeps an MPEG-2 MP3 at 22.05 kHz as it is (nothing re-encoded, nothing raised)...
+    const SourceQuality lsf = at(lossy(Codec::Mp3, 64), 22050);
+    const Advice kept = filing(lsf, mp3());
+    EXPECT_EQ(kept.action, Action::KeepAsIs);
+    EXPECT_EQ(kept.badge, Badge::BelowTarget);
+    EXPECT_TRUE(kept.notices.isEmpty());
+    // ...and by hand, the warning joins the others.
+    EXPECT_EQ(manual(lsf, mp3()).notices, (QList<Notice>{Notice::LossyUp, Notice::Upsample}));
+    EXPECT_EQ(manual(lsf, mp3(128)).notices, (QList<Notice>{Notice::LossyUp, Notice::Upsample}));
+    EXPECT_EQ(manual(at(lossy(Codec::Mp3, 160), 24000), mp3(128)).notices,
+              (QList<Notice>{Notice::Generation, Notice::Upsample}));
+    const Advice vorbis = filing(at(lossy(Codec::Vorbis, 96, false, Container::Ogg), 22050), mp3());
+    EXPECT_EQ(vorbis.action, Action::Ask);
+    EXPECT_EQ(vorbis.notices, (QList<Notice>{Notice::NotPlayable, Notice::Generation, Notice::Upsample}));
+    const SourceQuality aac = lossy(Codec::Aac, 256, false, Container::Mp4);
+    EXPECT_EQ(manual(aac, mp3At(48000)).notices, (QList<Notice>{Notice::Generation, Notice::Upsample}));
+    EXPECT_EQ(manual(aac, mp3At(32000)).notices, (QList<Notice>{Notice::Generation, Notice::Resample}));
+    EXPECT_EQ(manual(aac, output(OutputFormat::Aiff, 0, 48000)).action, Action::Refuse); // unchanged: lossless ⛔
+}
+
+// R4: an MP3 at the target's bitrate is kept as it is only at the rate the target asks for.
+TEST(Advisor, Mp3KeptOnlyAtTheTargetRate)
+{
+    const SourceQuality top = lossy(Codec::Mp3, 320);
+    for (const EncodeSettings &target : {mp3(), mp3At(44100)}) {
+        EXPECT_EQ(manual(top, target).action, Action::KeepAsIs);
+        EXPECT_EQ(filing(top, target).action, Action::KeepAsIs);
+        EXPECT_EQ(filing(top, target).badge, Badge::None);
+    }
+    const Advice raised = manual(top, mp3At(48000));
+    EXPECT_EQ(raised.action, Action::Ask);
+    EXPECT_EQ(raised.notices, (QList<Notice>{Notice::Generation, Notice::Upsample}));
+    EXPECT_EQ(raised.outputSampleRate, 48000);
+    const Advice lowered = manual(top, mp3At(32000));
+    EXPECT_EQ(lowered.action, Action::Ask);
+    EXPECT_EQ(lowered.notices, (QList<Notice>{Notice::Generation, Notice::Resample}));
+    EXPECT_EQ(manual(at(top, 48000), mp3()).action, Action::KeepAsIs); // 48 kHz is an MP3 rate: automatic keeps it
+    EXPECT_EQ(manual(at(top, 48000), mp3At(44100)).action, Action::Ask);
+
+    // Filing never re-encodes lossy audio: kept, and marked as not the target's format. The advice describes the
+    // kept file, not the target's.
+    const Advice filed = filing(top, mp3At(48000));
+    EXPECT_EQ(filed.action, Action::KeepAsIs);
+    EXPECT_EQ(filed.badge, Badge::FormatDiffers);
+    EXPECT_TRUE(filed.notices.isEmpty());
+    EXPECT_EQ(filed.outputSampleRate, 44100);
+    EXPECT_EQ(filed.outputBitDepth, 0);
+    EXPECT_DOUBLE_EQ(filed.sizeFactor, 1.0);
+    // A V0-class file meets an MP3 320 target: another rate makes it "format differs", not "below target".
+    const SourceQuality v0 = lossy(Codec::Mp3, 245, false);
+    EXPECT_EQ(manual(v0, mp3()).action, Action::KeepAsIs);
+    EXPECT_EQ(filing(v0, mp3At(48000)).badge, Badge::FormatDiffers);
+    EXPECT_EQ(manual(v0, mp3At(48000)).notices, (QList<Notice>{Notice::Generation, Notice::Upsample}));
+    // Below the target, the bitrate is what matters.
+    EXPECT_EQ(filing(lossy(Codec::Mp3, 192), mp3At(48000)).badge, Badge::BelowTarget);
+    EXPECT_EQ(filing(lossy(Codec::Mp3, 192), vbr(2)).badge, Badge::None);
+    EncodeSettings v2At48 = vbr(2);
+    v2At48.sampleRate = 48000;
+    EXPECT_EQ(filing(lossy(Codec::Mp3, 192), v2At48).badge, Badge::FormatDiffers);
+
+    // Every kept file is described as itself.
+    const Advice keptAsMp3 = filing(lossy(Codec::Mp3, 192), output(OutputFormat::Aiff));
+    EXPECT_EQ(keptAsMp3.action, Action::KeepAsIs);
+    EXPECT_EQ(keptAsMp3.outputSampleRate, 44100);
+    EXPECT_EQ(keptAsMp3.outputBitDepth, 0);
+    EXPECT_DOUBLE_EQ(keptAsMp3.sizeFactor, 1.0);
+    const Advice keptAac = filing(at(lossy(Codec::Aac, 256, false, Container::Mp4), 48000), mp3());
+    EXPECT_EQ(keptAac.outputSampleRate, 48000);
+    EXPECT_DOUBLE_EQ(keptAac.sizeFactor, 1.0);
+    const Advice keptFlac = filing(lossless(24, 96000), output(OutputFormat::KeepAudio));
+    EXPECT_EQ(keptFlac.outputSampleRate, 96000);
+    EXPECT_EQ(keptFlac.outputBitDepth, 24);
+}
+
+// R2 and R3: the copy for raised and changed rates says what is true for the target.
+TEST(Advisor, RateNoticeCopy)
+{
+    // An MP3's size follows its bitrate, so the upsampling notice says nothing is gained, not "larger".
+    const SourceQuality low = lossless(16, 22050);
+    NoticeText text = describeNotice(Notice::Upsample, low, mp3(), filing(low, mp3()));
+    EXPECT_EQ(text.shortText, u"No quality gain — upsampled"_s);
+    EXPECT_EQ(text.detail, u"Selecta writes MP3 at 32, 44.1 or 48 kHz, so 22.05 kHz is raised to 44.1 kHz. That adds "
+                           "no information: the MP3 holds nothing above 11.025 kHz."_s);
+    text = describeNotice(Notice::Upsample, low, mp3At(32000), manual(low, mp3At(32000)));
+    EXPECT_TRUE(
+        text.detail.startsWith(u"Selecta writes MP3 at 32, 44.1 or 48 kHz, so 22.05 kHz is raised to 32 kHz."_s))
+        << text.detail.toStdString();
+    const SourceQuality cd = lossless(16, 44100);
+    text = describeNotice(Notice::Upsample, cd, mp3At(48000), manual(cd, mp3At(48000)));
+    EXPECT_EQ(text.shortText, u"No quality gain — upsampled"_s);
+    EXPECT_EQ(text.detail, u"Raising 44.1 kHz to 48 kHz adds no information; MP3 can store 44.1 kHz as it is."_s);
+    const SourceQuality top = lossy(Codec::Mp3, 320);
+    EXPECT_FALSE(
+        describeNotice(Notice::Upsample, top, mp3At(48000), manual(top, mp3At(48000))).detail.contains(u"larger"_s));
+    // A lossless target does grow.
+    const EncodeSettings flac96 = output(OutputFormat::Flac, 0, 96000);
+    text = describeNotice(Notice::Upsample, cd, flac96, manual(cd, flac96));
+    EXPECT_EQ(text.shortText, u"No quality gain — larger file"_s);
+    EXPECT_TRUE(text.detail.endsWith(u"the file becomes 2.2× larger."_s)) << text.detail.toStdString();
+
+    // Resampling says why: a rate MP3 can't store, the user's choice, or (lossless, automatic) the players' limit.
+    const SourceQuality dat = lossless(16, 48000);
+    text = describeNotice(Notice::Resample, dat, mp3At(44100), manual(dat, mp3At(44100)));
+    EXPECT_EQ(text.shortText, u"Resampled to 44.1 kHz"_s);
+    EXPECT_EQ(text.detail, u"48 kHz becomes 44.1 kHz, as you chose; Selecta uses a high-quality SoX resampler."_s);
+    text = describeNotice(Notice::Resample, top, mp3At(32000), manual(top, mp3At(32000)));
+    EXPECT_EQ(text.detail, u"44.1 kHz becomes 32 kHz, as you chose; Selecta uses a high-quality SoX resampler."_s);
+    const SourceQuality hiRes = lossless(24, 96000);
+    for (const EncodeSettings &target : {mp3(), mp3At(48000)}) {
+        text = describeNotice(Notice::Resample, hiRes, target, manual(hiRes, target));
+        EXPECT_EQ(text.detail, u"MP3 cannot store 96 kHz; Selecta uses a high-quality SoX resampler."_s);
+    }
+    const SourceQuality ultra = lossless(24, 192000);
+    text =
+        describeNotice(Notice::Resample, ultra, output(OutputFormat::Aiff), filing(ultra, output(OutputFormat::Aiff)));
+    EXPECT_EQ(text.shortText, u"Resampled to 96 kHz"_s);
+    EXPECT_EQ(text.detail,
+              u"192 kHz becomes 96 kHz, your players' limit; Selecta uses a high-quality SoX resampler."_s);
+    const EncodeSettings aiff441 = output(OutputFormat::Aiff, 0, 44100);
+    text = describeNotice(Notice::Resample, dat, aiff441, manual(dat, aiff441));
+    EXPECT_EQ(text.detail, u"48 kHz becomes 44.1 kHz, as you chose; Selecta uses a high-quality SoX resampler."_s);
+    const EncodeSettings aiff882 = output(OutputFormat::Aiff, 0, 88200);
+    text = describeNotice(Notice::Resample, ultra, aiff882, manual(ultra, aiff882));
+    EXPECT_EQ(text.detail, u"192 kHz becomes 88.2 kHz, as you chose; Selecta uses a high-quality SoX resampler."_s);
+
+    // Sample rates are written exactly.
+    EXPECT_EQ(describeSource(low), u"FLAC 16-bit / 22.05 kHz"_s);
+    EXPECT_EQ(describeSource(lossless(16, 11025)), u"FLAC 16-bit / 11.025 kHz"_s);
+    EXPECT_EQ(describeSource(lossless(24, 176400)), u"FLAC 24-bit / 176.4 kHz"_s);
 }
 
 TEST(Verdict, ClaimsAndReasons)
