@@ -70,10 +70,12 @@ index). A LAME-encoded file therefore decodes to exactly its source length, sequ
 
 ### Output stage
 
-Codec output (any FFmpeg sample format, planar or packed) → float planar → channel mapping (mono `(L+R)/2`, stereo
-duplicating mono, multichannel downmix with standard coefficients, or the source layout untouched) → libsoxr when the
-output rate differs (HQ for playback, VHQ for transcoding), with its delay compensated so frame N of the output is frame
-N × ratio of the source → interleaved float.
+Codec output (any FFmpeg sample format, planar or packed) → interleaved float → channel mapping (mono `(L+R)/2`,
+stereo duplicating mono, surround downmixed with -3 dB centre and surrounds, normalised; or the source layout
+untouched) → libsoxr when the output rate differs (HQ for playback, VHQ for transcoding; libsoxr's output is aligned
+with its input, verified with an impulse test) → a FIFO serving `read()`. Gapless trimming and seek targets work on the
+raw timeline before this stage; timeline gaps (frames a corrupt stream lost) are filled with silence up to 10 s so
+positions stay true.
 
 ## Analysis (A2)
 
@@ -83,10 +85,20 @@ N × ratio of the source → interleaved float.
   progressive steps agree exactly.
 - **Complete files:** `analyzeWaveform()` splits the stream into N chunks at column boundaries (N ≤ ideal thread count,
   ≥ 20 s each), clones the decoder per chunk (the frame index is shared), seeks 80 ms before the chunk for filter
-  warm-up, and concatenates. The calling thread takes part in the work, so calling from a pool task can't deadlock.
-- **Previews:** `ProgressiveAnalyzer` steps through what has arrived; `WaveformJob` re-arms on the source's
-  notifications and reports new columns through queued signals.
-- **Overview:** 1 200 columns derived from the detail by max of peaks.
+  warm-up, and concatenates. The calling thread takes chunks too, so calling from a pool task can't deadlock; tasks
+  that start late find no chunk left. The result is byte-identical to a sequential analysis (tested on WAV, FLAC and
+  MP3: the MP3 preroll makes post-seek decoding bit-exact, and 80 ms of warm-up leaves the filters' memory far below
+  8-bit resolution). The first failing chunk stops the others; a real error wins over the cancellations it caused.
+- **Previews:** `ProgressiveAnalyzer::step()` analyses what has arrived (≤ 30 s of audio per step, so cancellation is
+  quick). `WaveformJob` runs steps on the pool one at a time, re-armed by the source's notifications (coalesced: a
+  notification during a step schedules one more step), and reports `columnsAdded` / `waitingForCompleteFile` /
+  `finished` / `failed`. The final result equals `analyzeWaveform()` on the finished file (tested).
+- **Overview:** 1 200 columns derived from the detail by max of peaks; `reduceColumns()` gives any other width (max of
+  peaks, mean of RMS) for mip levels and the pixel-exact overview.
+- **Job plumbing:** worker results reach the job through a mutex-protected mailbox and a data-free queued call
+  (`drainMailbox`), never inside queued lambdas: Qt here isn't built with ThreadSanitizer, so data carried through its
+  event queue would show up as races. Pool hand-offs go through `detail::startTask`, which tells ThreadSanitizer about
+  the hand-over (`__tsan_release`/`__tsan_acquire`); every lock in the library is a `std::` one for the same reason.
 
 ## Cache format (A2)
 
@@ -147,9 +159,12 @@ Any mismatch is a miss; the file is deleted and the waveform recomputed. Keys: B
 
 ### Waveform (app, core)
 
-`WaveformJob job(src); job.setCache(&cache, key); job.start();` — `columnsAdded` while downloading, `finished` with the
-complete `Waveform`, `failed` otherwise. For the library: `cache.load(key)` gives the overview even after the detail
-was evicted.
+`WaveformJob job(src); job.setCache(cache, key); job.start();` (`cache` is a `std::shared_ptr<AnalysisCache>`; work may
+outlive a destroyed job) — `columnsAdded` while downloading, `waitingForCompleteFile` for M4A with `moov` at the end,
+`finished` with the complete `Waveform`, `failed` otherwise. A cache hit (detail included) finishes without decoding.
+For previews use a provisional `CacheKey::forName("peer|path|size")`; store the finished waveform under
+`CacheKey::forContent(source)` as well when the file is kept. For the library: `cache.load(key)` gives the overview even
+after the detail was evicted.
 
 ### Arrival pipeline and converter (`convert/`)
 
@@ -165,15 +180,33 @@ with `ResamplerQuality::VeryHigh`.
 | libsoxr for the decoder's resampling too (not libswresample) | One resampler everywhere; VHQ for transcodes, HQ for playback. |
 | Cache key = BLAKE2b-256 of size + head + tail + 32 spread blocks | Content-based, reads ≤ 640 KiB whatever the size (audio §7.3 allows head + tail + size). |
 | Overview tier bounded too (64 MiB default) | "Kept long-term" but nothing on disk unbounded. |
-| TagLib requirement checked as ≥ 2.3 at build time | vcpkg's baseline ships 2.3.1; ADR-003 says ≥ 2.3.2. The contract says ≥ 2.3.x. Flagged to the head implementer. |
+| TagLib ≥ 2.3.2, checked at build time | The head implementer added the 2.3.2 overlay port (crafted-input hardening). |
+| `std::mutex`/`std::condition_variable`, mailbox delivery and annotated pool hand-offs | ThreadSanitizer can't see inside the static Qt (see Analysis); this keeps TSan runs meaningful for this library. |
 
 ## Benchmarks
 
-To be recorded here (Google Benchmark, `tests/audio/bench`).
+`tests/audio/bench/AnalysisBenchmark.cpp` (Google Benchmark), Release build, Apple M2 Pro (8 P + 4 E cores),
+2026-10-20, with other builds running (load average ≈ 10, so these are pessimistic). Six minutes of synthetic stereo
+44.1 kHz audio (tones over white noise, 16-bit), decoded from memory:
+
+| Benchmark | Time |
+|---|---|
+| Decode only, MP3 320 CBR (mono output) | 282 ms |
+| Decode only, FLAC 16-bit (noise-heavy, so near-incompressible) | 392 ms |
+| Decode only, WAV 16-bit | 37 ms |
+| 3-band split only (8 biquads + peak/RMS, one thread) | 139 ms |
+| **Analysis, MP3 320, parallel** | **53–84 ms** (target < 300 ms) |
+| Analysis, MP3 320, one thread | 591 ms |
+| Analysis, FLAC 16-bit, parallel | 99 ms |
+| Analysis, FLAC 16-bit, one thread | 723 ms |
+| Analysis, WAV 16-bit, parallel | 24 ms |
+
+Reproduce: configure a Release tree with tests on, build `selecta_audio_bench`, run it with `--benchmark_min_time=1s`.
+The CLI gives a quick check on any file: `selecta-cli media-analyze <file>`.
 
 ## Progress
 
-- **Done:** public headers (A1–A3), this document.
-- **Next:** A1 implementation: byte sources, container probe, MPEG/FLAC/PCM indexes and demuxers, FFmpeg glue,
-  decoder, tests with synthetic files.
-- **Open questions:** none yet.
+- **Done:** A1 (decoder, merged into main), A2 (band analyzer, chunked parallel and progressive analysis,
+  `WaveformJob`, two-tier cache, benchmark, `media-analyze`). 96 audio tests; dev, asan, tsan and lint clean.
+- **Next:** C1–C3 in `convert/`, then A3 (quality checks).
+- **Open questions:** none.

@@ -2,6 +2,7 @@
 #include "audio/detail/IndexedBackend.h"
 
 #include <algorithm>
+#include <cstring>
 #include <functional>
 #include <utility>
 
@@ -540,7 +541,13 @@ IndexedBackend::FlacSearch IndexedBackend::searchNextFlacFrame(SourceReader &rea
         const qint64 count = blockEnd - from;
         const quint8 *block = m_cache.peek(reader, from, count);
         for (qint64 i = 0; block != nullptr && i + 1 < count; ++i) {
-            if (block[i] != 0xFF || (block[i + 1] & 0xFEU) != 0xF8) {
+            // Jump to the next 0xFF: compressed audio rarely holds one, so memchr does most of the scanning.
+            const void *hit = std::memchr(block + i, 0xFF, static_cast<std::size_t>(count - 1 - i));
+            if (hit == nullptr) {
+                break;
+            }
+            i = static_cast<const quint8 *>(hit) - block;
+            if ((block[i + 1] & 0xFEU) != 0xF8) {
                 continue;
             }
             switch (checkFlacCandidate(reader, from + i, current, limit, search.header)) {

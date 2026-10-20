@@ -12,6 +12,11 @@ qt_add_library(selecta_audio STATIC
     ByteSource.h ByteSource.cpp
     StreamInfo.h StreamInfo.cpp
     Decoder.h Decoder.cpp
+    Waveform.h Waveform.cpp
+    BandAnalyzer.h BandAnalyzer.cpp
+    WaveformAnalyzer.h WaveformAnalyzer.cpp
+    AnalysisCache.h AnalysisCache.cpp
+    detail/ThreadHandOver.h
     detail/AvioAdapter.h detail/AvioAdapter.cpp
     detail/Backend.h
     detail/Bytes.h

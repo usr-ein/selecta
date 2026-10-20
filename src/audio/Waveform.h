@@ -48,6 +48,14 @@ struct OverviewColumn
     friend bool operator==(const OverviewColumn &, const OverviewColumn &) = default;
 };
 
+} // namespace selecta::audio
+
+// Plain bytes: QList may move them with memcpy.
+Q_DECLARE_TYPEINFO(selecta::audio::WaveformColumn, Q_PRIMITIVE_TYPE);
+Q_DECLARE_TYPEINFO(selecta::audio::OverviewColumn, Q_PRIMITIVE_TYPE);
+
+namespace selecta::audio {
+
 // q = round(255 · √min(1, a)) for a linear amplitude a ≥ 0 (negative and NaN give 0). √ companding gives quiet passages
 // more code values than a linear byte would; the display curve (dB mapping, per-track gain) is applied when drawing.
 quint8 compandAmplitude(float amplitude);
@@ -107,3 +115,4 @@ QList<WaveformColumn> reduceColumns(std::span<const WaveformColumn> columns, int
 } // namespace selecta::audio
 
 Q_DECLARE_METATYPE(selecta::audio::Waveform)
+Q_DECLARE_METATYPE(selecta::audio::WaveformColumn)

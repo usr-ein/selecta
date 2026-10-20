@@ -13,8 +13,17 @@ selecta_set_warnings(selecta_media_test_support)
 
 selecta_add_test_suite(selecta_audio_tests
     SOURCES
+        AnalysisCacheTest.cpp
         AvioAdapterTest.cpp
         ByteSourceTest.cpp
         DecoderTest.cpp
         ParserTest.cpp
+        WaveformJobTest.cpp
+        WaveformTest.cpp
     LIBRARIES selecta_audio selecta_media_test_support)
+
+# Analysis speed (NFR-2). Not a CTest test: run it from a Release build and record the numbers in src/audio/DESIGN.md.
+find_package(benchmark CONFIG REQUIRED)
+add_executable(selecta_audio_bench bench/AnalysisBenchmark.cpp)
+target_link_libraries(selecta_audio_bench PRIVATE selecta_audio selecta_media_test_support benchmark::benchmark)
+selecta_set_warnings(selecta_audio_bench)
