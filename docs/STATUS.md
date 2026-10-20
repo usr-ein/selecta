@@ -69,6 +69,11 @@ their branches are on origin.
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-20 | The spectrum check informs and never changes what the Inbox gets: a likely-transcoded FLAC still becomes MP3 320; only peer previews are judged (YouTube and Deezer clips are lossy by design); spectrograms live in the analysis cache (evictable, the badge stays); inferno colour scale, fixed −120…0 dB | PREV-9; keeping suspect files as FLAC would be a product call (selecta-media) |
+| 2026-10-20 | Get tracks moves a line to another peer's copy only when it's as good (fit within 0.05, a free slot if the best had one); the best stays first in line if that fails | BATCH-7; spreading must never cost quality |
+| 2026-10-20 | Previews: the cache index lives in the cache folder (index.json); files expire 30 days after last use within the 2 GB LRU; Discard is D (⌫ removes rows); discarding a kept preview doesn't cancel its download | CACHE-1, PREV-5, PREV-8 (selecta-previews) |
+| 2026-10-20 | Notifications only while the window isn't active (toasts always); messages and mentions coalesce per peer or room; permission asked at the first notification, never at launch; Dock badge = unread messages + arrivals while away | UI-6, NET-7 (selecta-notify) |
+| 2026-10-20 | The app icon is an Icon Composer `.icon` (dark tile, the disc at 92 %) compiled by actool when Xcode 26+ is there, with the round `.icns` as the fallback; macOS 26+ never draws a truly round app icon | D36 (selecta-logo) |
 | 2026-10-20 | The dev preset builds with line tables only (`-g1`) | Keeps file:line backtraces; build folders about half the size (the maintainer asked for about 10 GB for the whole repo, worktrees included) |
 | 2026-10-20 | Presets: Selecta's four (MP3 320 or lossless, the default; lossless only; hi-res 24-bit; any quality) plus the user's, kept in settings.ini; each Wishlist search keeps a copy of its filter | A saved search shouldn't change under a later edit of a preset; SRCH-8 |
 | 2026-10-20 | Changing Get tracks' quality ranks the lines already found again, from the search cache | Spends no search budget; a new network search only when the cache has nothing |
