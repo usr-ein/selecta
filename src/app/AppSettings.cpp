@@ -3,6 +3,10 @@
 
 #include "base/Paths.h"
 
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
 #include <algorithm>
 #include <cmath>
 
@@ -23,6 +27,7 @@ const QString kPreviewSource = u"player/source"_s;
 const QString kPreviewFollows = u"player/followSelection"_s;
 const QString kYtDlpPath = u"player/ytDlp"_s;
 const QString kShowNotifications = u"notifications/show"_s;
+const QString kSpotifyTermsAccepted = u"spotify/termsAccepted"_s;
 const QString kRecentSearchesKey = u"search/recent"_s;
 const QString kConverterTarget = u"converter/target"_s;
 const QString kConverterId3v24 = u"converter/id3v24"_s;
@@ -43,24 +48,15 @@ const QString kUsername = u"soulseek/username"_s;
 const QString kListenPort = u"soulseek/listenPort"_s;
 const QString kConnectAtLaunch = u"soulseek/connectAtLaunch"_s;
 const QString kLiveAllowed = u"soulseek/liveAllowed"_s;
-const QString kSearchPreset = u"search/preset"_s;
+const QString kSearchPreset = u"search/presetId"_s;
 const QString kSearchCustomised = u"search/customised"_s;
 const QString kSearchGrouped = u"search/grouped"_s;
 const QString kSearchFiltersShown = u"search/filtersShown"_s;
-const QString kSearchFormats = u"search/formats"_s;
-const QString kSearchBitrateRule = u"search/bitrateRule"_s;
-const QString kSearchBitrate = u"search/bitrate"_s;
-const QString kSearchCbrOnly = u"search/cbrOnly"_s;
-const QString kSearchBitDepth = u"search/minBitDepth"_s;
-const QString kSearchSampleRates = u"search/sampleRates"_s;
-const QString kSearchMinLength = u"search/minLength"_s;
-const QString kSearchMaxLength = u"search/maxLength"_s;
-const QString kSearchFreeSlot = u"search/freeSlotOnly"_s;
-const QString kSearchMaxQueue = u"search/maxQueue"_s;
-const QString kSearchExcluded = u"search/excludedWords"_s;
-const QString kSearchStrict = u"search/strict"_s;
-const QString kSearchOwned = u"search/owned"_s;
-const QString kSearchOnlyRelease = u"search/onlyThisRelease"_s;
+const QString kSearchFilter = u"search/filter"_s; // JSON (core::filterToJson)
+const QString kUserPresets = u"presets/user"_s;   // JSON: [{id, name, filter}]
+const QString kDefaultPreset = u"presets/default"_s;
+const QString kGetTracksPreset = u"presets/getTracks"_s;
+constexpr int kMaxUserPresets = 50;
 
 quint16 portFrom(const QVariant &value, quint16 fallback)
 {
@@ -282,6 +278,20 @@ void AppSettings::setYtDlpPath(const QString &path)
     }
 }
 
+bool AppSettings::spotifyTermsAccepted() const
+{
+    return m_settings.value(kSpotifyTermsAccepted, false).toBool();
+}
+
+void AppSettings::setSpotifyTermsAccepted(bool accepted)
+{
+    if (accepted) {
+        m_settings.setValue(kSpotifyTermsAccepted, true);
+    } else {
+        m_settings.remove(kSpotifyTermsAccepted);
+    }
+}
+
 core::LibraryConfig AppSettings::libraryConfig() const
 {
     core::LibraryConfig config;
@@ -347,79 +357,108 @@ void AppSettings::setNetworkConfig(const core::NetworkConfig &config)
 AppSettings::SearchViewState AppSettings::searchViewState() const
 {
     SearchViewState state;
-    const int preset = m_settings.value(kSearchPreset, 0).toInt();
-    if (preset >= 0 && preset <= static_cast<int>(core::QualityWanted::Any)) {
-        state.preset = static_cast<core::QualityWanted>(preset);
-    }
-    state.filter = core::presetFilter(state.preset);
+    const QString presetId = m_settings.value(kSearchPreset, defaultPresetId()).toString();
+    const core::FilterPreset preset = presetById(presetId).value_or(core::builtInPresets().constFirst());
+    state.presetId = preset.id;
+    state.filter = preset.filter;
     state.grouped = m_settings.value(kSearchGrouped, false).toBool();
     state.filtersShown = m_settings.value(kSearchFiltersShown, false).toBool();
     state.customised = m_settings.value(kSearchCustomised, false).toBool();
-    core::SearchFilter &filter = state.filter;
-    filter.onlyThisRelease = m_settings.value(kSearchOnlyRelease, true).toBool();
-    const int owned = m_settings.value(kSearchOwned, 0).toInt();
-    if (owned >= 0 && owned <= static_cast<int>(core::SearchFilter::OwnedResults::Hide)) {
-        filter.owned = static_cast<core::SearchFilter::OwnedResults>(owned);
-    }
-    if (!state.customised) {
-        return state;
-    }
-    // Values out of range read as the preset's.
-    const auto number = [this](const QString &key, int fallback, int low, int high) {
-        bool ok = false;
-        const int value = m_settings.value(key, fallback).toInt(&ok);
-        return ok && value >= low && value <= high ? value : fallback;
-    };
-    filter.formats = static_cast<quint16>(number(kSearchFormats, filter.formats, 0, 0xFFFF));
-    filter.bitrateRule =
-        static_cast<core::SearchFilter::BitrateRule>(number(kSearchBitrateRule, static_cast<int>(filter.bitrateRule), 0,
-                                                            static_cast<int>(core::SearchFilter::BitrateRule::AtMost)));
-    filter.bitrateKbps = number(kSearchBitrate, filter.bitrateKbps, 8, 2000);
-    filter.cbrOnly = m_settings.value(kSearchCbrOnly, filter.cbrOnly).toBool();
-    filter.minBitDepth = number(kSearchBitDepth, filter.minBitDepth, 0, 32);
-    filter.sampleRates.clear();
-    const QStringList rates = m_settings.value(kSearchSampleRates).toStringList();
-    for (const QString &rate : rates) {
-        bool ok = false;
-        const int hz = rate.toInt(&ok);
-        if (ok && hz > 0 && hz <= 768'000) {
-            filter.sampleRates.append(hz);
+    const QJsonDocument saved = QJsonDocument::fromJson(m_settings.value(kSearchFilter).toString().toUtf8());
+    if (saved.isObject()) {
+        const core::SearchFilter filter = core::filterFromJson(saved.object());
+        if (state.customised) {
+            state.filter = filter;
+        } else {
+            // Not part of the quality: kept whichever preset is chosen.
+            state.filter.onlyThisRelease = filter.onlyThisRelease;
+            state.filter.owned = filter.owned;
         }
     }
-    filter.minDurationSec = number(kSearchMinLength, 0, 0, 24 * 3600);
-    filter.maxDurationSec = number(kSearchMaxLength, 0, 0, 24 * 3600);
-    filter.freeSlotOnly = m_settings.value(kSearchFreeSlot, false).toBool();
-    filter.maxQueue = number(kSearchMaxQueue, 0, 0, 100'000);
-    filter.excludedWords = m_settings.value(kSearchExcluded).toStringList();
-    filter.strict = m_settings.value(kSearchStrict, filter.strict).toBool();
     return state;
 }
 
 void AppSettings::setSearchViewState(const SearchViewState &state)
 {
-    const core::SearchFilter &filter = state.filter;
-    m_settings.setValue(kSearchPreset, static_cast<int>(state.preset));
+    m_settings.setValue(kSearchPreset, state.presetId);
     m_settings.setValue(kSearchCustomised, state.customised);
     m_settings.setValue(kSearchGrouped, state.grouped);
     m_settings.setValue(kSearchFiltersShown, state.filtersShown);
-    m_settings.setValue(kSearchOnlyRelease, filter.onlyThisRelease);
-    m_settings.setValue(kSearchOwned, static_cast<int>(filter.owned));
-    m_settings.setValue(kSearchFormats, static_cast<int>(filter.formats));
-    m_settings.setValue(kSearchBitrateRule, static_cast<int>(filter.bitrateRule));
-    m_settings.setValue(kSearchBitrate, filter.bitrateKbps);
-    m_settings.setValue(kSearchCbrOnly, filter.cbrOnly);
-    m_settings.setValue(kSearchBitDepth, filter.minBitDepth);
-    QStringList rates;
-    for (const int rate : filter.sampleRates) {
-        rates.append(QString::number(rate));
+    m_settings.setValue(
+        kSearchFilter,
+        QString::fromUtf8(QJsonDocument(core::filterToJson(state.filter)).toJson(QJsonDocument::Compact)));
+}
+
+QList<core::FilterPreset> AppSettings::userPresets() const
+{
+    QList<core::FilterPreset> presets;
+    const QJsonArray saved = QJsonDocument::fromJson(m_settings.value(kUserPresets).toString().toUtf8()).array();
+    for (const auto &value : saved) {
+        const QJsonObject object = value.toObject();
+        const QString id = object.value("id"_L1).toString();
+        const QString name = object.value("name"_L1).toString().trimmed();
+        if (!id.startsWith(u"user-"_s) || name.isEmpty() || presets.size() >= kMaxUserPresets) {
+            continue;
+        }
+        presets.append(core::FilterPreset{.id = id,
+                                          .name = name.left(80),
+                                          .filter = core::filterFromJson(object.value("filter"_L1).toObject()),
+                                          .builtIn = false});
     }
-    m_settings.setValue(kSearchSampleRates, rates);
-    m_settings.setValue(kSearchMinLength, filter.minDurationSec);
-    m_settings.setValue(kSearchMaxLength, filter.maxDurationSec);
-    m_settings.setValue(kSearchFreeSlot, filter.freeSlotOnly);
-    m_settings.setValue(kSearchMaxQueue, filter.maxQueue);
-    m_settings.setValue(kSearchExcluded, filter.excludedWords);
-    m_settings.setValue(kSearchStrict, filter.strict);
+    return presets;
+}
+
+void AppSettings::setUserPresets(const QList<core::FilterPreset> &presets)
+{
+    QJsonArray saved;
+    for (const core::FilterPreset &preset : presets) {
+        if (!preset.builtIn) {
+            saved.append(QJsonObject{
+                {"id"_L1, preset.id}, {"name"_L1, preset.name}, {"filter"_L1, core::filterToJson(preset.filter)}});
+        }
+    }
+    m_settings.setValue(kUserPresets, QString::fromUtf8(QJsonDocument(saved).toJson(QJsonDocument::Compact)));
+}
+
+QString AppSettings::defaultPresetId() const
+{
+    const QString id = m_settings.value(kDefaultPreset).toString();
+    return presetById(id) ? id : core::kMp3OrLosslessPreset.toString();
+}
+
+void AppSettings::setDefaultPresetId(const QString &id)
+{
+    m_settings.setValue(kDefaultPreset, id);
+}
+
+QString AppSettings::getTracksPresetId() const
+{
+    const QString id = m_settings.value(kGetTracksPreset).toString();
+    return presetById(id) ? id : defaultPresetId();
+}
+
+void AppSettings::setGetTracksPresetId(const QString &id)
+{
+    m_settings.setValue(kGetTracksPreset, id);
+}
+
+QList<core::FilterPreset> AppSettings::presets() const
+{
+    return core::builtInPresets() + userPresets();
+}
+
+std::optional<core::FilterPreset> AppSettings::presetById(const QString &id) const
+{
+    if (std::optional<core::FilterPreset> builtIn = core::builtInPreset(id)) {
+        return builtIn;
+    }
+    const QList<core::FilterPreset> mine = userPresets();
+    for (const core::FilterPreset &preset : mine) {
+        if (preset.id == id) {
+            return preset;
+        }
+    }
+    return std::nullopt;
 }
 
 bool AppSettings::sync()

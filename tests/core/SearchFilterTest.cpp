@@ -3,12 +3,14 @@
 
 #include "core/SearchResults.h"
 
+#include <QJsonArray>
+#include <QJsonObject>
+
 #include <gtest/gtest.h>
 
 using namespace Qt::StringLiterals;
 using selecta::core::HiddenReason;
 using selecta::core::Ownership;
-using selecta::core::QualityWanted;
 using selecta::core::SearchFilter;
 using selecta::core::SearchFormat;
 using selecta::core::SearchHit;
@@ -279,9 +281,19 @@ TEST(SearchFilterTest, ExcludedWordsAndWhatYouHave)
     EXPECT_EQ(filter.hiddenReason(upgrade, false), HiddenReason::None); // an upgrade is worth seeing
 }
 
-TEST(SearchFilterTest, PresetsMatchGetTracks)
+TEST(SearchFilterTest, SelectasPresets)
 {
-    const SearchFilter mp3OrLossless = selecta::core::presetFilter(QualityWanted::Mp3_320OrLossless);
+    const QList<selecta::core::FilterPreset> presets = selecta::core::builtInPresets();
+    ASSERT_EQ(presets.size(), 4);
+    EXPECT_EQ(presets.constFirst().id, selecta::core::kMp3OrLosslessPreset); // the default comes first
+    for (const selecta::core::FilterPreset &preset : presets) {
+        EXPECT_TRUE(preset.builtIn);
+        EXPECT_FALSE(preset.name.isEmpty());
+        EXPECT_EQ(selecta::core::builtInPreset(preset.id), preset);
+    }
+    EXPECT_FALSE(selecta::core::builtInPreset(u"user-1").has_value());
+
+    const SearchFilter mp3OrLossless = selecta::core::builtInPreset(selecta::core::kMp3OrLosslessPreset)->filter;
     EXPECT_EQ(mp3OrLossless.hiddenReason(analysed(mp3(320)), false), HiddenReason::None);
     EXPECT_EQ(mp3OrLossless.hiddenReason(analysed(flac()), false), HiddenReason::None);
     EXPECT_EQ(mp3OrLossless.hiddenReason(analysed(mp3(256)), false), HiddenReason::Bitrate);
@@ -290,13 +302,75 @@ TEST(SearchFilterTest, PresetsMatchGetTracks)
     aac.extension = u"m4a"_s;
     EXPECT_EQ(mp3OrLossless.hiddenReason(analysed(aac), false), HiddenReason::Format);
 
-    const SearchFilter lossless = selecta::core::presetFilter(QualityWanted::LosslessOnly);
+    const SearchFilter lossless = selecta::core::builtInPreset(selecta::core::kLosslessPreset)->filter;
     EXPECT_EQ(lossless.hiddenReason(analysed(mp3(320)), false), HiddenReason::Format);
     EXPECT_EQ(lossless.hiddenReason(analysed(flac()), false), HiddenReason::None);
 
-    const SearchFilter any = selecta::core::presetFilter(QualityWanted::Any);
+    const SearchFilter hiRes = selecta::core::builtInPreset(selecta::core::kHiResPreset)->filter;
+    EXPECT_EQ(hiRes.hiddenReason(analysed(mp3(320)), false), HiddenReason::Format);
+    EXPECT_EQ(hiRes.hiddenReason(analysed(flac(16)), false), HiddenReason::Resolution);
+    EXPECT_EQ(hiRes.hiddenReason(analysed(flac(24, 96'000)), false), HiddenReason::None);
+
+    const SearchFilter any = selecta::core::builtInPreset(selecta::core::kAnyQualityPreset)->filter;
     EXPECT_EQ(any.hiddenReason(analysed(mp3(128)), false), HiddenReason::None);
     EXPECT_EQ(any, SearchFilter());
+}
+
+TEST(SearchFilterTest, SlowPeersCanBeLeftOut)
+{
+    SearchFilter filter;
+    filter.minSpeedKBps = 100;
+    SearchHit slow = mp3(320);
+    slow.averageSpeed = 99'999;
+    EXPECT_EQ(filter.hiddenReason(analysed(slow), false), HiddenReason::TooSlow);
+    SearchHit fast = mp3(320);
+    fast.averageSpeed = 100'000;
+    EXPECT_EQ(filter.hiddenReason(analysed(fast), false), HiddenReason::None);
+    EXPECT_FALSE(selecta::core::hiddenReasonLabel(HiddenReason::TooSlow).isEmpty());
+}
+
+TEST(SearchFilterTest, FiltersRoundTripAsJsonAndBadValuesReadAsDefaults)
+{
+    SearchFilter filter;
+    filter.setAllowed(selecta::core::SearchFormat::Flac, true);
+    filter.setAllowed(selecta::core::SearchFormat::Mp3, true);
+    filter.bitrateRule = SearchFilter::BitrateRule::Equal;
+    filter.bitrateKbps = 256;
+    filter.cbrOnly = true;
+    filter.minBitDepth = 24;
+    filter.sampleRates = {44'100, 96'000};
+    filter.minDurationSec = 120;
+    filter.maxDurationSec = 900;
+    filter.minSizeBytes = 1'000'000;
+    filter.maxSizeBytes = 200'000'000;
+    filter.freeSlotOnly = true;
+    filter.maxQueue = 20;
+    filter.minSpeedKBps = 250;
+    filter.excludedWords = {u"live"_s, u"karaoke"_s};
+    filter.strict = true;
+    filter.owned = SearchFilter::OwnedResults::Hide;
+    filter.onlyThisRelease = false;
+    EXPECT_EQ(selecta::core::filterFromJson(selecta::core::filterToJson(filter)), filter);
+
+    // Missing, mistyped and out-of-range values read as the defaults; lists stay bounded.
+    QJsonObject bad;
+    bad.insert(u"bitrateRule"_s, 99);
+    bad.insert(u"bitrateKbps"_s, u"lots"_s);
+    bad.insert(u"minBitDepth"_s, -4);
+    bad.insert(u"sampleRates"_s, QJsonArray{44'100, -1, 9'999'999, 44'100});
+    QJsonArray words;
+    for (int i = 0; i < 500; ++i) {
+        words.append(u"word%1"_s.arg(i));
+    }
+    bad.insert(u"excludedWords"_s, words);
+    const SearchFilter read = selecta::core::filterFromJson(bad);
+    EXPECT_EQ(read.bitrateRule, SearchFilter::BitrateRule::Any);
+    EXPECT_EQ(read.bitrateKbps, SearchFilter().bitrateKbps);
+    EXPECT_EQ(read.minBitDepth, 0);
+    EXPECT_EQ(read.sampleRates, QList<int>{44'100});
+    EXPECT_EQ(read.excludedWords.size(), 50);
+    EXPECT_TRUE(read.onlyThisRelease);
+    EXPECT_EQ(selecta::core::filterFromJson(QJsonObject()), SearchFilter());
 }
 
 TEST(SearchFilterTest, CountsSayWhyResultsAreHidden)

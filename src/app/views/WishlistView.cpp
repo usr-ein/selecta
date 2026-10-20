@@ -2,6 +2,7 @@
 #include "app/views/WishlistView.h"
 
 #include "app/Format.h"
+#include "app/Presets.h"
 #include "core/EngineHost.h"
 
 #include <QDateTime>
@@ -25,6 +26,7 @@ namespace {
 constexpr int kIdRole = Qt::UserRole + 1;
 enum Column { // NOLINT(cppcoreguidelines-use-enum-class): Qt columns are plain ints
     SearchColumn,
+    QualityColumn,
     LastRunColumn,
     FoundColumn,
     ColumnCount
@@ -32,9 +34,10 @@ enum Column { // NOLINT(cppcoreguidelines-use-enum-class): Qt columns are plain 
 
 } // namespace
 
-WishlistView::WishlistView(core::EngineHost &engine, QWidget *parent)
+WishlistView::WishlistView(core::EngineHost &engine, Presets &presets, QWidget *parent)
     : QWidget(parent)
     , m_engine(engine)
+    , m_presets(presets)
     , m_field(new QLineEdit(this))
     , m_add(new QPushButton(tr("Add"), this))
     , m_pages(new QStackedWidget(this))
@@ -55,7 +58,7 @@ WishlistView::WishlistView(core::EngineHost &engine, QWidget *parent)
     note->setWordWrap(true);
     note->setForegroundRole(QPalette::PlaceholderText);
 
-    m_model->setHorizontalHeaderLabels({tr("Search"), tr("Last run"), tr("New files")});
+    m_model->setHorizontalHeaderLabels({tr("Search"), tr("Quality"), tr("Last run"), tr("New files")});
     m_table->setObjectName(u"wishlist.items"_s);
     m_table->setModel(m_model);
     m_table->setRootIsDecorated(false);
@@ -68,6 +71,7 @@ WishlistView::WishlistView(core::EngineHost &engine, QWidget *parent)
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     m_table->header()->setStretchLastSection(false);
     m_table->header()->setSectionResizeMode(SearchColumn, QHeaderView::Stretch);
+    m_table->setColumnWidth(QualityColumn, 170);
     m_table->setColumnWidth(LastRunColumn, 140);
     m_table->setColumnWidth(FoundColumn, 120);
     m_table->installEventFilter(this);
@@ -79,6 +83,16 @@ WishlistView::WishlistView(core::EngineHost &engine, QWidget *parent)
         }
         QMenu menu(this);
         menu.addAction(tr("Show"), this, &WishlistView::showSelected);
+        // Which files count as found (SRCH-8).
+        QMenu *quality = menu.addMenu(tr("Quality"));
+        const QList<core::FilterPreset> presets = m_presets.all();
+        for (const core::FilterPreset &preset : presets) {
+            quality->addAction(preset.name, this, [this, ids, preset] {
+                for (const qint64 id : ids) {
+                    m_engine.setWishlistPreset(id, preset.name, preset.filter);
+                }
+            });
+        }
         menu.addSeparator();
         menu.addAction(ids.size() == 1 ? tr("Remove from Wishlist") : tr("Remove %1 from Wishlist").arg(ids.size()),
                        this, [this, ids] {
@@ -123,7 +137,8 @@ void WishlistView::addTyped()
     if (text.isEmpty()) {
         return;
     }
-    m_engine.addToWishlist(text);
+    const core::FilterPreset preset = m_presets.preset(m_presets.defaultId());
+    m_engine.addToWishlist(text, preset.name, preset.filter);
     m_field->clear();
 }
 
@@ -136,6 +151,8 @@ void WishlistView::rebuild(const QList<core::WishlistItem> &items)
     for (const core::WishlistItem &item : items) {
         auto *search = new QStandardItem(item.text);
         search->setData(item.id, kIdRole);
+        auto *quality = new QStandardItem(item.preset.isEmpty() ? tr("Any audio file") : item.preset);
+        quality->setForeground(QPalette().brush(QPalette::PlaceholderText));
         auto *lastRun = new QStandardItem(item.lastRunMs > 0 ? format::ago(item.lastRunMs, now) : tr("Not yet"));
         lastRun->setForeground(QPalette().brush(QPalette::PlaceholderText));
         QString news;
@@ -149,7 +166,7 @@ void WishlistView::rebuild(const QList<core::WishlistItem> &items)
             found->setFont(bold);
             found->setToolTip(tr("Double-click to see them"));
         }
-        m_model->appendRow({search, lastRun, found});
+        m_model->appendRow({search, quality, lastRun, found});
         if (selected.contains(item.id)) {
             m_table->selectionModel()->select(search->index(), QItemSelectionModel::Select | QItemSelectionModel::Rows);
         }

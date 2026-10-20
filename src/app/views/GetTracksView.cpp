@@ -2,6 +2,7 @@
 #include "app/views/GetTracksView.h"
 
 #include "app/Icons.h"
+#include "app/Presets.h"
 #include "app/TickDelegate.h"
 #include "app/TwoLineDelegate.h"
 #include "app/models/GetTracksModel.h"
@@ -11,6 +12,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
@@ -32,9 +34,10 @@ using namespace Qt::StringLiterals;
 
 namespace selecta::app {
 
-GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
+GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget *parent)
     : QWidget(parent)
     , m_engine(engine)
+    , m_presets(presets)
     , m_model(new GetTracksModel(this))
     , m_inspector(new GetTracksInspector)
     , m_pages(new QStackedWidget(this))
@@ -42,6 +45,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     , m_summary(new QLabel(this))
     , m_note(new QLabel(this))
     , m_add(new QPushButton(tr("Add Tracks…"), this))
+    , m_preset(new QComboBox(this))
     , m_find(new QPushButton(tr("Find Them"), this))
     , m_get(new QPushButton(tr("Get"), this))
     , m_export(new QPushButton(tr("Export Not Found…"), this))
@@ -144,6 +148,16 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     m_note->setObjectName(u"get.note"_s);
     m_note->setWordWrap(true);
     m_note->hide();
+    // The quality wanted: a preset, as in Search and the Wishlist (BATCH-2, SRCH-8).
+    m_preset->setObjectName(u"get.preset"_s);
+    m_preset->setToolTip(tr("The quality wanted. Changing it ranks the tracks already found again."));
+    connect(m_preset, &QComboBox::activated, this, [this](int row) {
+        const QString id = m_preset->itemData(row).toString();
+        m_presets.setGetTracksId(id);
+        m_engine.setGetTracksFilter(m_presets.preset(id).filter);
+    });
+    connect(&m_presets, &Presets::changed, this, &GetTracksView::rebuildPresets);
+    rebuildPresets();
     m_find->setObjectName(u"get.find"_s);
     m_find->setToolTip(tr("Search Soulseek for each track, paced to stay a good citizen of the network: up to 6 "
                           "searches at once, then one every 30 seconds"));
@@ -185,6 +199,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     bar->addWidget(m_summary, 1);
     bar->addWidget(m_progress);
     bar->addWidget(m_export);
+    bar->addWidget(m_preset);
     bar->addWidget(m_find);
     bar->addWidget(m_get);
     auto *noteBox = new QHBoxLayout;
@@ -352,6 +367,19 @@ void GetTracksView::refresh()
     Q_EMIT summaryChanged();
 }
 
+void GetTracksView::rebuildPresets()
+{
+    const QSignalBlocker blocker(m_preset);
+    m_preset->clear();
+    const QList<core::FilterPreset> presets = m_presets.all();
+    for (const core::FilterPreset &preset : presets) {
+        m_preset->addItem(preset.name, preset.id);
+    }
+    const QString id = m_presets.getTracksId();
+    m_preset->setCurrentIndex(std::max(m_preset->findData(id), 0));
+    m_engine.setGetTracksFilter(m_presets.preset(id).filter); // a deleted preset falls back to the default
+}
+
 void GetTracksView::refreshProgress()
 {
     int toFind = 0;
@@ -446,7 +474,8 @@ void GetTracksView::contextMenu(QPoint position)
             }
             const core::GetLine &line = m_model->lines().at(row);
             const QString text = line.artist.isEmpty() ? line.raw : line.artist + u' ' + line.title;
-            m_engine.addToWishlist(text);
+            const core::FilterPreset preset = m_presets.preset(m_presets.getTracksId());
+            m_engine.addToWishlist(text, preset.name, preset.filter);
         }
     });
     menu.addAction(tr("Copy"), this, [this] {

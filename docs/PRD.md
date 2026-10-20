@@ -254,7 +254,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | SHARE-1 | P0 | Choose shared folders. The whole collection is shared by default (D12); the Inbox and the preview cache never are. Scan and index the shares, excluding hidden and system files. |
 | SHARE-2 | P0 | Answer browse, folder-contents and search requests from the index. Honour the server's excluded search phrases. Never reveal full local paths. |
 | SHARE-3 | P0 | Upload queue: 3 slots, one active upload per user, **privileged users first**, round-robin between users, per-user limits (100 files / 10 000 MB) answered with the standard denial strings, optional bandwidth limit. |
-| SHARE-4 | P1 | Buddy-only shared folders; ban / ignore users. |
+| SHARE-4 | P1 | Ban / ignore users (NET-8). Buddy-only shared folders are out of v1 (D34). |
 | SHARE-5 | P0 | Upload statistics (files and bytes, per user) feed the ratio. |
 
 ### 7.10 Fairness and ratio (FAIR)
@@ -426,6 +426,10 @@ Answers given by the maintainer on 2026-10-19.
 | D31 | Search pace (OQ-4, search part) | **2 searches per minute with bursts of 6** (token bucket: burst 6, one more every 30 s), one budget for every search source, no setting that loosens it, and the same query not repeated within 10 min. A 50-line Get tracks list takes about 25 minutes; cached lines are instant (`references/network-etiquette-and-safe-development.md` §9.1). |
 | D32 | Chat rooms vs the official "full range of features" rule | **A minimal rooms view** (NET-10): list, join, read, post. It closes the gap in the rules at little cost; everything else about rooms stays out. |
 | D33 | Apple Developer ID (OQ-8) | The maintainer has one: "Yes I do, but don't use it for development." Release builds (M10) are signed with it, use the hardened runtime and are notarised. Development builds use a stable local identity so Keychain and firewall approvals survive rebuilds. |
+| D34 | Buddy-only shared folders (SHARE-4), 2026-10-20 | **Out of v1.** Everything shared stays public; banning and ignoring (NET-8) cover unwanted peers. One public share level, as `docs/STATUS.md` recorded (D-S4). |
+| D35 | Testing against the real metadata services, 2026-10-20 | **Allowed for manual runs**: Spotify (the maintainer signs in for playlists), yt-dlp / YouTube Music, Deezer clips, MusicBrainz and the Cover Art Archive, in isolated runs (`--data-dir … --metadata-network`), paced by the governor. Soulseek stays on the local test network; automated tests still use fakes only. |
+| D36 | App logo, 2026-10-20 | **A round vinyl disc** in the spirit of the old djay icon, whose centre label is the **Jamaican flag** (gold saltire, green and black triangles), with a spindle hole. It is the app icon (a circle) and the window icon. |
+| D37 | How the work is run, 2026-10-20 | Up to five teammates work in parallel in their own worktrees; the head implementer merges their branches into `main` locally and pushes. No pull requests. The CI teammate may push its own branch so GitHub Actions can run. |
 
 ## Appendix B — Raw brief (verbatim)
 

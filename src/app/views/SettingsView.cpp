@@ -17,6 +17,7 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QLocale>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
@@ -306,7 +307,7 @@ QWidget *SettingsView::createSpotifyBox(QWidget *parent)
     connect(m_spotifySave, &QPushButton::clicked, this, &SettingsView::submitSpotify);
     connect(m_spotifyClientId, &QLineEdit::returnPressed, this, &SettingsView::submitSpotify);
     connect(m_spotifySecret, &QLineEdit::returnPressed, this, &SettingsView::submitSpotify);
-    connect(m_spotifySignIn, &QPushButton::clicked, this, &SettingsView::spotifySignInRequested);
+    connect(m_spotifySignIn, &QPushButton::clicked, this, &SettingsView::signInToSpotify);
     connect(m_spotifySignOut, &QPushButton::clicked, this, &SettingsView::spotifySignOutRequested);
     buttons->addWidget(m_spotifySave);
     buttons->addWidget(m_spotifySignIn);
@@ -608,7 +609,64 @@ void SettingsView::submitSpotify()
     const QString clientId = m_spotifyClientId->text().trimmed();
     const QByteArray secret = m_spotifySecret->text().toUtf8();
     m_spotifySecret->clear(); // the secret doesn't stay in the window
-    Q_EMIT spotifyCredentialsSubmitted(clientId, secret, secret.isEmpty() && clientId == m_spotify.clientId);
+    const bool keepSavedSecret = secret.isEmpty() && clientId == m_spotify.clientId;
+    if (clientId.isEmpty() || m_spotifyTermsAccepted) { // forgetting the credentials needs no notice
+        Q_EMIT spotifyCredentialsSubmitted(clientId, secret, keepSavedSecret);
+        return;
+    }
+    askAboutSpotifyTerms([this, clientId, secret, keepSavedSecret] {
+        Q_EMIT spotifyCredentialsSubmitted(clientId, secret, keepSavedSecret);
+    });
+}
+
+void SettingsView::signInToSpotify()
+{
+    if (m_spotifyTermsAccepted) {
+        Q_EMIT spotifySignInRequested();
+        return;
+    }
+    askAboutSpotifyTerms([this] { Q_EMIT spotifySignInRequested(); });
+}
+
+void SettingsView::askAboutSpotifyTerms(const std::function<void()> &accepted)
+{
+    // D30, and the wording of references/metadata-and-preview-services.md §5.3: what Selecta does with Spotify's data,
+    // what Spotify's terms say about it, and what the user risks: their own developer app, not Selecta's.
+    auto *box = new QMessageBox(this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setObjectName(u"settings.spotify.terms"_s);
+    box->setIcon(QMessageBox::Warning);
+    box->setText(tr("Tag your downloads from Spotify?"));
+    box->setInformativeText(
+        tr("Selecta writes Spotify's track details and cover art into the files you download: title, artists, album, "
+           "release date, track numbers, ISRC and the cover. Spotify's developer terms don't allow apps to keep its "
+           "metadata or artwork in files. If Spotify objects, it can revoke the developer app (Client ID) you created "
+           "for Selecta, which belongs to your Spotify account.\n\nWithout Spotify, tags come from Deezer and "
+           "MusicBrainz. Selecta asks only once."));
+    QPushButton *use = box->addButton(tr("Use Spotify Tags"), QMessageBox::AcceptRole);
+    use->setObjectName(u"settings.spotify.terms.accept"_s);
+    QPushButton *decline = box->addButton(tr("Use Deezer and MusicBrainz"), QMessageBox::RejectRole);
+    decline->setObjectName(u"settings.spotify.terms.decline"_s);
+    box->setDefaultButton(use);
+    box->setEscapeButton(decline);
+    box->setWindowModality(Qt::WindowModal); // a sheet on macOS
+    connect(box, &QMessageBox::finished, this, [this, box, use, accepted] {
+        if (box->clickedButton() != use) {
+            m_spotifyClientId->setText(m_spotify.clientId); // nothing was saved
+            return;
+        }
+        m_spotifyTermsAccepted = true;
+        Q_EMIT spotifyTermsAccepted();
+        accepted();
+        setSpotifyStatus(m_spotify);
+    });
+    box->open();
+}
+
+void SettingsView::setSpotifyTermsAccepted(bool accepted)
+{
+    m_spotifyTermsAccepted = accepted;
+    setSpotifyStatus(m_spotify);
 }
 
 void SettingsView::setSpotifyStatus(const core::SpotifyStatus &status)
@@ -649,7 +707,10 @@ void SettingsView::setSpotifyStatus(const core::SpotifyStatus &status)
         text = tr("The sign-in expired: sign in again.");
         break;
     }
-    if (!status.error.isEmpty()) {
+    if (!m_spotifyTermsAccepted && status.state != State::NotConfigured) {
+        // Credentials saved before the notice existed: unused until the user has read it.
+        text = tr("Saved, but not in use until you accept the notice on Spotify's terms: press Save to read it.");
+    } else if (!status.error.isEmpty()) {
         text += u' ' + tr("Last problem: %1").arg(status.error);
     }
     m_spotifyState->setText(text);

@@ -7,6 +7,7 @@
 #include "app/NavModel.h"
 #include "app/Notifications.h"
 #include "app/PlayerBar.h"
+#include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/Sidebar.h"
 #include "app/Toasts.h"
@@ -335,12 +336,15 @@ void MainWindow::addView(const QString &id, QWidget *widget, std::function<QStri
 
 void MainWindow::createViews()
 {
+    // The filter presets Search, Get tracks and the Wishlist share (SRCH-8).
+    m_presets = new Presets(m_services.settings, this);
+
     const auto fixed = [](const QString &text) { return [text] { return text; }; };
 
     createSearchView();
     createBrowseView();
 
-    m_getTracksView = new GetTracksView(m_services.engine, m_stack);
+    m_getTracksView = new GetTracksView(m_services.engine, *m_presets, m_stack);
     addView(u"get"_s, m_getTracksView, [this] { return m_getTracksView->summary(); });
     m_inspector->addPanel(u"get"_s, m_getTracksView->inspectorPanel());
     connect(m_getTracksView, &GetTracksView::summaryChanged, this, [this] {
@@ -401,7 +405,7 @@ void MainWindow::createViews()
             m_player->showMessage(preview.message);
         }
     });
-    auto *wishlistView = new WishlistView(m_services.engine, m_stack);
+    auto *wishlistView = new WishlistView(m_services.engine, *m_presets, m_stack);
     addView(u"wishlist"_s, wishlistView, [wishlistView] { return wishlistView->summary(); });
     connect(wishlistView, &WishlistView::summaryChanged, this, [this, wishlistView] {
         m_navModel->setCount(u"wishlist"_s, wishlistView->foundCount());
@@ -477,7 +481,7 @@ void MainWindow::createViews()
 void MainWindow::createSearchView()
 {
     // Searches typed by hand: one view shows whichever search is picked in the sidebar.
-    m_searchView = new SearchView(m_services.engine, m_services.settings, m_stack);
+    m_searchView = new SearchView(m_services.engine, m_services.settings, *m_presets, m_stack);
     addView(u"search"_s, m_searchView, [this] { return m_searchView->summary(); });
     m_inspector->addPanel(u"search"_s, m_searchView->inspectorPanel());
     connect(m_searchView, &SearchView::summaryChanged, this, [this] {
@@ -690,6 +694,15 @@ void MainWindow::createSettingsView()
         }
         m_services.engine.setLibraryConfig(config);
         m_inboxView->setLibraryConfig(config);
+    });
+    // META-4, D30: the notice on Spotify's terms is answered once; the engine uses Spotify only after a yes.
+    m_settingsView->setSpotifyTermsAccepted(m_services.settings.spotifyTermsAccepted());
+    connect(m_settingsView, &SettingsView::spotifyTermsAccepted, this, [this] {
+        m_services.settings.setSpotifyTermsAccepted(true);
+        if (!m_services.settings.sync()) {
+            qCWarning(lcUi) << "couldn't write settings to" << m_services.settings.fileName();
+        }
+        m_services.engine.allowSpotify();
     });
     connect(m_settingsView, &SettingsView::spotifyCredentialsSubmitted, &m_services.engine,
             &core::EngineHost::setSpotifyCredentials);

@@ -2,6 +2,8 @@
 #include "core/SearchFilter.h"
 
 #include <QCoreApplication>
+#include <QJsonArray>
+#include <QJsonValue>
 
 #include <utility>
 
@@ -97,6 +99,8 @@ QString hiddenReasonLabel(HiddenReason reason)
         return translated("No free slot");
     case HiddenReason::QueueTooLong:
         return translated("Long queue");
+    case HiddenReason::TooSlow:
+        return translated("Slow peer");
     case HiddenReason::ExcludedWord:
         return translated("Excluded words");
     case HiddenReason::Owned:
@@ -199,6 +203,9 @@ HiddenReason otherReason(const SearchFilter &filter, const SearchResult &result)
     if (filter.maxQueue > 0 && std::cmp_greater(result.hit.queueLength, filter.maxQueue)) {
         return HiddenReason::QueueTooLong;
     }
+    if (filter.minSpeedKBps > 0 && std::cmp_less(result.hit.averageSpeed, qint64{filter.minSpeedKBps} * 1000)) {
+        return HiddenReason::TooSlow;
+    }
     if (!filter.excludedWords.isEmpty()) {
         const QString path = result.path.toCaseFolded();
         const bool excluded = std::ranges::any_of(filter.excludedWords, [&path](const QString &word) {
@@ -231,43 +238,165 @@ HiddenReason SearchFilter::hiddenReason(const SearchResult &result, bool release
     return otherReason(*this, result);
 }
 
-SearchFilter presetFilter(QualityWanted wanted)
+namespace {
+
+// JSON keys: short, stable, never renamed (saved presets and Wishlist searches carry them).
+constexpr auto kFormats = "formats"_L1;
+constexpr auto kBitrateRule = "bitrateRule"_L1;
+constexpr auto kBitrate = "bitrateKbps"_L1;
+constexpr auto kCbrOnly = "cbrOnly"_L1;
+constexpr auto kBitDepth = "minBitDepth"_L1;
+constexpr auto kSampleRates = "sampleRates"_L1;
+constexpr auto kMinLength = "minDurationSec"_L1;
+constexpr auto kMaxLength = "maxDurationSec"_L1;
+constexpr auto kMinSize = "minSizeBytes"_L1;
+constexpr auto kMaxSize = "maxSizeBytes"_L1;
+constexpr auto kFreeSlot = "freeSlotOnly"_L1;
+constexpr auto kMaxQueue = "maxQueue"_L1;
+constexpr auto kMinSpeed = "minSpeedKBps"_L1;
+constexpr auto kExcluded = "excludedWords"_L1;
+constexpr auto kStrict = "strict"_L1;
+constexpr auto kOwned = "owned"_L1;
+constexpr auto kOnlyRelease = "onlyThisRelease"_L1;
+constexpr int kMaxExcludedWords = 50;
+constexpr int kMaxSampleRates = 16;
+
+// An integer in [low, high], or `fallback`.
+qint64 bounded(const QJsonValue &value, qint64 fallback, qint64 low, qint64 high)
+{
+    if (!value.isDouble()) {
+        return fallback;
+    }
+    const double number = value.toDouble();
+    if (number < static_cast<double>(low) || number > static_cast<double>(high)) {
+        return fallback;
+    }
+    return static_cast<qint64>(number);
+}
+
+SearchFilter mp3OrLossless()
 {
     SearchFilter filter;
-    switch (wanted) {
-    case QualityWanted::Mp3_320OrLossless:
-        for (const SearchFormat format :
-             {SearchFormat::Flac, SearchFormat::Mp3, SearchFormat::Wav, SearchFormat::Aiff, SearchFormat::Alac}) {
-            filter.setAllowed(format, true);
-        }
-        filter.bitrateRule = SearchFilter::BitrateRule::AtLeast;
-        filter.bitrateKbps = 320;
-        filter.strict = true;
-        break;
-    case QualityWanted::LosslessOnly:
-        for (const SearchFormat format :
-             {SearchFormat::Flac, SearchFormat::Wav, SearchFormat::Aiff, SearchFormat::Alac}) {
-            filter.setAllowed(format, true);
-        }
-        filter.strict = true;
-        break;
-    case QualityWanted::Any:
-        break;
+    for (const SearchFormat format :
+         {SearchFormat::Flac, SearchFormat::Mp3, SearchFormat::Wav, SearchFormat::Aiff, SearchFormat::Alac}) {
+        filter.setAllowed(format, true);
     }
+    filter.bitrateRule = SearchFilter::BitrateRule::AtLeast;
+    filter.bitrateKbps = 320;
+    filter.strict = true;
     return filter;
 }
 
-QString qualityWantedName(QualityWanted wanted)
+SearchFilter losslessOnly(int minBitDepth)
 {
-    switch (wanted) {
-    case QualityWanted::Mp3_320OrLossless:
-        return translated("MP3 320 or lossless");
-    case QualityWanted::LosslessOnly:
-        return translated("Lossless only");
-    case QualityWanted::Any:
-        break;
+    SearchFilter filter;
+    for (const SearchFormat format : {SearchFormat::Flac, SearchFormat::Wav, SearchFormat::Aiff, SearchFormat::Alac}) {
+        filter.setAllowed(format, true);
     }
-    return translated("Any quality");
+    filter.minBitDepth = minBitDepth;
+    filter.strict = true;
+    return filter;
+}
+
+} // namespace
+
+QJsonObject filterToJson(const SearchFilter &filter)
+{
+    QJsonArray rates;
+    for (const int rate : filter.sampleRates) {
+        rates.append(rate);
+    }
+    return QJsonObject{
+        {kFormats, filter.formats},
+        {kBitrateRule, static_cast<int>(filter.bitrateRule)},
+        {kBitrate, filter.bitrateKbps},
+        {kCbrOnly, filter.cbrOnly},
+        {kBitDepth, filter.minBitDepth},
+        {kSampleRates, rates},
+        {kMinLength, filter.minDurationSec},
+        {kMaxLength, filter.maxDurationSec},
+        {kMinSize, filter.minSizeBytes},
+        {kMaxSize, filter.maxSizeBytes},
+        {kFreeSlot, filter.freeSlotOnly},
+        {kMaxQueue, filter.maxQueue},
+        {kMinSpeed, filter.minSpeedKBps},
+        {kExcluded, QJsonArray::fromStringList(filter.excludedWords)},
+        {kStrict, filter.strict},
+        {kOwned, static_cast<int>(filter.owned)},
+        {kOnlyRelease, filter.onlyThisRelease},
+    };
+}
+
+SearchFilter filterFromJson(const QJsonObject &json)
+{
+    constexpr qint64 kDay = qint64{24} * 3600;
+    constexpr auto kTerabyte = qint64{1'000'000'000'000};
+    SearchFilter filter;
+    filter.formats = static_cast<quint16>(bounded(json.value(kFormats), 0, 0, 0xFFFF));
+    filter.bitrateRule = static_cast<SearchFilter::BitrateRule>(
+        bounded(json.value(kBitrateRule), 0, 0, static_cast<int>(SearchFilter::BitrateRule::AtMost)));
+    filter.bitrateKbps = static_cast<int>(bounded(json.value(kBitrate), filter.bitrateKbps, 8, 2000));
+    filter.cbrOnly = json.value(kCbrOnly).toBool(false);
+    filter.minBitDepth = static_cast<int>(bounded(json.value(kBitDepth), 0, 0, 32));
+    const QJsonArray rates = json.value(kSampleRates).toArray();
+    for (const auto &rate : rates) {
+        const auto hz = static_cast<int>(bounded(rate, 0, 0, 768'000));
+        if (hz > 0 && filter.sampleRates.size() < kMaxSampleRates && !filter.sampleRates.contains(hz)) {
+            filter.sampleRates.append(hz);
+        }
+    }
+    filter.minDurationSec = static_cast<int>(bounded(json.value(kMinLength), 0, 0, kDay));
+    filter.maxDurationSec = static_cast<int>(bounded(json.value(kMaxLength), 0, 0, kDay));
+    filter.minSizeBytes = bounded(json.value(kMinSize), 0, 0, kTerabyte);
+    filter.maxSizeBytes = bounded(json.value(kMaxSize), 0, 0, kTerabyte);
+    filter.freeSlotOnly = json.value(kFreeSlot).toBool(false);
+    filter.maxQueue = static_cast<int>(bounded(json.value(kMaxQueue), 0, 0, 1'000'000));
+    filter.minSpeedKBps = static_cast<int>(bounded(json.value(kMinSpeed), 0, 0, 1'000'000));
+    const QJsonArray words = json.value(kExcluded).toArray();
+    for (const auto &word : words) {
+        const QString text = word.toString().trimmed().left(100);
+        if (!text.isEmpty() && filter.excludedWords.size() < kMaxExcludedWords) {
+            filter.excludedWords.append(text);
+        }
+    }
+    filter.strict = json.value(kStrict).toBool(false);
+    filter.owned = static_cast<SearchFilter::OwnedResults>(
+        bounded(json.value(kOwned), 0, 0, static_cast<int>(SearchFilter::OwnedResults::Hide)));
+    filter.onlyThisRelease = json.value(kOnlyRelease).toBool(true);
+    return filter;
+}
+
+QList<FilterPreset> builtInPresets()
+{
+    return {
+        FilterPreset{.id = kMp3OrLosslessPreset.toString(),
+                     .name = translated("MP3 320 or lossless"),
+                     .filter = mp3OrLossless(),
+                     .builtIn = true},
+        FilterPreset{.id = kLosslessPreset.toString(),
+                     .name = translated("Lossless only"),
+                     .filter = losslessOnly(0),
+                     .builtIn = true},
+        FilterPreset{.id = kHiResPreset.toString(),
+                     .name = translated("Hi-res (24-bit lossless)"),
+                     .filter = losslessOnly(24),
+                     .builtIn = true},
+        FilterPreset{.id = kAnyQualityPreset.toString(),
+                     .name = translated("Any quality"),
+                     .filter = SearchFilter{},
+                     .builtIn = true},
+    };
+}
+
+std::optional<FilterPreset> builtInPreset(QStringView id)
+{
+    const QList<FilterPreset> presets = builtInPresets();
+    for (const FilterPreset &preset : presets) {
+        if (preset.id == id) {
+            return preset;
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace selecta::core

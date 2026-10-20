@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
-#include "core/FileRanking.h"
 #include "core/SearchResults.h"
 
+#include <QJsonObject>
 #include <QList>
 #include <QString>
 #include <QStringList>
 
 #include <array>
+#include <optional>
 
 namespace selecta::core {
 
@@ -43,10 +44,11 @@ enum class HiddenReason : quint8 {
     Size,
     NoFreeSlot,
     QueueTooLong,
+    TooSlow, // the peer's upload speed is under the minimum
     ExcludedWord,
     Owned, // "Already have: hide"
 };
-inline constexpr int kHiddenReasonCount = 14;
+inline constexpr int kHiddenReasonCount = 15;
 
 QString hiddenReasonLabel(HiddenReason reason); // "Format", "Bitrate"… for the breakdown
 
@@ -77,7 +79,8 @@ struct SearchFilter
     qint64 minSizeBytes = 0;
     qint64 maxSizeBytes = 0;
     bool freeSlotOnly = false;
-    int maxQueue = 0; // 0: any
+    int maxQueue = 0;     // 0: any
+    int minSpeedKBps = 0; // the peer's upload speed, KB/s (1000 bytes); 0: any
     QStringList excludedWords;
     bool strict = false; // hide results whose quality is unknown or implausible
     OwnedResults owned = OwnedResults::Show;
@@ -92,10 +95,33 @@ struct SearchFilter
     friend bool operator==(const SearchFilter &, const SearchFilter &) = default;
 };
 
-// The presets (SRCH-8), the same qualities Get tracks offers (BATCH-2): MP3 320 or lossless, lossless only, anything.
-// Strict, so files that don't say their quality, or lie about it, stay out of the way.
-SearchFilter presetFilter(QualityWanted wanted);
-QString qualityWantedName(QualityWanted wanted);
+// The filter as JSON, to save it with a preset or a Wishlist search; and back. Reading is lenient and bounded: what is
+// missing, of the wrong type or out of range reads as the default.
+QJsonObject filterToJson(const SearchFilter &filter);
+SearchFilter filterFromJson(const QJsonObject &json);
+
+// A named filter preset (PRD SRCH-8). Search, Get tracks (BATCH-2) and the Wishlist pick from the same list:
+// Selecta's own first, which can't be changed, then the user's, saved from the Search view's filters.
+struct FilterPreset
+{
+    QString id; // the built-in ones' below; the user's "user-<n>"
+    QString name;
+    SearchFilter filter;
+    bool builtIn = false;
+
+    friend bool operator==(const FilterPreset &, const FilterPreset &) = default;
+};
+
+// Selecta's presets. Everything arrives as MP3 320 (D29), so the default takes only files that can make a real one:
+// lossless, or MP3 at 320 kbps. Those with a quality are strict: files that don't say their quality, or whose size
+// contradicts it, stay out of the way. "Any quality" filters nothing.
+inline constexpr QStringView kMp3OrLosslessPreset = u"mp3-320-or-lossless"; // the default
+inline constexpr QStringView kLosslessPreset = u"lossless";
+inline constexpr QStringView kHiResPreset = u"hi-res"; // 24-bit lossless
+inline constexpr QStringView kAnyQualityPreset = u"any";
+QList<FilterPreset> builtInPresets();
+// A built-in preset by id; nullopt for any other id.
+std::optional<FilterPreset> builtInPreset(QStringView id);
 
 // How results that pass the filters are counted, and why the others are hidden (SRCH-9).
 struct FilterCounts

@@ -6,6 +6,7 @@
 #include "convert/TagWriter.h"
 #include "core/ArrivalService.h"
 #include "core/InboxService.h"
+#include "library/Quarantine.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
@@ -106,6 +107,21 @@ TEST_F(InboxRetagTest, WritesTheNewTagsAndRenamesTheFile)
     EXPECT_LE(written.width(), 800);
     // No copy left behind.
     EXPECT_EQ(QDir(inbox + u"/Singles"_s).entryList(QDir::Files | QDir::Hidden).size(), 1);
+}
+
+TEST_F(InboxRetagTest, ARetaggedFileStaysQuarantined)
+{
+    if (!selecta::library::quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    ASSERT_TRUE(selecta::library::quarantine::mark(path));
+    const QByteArray attribute = selecta::library::quarantine::value(path);
+    const selecta::library::FileOps fileOps(inbox, {});
+    RetagRequest r = request();
+    r.changes.set(keys::Title, u"Neon Rain (Extended Mix)"_s, selecta::convert::Provenance::User); // renamed too
+    const RetagResult result = selecta::core::retagInboxFile(r, fileOps);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(selecta::library::quarantine::value(result.path), attribute); // the very same, not a new one
 }
 
 TEST_F(InboxRetagTest, TheSameNameStaysPut)
