@@ -305,3 +305,67 @@ jobs:
           path: build/linux/Testing/Temporary/LastTest*.log
           if-no-files-found: ignore
           retention-days: 14
+
+  windows:
+    name: Windows · build, tests
+    runs-on: windows-2025
+    timeout-minutes: 240
+    defaults:
+      run:
+        shell: bash
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-archives
+    steps:
+      - uses: actions/checkout@v7
+
+      # Ninja needs the compiler's environment: import what vcvars64.bat sets.
+      - name: MSVC developer environment
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul && set" | ForEach-Object {
+            if ($_ -match '^([^=]+)=(.*)$') {
+              "$($Matches[1])=$($Matches[2])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            }
+          }
+
+      - name: vcpkg
+        id: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-windows-selecta
+
+      - name: Configure (builds missing dependencies)
+        id: configure
+        run: >-
+          cmake --preset windows -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
+          -DSELECTA_WITH_MEDIA=OFF -DSELECTA_WARNINGS_AS_ERRORS=OFF
+
+      - name: Save the vcpkg binary cache
+        if: always() && steps.vcpkg.outcome == 'success'
+        uses: ./.github/actions/vcpkg-save
+        with:
+          key: ${{ steps.vcpkg.outputs.cache-key }}
+          installed: build/windows/vcpkg_installed
+          complete: ${{ steps.configure.outcome == 'success' }}
+
+      - name: The live-server switch is off
+        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/windows/CMakeCache.txt
+
+      - name: Build
+        run: cmake --build --preset windows -- -k 0
+
+      - name: Test
+        timeout-minutes: 30
+        run: ctest --preset windows --parallel 4 --timeout 300
+
+      - name: Keep the test log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-test-log
+          path: build/windows/Testing/Temporary/LastTest*.log
+          if-no-files-found: ignore
+          retention-days: 14

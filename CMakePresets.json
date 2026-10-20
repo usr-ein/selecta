@@ -38,6 +38,21 @@
       }
     },
     {
+      "name": "vcpkg-static-windows",
+      "hidden": true,
+      "description": "Static dependencies from vcpkg on Windows with MSVC (NFR-1, ADR-004). Needs VCPKG_ROOT and a Visual Studio developer environment.",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-selecta",
+        "VCPKG_HOST_TRIPLET": "x64-windows-selecta",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-ports",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
       "name": "dev",
       "displayName": "Debug",
       "inherits": [ "base", "vcpkg-static" ],
@@ -48,6 +63,12 @@
       "displayName": "Debug on Linux",
       "inherits": [ "base", "vcpkg-static-linux" ],
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "windows",
+      "displayName": "RelWithDebInfo on Windows (MSVC)",
+      "inherits": [ "base", "vcpkg-static-windows" ],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
     },
     {
       "name": "asan",
@@ -87,6 +108,7 @@
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
     { "name": "linux", "configurePreset": "linux" },
+    { "name": "windows", "configurePreset": "windows" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "lint", "configurePreset": "lint" },
@@ -103,6 +125,7 @@
     },
     { "name": "dev", "inherits": "base", "configurePreset": "dev" },
     { "name": "linux", "inherits": "base", "configurePreset": "linux" },
+    { "name": "windows", "inherits": "base", "configurePreset": "windows" },
     { "name": "asan", "inherits": "base", "configurePreset": "asan" },
     { "name": "tsan", "inherits": "base", "configurePreset": "tsan" },
     { "name": "ci", "inherits": "base", "configurePreset": "ci" }
