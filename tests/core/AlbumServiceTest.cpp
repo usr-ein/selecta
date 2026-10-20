@@ -26,10 +26,10 @@
 #include <QImage>
 #include <QSignalSpy>
 #include <QTemporaryDir>
-#include <QTest>
 
 #include <gtest/gtest.h>
 #include <memory>
+#include <mutex>
 
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
@@ -122,11 +122,18 @@ protected:
         ASSERT_TRUE(QDir().mkpath(library.inboxRoot));
         ASSERT_TRUE(QDir().mkpath(library.collectionRoots.constFirst()));
         inbox = std::make_unique<selecta::core::InboxService>(db, library, trash());
+        startAlbums();
+    }
 
+    // The default listing timeout is longer than any wait here, so the peer's listing always comes first, however
+    // slow the machine. Only a test of a peer that never lists the folder makes it short.
+    void startAlbums(std::chrono::milliseconds listingTimeout = AlbumService::Options{}.listingTimeout)
+    {
+        albums.reset();
         AlbumService::Options options;
         options.stagingDir = dir.filePath(u"staging"_s);
         options.encodedBy = u"Selecta 9.9.9"_s;
-        options.listingTimeout = 300ms;
+        options.listingTimeout = listingTimeout;
         options.metadataTimeout = 1s;
         albums = std::make_unique<AlbumService>(db, governor, *network, *transfers, *inbox, log, trash(), options,
                                                 [this] { return now; });
@@ -149,14 +156,24 @@ protected:
         transfers.reset();
     }
 
+    // The Inbox runs it on its file workers, several singles at once.
     selecta::library::FileOps::TrashFunction trash()
     {
         return [this](const QString &path, QString *to) {
-            trashed.append(path);
+            {
+                const std::scoped_lock lock(trashedMutex);
+                trashed.append(path);
+            }
             *to = dir.filePath(u"Trash/"_s + QFileInfo(path).fileName());
             QDir().mkpath(dir.filePath(u"Trash"_s));
             return QFile::rename(path, *to);
         };
+    }
+
+    QStringList trashedPaths()
+    {
+        const std::scoped_lock lock(trashedMutex);
+        return trashed;
     }
 
     // vinyl_ghost shares the album: two FLAC tracks, the cover and a rip log.
@@ -248,7 +265,8 @@ protected:
     selecta::storage::Database db;
     selecta::core::ActivityLog log{db};
     selecta::meta::InMemoryTokenStore tokens;
-    QStringList trashed;
+    std::mutex trashedMutex;
+    QStringList trashed; // guarded by trashedMutex: read it through trashedPaths()
     std::unique_ptr<selecta::core::NetworkService> network;
     std::unique_ptr<selecta::core::TransferService> transfers;
     std::unique_ptr<selecta::core::InboxService> inbox;
@@ -330,6 +348,7 @@ TEST_F(AlbumServiceTest, AnArrivalIsReportedOnce)
 
 TEST_F(AlbumServiceTest, AFolderThePeerDoesntListComesFromTheSearchResults)
 {
+    startAlbums(300ms);
     auto peer = ghost();
     peer->ignoreRequests = true;
     const std::optional<qint64> id = albums->download(peer->username(), albumFolder(), searchHits(*peer), neonRain());
@@ -378,8 +397,8 @@ TEST_F(AlbumServiceTest, ASingleInTheInboxGoesToTheTrashAndUndoPutsItBack)
     EXPECT_EQ(inboxItems(InboxItem::Kind::Single).constFirst().id, other);
     const QString singlePath = dir.filePath(u"Inbox/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s);
     EXPECT_FALSE(QFileInfo::exists(singlePath));
-    EXPECT_EQ(trashed.filter(u"Inbox/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s).size(), 1)
-        << trashed.join(u", "_s).toStdString();
+    EXPECT_EQ(trashedPaths().filter(u"Inbox/Singles/Okuma_Drift_-_Neon_Rain.mp3"_s).size(), 1)
+        << trashedPaths().join(u", "_s).toStdString();
 
     // Undo: it's back, under its old name.
     albums->undoSupersede(*id);
@@ -410,12 +429,13 @@ TEST_F(AlbumServiceTest, ManySinglesAtOnceWaitForAYes)
     const auto asked = reported.at(0).at(0).value<AlbumReport>();
     EXPECT_TRUE(asked.trashed.isEmpty());
     EXPECT_EQ(asked.held.size(), 4);
-    QTest::qWait(100);
-    EXPECT_EQ(inboxItems(InboxItem::Kind::Single).size(), 4); // nothing moved yet
-    // Meanwhile each one says what album it's on (DL-8).
+    // Nothing moves: no single is on its way to the Trash (the Inbox marks one busy as soon as it starts). Meanwhile
+    // each one says what album it's on (DL-8).
+    EXPECT_EQ(inboxItems(InboxItem::Kind::Single).size(), 4);
     const QList<InboxEntry> entries = inbox->entries();
     for (const InboxEntry &entry : entries) {
         if (entry.item.kind == InboxItem::Kind::Single) {
+            EXPECT_FALSE(entry.busy) << entry.item.relativePath.toStdString();
             EXPECT_EQ(entry.alsoOn, QStringList{u"Night Signals"_s}) << entry.item.relativePath.toStdString();
         }
     }
@@ -461,7 +481,7 @@ TEST_F(AlbumServiceTest, ASingleFiledInTheCollectionIsOnlyFlagged)
     EXPECT_TRUE(report.trashed.isEmpty());
     EXPECT_EQ(report.flagged, QStringList{u"Okuma Drift – Neon Rain"_s});
     EXPECT_TRUE(QFileInfo::exists(filed)); // never touched
-    EXPECT_TRUE(trashed.filter(u"Collection"_s).isEmpty());
+    EXPECT_TRUE(trashedPaths().filter(u"Collection"_s).isEmpty());
 
     // The pair is kept, for the Collection view (DL-8).
     const QList<selecta::core::SupersedeFlag> flags = selecta::core::SupersedeFlagStore(db).all();
