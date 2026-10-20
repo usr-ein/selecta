@@ -536,6 +536,221 @@ TEST_F(TransferServiceTest, GetTracksMovesOnToTheNextPeersCopy)
     EXPECT_EQ(line.best->peer, sharer.username());
 }
 
+namespace {
+
+// A search result with a FLAC file, or an MP3 at another bitrate.
+selecta::slsk::peer::FileSearchResponse flacResult(quint32 token, const QString &path, quint64 size)
+{
+    selecta::slsk::peer::FileSearchResponse response = result(token, path, size);
+    response.results[0].attributes.bitrate.reset();
+    response.results[0].attributes.sampleRate = 44'100;
+    response.results[0].attributes.bitDepth = 16;
+    return response;
+}
+
+selecta::slsk::peer::FileSearchResponse mp3Result(quint32 token, const QString &path, quint32 bitrate)
+{
+    selecta::slsk::peer::FileSearchResponse response = result(token, path, quint64{bitrate} * 1000 / 8 * 372);
+    response.results[0].attributes.bitrate = bitrate;
+    return response;
+}
+
+// Get tracks on top of the service under test, finding through searches the test answers.
+struct GetTracksRig
+{
+    GetTracksRig(TransferService &transfers, selecta::governor::Governor &governor,
+                 const selecta::base::ManualClock &clock, selecta::storage::Database &db,
+                 const std::function<qint64()> &now)
+        : search(governor, network, clock, {.idle = 40ms, .total = 1000ms})
+        , getTracks(db, now)
+    {
+        getTracks.setSearch(&search, [] { return QStringList(); });
+        getTracks.setTransfers(&transfers);
+        QObject::connect(&transfers, &TransferService::changed, &getTracks,
+                         &selecta::core::GetTracksService::downloadChanged);
+    }
+
+    // Adds Okuma Drift's "Neon Rain" and starts finding it.
+    void addTrack()
+    {
+        selecta::meta::Release release;
+        release.title = u"Neon Rain"_s;
+        release.artists = {u"Okuma Drift"_s};
+        release.durationMs = 372'000;
+        getTracks.addReleases({release});
+        getTracks.find();
+    }
+
+    selecta::core::GetLine line() const { return getTracks.lines().constFirst(); }
+
+    LocalSearch network;
+    selecta::core::SearchService search;
+    selecta::core::GetTracksService getTracks;
+};
+
+} // namespace
+
+TEST_F(TransferServiceTest, TryingAnotherPeerLeavesTheOldQueueAndGetsTheOtherCopy)
+{
+    auto holder = peer(u"forever_queue"_s);
+    auto sharer = peer(u"free_slot"_s);
+    holder->queueBehaviour = FakePeer::QueueBehaviour::Hold;
+    const QString holderPath = u"@@h\\Okuma Drift - Neon Rain.flac"_s;
+    const QString sharerPath = u"@@s\\Okuma Drift - Neon Rain.mp3"_s;
+    constexpr qint64 kSize = 14'880'000; // 320 kbps × 372 s
+    sharer->files.insert(selecta::slsk::RemotePath::fromText(sharerPath).raw,
+                         FakePeer::Upload{.content = content(kSize, 22)});
+
+    GetTracksRig rig(*service, governor, clock, db, [this] { return now; });
+    rig.addTrack();
+    ASSERT_TRUE(waitFor([&] { return rig.network.sent == 1; }));
+    rig.search.received(1, holder->username(), flacResult(1, holderPath, 42'000'000));
+    rig.search.received(1, sharer->username(), result(1, sharerPath, kSize));
+    ASSERT_TRUE(waitFor([&] { return rig.getTracks.findingCount() == 0; }));
+    selecta::core::GetLine line = rig.line();
+    ASSERT_EQ(line.best->peer, holder->username()); // lossless first
+    ASSERT_EQ(line.alternatives.size(), 1);
+
+    rig.getTracks.download({line.id});
+    ASSERT_TRUE(waitFor([&] { return holder->heldCount() == 1; }));
+    ASSERT_TRUE(waitFor([&] { return rig.line().downloadState == selecta::core::GetLine::DownloadState::Queued; }));
+    const qint64 queuedAtHolder = rig.line().downloadId;
+    EXPECT_FALSE(rig.line().stuck);
+    // Stuck two minutes on: the line says so.
+    now += 2 * 60'000;
+    ASSERT_TRUE(waitFor([&] { return rig.line().stuck; }));
+
+    // Try another peer: the other copy is asked for, and the queue place at the holder given back.
+    QSignalSpy completed(service.get(), &TransferService::completed);
+    rig.getTracks.switchPeer(line.id);
+    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s));
+    EXPECT_EQ(completed.at(0).at(0).value<Download>().peer, sharer->username());
+    line = rig.line();
+    EXPECT_EQ(line.best->peer, sharer->username());
+    EXPECT_TRUE(line.leftPeers.contains(holder->username()));
+    EXPECT_FALSE(line.stuck);
+    EXPECT_EQ(service->download(queuedAtHolder)->state, State::Cancelled);
+    EXPECT_EQ(governor.peerQueued(holder->username()), 0);
+
+    // There is no message to leave a queue: when the holder's turn comes, it is answered "Cancelled" and moves on.
+    ASSERT_TRUE(holder->startUpload(u"selecta_test"_s, selecta::slsk::RemotePath::fromText(holderPath)));
+    ASSERT_TRUE(waitFor([&] { return !holder->receivedOf<selecta::slsk::peer::TransferResponse>().isEmpty(); }));
+    const auto answer = holder->receivedOf<selecta::slsk::peer::TransferResponse>().constFirst();
+    EXPECT_FALSE(answer.allowed);
+    EXPECT_EQ(answer.reason, u"Cancelled"_s);
+
+    // The holder is never offered again for this line.
+    rig.getTracks.switchPeer(line.id);
+    EXPECT_EQ(rig.line().best->peer, sharer->username());
+}
+
+TEST_F(TransferServiceTest, TryingAnotherPeerAfterARestartFindsTheOtherCopiesAgain)
+{
+    auto holder = peer(u"forever_queue"_s);
+    auto sharer = peer(u"free_slot"_s);
+    holder->queueBehaviour = FakePeer::QueueBehaviour::Hold;
+    const QString holderPath = u"@@h\\Okuma Drift - Neon Rain.flac"_s;
+    const QString sharerPath = u"@@s\\Okuma Drift - Neon Rain.mp3"_s;
+    constexpr qint64 kSize = 14'880'000;
+    sharer->files.insert(selecta::slsk::RemotePath::fromText(sharerPath).raw,
+                         FakePeer::Upload{.content = content(kSize, 23)});
+
+    auto rig = std::make_unique<GetTracksRig>(*service, governor, clock, db, [this] { return now; });
+    rig->addTrack();
+    ASSERT_TRUE(waitFor([&] { return rig->network.sent == 1; }));
+    rig->search.received(1, holder->username(), flacResult(1, holderPath, 42'000'000));
+    rig->search.received(1, sharer->username(), result(1, sharerPath, kSize));
+    ASSERT_TRUE(waitFor([&] { return rig->getTracks.findingCount() == 0; }));
+    const qint64 id = rig->line().id;
+    rig->getTracks.download({id});
+    ASSERT_TRUE(waitFor([&] { return holder->heldCount() == 1; }));
+
+    // Get tracks starts again (the search service and its cache stay): the line knows no other copy.
+    selecta::core::GetTracksService restarted(db, [this] { return now; });
+    restarted.setSearch(&rig->search, [] { return QStringList(); });
+    restarted.setTransfers(service.get());
+    QObject::disconnect(service.get(), &TransferService::changed, &rig->getTracks, nullptr);
+    QObject::connect(service.get(), &TransferService::changed, &restarted,
+                     &selecta::core::GetTracksService::downloadChanged);
+    ASSERT_TRUE(restarted.lines().constFirst().alternatives.isEmpty());
+    now += 2 * 60'000;
+    ASSERT_TRUE(waitFor([&] { return restarted.lines().constFirst().stuck; }));
+
+    // Try another peer: found again (the cache answers, no search goes out), then the other copy is got.
+    QSignalSpy completed(service.get(), &TransferService::completed);
+    restarted.switchPeer(id);
+    EXPECT_TRUE(restarted.lines().constFirst().lookingForPeers);
+    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s));
+    EXPECT_EQ(completed.at(0).at(0).value<Download>().peer, sharer->username());
+    EXPECT_EQ(rig->network.sent, 1);
+    EXPECT_FALSE(restarted.lines().constFirst().lookingForPeers);
+    EXPECT_EQ(governor.peerQueued(holder->username()), 0);
+}
+
+TEST_F(TransferServiceTest, NoOtherPeerLeavesTheLineWhereItWaits)
+{
+    auto holder = peer(u"forever_queue"_s);
+    holder->queueBehaviour = FakePeer::QueueBehaviour::Hold;
+    const QString holderPath = u"@@h\\Okuma Drift - Neon Rain.flac"_s;
+    GetTracksRig rig(*service, governor, clock, db, [this] { return now; });
+    rig.addTrack();
+    ASSERT_TRUE(waitFor([&] { return rig.network.sent == 1; }));
+    rig.search.received(1, holder->username(), flacResult(1, holderPath, 42'000'000));
+    ASSERT_TRUE(waitFor([&] { return rig.getTracks.findingCount() == 0; }));
+    const qint64 id = rig.line().id;
+    rig.getTracks.download({id});
+    ASSERT_TRUE(waitFor([&] { return holder->heldCount() == 1; }));
+    const qint64 waiting = rig.line().downloadId;
+
+    rig.getTracks.switchPeer(id);
+    ASSERT_TRUE(waitFor([&] { return !rig.line().lookingForPeers; }));
+    EXPECT_EQ(rig.line().peersNote, u"No other peer has it in the quality wanted."_s);
+    EXPECT_EQ(rig.line().downloadId, waiting);
+    EXPECT_EQ(service->download(waiting)->state, State::Queued);
+    EXPECT_EQ(rig.line().best->peer, holder->username());
+}
+
+TEST_F(TransferServiceTest, GettingANearMissAnywayDownloadsItBelowTheQualityWanted)
+{
+    auto low = peer(u"low_bitrate"_s);
+    auto lower = peer(u"lower_bitrate"_s);
+    const QString lowPath = u"@@l\\Okuma Drift - Neon Rain.mp3"_s;
+    const QString lowerPath = u"@@m\\Okuma Drift - Neon Rain.mp3"_s;
+    constexpr qint64 kSize = 192 * 1000 / 8 * 372;
+    lower->files.insert(selecta::slsk::RemotePath::fromText(lowerPath).raw,
+                        FakePeer::Upload{.content = content(kSize / 2, 24)});
+
+    GetTracksRig rig(*service, governor, clock, db, [this] { return now; });
+    rig.addTrack();
+    ASSERT_TRUE(waitFor([&] { return rig.network.sent == 1; }));
+    rig.search.received(1, low->username(), mp3Result(1, lowPath, 192));
+    rig.search.received(1, lower->username(), mp3Result(1, lowerPath, 96));
+    ASSERT_TRUE(waitFor([&] { return rig.getTracks.findingCount() == 0; }));
+    selecta::core::GetLine line = rig.line();
+    ASSERT_EQ(line.findState, selecta::core::GetLine::FindState::NotFound);
+    ASSERT_EQ(line.nearMisses.size(), 2);
+    EXPECT_EQ(line.nearMisses[0].peer, low->username());
+    EXPECT_EQ(line.message, u"2 files of this track found, below the quality wanted."_s);
+
+    // The user picks the second (radio buttons): exactly that file is got, not spread elsewhere.
+    QSignalSpy completed(service.get(), &TransferService::completed);
+    rig.getTracks.getAnyway(line.id, line.nearMisses[1].peer, line.nearMisses[1].remotePath);
+    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s));
+    const auto done = completed.at(0).at(0).value<Download>();
+    EXPECT_EQ(done.peer, lower->username());
+    ASSERT_TRUE(done.file.has_value());
+    EXPECT_EQ(done.file->shortfall, u"under 320 kbps"_s); // the Inbox marks it below the quality wanted
+    line = rig.line();
+    EXPECT_EQ(line.findState, selecta::core::GetLine::FindState::Check);
+    EXPECT_TRUE(line.nearMisses.isEmpty());
+    ASSERT_EQ(line.alternatives.size(), 1); // the other near miss, should this one fail
+    EXPECT_EQ(line.alternatives[0].peer, low->username());
+
+    // A near miss the line doesn't have does nothing.
+    rig.getTracks.getAnyway(line.id, u"nobody"_s, "x.mp3");
+    EXPECT_EQ(rig.line().best->peer, lower->username());
+}
+
 TEST_F(TransferServiceTest, APreviewPlaysTheFileWhileItArrives)
 {
     auto ghost = peer(u"vinyl_ghost"_s);
