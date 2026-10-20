@@ -23,9 +23,12 @@ is a release-preset build of `main`:
 
 Each step ends at its gate; the next starts only when the gate holds.
 
-**Where it stands (2026-10-20, 18:00):** step 1 is down to UI-5's last names (selecta-a11y). Step 2 waits for the
-`ci/green` branch (selecta-ci). Step 3 started early on what is merged: QA pass 1 on the local test network found 17
-issues (`local/qa/findings.md`); 7 are fixed and merged, 2 are with selecta-a11y, the rest are minor or notes.
+**Where it stands (2026-10-20, 18:45):** everything built so far is merged and pushed; every teammate is closed. CI's
+fixes are in main. QA pass 1 on the local test network found 19 issues (`local/qa/findings.md`): 9 fixed, the rest
+minor or notes. Now the maintainer tests a **beta build** on the live network with their normal setup
+(`docs/BETA-TESTING.md`): it records an action trail, stalls and "Note a Problem…" notes, which main-impl gathers
+with `tools/dev/collect-feedback.sh` to fix what comes up. Left of step 1: VoiceOver names for the Converter and
+Settings (a partial patch is in `local/patches/`).
 
 | Step | What | Who | Gate |
 |---|---|---|---|
@@ -57,14 +60,10 @@ Each teammate is its own Claude session (`claude agents` lists them; `claude att
 own worktree under `.claude/worktrees/`. They report to `main-impl`, which merges into `main` locally and pushes (D37).
 Briefs: `local/briefs/` (git-ignored).
 
-| Session | Branch | Task | Effort |
-|---|---|---|---|
-| selecta-ci | `worktree-agent-a70a72901e0097c60` (pushed as `ci/green`) | CI green on GitHub (step 2): macOS build, tests, lint, ASan; Linux; TSan reporting | max |
-| selecta-a11y | `feat/a11y-4` | The Converter's and Settings' names (UI-5), the last step-1 item | high |
-
-Merged and closed today: selecta-previews (CACHE-1, PREV-5), selecta-notify (UI-6, NET-7), selecta-logo (D36),
+No teammate is running. Merged and closed today: selecta-previews (CACHE-1, PREV-5), selecta-notify (UI-6, NET-7), selecta-logo (D36),
 selecta-fixes (live-test findings), selecta-media (PREV-9, LIB-6), selecta-upnp (NET-3), selecta-gaps (quarantine,
-Spotify notice, CONV-1, Open Again).
+Spotify notice, CONV-1, Open Again), selecta-ci (CI green), selecta-a11y (UI-5 except the Converter's and Settings'
+names).
 The library agents of the first night (slsk, meta, match, collection, share) are merged; their worktrees are removed and
 their branches are on origin.
 
