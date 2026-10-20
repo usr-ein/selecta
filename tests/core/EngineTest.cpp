@@ -165,3 +165,46 @@ TEST_F(EngineTest, HostStopsCleanlyBeforeTheEngineStarted)
     EngineHost host(options());
     host.start();
 }
+
+TEST_F(EngineTest, PreviewsFallBackFromYouTubeToTheClipToThePeer)
+{
+    EngineOptions opts = options();
+    opts.previewDir = dir.filePath(u"previews"_s);
+    Engine engine(opts);
+    ASSERT_TRUE(engine.start()) << engine.error().toStdString();
+    engine.addTracks(u"Okuma Drift - Neon Rain"_s);
+    const QList<selecta::core::GetLine> lines = engine.getTracks().lines();
+    ASSERT_EQ(lines.size(), 1);
+    const qint64 lineId = lines.constFirst().id;
+
+    // Isolated: no yt-dlp, no Deezer, and this line has no file on Soulseek. Each source says why, the last one wins.
+    QSignalSpy refused(&engine, &Engine::previewRefused);
+    QSignalSpy changes(&engine, &Engine::previewChanged);
+    engine.previewLine(lineId, selecta::core::PreviewSource::Automatic);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !refused.isEmpty(); }, 5000));
+    EXPECT_EQ(refused.at(0).at(0).toString(), selecta::core::previewKeyForLine(lineId));
+    EXPECT_FALSE(refused.at(0).at(1).toString().isEmpty());
+    bool triedYouTube = false;
+    bool triedClip = false;
+    for (const QList<QVariant> &change : std::as_const(changes)) {
+        const auto preview = change.at(0).value<selecta::core::Preview>();
+        triedYouTube = triedYouTube || preview.peer == u"YouTube"_s;
+        triedClip = triedClip || preview.peer == u"Deezer"_s;
+    }
+    EXPECT_TRUE(triedYouTube);
+    EXPECT_TRUE(triedClip);
+
+    // Asking for one source only tries that one.
+    refused.clear();
+    changes.clear();
+    engine.previewLine(lineId, selecta::core::PreviewSource::Peer);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !refused.isEmpty(); }, 5000));
+    EXPECT_TRUE(changes.isEmpty());
+
+    // A preview stopped meanwhile doesn't come back through a late fallback.
+    refused.clear();
+    engine.previewLine(lineId, selecta::core::PreviewSource::Automatic);
+    engine.stopPreview();
+    QTest::qWait(300);
+    EXPECT_TRUE(refused.isEmpty());
+}

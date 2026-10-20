@@ -66,6 +66,8 @@ public:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 Q_SIGNALS:
+    // The current row moved (↑, ↓, a click): previews may follow it.
+    void selectionMoved();
     void summaryChanged();
     void previewRequested();
 

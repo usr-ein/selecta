@@ -67,8 +67,12 @@ public:
     void downloadTracks(const QList<qint64> &ids = {});
     void cancelTrackDownloads(const QList<qint64> &ids);
     // Previews a line's chosen file while it arrives (previewStarted / previewRefused); stops the one playing.
-    void previewTrack(qint64 lineId);
+    void previewTrack(qint64 lineId, PreviewSource source = PreviewSource::Automatic);
     void stopPreview();
+
+    // --- previews (PREV-11, PREV-12) ---
+    void setYtDlpPath(const QString &path);
+    void checkYtDlp();
 
     // --- the Inbox inspector (DL-4, META-2, META-4) ---
     void editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared);
@@ -85,7 +89,7 @@ public:
     void refreshSearch(qint64 searchId);
     void widenSearch(qint64 searchId);
     void downloadResults(qint64 searchId, const QList<int> &indexes);
-    void previewResult(qint64 searchId, int index);
+    void previewResult(qint64 searchId, int index, PreviewSource source = PreviewSource::Automatic);
     // Open searches and their results, as last reported.
     QList<ManualSearch> searches() const { return m_searches; }
     std::optional<ManualSearch> search(qint64 searchId) const;
@@ -136,6 +140,7 @@ Q_SIGNALS:
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
+    void ytDlpChecked(bool ok, const QString &description);
     void searchOpened(quint64 request, qint64 searchId);
     void manualSearchChanged(const selecta::core::ManualSearch &search);
     void manualSearchClosed(qint64 searchId);

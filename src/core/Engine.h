@@ -3,6 +3,7 @@
 
 #include "core/ActivityLog.h"
 #include "core/ArrivalService.h"
+#include "core/ClipPreviews.h"
 #include "core/CollectionService.h"
 #include "core/GetTracksService.h"
 #include "core/InboxService.h"
@@ -56,6 +57,15 @@ struct EngineOptions
     QString previewDir;          // previews, emptied at start
     bool watchCollection = true; // follow changes in the collection folders (tests turn it off)
     std::optional<int> session;  // this run's session number, recorded with downloads
+    QString ytDlpPath;           // Settings → Previews; empty: the usual places
+};
+
+// Where a preview's audio comes from (PRD PREV-12, D26).
+enum class PreviewSource : quint8 {
+    Automatic, // the user's yt-dlp, else Deezer's 30-second clip, else the peer's file
+    YouTube,
+    Clip,
+    Peer, // the very file a Get would download
 };
 
 // What a preview belongs to, as previewStarted() and previewRefused() name it: a Get tracks line or a search result.
@@ -98,16 +108,22 @@ public:
     // (BATCH-1, META-3). tracksAdded() reports each part as it completes.
     void addTracks(const QString &text);
 
-    // Previews a Get tracks line's chosen file (PREV-1): previewStarted() hands over the source to play while the
-    // file arrives, or previewRefused() says why it can't. The preview playing before stops.
-    void previewLine(qint64 lineId);
-    // Previews a search result's file from its peer, likewise.
-    void previewResult(qint64 searchId, int index);
+    // Previews a Get tracks line (PREV-1, PREV-12): previewStarted() hands over the source to play while the audio
+    // arrives, or previewRefused() says why nothing can play. Automatic tries the user's yt-dlp, then Deezer's clip,
+    // then the peer's file. The preview playing before stops.
+    void previewLine(qint64 lineId, PreviewSource source = PreviewSource::Automatic);
+    // Previews a search result likewise: its release (or the track its name says), or its very file from the peer.
+    void previewResult(qint64 searchId, int index, PreviewSource source = PreviewSource::Automatic);
     void stopPreview();
 
     // Searches typed by hand (SRCH-1): opens one, or finds the open search for the same text; searchOpened() answers
     // `request` with its id.
     void openSearch(quint64 request, const QString &text);
+
+    // Settings → Previews: the yt-dlp to run (empty: the usual places), and a check of what will run, reported by
+    // ytDlpChecked().
+    void setYtDlpPath(const QString &path);
+    void checkYtDlp();
 
     // The Inbox inspector (DL-4, META-2, META-4). Edits write the user's tags over a single's own; another release
     // re-tags it from that release (label and genre from MusicBrainz, its cover), as an arrival would.
@@ -167,10 +183,24 @@ Q_SIGNALS:
     void searchResultsAdded(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsReset(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsChanged(qint64 searchId, const QList<selecta::core::SearchResult> &results);
+    // What checkYtDlp() found: whether previews can come from YouTube, and in words what or why.
+    void ytDlpChecked(bool ok, const QString &description);
     // Release candidates for an Inbox item (findInboxReleases()), or why there are none.
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
 
 private:
+    // What a preview can play from: the release (YouTube, the clip) and the peer's file.
+    struct PreviewPlan
+    {
+        QString key;
+        std::optional<meta::Release> release;
+        std::optional<DownloadSpec> peer;
+        QString title;
+        QString artist;
+    };
+    void startPreview(PreviewPlan plan, PreviewSource source);
+    void tryPreview(const std::shared_ptr<const PreviewPlan> &plan, const QList<PreviewSource> &attempts,
+                    qsizetype next, quint64 generation, QString lastError);
     bool fail(const QString &error);
     void pruneActivity();
     // Reports the search budget now and again whenever it refills, until it's full.
@@ -197,7 +227,9 @@ private:
     std::unique_ptr<ArrivalService> m_arrival;
     std::unique_ptr<CollectionService> m_collection;
     std::unique_ptr<YouTubePreviews> m_youtube;
-    qint64 m_previewId = 0; // the preview playing
+    std::unique_ptr<ClipPreviews> m_clips;
+    qint64 m_previewId = 0;          // the preview playing
+    quint64 m_previewGeneration = 0; // bumps when a preview is stopped or replaced
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     QTimer *m_annotateTimer = nullptr; // coalesces transfer changes before search results are annotated again

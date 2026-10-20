@@ -2,6 +2,7 @@
 #pragma once
 
 #include "app/Appearance.h"
+#include "core/Engine.h"
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
@@ -51,6 +52,9 @@ public:
     void setSpotifyStatus(const core::SpotifyStatus &status);
     // Shows the connection to the Soulseek server.
     void setNetworkStatus(const core::NetworkStatus &status);
+    // Previews (PREV-11, PREV-12): where Space previews from, the yt-dlp to run, and what a check of it found.
+    void setPreviewSettings(core::PreviewSource source, const QString &ytDlpPath);
+    void setYtDlpStatus(bool ok, const QString &description);
     core::NetworkConfig networkConfig() const { return m_network; }
 
 Q_SIGNALS:
@@ -64,12 +68,17 @@ Q_SIGNALS:
     void networkPasswordSubmitted(const QString &password);
     void connectRequested();
     void disconnectRequested();
+    void previewSourceChanged(selecta::core::PreviewSource source);
+    // An empty path: look in the usual places. The view asks for a check right after.
+    void ytDlpPathChanged(const QString &path);
+    void ytDlpCheckRequested();
 
 private:
     QWidget *createLibraryBox(QWidget *parent);
     QWidget *createFilingBox(QWidget *parent);
     QWidget *createSpotifyBox(QWidget *parent);
     QWidget *createNetworkBox(QWidget *parent);
+    QWidget *createPreviewBox(QWidget *parent);
     void submitNetwork();
     void submitSpotify();
     void showLibrary();
@@ -110,6 +119,9 @@ private:
     QCheckBox *m_connectAtLaunch = nullptr;
     QPushButton *m_networkSave = nullptr;
     QPushButton *m_networkConnect = nullptr;
+    QComboBox *m_previewSource = nullptr;
+    QLineEdit *m_ytDlpPath = nullptr;
+    QLabel *m_ytDlpState = nullptr;
 };
 
 } // namespace selecta::app

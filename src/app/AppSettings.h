@@ -2,6 +2,7 @@
 #pragma once
 
 #include "app/Appearance.h"
+#include "core/Engine.h"
 #include "core/FileRanking.h"
 #include "core/InboxService.h"
 #include "core/NetworkService.h"
@@ -43,6 +44,15 @@ public:
     // The player bar's volume, 0…1.
     double previewVolume() const;
     void setPreviewVolume(double volume);
+    // Where Space previews from (PREV-12, D26); ⇧Space always asks the peer for its file.
+    core::PreviewSource previewSource() const;
+    void setPreviewSource(core::PreviewSource source);
+    // Previews follow the selection as it moves with ↑ and ↓ (PREV-4).
+    bool previewFollowsSelection() const;
+    void setPreviewFollowsSelection(bool follows);
+    // Settings → Previews: the yt-dlp to run; empty: look in the usual places.
+    QString ytDlpPath() const;
+    void setYtDlpPath(const QString &path);
 
     // Settings → Library and Filing (PRD LIB-1, DL-5, DL-13). Missing or invalid values read as the defaults.
     core::LibraryConfig libraryConfig() const;

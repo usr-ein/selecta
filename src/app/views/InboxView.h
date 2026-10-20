@@ -54,6 +54,8 @@ public Q_SLOTS:
     void revealSelected();
 
 Q_SIGNALS:
+    // The current row moved (↑, ↓, a click): previews may follow it.
+    void selectionMoved();
     void summaryChanged();
     void previewRequested(); // a double-click on an item
 

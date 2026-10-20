@@ -115,9 +115,9 @@ TEST_F(YouTubePreviewsTest, FindsTheTrackAndPlaysItWhileItArrives)
     YouTubePreviews previews(runner, dir.filePath(u"previews"_s));
     QSignalSpy started(&previews, &YouTubePreviews::started);
     QSignalSpy changes(&previews, &YouTubePreviews::changed);
-    const qint64 id = previews.start(7, glassHarbour());
+    const qint64 id = previews.start(u"line:7"_s, glassHarbour());
     ASSERT_TRUE(eventually([&] { return !started.isEmpty(); }));
-    EXPECT_EQ(started.at(0).at(0).toLongLong(), 7);
+    EXPECT_EQ(started.at(0).at(0).toString(), u"line:7"_s);
     EXPECT_EQ(started.at(0).at(1).toLongLong(), id);
     const auto source = started.at(0).at(2).value<std::shared_ptr<selecta::audio::ByteSource>>();
     ASSERT_TRUE(source);
@@ -136,11 +136,13 @@ TEST_F(YouTubePreviewsTest, SaysWhyWhenItCantBeHeard)
     selecta::meta::YtDlpRunner runner(config, pacer, clock);
     YouTubePreviews previews(runner, dir.filePath(u"previews"_s));
     QSignalSpy changes(&previews, &YouTubePreviews::changed);
-    previews.start(7, glassHarbour());
+    QString unavailable;
+    previews.start(u"line:7"_s, glassHarbour(), [&unavailable](const QString &why) { unavailable = why; });
     ASSERT_TRUE(eventually([&] {
         return !changes.isEmpty() && changes.constLast().at(0).value<Preview>().state == Preview::State::Failed;
     }));
     EXPECT_FALSE(changes.constLast().at(0).value<Preview>().message.isEmpty());
+    EXPECT_EQ(unavailable, changes.constLast().at(0).value<Preview>().message); // the caller can try elsewhere
 }
 
 TEST_F(YouTubePreviewsTest, WithoutALengthNoVideoIsGuessed)
@@ -150,7 +152,7 @@ TEST_F(YouTubePreviewsTest, WithoutALengthNoVideoIsGuessed)
     QSignalSpy changes(&previews, &YouTubePreviews::changed);
     selecta::meta::Release release = glassHarbour();
     release.durationMs.reset();
-    previews.start(7, release);
+    previews.start(u"line:7"_s, release);
     ASSERT_TRUE(eventually([&] {
         return !changes.isEmpty() && changes.constLast().at(0).value<Preview>().state == Preview::State::Failed;
     }));
@@ -162,7 +164,7 @@ TEST_F(YouTubePreviewsTest, IsolatedRunsNeverRunYtDlp)
     selecta::meta::YtDlpRunner runner(selecta::meta::YtDlpRunner::Config::disabled(), pacer, clock);
     YouTubePreviews previews(runner, dir.filePath(u"previews"_s));
     QSignalSpy changes(&previews, &YouTubePreviews::changed);
-    previews.start(7, glassHarbour());
+    previews.start(u"line:7"_s, glassHarbour());
     ASSERT_TRUE(eventually([&] {
         return !changes.isEmpty() && changes.constLast().at(0).value<Preview>().state == Preview::State::Failed;
     }));
@@ -175,7 +177,7 @@ TEST_F(YouTubePreviewsTest, StoppingCancelsTheFetch)
     selecta::meta::YtDlpRunner runner(config, pacer, clock);
     YouTubePreviews previews(runner, dir.filePath(u"previews"_s));
     QSignalSpy changes(&previews, &YouTubePreviews::changed);
-    previews.start(7, glassHarbour());
+    previews.start(u"line:7"_s, glassHarbour());
     ASSERT_TRUE(eventually([&] {
         return !changes.isEmpty() && changes.constLast().at(0).value<Preview>().message.contains(u"Fetching"_s);
     }));

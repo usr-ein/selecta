@@ -2,6 +2,7 @@
 #pragma once
 
 #include "core/GovernorPacer.h"
+#include "meta/ClipSource.h"
 #include "meta/CoverFetcher.h"
 #include "meta/DeezerClient.h"
 #include "meta/MetaCache.h"
@@ -132,6 +133,8 @@ public:
     meta::CoverFetcher *covers() { return m_covers.get(); }
     // Previews through the user's own yt-dlp (never finds or runs it in isolated runs).
     meta::YtDlpRunner &ytDlp() { return *m_ytDlp; }
+    // Official 30-second clips (META-5), from Deezer.
+    meta::ClipSource &clips() { return *m_clips; }
     meta::MetaCache &cache() { return m_cache; }
     QNetworkAccessManager &network() { return *m_network; }
     meta::RequestPacer &pacer() { return m_pacer; }
@@ -153,6 +156,7 @@ private:
     std::unique_ptr<meta::SpotifyClient> m_spotifyClient;
     std::unique_ptr<meta::DeezerClient> m_deezer;
     std::unique_ptr<meta::ReleaseResolver> m_resolver;
+    std::unique_ptr<meta::ClipSource> m_clips;
     std::unique_ptr<meta::MusicBrainzClient> m_musicBrainz;
     std::unique_ptr<meta::CoverFetcher> m_covers;
     std::unique_ptr<meta::YtDlpRunner> m_ytDlp;

@@ -222,12 +222,11 @@ bool Engine::start()
     connect(m_transfers.get(), &TransferService::previewChanged, this, &Engine::previewChanged);
     m_youtube = std::make_unique<YouTubePreviews>(
         m_meta->ytDlp(), m_options.previewDir.isEmpty() ? QString() : m_options.previewDir + u"/YouTube"_s);
-    connect(m_youtube.get(), &YouTubePreviews::started, this,
-            [this](qint64 lineId, qint64 previewId, const std::shared_ptr<audio::ByteSource> &source,
-                   const QString &identity, const QString &title, const QString &artist, const QString &label) {
-                Q_EMIT previewStarted(previewKeyForLine(lineId), previewId, source, identity, title, artist, label);
-            });
+    connect(m_youtube.get(), &YouTubePreviews::started, this, &Engine::previewStarted);
     connect(m_youtube.get(), &YouTubePreviews::changed, this, &Engine::previewChanged);
+    m_clips = std::make_unique<ClipPreviews>(m_meta->clips(), m_meta->network());
+    connect(m_clips.get(), &ClipPreviews::started, this, &Engine::previewStarted);
+    connect(m_clips.get(), &ClipPreviews::changed, this, &Engine::previewChanged);
 
     pruneActivity();
     m_pruneTimer = new QTimer(this);
@@ -246,6 +245,9 @@ bool Engine::start()
     m_inbox->reconcile(); // publishes the Inbox, which the collection index takes in
     setLibraryConfig(m_options.library);
     m_meta->restore();
+    if (!m_options.ytDlpPath.isEmpty()) {
+        m_meta->ytDlp().setExecutable(m_options.ytDlpPath);
+    }
     m_network->start(m_options.network);
     m_transfers->load();
     m_getTracks->downloadsRestored(m_transfers->unfinished());
@@ -277,6 +279,7 @@ void Engine::stop()
     m_network.reset(); // before the token store it reads from (owned by m_meta), and after shutdown()
     m_transfers.reset();
     m_youtube.reset(); // uses m_meta's yt-dlp runner
+    m_clips.reset();   // and its clip source
     m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();
@@ -306,7 +309,23 @@ void Engine::setLibraryConfig(const LibraryConfig &config)
     m_collection->setRoots(config.collectionRoots, excluded);
 }
 
-void Engine::previewLine(qint64 lineId)
+namespace {
+
+// "FLAC 16/44.1 from vinyl_ghost": what a peer preview plays.
+QString peerPreviewLabel(const FileChoice &file)
+{
+    QString quality = file.extension.toUpper();
+    if (file.bitDepth && file.sampleRate) {
+        quality += u" %1/%2"_s.arg(*file.bitDepth).arg(*file.sampleRate / 1000.0, 0, 'g', 3);
+    } else if (file.bitrate) {
+        quality += u' ' + QString::number(*file.bitrate);
+    }
+    return Engine::tr("%1 from %2").arg(quality, file.peer);
+}
+
+} // namespace
+
+void Engine::previewLine(qint64 lineId, PreviewSource source)
 {
     if (!m_started) {
         return;
@@ -321,106 +340,177 @@ void Engine::previewLine(qint64 lineId)
     if (!line) {
         return;
     }
-    if (!line->best) {
-        // No file on Soulseek yet: hear it from YouTube, through the user's own yt-dlp (ADR-011).
-        stopPreview();
-        meta::Release release;
-        if (line->release) {
-            release = *line->release;
-        } else {
-            release.title = line->title;
-            release.artists = line->artist.isEmpty() ? QStringList() : QStringList{line->artist};
-            release.durationMs = line->durationHintMs;
-        }
-        if (release.title.isEmpty()) {
-            Q_EMIT previewRefused(previewKeyForLine(lineId), tr("There's nothing to look for in this line."));
-            return;
-        }
-        m_previewId = m_youtube->start(lineId, release);
-        return;
+    PreviewPlan plan;
+    plan.key = previewKeyForLine(lineId);
+    meta::Release release;
+    if (line->release) {
+        release = *line->release;
+    } else {
+        release.title = line->title;
+        release.artists = line->artist.isEmpty() ? QStringList() : QStringList{line->artist};
+        release.durationMs = line->durationHintMs;
     }
-    m_youtube->stop();
-    const FileChoice &file = *line->best;
-    DownloadSpec spec;
-    spec.peer = file.peer;
-    spec.remotePath = file.remotePath;
-    spec.size = file.size;
-    spec.file = file;
-    spec.release = line->release;
-    spec.getLine = lineId;
-    QString why;
-    const std::optional<TransferService::PreviewStart> started = m_transfers->startPreview(spec, &why);
-    if (!started) {
-        Q_EMIT previewRefused(previewKeyForLine(lineId), why);
-        return;
+    if (!release.title.isEmpty()) {
+        plan.release = release;
     }
-    m_previewId = started->id;
-    const QString identity =
-        u"peer|%1|%2|%3"_s.arg(file.peer, QString::fromLatin1(file.remotePath.toBase64())).arg(file.size);
-    const QString title = line->release ? line->release->title : line->title;
-    const QString artist = line->release ? line->release->artist() : line->artist;
-    QString quality = file.extension.toUpper();
-    if (file.bitDepth && file.sampleRate) {
-        quality += u" %1/%2"_s.arg(*file.bitDepth).arg(*file.sampleRate / 1000.0, 0, 'g', 3);
-    } else if (file.bitrate) {
-        quality += u' ' + QString::number(*file.bitrate);
+    if (line->best) {
+        DownloadSpec spec;
+        spec.peer = line->best->peer;
+        spec.remotePath = line->best->remotePath;
+        spec.size = line->best->size;
+        spec.file = line->best;
+        spec.release = line->release;
+        spec.getLine = lineId;
+        plan.peer = spec;
     }
-    Q_EMIT previewStarted(previewKeyForLine(lineId), started->id, started->source, identity, title, artist,
-                          tr("%1 from %2").arg(quality, file.peer));
+    plan.title = line->release ? line->release->title : line->title;
+    plan.artist = line->release ? line->release->artist() : line->artist;
+    startPreview(std::move(plan), source);
 }
 
-void Engine::previewResult(qint64 searchId, int index)
+void Engine::previewResult(qint64 searchId, int index, PreviewSource source)
 {
     if (!m_started) {
         return;
     }
-    const QString key = previewKeyForResult(searchId, index);
     const std::optional<SearchResult> result = m_manualSearch->result(searchId, index);
     if (!result || !result->isAudio()) {
-        Q_EMIT previewRefused(key, tr("Only audio files can be previewed."));
+        Q_EMIT previewRefused(previewKeyForResult(searchId, index), tr("Only audio files can be previewed."));
         return;
     }
-    m_youtube->stop();
     const std::optional<ManualSearch> search = m_manualSearch->search(searchId);
-    const meta::Release *release = search ? search->chosenRelease() : nullptr;
+    const meta::Release *chosen = search ? search->chosenRelease() : nullptr;
+    PreviewPlan plan;
+    plan.key = previewKeyForResult(searchId, index);
     DownloadSpec spec;
     spec.peer = result->hit.peer;
     spec.remotePath = result->hit.path;
     spec.size = static_cast<qint64>(result->hit.size);
     spec.file = fileChoiceOf(*result);
-    if (release && result->fitsRelease()) {
-        spec.release = *release;
+    if (chosen && result->fitsRelease()) {
+        spec.release = *chosen;
+        plan.release = *chosen;
+    } else if (!result->parsed.title.value.isEmpty()) {
+        // The file's own track, as its name says.
+        meta::Release own;
+        own.title = result->parsed.title.value;
+        if (!result->parsed.artist.value.isEmpty()) {
+            own.artists = {result->parsed.artist.value};
+        }
+        if (result->durationSec() > 0) {
+            own.durationMs = qint64{result->durationSec()} * 1000;
+        }
+        plan.release = own;
     }
-    QString why;
-    const std::optional<TransferService::PreviewStart> started = m_transfers->startPreview(spec, &why);
-    if (!started) {
-        Q_EMIT previewRefused(key, why);
-        return;
+    plan.peer = spec;
+    plan.title = plan.release ? plan.release->title : result->name;
+    plan.artist = plan.release ? plan.release->artist() : QString();
+    startPreview(std::move(plan), source);
+}
+
+void Engine::startPreview(PreviewPlan plan, PreviewSource source)
+{
+    stopPreview();
+    // D26: Space hears the track from the user's yt-dlp, else Deezer's clip; the peer's file is the last resort and
+    // what ⇧Space asks for.
+    QList<PreviewSource> attempts;
+    switch (source) {
+    case PreviewSource::Automatic:
+        attempts = {PreviewSource::YouTube, PreviewSource::Clip, PreviewSource::Peer};
+        break;
+    default:
+        attempts = {source};
+        break;
     }
-    m_previewId = started->id;
-    const QString identity =
-        u"peer|%1|%2|%3"_s.arg(spec.peer, QString::fromLatin1(spec.remotePath.toBase64())).arg(spec.size);
-    QString title = result->parsed.title.value.isEmpty() ? result->name : result->parsed.title.value;
-    QString artist = result->parsed.artist.value;
-    if (spec.release) {
-        title = spec.release->title;
-        artist = spec.release->artist();
+    tryPreview(std::make_shared<const PreviewPlan>(std::move(plan)), attempts, 0, m_previewGeneration, {});
+}
+
+void Engine::tryPreview(const std::shared_ptr<const PreviewPlan> &plan, const QList<PreviewSource> &attempts,
+                        qsizetype next, quint64 generation, QString lastError)
+{
+    if (!m_started || generation != m_previewGeneration) {
+        return; // another preview was asked for meanwhile
     }
-    QString quality = result->hit.extension.toUpper();
-    const match::AudioQuality &declared = result->quality.quality;
-    if (declared.bitDepth > 0 && declared.sampleRateHz > 0) {
-        quality += u" %1/%2"_s.arg(declared.bitDepth).arg(declared.sampleRateHz / 1000.0, 0, 'g', 3);
-    } else if (declared.bitrateKbps > 0) {
-        quality += u' ' + QString::number(declared.bitrateKbps);
+    const auto fallBack = [this, plan, attempts, generation](qsizetype after) {
+        return [this, plan, attempts, generation, after](const QString &why) {
+            tryPreview(plan, attempts, after + 1, generation, why);
+        };
+    };
+    for (; next < attempts.size(); ++next) {
+        switch (attempts.at(next)) {
+        case PreviewSource::YouTube:
+            if (plan->release) {
+                m_previewId = m_youtube->start(plan->key, *plan->release, fallBack(next));
+                return;
+            }
+            break;
+        case PreviewSource::Clip:
+            if (plan->release) {
+                m_previewId = m_clips->start(plan->key, *plan->release, fallBack(next));
+                return;
+            }
+            break;
+        case PreviewSource::Peer: {
+            if (!plan->peer) {
+                lastError = tr("No file on Soulseek to preview yet.");
+                break;
+            }
+            QString why;
+            const std::optional<TransferService::PreviewStart> started = m_transfers->startPreview(*plan->peer, &why);
+            if (!started) {
+                lastError = why;
+                break;
+            }
+            m_previewId = started->id;
+            const DownloadSpec &spec = *plan->peer;
+            const QString identity =
+                u"peer|%1|%2|%3"_s.arg(spec.peer, QString::fromLatin1(spec.remotePath.toBase64())).arg(spec.size);
+            Q_EMIT previewStarted(plan->key, started->id, started->source, identity, plan->title, plan->artist,
+                                  spec.file ? peerPreviewLabel(*spec.file) : tr("From %1").arg(spec.peer));
+            return;
+        }
+        case PreviewSource::Automatic:
+            break;
+        }
     }
-    Q_EMIT previewStarted(key, started->id, started->source, identity, title, artist,
-                          tr("%1 from %2").arg(quality, spec.peer));
+    Q_EMIT previewRefused(plan->key, lastError.isEmpty() ? tr("There's nothing to preview this from.") : lastError);
 }
 
 void Engine::openSearch(quint64 request, const QString &text)
 {
     const qint64 id = m_started ? m_manualSearch->open(text) : 0;
     Q_EMIT searchOpened(request, id);
+}
+
+void Engine::setYtDlpPath(const QString &path)
+{
+    if (m_started) {
+        m_meta->ytDlp().setExecutable(path);
+    }
+}
+
+void Engine::checkYtDlp()
+{
+    if (!m_started) {
+        return;
+    }
+    m_meta->ytDlp().probe().then(this, [this](const meta::Result<meta::YtDlpInstall> &result) {
+        if (!m_started) {
+            return;
+        }
+        if (!result.ok()) {
+            Q_EMIT ytDlpChecked(false, result.error().message);
+            return;
+        }
+        const meta::YtDlpInstall &install = result.value();
+        QString text = tr("yt-dlp %1 at %2").arg(install.version, install.path);
+        if (install.denoPath.isEmpty()) {
+            text += u". "_s + tr("Deno isn't installed, and YouTube needs it: brew install deno");
+        } else if (install.stale) {
+            text += u". "_s + tr("It's getting old: brew upgrade yt-dlp");
+        }
+        Q_EMIT ytDlpChecked(true, text);
+    });
 }
 
 void Engine::editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared)
@@ -523,9 +613,11 @@ void Engine::annotate(QList<SearchResult> &results)
 
 void Engine::stopPreview()
 {
+    ++m_previewGeneration; // a fallback still on its way doesn't start anything
     if (m_started && m_previewId != 0) {
         m_transfers->stopPreview(m_previewId);
         m_youtube->stop();
+        m_clips->stop();
         m_previewId = 0;
     }
 }

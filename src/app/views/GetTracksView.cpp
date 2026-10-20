@@ -123,6 +123,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
             [this](qint64 id, bool ticked) { m_engine.tickTracks({id}, ticked); });
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &GetTracksView::showSelection);
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &GetTracksView::showSelection);
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &GetTracksView::selectionMoved);
     connect(m_table, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
         const QList<qint64> ids = selectedIds();
         if (ids.isEmpty()) {
@@ -341,6 +342,14 @@ bool GetTracksView::eventFilter(QObject *watched, QEvent *event)
         if (key && (key->key() == Qt::Key_Backspace || key->key() == Qt::Key_Delete) &&
             key->modifiers() == Qt::NoModifier) {
             removeSelected();
+            return true;
+        }
+        if (key && (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
+            key->modifiers() == Qt::NoModifier) {
+            // PREV-4: Return gets the selection (lines with nothing found are left alone by the engine).
+            if (const QList<qint64> ids = selectedIds(); !ids.isEmpty()) {
+                m_engine.downloadTracks(ids);
+            }
             return true;
         }
     }

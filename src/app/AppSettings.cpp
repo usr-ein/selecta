@@ -19,6 +19,9 @@ const QString kInspector = u"window/inspectorShown"_s;
 const QString kLastView = u"window/lastView"_s;
 const QString kNetworkPaused = u"network/paused"_s;
 const QString kPreviewVolume = u"player/volume"_s;
+const QString kPreviewSource = u"player/source"_s;
+const QString kPreviewFollows = u"player/followSelection"_s;
+const QString kYtDlpPath = u"player/ytDlp"_s;
 const QString kInboxDir = u"library/inbox"_s;
 const QString kCollectionRoots = u"library/collections"_s;
 const QString kSinglesFolder = u"library/singlesFolder"_s;
@@ -156,6 +159,63 @@ double AppSettings::previewVolume() const
 void AppSettings::setPreviewVolume(double volume)
 {
     m_settings.setValue(kPreviewVolume, std::clamp(volume, 0.0, 1.0));
+}
+
+core::PreviewSource AppSettings::previewSource() const
+{
+    const QString source = m_settings.value(kPreviewSource).toString();
+    if (source == u"youtube"_s) {
+        return core::PreviewSource::YouTube;
+    }
+    if (source == u"clip"_s) {
+        return core::PreviewSource::Clip;
+    }
+    if (source == u"peer"_s) {
+        return core::PreviewSource::Peer;
+    }
+    return core::PreviewSource::Automatic;
+}
+
+void AppSettings::setPreviewSource(core::PreviewSource source)
+{
+    switch (source) {
+    case core::PreviewSource::YouTube:
+        m_settings.setValue(kPreviewSource, u"youtube"_s);
+        return;
+    case core::PreviewSource::Clip:
+        m_settings.setValue(kPreviewSource, u"clip"_s);
+        return;
+    case core::PreviewSource::Peer:
+        m_settings.setValue(kPreviewSource, u"peer"_s);
+        return;
+    case core::PreviewSource::Automatic:
+        break;
+    }
+    m_settings.remove(kPreviewSource);
+}
+
+bool AppSettings::previewFollowsSelection() const
+{
+    return m_settings.value(kPreviewFollows, false).toBool();
+}
+
+void AppSettings::setPreviewFollowsSelection(bool follows)
+{
+    m_settings.setValue(kPreviewFollows, follows);
+}
+
+QString AppSettings::ytDlpPath() const
+{
+    return m_settings.value(kYtDlpPath).toString().trimmed();
+}
+
+void AppSettings::setYtDlpPath(const QString &path)
+{
+    if (path.trimmed().isEmpty()) {
+        m_settings.remove(kYtDlpPath);
+    } else {
+        m_settings.setValue(kYtDlpPath, path.trimmed());
+    }
 }
 
 core::LibraryConfig AppSettings::libraryConfig() const

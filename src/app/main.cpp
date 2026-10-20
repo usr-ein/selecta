@@ -203,6 +203,7 @@ int runSelecta(int argc, char **argv)
     engineOptions.incomingDir = dataDir + u"/Downloads/Incoming"_s;
     engineOptions.stagingDir = dataDir + u"/Downloads/Converting"_s;
     engineOptions.previewDir = paths::cacheDir() + u"/Previews"_s; // a session's previews only
+    engineOptions.ytDlpPath = settings.ytDlpPath();
     if (session > 0) {
         engineOptions.session = session;
     }

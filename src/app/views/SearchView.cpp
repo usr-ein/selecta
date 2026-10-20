@@ -210,6 +210,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
     });
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &SearchView::refreshInspector);
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &SearchView::refreshInspector);
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &SearchView::selectionMoved);
     connect(m_table, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
         const QList<int> selected = selectedResults();
         if (selected.isEmpty()) {

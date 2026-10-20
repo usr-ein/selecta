@@ -39,6 +39,7 @@
 #include <QSignalBlocker>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -195,7 +196,9 @@ void MainWindow::createViews()
             refreshTitle();
         }
     });
-    connect(m_searchView, &SearchView::previewRequested, this, [this] { previewSearchResult(false); });
+    connect(m_searchView, &SearchView::previewRequested, this,
+            [this] { previewSearchResult(false, m_services.settings.previewSource()); });
+    connect(m_searchView, &SearchView::selectionMoved, this, &MainWindow::selectionMoved);
     connect(&m_services.engine, &core::EngineHost::searchOpened, this, [this](quint64 request, qint64 searchId) {
         if (request == m_searchRequest && searchId > 0) {
             if (const std::optional<core::ManualSearch> search = m_services.engine.search(searchId)) {
@@ -233,7 +236,10 @@ void MainWindow::createViews()
         }
     });
     connect(m_inboxView, &InboxView::previewRequested, this, [this] { previewInboxSelection(false); });
-    connect(m_getTracksView, &GetTracksView::previewRequested, this, [this] { previewGetTracksLine(false); });
+    connect(m_getTracksView, &GetTracksView::previewRequested, this,
+            [this] { previewGetTracksLine(false, m_services.settings.previewSource()); });
+    connect(m_getTracksView, &GetTracksView::selectionMoved, this, &MainWindow::selectionMoved);
+    connect(m_inboxView, &InboxView::selectionMoved, this, &MainWindow::selectionMoved);
     connect(&m_services.engine, &core::EngineHost::previewStarted, this,
             [this](const QString &key, qint64 previewId, const std::shared_ptr<audio::ByteSource> &source,
                    const QString &identity, const QString &title, const QString &artist, const QString &label) {
@@ -242,6 +248,7 @@ void MainWindow::createViews()
                 }
                 m_previewId = previewId;
                 m_playingKey = key;
+                m_playingIdentity = identity;
                 m_services.preview.preview({source, {title, artist, label}, identity});
             });
     connect(&m_services.engine, &core::EngineHost::previewRefused, this,
@@ -252,6 +259,11 @@ void MainWindow::createViews()
                 }
             });
     connect(&m_services.engine, &core::EngineHost::previewChanged, this, [this](const core::Preview &preview) {
+        // While a preview is being looked for, each source says what it's doing (YouTube, then the clip…).
+        if (!m_askedPreviewKey.isEmpty() && m_askedPreviewKey != m_playingKey && !preview.isFinished()) {
+            m_player->showMessage(preview.message);
+            return;
+        }
         if (preview.id != m_previewId) {
             return;
         }
@@ -346,6 +358,15 @@ void MainWindow::createViews()
     connect(m_settingsView, &SettingsView::networkPasswordSubmitted, &m_services.engine,
             &core::EngineHost::setNetworkPassword);
     connect(m_settingsView, &SettingsView::connectRequested, &m_services.engine, &core::EngineHost::connectNetwork);
+    m_settingsView->setPreviewSettings(m_services.settings.previewSource(), m_services.settings.ytDlpPath());
+    connect(m_settingsView, &SettingsView::previewSourceChanged, this,
+            [this](core::PreviewSource source) { m_services.settings.setPreviewSource(source); });
+    connect(m_settingsView, &SettingsView::ytDlpPathChanged, this, [this](const QString &path) {
+        m_services.settings.setYtDlpPath(path);
+        m_services.engine.setYtDlpPath(path);
+    });
+    connect(m_settingsView, &SettingsView::ytDlpCheckRequested, &m_services.engine, &core::EngineHost::checkYtDlp);
+    connect(&m_services.engine, &core::EngineHost::ytDlpChecked, m_settingsView, &SettingsView::setYtDlpStatus);
     connect(m_settingsView, &SettingsView::disconnectRequested, &m_services.engine,
             &core::EngineHost::disconnectNetwork);
     connect(&m_services.engine, &core::EngineHost::networkStatusChanged, m_settingsView,
@@ -415,6 +436,14 @@ void MainWindow::createActions()
     space->setObjectName(u"shortcut.playPause"_s);
     space->setContext(Qt::WindowShortcut);
     connect(space, &QShortcut::activated, this, &MainWindow::playOrPause);
+    auto *shiftSpace = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Space), this);
+    shiftSpace->setObjectName(u"shortcut.previewPeerFile"_s);
+    shiftSpace->setContext(Qt::WindowShortcut);
+    connect(shiftSpace, &QShortcut::activated, this, &MainWindow::previewPeerFile);
+    auto *keep = new QShortcut(QKeySequence(Qt::Key_K), this);
+    keep->setObjectName(u"shortcut.keepPreview"_s);
+    keep->setContext(Qt::WindowShortcut);
+    connect(keep, &QShortcut::activated, this, &MainWindow::keepPreview);
 
     playback::Player &player = m_services.preview.player();
     const std::array skips{
@@ -437,6 +466,29 @@ void MainWindow::createActions()
         });
         m_playbackActions.append(action);
     }
+    auto *peerFile = new QAction(tr("Preview the Peer's File"), this);
+    peerFile->setObjectName(u"action.previewPeerFile"_s);
+    peerFile->setToolTip(tr("Hear the very file a Get would download (⇧Space)"));
+    connect(peerFile, &QAction::triggered, this, &MainWindow::previewPeerFile);
+    m_playbackActions.append(peerFile);
+    auto *keepAction = new QAction(tr("Keep Preview"), this);
+    keepAction->setObjectName(u"action.keepPreview"_s);
+    keepAction->setToolTip(tr("Put the peer's file you're hearing into your Inbox, without downloading it again (K)"));
+    connect(keepAction, &QAction::triggered, this, &MainWindow::keepPreview);
+    m_playbackActions.append(keepAction);
+    m_followSelection = new QAction(tr("Preview as You Move"), this);
+    m_followSelection->setObjectName(u"action.followSelection"_s);
+    m_followSelection->setCheckable(true);
+    m_followSelection->setChecked(m_services.settings.previewFollowsSelection());
+    connect(m_followSelection, &QAction::toggled, this,
+            [this](bool follows) { m_services.settings.setPreviewFollowsSelection(follows); });
+    m_playbackActions.append(m_followSelection);
+    m_followTimer = new QTimer(this);
+    m_followTimer->setSingleShot(true);
+    m_followTimer->setInterval(governor::limits::kAutoPreviewRest);
+    connect(m_followTimer, &QTimer::timeout, this,
+            [this] { previewSelection(false, m_services.settings.previewSource()); });
+
     auto *stop = new QAction(tr("Stop"), this);
     stop->setObjectName(u"action.stopPreview"_s);
     stop->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Period));
@@ -444,6 +496,7 @@ void MainWindow::createActions()
         m_services.preview.stop();
         m_askedPreviewKey.clear();
         m_playingKey.clear();
+        m_playingIdentity.clear();
         if (m_previewId != 0) {
             m_services.engine.stopPreview(); // a nearly complete preview still finishes, for a Get to reuse
             m_previewId = 0;
@@ -633,22 +686,76 @@ void MainWindow::saveState()
 
 void MainWindow::playOrPause()
 {
+    previewSelection(true, m_services.settings.previewSource());
+}
+
+void MainWindow::previewPeerFile()
+{
+    previewSelection(true, core::PreviewSource::Peer);
+}
+
+void MainWindow::previewSelection(bool toggleIfLoaded, core::PreviewSource source)
+{
     if (m_currentId == u"inbox"_s && m_inboxView->previewTarget()) {
-        previewInboxSelection(true);
+        previewInboxSelection(toggleIfLoaded);
         return;
     }
     if (m_currentId == u"get"_s && m_getTracksView->previewTarget()) {
-        previewGetTracksLine(true);
+        previewGetTracksLine(toggleIfLoaded, source);
         return;
     }
     if (NavModel::searchOfItem(m_currentId) > 0 && m_searchView->previewTarget()) {
-        previewSearchResult(true);
+        previewSearchResult(toggleIfLoaded, source);
         return;
     }
-    m_services.preview.toggle();
+    if (toggleIfLoaded) {
+        m_services.preview.toggle();
+    }
 }
 
-void MainWindow::previewSearchResult(bool toggleIfLoaded)
+QString MainWindow::askingMessage(core::PreviewSource source, const QString &peer)
+{
+    switch (source) {
+    case core::PreviewSource::Automatic:
+    case core::PreviewSource::YouTube:
+        return tr("Looking for it on YouTube…");
+    case core::PreviewSource::Clip:
+        return tr("Looking for its 30-second clip…");
+    case core::PreviewSource::Peer:
+        break;
+    }
+    return peer.isEmpty() ? tr("No file on Soulseek to preview yet.") : tr("Asking %1 for a preview…").arg(peer);
+}
+
+void MainWindow::keepPreview()
+{
+    if (m_playingKey.isEmpty() || !m_playingIdentity.startsWith(u"peer|"_s)) {
+        m_player->showMessage(m_playingKey.isEmpty()
+                                  ? tr("Nothing to keep: preview a file first.")
+                                  : tr("Only a peer's file can be kept; previews from YouTube and Deezer are for "
+                                       "listening. ⇧Space previews the peer's file."));
+        return;
+    }
+    // A Get of the very file: the preview's bytes go to the Inbox, nothing is downloaded again.
+    const QStringList parts = m_playingKey.split(u':');
+    if (parts.size() == 2 && parts.at(0) == u"line"_s) {
+        m_services.engine.downloadTracks({parts.at(1).toLongLong()});
+    } else if (parts.size() == 3 && parts.at(0) == u"search"_s) {
+        m_services.engine.downloadResults(parts.at(1).toLongLong(), {parts.at(2).toInt()});
+    } else {
+        return;
+    }
+    m_player->showMessage(tr("Kept: it goes to your Inbox once it has arrived."));
+}
+
+void MainWindow::selectionMoved()
+{
+    if (m_followSelection && m_followSelection->isChecked()) {
+        m_followTimer->start(); // a rest first: running down a list doesn't start a preview per row
+    }
+}
+
+void MainWindow::previewSearchResult(bool toggleIfLoaded, core::PreviewSource source)
 {
     const std::optional<SearchView::PreviewTarget> target = m_searchView->previewTarget();
     if (!target) {
@@ -663,11 +770,11 @@ void MainWindow::previewSearchResult(bool toggleIfLoaded)
         return;
     }
     m_askedPreviewKey = key;
-    m_player->showMessage(tr("Asking %1 for a preview…").arg(target->peer));
-    m_services.engine.previewResult(target->searchId, target->index);
+    m_player->showMessage(askingMessage(source, target->peer));
+    m_services.engine.previewResult(target->searchId, target->index, source);
 }
 
-void MainWindow::previewGetTracksLine(bool toggleIfLoaded)
+void MainWindow::previewGetTracksLine(bool toggleIfLoaded, core::PreviewSource source)
 {
     const std::optional<GetTracksView::PreviewTarget> target = m_getTracksView->previewTarget();
     if (!target) {
@@ -682,10 +789,8 @@ void MainWindow::previewGetTracksLine(bool toggleIfLoaded)
         return;
     }
     m_askedPreviewKey = key;
-    // A line with a file previews it from its peer; one without, from YouTube (the user's own yt-dlp).
-    m_player->showMessage(target->peer.isEmpty() ? tr("Looking for it on YouTube…")
-                                                 : tr("Asking %1 for a preview…").arg(target->peer));
-    m_services.engine.previewTrack(target->lineId);
+    m_player->showMessage(askingMessage(source, target->peer));
+    m_services.engine.previewTrack(target->lineId, source);
 }
 
 void MainWindow::previewInboxSelection(bool toggleIfLoaded)
@@ -708,6 +813,7 @@ void MainWindow::previewInboxSelection(bool toggleIfLoaded)
     }
     m_askedPreviewKey.clear(); // a peer preview playing gives way
     m_playingKey.clear();
+    m_playingIdentity = local.request->identity;
     if (m_previewId != 0) {
         m_services.engine.stopPreview();
         m_previewId = 0;

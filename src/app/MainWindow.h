@@ -16,6 +16,7 @@ class QActionGroup;
 class QLabel;
 class QSplitter;
 class QStackedWidget;
+class QTimer;
 
 namespace selecta::core {
 class EngineHost;
@@ -83,8 +84,12 @@ public:
     // Writes window state and preferences to the settings file. Called on close and on quit; safe to call twice.
     void saveState();
 
-    // Space: previews what is selected in the current view, or plays and pauses what is loaded.
+    // Space: previews what is selected in the current view (from the source Settings say), or plays and pauses what
+    // is loaded. ⇧Space: the same, from the peer's own file.
     void playOrPause();
+    void previewPeerFile();
+    // K: keeps the preview playing (PREV-5): a peer's file goes to the Inbox without downloading it again.
+    void keepPreview();
     PreviewController &preview() { return m_services.preview; }
 
 Q_SIGNALS:
@@ -111,8 +116,13 @@ private:
     void refreshTitle();
     void refreshNetworkState();
     void previewInboxSelection(bool toggleIfLoaded);
-    void previewGetTracksLine(bool toggleIfLoaded);
-    void previewSearchResult(bool toggleIfLoaded);
+    void previewGetTracksLine(bool toggleIfLoaded, core::PreviewSource source);
+    void previewSearchResult(bool toggleIfLoaded, core::PreviewSource source);
+    // Starts or toggles the preview of the current view's selection.
+    void previewSelection(bool toggleIfLoaded, core::PreviewSource source);
+    // The selection moved: with "Preview as You Move", its preview follows after a short rest (PREV-4).
+    void selectionMoved();
+    static QString askingMessage(core::PreviewSource source, const QString &peer);
     // Keeps the sidebar's search items in step with the engine's open searches.
     void showSearchInSidebar(const core::ManualSearch &search);
 
@@ -144,7 +154,10 @@ private:
     std::optional<bool> m_shownPaused; // what the pause action shows
     QString m_askedPreviewKey;         // what a preview was asked for (core::previewKeyForLine() and the like)
     QString m_playingKey;              // what the loaded preview belongs to
-    qint64 m_previewId = 0;            // the engine's preview playing, if any
+    QString m_playingIdentity;         // the loaded preview's identity ("peer|…", "youtube|…", "clip|…", "file|…")
+    QAction *m_followSelection = nullptr;
+    QTimer *m_followTimer = nullptr;
+    qint64 m_previewId = 0; // the engine's preview playing, if any
     QList<View> m_views;
     QHash<QString, qsizetype> m_viewIndex;
     QString m_currentId;

@@ -125,6 +125,7 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     columnLayout->addWidget(createFilingBox(column));
     columnLayout->addWidget(createNetworkBox(column));
     columnLayout->addWidget(createSpotifyBox(column));
+    columnLayout->addWidget(createPreviewBox(column));
     columnLayout->addWidget(dataBox);
     columnLayout->addWidget(aboutBox);
     columnLayout->addStretch(1);
@@ -311,6 +312,88 @@ QWidget *SettingsView::createSpotifyBox(QWidget *parent)
     form->addRow(QString(), buttons);
     setSpotifyStatus(m_spotify);
     return box;
+}
+
+QWidget *SettingsView::createPreviewBox(QWidget *parent)
+{
+    auto *box = new QGroupBox(tr("Previews"), parent);
+    auto *form = new QFormLayout(box);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    auto *note = new QLabel(tr("Space previews a track from YouTube through your own yt-dlp, which costs Soulseek "
+                               "peers nothing; without yt-dlp, from Deezer's 30-second clip. ⇧Space always asks "
+                               "the peer for the very file a Get would download, and K keeps it."),
+                            box);
+    note->setWordWrap(true);
+    note->setForegroundRole(QPalette::PlaceholderText);
+    form->addRow(note);
+
+    m_previewSource = new QComboBox(box);
+    m_previewSource->setObjectName(u"settings.preview.source"_s);
+    m_previewSource->addItem(tr("YouTube, else the 30-second clip"), static_cast<int>(core::PreviewSource::Automatic));
+    m_previewSource->addItem(tr("YouTube only"), static_cast<int>(core::PreviewSource::YouTube));
+    m_previewSource->addItem(tr("The 30-second clip only"), static_cast<int>(core::PreviewSource::Clip));
+    m_previewSource->addItem(tr("The peer's file"), static_cast<int>(core::PreviewSource::Peer));
+    connect(m_previewSource, &QComboBox::activated, this, [this](int row) {
+        Q_EMIT previewSourceChanged(static_cast<core::PreviewSource>(m_previewSource->itemData(row).toInt()));
+    });
+    form->addRow(tr("Space previews:"), m_previewSource);
+
+    auto *row = new QWidget(box);
+    auto *rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    m_ytDlpPath = new QLineEdit(row);
+    m_ytDlpPath->setObjectName(u"settings.preview.ytDlp"_s);
+    m_ytDlpPath->setPlaceholderText(tr("Found by itself in Homebrew or your PATH"));
+    m_ytDlpPath->setClearButtonEnabled(true);
+    auto *choose = new QPushButton(tr("Choose…"), row);
+    choose->setObjectName(u"settings.preview.ytDlp.choose"_s);
+    auto *check = new QPushButton(tr("Check"), row);
+    check->setObjectName(u"settings.preview.ytDlp.check"_s);
+    rowLayout->addWidget(m_ytDlpPath, 1);
+    rowLayout->addWidget(choose);
+    rowLayout->addWidget(check);
+    form->addRow(tr("yt-dlp:"), row);
+    m_ytDlpState = new QLabel(tr("Not checked yet."), box);
+    m_ytDlpState->setObjectName(u"settings.preview.ytDlp.state"_s);
+    m_ytDlpState->setWordWrap(true);
+    m_ytDlpState->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    form->addRow(QString(), m_ytDlpState);
+
+    const auto submit = [this] {
+        Q_EMIT ytDlpPathChanged(m_ytDlpPath->text().trimmed());
+        m_ytDlpState->setText(tr("Checking…"));
+        Q_EMIT ytDlpCheckRequested();
+    };
+    connect(m_ytDlpPath, &QLineEdit::editingFinished, this, [this, submit] {
+        if (m_ytDlpPath->isModified()) {
+            m_ytDlpPath->setModified(false);
+            submit();
+        }
+    });
+    connect(choose, &QPushButton::clicked, this, [this, submit] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("Choose yt-dlp"), u"/opt/homebrew/bin"_s);
+        if (!path.isEmpty()) {
+            m_ytDlpPath->setText(path);
+            submit();
+        }
+    });
+    connect(check, &QPushButton::clicked, this, [this] {
+        m_ytDlpState->setText(tr("Checking…"));
+        Q_EMIT ytDlpCheckRequested();
+    });
+    return box;
+}
+
+void SettingsView::setPreviewSettings(core::PreviewSource source, const QString &ytDlpPath)
+{
+    const QSignalBlocker blocker(m_previewSource);
+    m_previewSource->setCurrentIndex(std::max(m_previewSource->findData(static_cast<int>(source)), 0));
+    m_ytDlpPath->setText(ytDlpPath);
+}
+
+void SettingsView::setYtDlpStatus(bool ok, const QString &description)
+{
+    m_ytDlpState->setText(ok ? description : tr("Not usable: %1").arg(description));
 }
 
 QWidget *SettingsView::createNetworkBox(QWidget *parent)

@@ -142,6 +142,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &InboxView::refreshActions);
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &InboxView::showSelection);
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &InboxView::showSelection);
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &InboxView::selectionMoved);
     connect(m_inspector, &InboxInspector::previewRequested, this, &InboxView::previewRequested);
     connect(m_table, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
         if (selectedIds().isEmpty()) {

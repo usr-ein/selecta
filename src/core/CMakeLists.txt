@@ -3,6 +3,7 @@
 qt_add_library(selecta_core STATIC
     ActivityLog.h ActivityLog.cpp
     ArrivalService.h ArrivalService.cpp
+    ClipPreviews.h ClipPreviews.cpp
     CollectionService.h CollectionService.cpp
     CollectionStore.h CollectionStore.cpp
     Downloads.h Downloads.cpp

@@ -82,6 +82,9 @@ class TransferService : public QObject
 public:
     using WallClock = std::function<qint64()>;
 
+    // The preview cache's bound (PREV-8, CACHE-1): peer previews and YouTube audio together.
+    static constexpr qint64 kPreviewCacheBytes = qint64{2} * 1000 * 1000 * 1000;
+
     struct Options
     {
         QString incomingDir;
@@ -172,6 +175,14 @@ private:
     void releasePreview(PreviewSlot &slot, qint64 bytes);
     void finishPreview(PreviewSlot &slot, Preview::State state, const QString &message);
     std::optional<Download> reusePreview(const DownloadSpec &spec);
+    // A preview still arriving becomes the download when it completes, instead of a second transfer (PREV-5).
+    std::optional<qint64> keepPreview(const DownloadSpec &spec);
+    // Hands a complete preview file to the arrival pipeline as `download`'s file; false when it can't be copied.
+    bool deliverFromPreview(Download &download, const QString &previewPath);
+    // A kept preview ended: its download takes the file, or asks the peer itself when the preview failed.
+    void keptPreviewEnded(qint64 downloadId, const QString &completePath);
+    // Deletes the oldest preview files once the cache is over its size (PREV-8); files in use stay.
+    void trimPreviewCache();
     static QString previewKey(const QString &peer, const QByteArray &remotePath);
     QString folderOf(qint64 id) const;
     QString partialPathOf(const Download &download) const;
@@ -198,6 +209,7 @@ private:
     QHash<qint64, std::shared_ptr<PreviewSlot>> m_previews; // by preview id, until finished and replaced
     QHash<slsk::TransferId, qint64> m_previewOf;            // a preview's transfer → its id
     QHash<QString, QString> m_completedPreviews;            // previewKey → the complete file in the preview cache
+    QSet<qint64> m_awaitingPreview;                         // downloads that a kept preview will hand its file to
     qint64 m_nextPreviewId = 1;
     bool m_shutDown = false;
 };

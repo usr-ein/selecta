@@ -44,6 +44,7 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
                    : std::make_unique<meta::DeezerClient>(m_network.get(), m_pacer, &m_cache, clock, nullptr,
                                                           options.endpoints.deezerApi);
     m_resolver = std::make_unique<meta::ReleaseResolver>(m_spotifyClient.get(), m_deezer.get());
+    m_clips = std::make_unique<meta::ClipSource>(*m_deezer);
     m_musicBrainz = options.endpoints.musicBrainzApi.isEmpty()
                         ? std::make_unique<meta::MusicBrainzClient>(m_network.get(), m_pacer, &m_cache, clock)
                         : std::make_unique<meta::MusicBrainzClient>(m_network.get(), m_pacer, &m_cache, clock, nullptr,
@@ -73,6 +74,7 @@ MetaServices::~MetaServices()
     m_covers.reset();
     m_musicBrainz.reset();
     m_resolver.reset();
+    m_clips.reset();
     m_deezer.reset();
     m_spotifyClient.reset();
     m_spotifyAuth.reset();

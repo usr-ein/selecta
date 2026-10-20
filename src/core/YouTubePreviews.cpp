@@ -24,16 +24,25 @@ YouTubePreviews::~YouTubePreviews()
     stop();
 }
 
-qint64 YouTubePreviews::start(qint64 lineId, const meta::Release &release)
+qint64 YouTubePreviews::start(const QString &key, const meta::Release &release, Unavailable unavailable)
 {
     stop();
     const qint64 id = m_nextId++;
     m_current = id;
-    m_lineId = lineId;
+    m_key = key;
+    m_unavailable = std::move(unavailable);
     m_announced = false;
     report(id, Preview::State::Queued, tr("Looking for it on YouTube…"));
     if (m_cacheDir.isEmpty() || !QDir().mkpath(m_cacheDir)) {
-        report(id, Preview::State::Failed, tr("Previews have nowhere to go."));
+        // On the next turn, like every other outcome: the caller gets the id first.
+        QMetaObject::invokeMethod(
+            this,
+            [this, id] {
+                if (id == m_current) {
+                    fail(id, tr("Previews have nowhere to go."));
+                }
+            },
+            Qt::QueuedConnection);
         return id;
     }
     m_runner.search(meta::YtDlpRunner::searchText(release), 10)
@@ -42,14 +51,13 @@ qint64 YouTubePreviews::start(qint64 lineId, const meta::Release &release)
                 return; // replaced or stopped meanwhile
             }
             if (!result.ok()) {
-                report(id, Preview::State::Failed, result.error().message);
+                fail(id, result.error().message);
                 return;
             }
             const std::optional<meta::YouTubePick> pick = meta::YtDlpRunner::pick(result.value(), release);
             if (!pick) {
-                report(id, Preview::State::Failed,
-                       release.durationMs ? tr("No video on YouTube matches this track's length.")
-                                          : tr("Without the track's length, Selecta can't tell which video is it."));
+                fail(id, release.durationMs ? tr("No video on YouTube matches this track's length.")
+                                            : tr("Without the track's length, Selecta can't tell which video is it."));
                 return;
             }
             fetch(id, release, pick->candidate.id, pick->candidate.channel);
@@ -110,7 +118,7 @@ void YouTubePreviews::fetch(qint64 id, const meta::Release &release, const QStri
                     if (m_growing) {
                         m_growing->setFailed();
                     }
-                    report(id, Preview::State::Failed, result.error().message);
+                    fail(id, result.error().message);
                     return;
                 }
                 if (m_growing && m_growing->totalSize() == result.value().bytes) {
@@ -121,7 +129,7 @@ void YouTubePreviews::fetch(qint64 id, const meta::Release &release, const QStri
                     audio::Result<std::shared_ptr<audio::FileSource>> file =
                         audio::FileSource::open(result.value().path);
                     if (!file) {
-                        report(id, Preview::State::Failed, file.error().message);
+                        fail(id, file.error().message);
                         return;
                     }
                     m_announced = false;
@@ -139,8 +147,16 @@ void YouTubePreviews::playable(qint64 id, const meta::Release &release,
         return;
     }
     m_announced = true;
-    Q_EMIT started(m_lineId, id, source, u"youtube|"_s + videoId, release.title, release.artist(),
+    Q_EMIT started(m_key, id, source, u"youtube|"_s + videoId, release.title, release.artist(),
                    channel.isEmpty() ? tr("YouTube (lossy preview)") : tr("YouTube · %1 (lossy preview)").arg(channel));
+}
+
+void YouTubePreviews::fail(qint64 id, const QString &message)
+{
+    report(id, Preview::State::Failed, message);
+    if (id == m_current && !m_announced && m_unavailable) {
+        std::exchange(m_unavailable, {})(message);
+    }
 }
 
 void YouTubePreviews::report(qint64 id, Preview::State state, const QString &message)
@@ -148,7 +164,6 @@ void YouTubePreviews::report(qint64 id, Preview::State state, const QString &mes
     Preview preview;
     preview.id = id;
     preview.peer = u"YouTube"_s;
-    preview.getLine = m_lineId;
     preview.state = state;
     preview.message = message;
     Q_EMIT changed(preview);

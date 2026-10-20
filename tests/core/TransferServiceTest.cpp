@@ -502,3 +502,47 @@ TEST_F(TransferServiceTest, APreviewNeedsTheConnectionAndAKnownSize)
     EXPECT_FALSE(service->startPreview(spec(*ghost, "offline.mp3", 100), &why).has_value());
     EXPECT_TRUE(why.contains(u"Not connected"_s)) << why.toStdString();
 }
+
+TEST_F(TransferServiceTest, KeepingAPreviewStillArrivingMakesItTheDownload)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    auto lena = peer(u"lossless_lena"_s);
+    const QByteArray bytes = content(400'000, 26);
+    ghost->files.insert("keep.flac", FakePeer::Upload{.content = bytes});
+    ghost->uploadRate = 200'000; // 2 s
+    lena->files.insert("next.flac", FakePeer::Upload{.content = content(20'000, 27)});
+    const std::optional<TransferService::PreviewStart> started =
+        service->startPreview(spec(*ghost, "keep.flac", bytes.size()));
+    ASSERT_TRUE(started.has_value());
+    ASSERT_TRUE(waitFor([&] { return started->source->available() > 0; }));
+
+    const QSignalSpy completed(service.get(), &TransferService::completed);
+    const std::optional<qint64> id = service->enqueue(spec(*ghost, "keep.flac", bytes.size()));
+    ASSERT_TRUE(id.has_value());
+    EXPECT_EQ(service->download(*id)->state, State::Waiting);
+    EXPECT_TRUE(completed.isEmpty());
+    // Skipping to another preview no longer cancels the kept one.
+    ASSERT_TRUE(service->startPreview(spec(*lena, "next.flac", 20'000)).has_value());
+
+    ASSERT_TRUE(waitFor([&] { return completed.size() == 1; }, 10s));
+    const auto done = completed.at(0).at(0).value<Download>();
+    EXPECT_EQ(done.id, *id);
+    EXPECT_EQ(readFile(done.localPath), bytes);
+    EXPECT_EQ(ghost->receivedOf<selecta::slsk::peer::QueueUpload>().size(), 1); // one transfer, not two
+}
+
+TEST_F(TransferServiceTest, AKeptPreviewThatFailsDownloadsTheUsualWay)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    const QByteArray bytes = content(400'000, 28);
+    ghost->files.insert("flaky.flac", FakePeer::Upload{.content = bytes, .stopAfter = 100'000});
+    ghost->uploadRate = 200'000;
+    const std::optional<TransferService::PreviewStart> started =
+        service->startPreview(spec(*ghost, "flaky.flac", bytes.size()));
+    ASSERT_TRUE(started.has_value());
+    ASSERT_TRUE(waitFor([&] { return started->source->available() > 0; }));
+    const std::optional<qint64> id = service->enqueue(spec(*ghost, "flaky.flac", bytes.size()));
+    ASSERT_TRUE(id.has_value());
+    // The preview breaks off (once); the download then asks the peer itself.
+    EXPECT_TRUE(reaches(*id, State::Converting, 20s));
+}

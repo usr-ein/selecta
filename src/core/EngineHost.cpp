@@ -84,6 +84,7 @@ void EngineHost::start()
     });
     connect(engine, &Engine::searchOpened, this, &EngineHost::searchOpened);
     connect(engine, &Engine::inboxReleasesFound, this, &EngineHost::inboxReleasesFound);
+    connect(engine, &Engine::ytDlpChecked, this, &EngineHost::ytDlpChecked);
     connect(engine, &Engine::manualSearchChanged, this, [this](const ManualSearch &search) {
         const auto known = std::ranges::find(m_searches, search.id, &ManualSearch::id);
         if (known == m_searches.end()) {
@@ -273,14 +274,25 @@ void EngineHost::scanCollection()
     });
 }
 
-void EngineHost::previewTrack(qint64 lineId)
+void EngineHost::previewTrack(qint64 lineId, PreviewSource source)
 {
-    post([lineId](Engine &engine) { engine.previewLine(lineId); });
+    post([lineId, source](Engine &engine) { engine.previewLine(lineId, source); });
 }
 
 void EngineHost::stopPreview()
 {
     post([](Engine &engine) { engine.stopPreview(); });
+}
+
+void EngineHost::setYtDlpPath(const QString &path)
+{
+    m_options.ytDlpPath = path; // used if the engine (re)starts
+    post([path](Engine &engine) { engine.setYtDlpPath(path); });
+}
+
+void EngineHost::checkYtDlp()
+{
+    post([](Engine &engine) { engine.checkYtDlp(); });
 }
 
 void EngineHost::editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared)
@@ -350,9 +362,9 @@ void EngineHost::downloadResults(qint64 searchId, const QList<int> &indexes)
     });
 }
 
-void EngineHost::previewResult(qint64 searchId, int index)
+void EngineHost::previewResult(qint64 searchId, int index, PreviewSource source)
 {
-    post([searchId, index](Engine &engine) { engine.previewResult(searchId, index); });
+    post([searchId, index, source](Engine &engine) { engine.previewResult(searchId, index, source); });
 }
 
 std::optional<ManualSearch> EngineHost::search(qint64 searchId) const
