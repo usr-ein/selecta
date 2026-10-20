@@ -174,6 +174,10 @@ QWidget *ActivityView::createTransfersPage()
     explanation->setForegroundRole(QPalette::PlaceholderText);
     explanation->setWordWrap(true);
     bar->addWidget(explanation, 1);
+    auto *groupLabel = new QLabel(tr("Group"), page);
+    groupLabel->setForegroundRole(QPalette::PlaceholderText);
+    groupLabel->setBuddy(m_grouping); // VoiceOver reads a pop-up by its label
+    bar->addWidget(groupLabel);
     bar->addWidget(m_grouping);
 
     m_transfersTable->setModel(m_transfers);

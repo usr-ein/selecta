@@ -301,6 +301,7 @@ void InboxInspector::showItem(const std::optional<library::InboxItem> &item, con
 
     m_cover->setPixmap({});
     m_cover->setText(tr("No cover"));
+    m_cover->setAccessibleName({}); // the text says it
     m_tags = {};
     m_tagList->setText(single ? tr("Reading…") : tr("An album folder: its files keep their own tags."));
     m_path = QDir(inboxRoot).filePath(item->relativePath);
@@ -334,6 +335,7 @@ void InboxInspector::showTags(const FileTags &read)
         cover.setDevicePixelRatio(static_cast<qreal>(kCoverPixels) / kCoverPoints);
         m_cover->setPixmap(cover);
         m_cover->setText({});
+        m_cover->setAccessibleName(tr("Cover"));
     }
     const std::array fields{
         std::pair{keys::Title, tr("Title")},     std::pair{keys::Artist, tr("Artists")},

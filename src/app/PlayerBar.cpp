@@ -240,6 +240,7 @@ void PlayerBar::refresh()
         }
         m_subtitle->setText(m_message.isEmpty() ? parts.join(u" · "_s) : m_message);
         m_waveform->setMessage({});
+        m_waveform->setSource(track.source); // for VoiceOver, with the position
     }
 
     const bool running = state == State::Playing || state == State::Buffering || state == State::Loading;
