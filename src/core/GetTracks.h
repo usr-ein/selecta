@@ -8,6 +8,7 @@
 #include <QMetaType>
 #include <QString>
 
+#include <chrono>
 #include <optional>
 
 namespace selecta::storage {
@@ -96,6 +97,12 @@ private:
 // FileChoice ↔ JSON text, for the database.
 QByteArray fileChoiceToText(const FileChoice &choice);
 std::optional<FileChoice> fileChoiceFromText(const QByteArray &text);
+
+// About how long finding the rest of a Get tracks list takes (BATCH-4), at the governor's pace (D31): the searches
+// still to start take what the budget holds beyond the reserve kept for searches typed by hand, then one per refill
+// (the first when `nextIn` says), and the last one collects answers for a while. Zero when nothing is left. Pure.
+std::chrono::milliseconds findingTimeLeft(int searchesToStart, int searchesCollecting, int searchesAvailable,
+                                          std::chrono::milliseconds nextIn);
 
 } // namespace selecta::core
 

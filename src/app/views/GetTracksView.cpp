@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksView.h"
 
+#include "app/Format.h"
 #include "app/Icons.h"
 #include "app/Presets.h"
 #include "app/TickDelegate.h"
@@ -423,9 +424,17 @@ void GetTracksView::refreshProgress()
         text += u" · "_s + tr("waiting for the network");
     } else if (m_engine.isPaused()) {
         text += u" · "_s + tr("network paused");
-    } else if (m_collecting == 0 && m_nextAtMs > 0) {
-        const qint64 seconds = std::max<qint64>(0, (m_nextAtMs - QDateTime::currentMSecsSinceEpoch() + 999) / 1000);
-        text += u" · "_s + tr("next search in %1 s").arg(seconds);
+    } else {
+        // The whole list's time left at the governor's pace (BATCH-4), and when the next search goes.
+        const qint64 nextIn =
+            m_nextAtMs > 0 ? std::max<qint64>(0, m_nextAtMs - QDateTime::currentMSecsSinceEpoch()) : 0;
+        if (m_collecting == 0 && nextIn > 0) {
+            text += u" · "_s + tr("next search in %1 s").arg((nextIn + 999) / 1000);
+        }
+        const std::chrono::milliseconds left =
+            core::findingTimeLeft(std::max(0, finding - m_collecting), m_collecting, m_engine.searchesAvailable(),
+                                  std::chrono::milliseconds(nextIn));
+        text += u" · "_s + format::about(left.count());
     }
     m_progress->setText(text);
     if (!m_countdown->isActive()) {

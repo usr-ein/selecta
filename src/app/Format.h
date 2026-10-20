@@ -31,5 +31,7 @@ QString size(qint64 bytes);
 QString speed(qint64 bytesPerSecond);
 // "just now", "12 min ago", "3 h ago", "2 days ago": how long ago `thenMs` was, at `nowMs` (Unix time, ms).
 QString ago(qint64 thenMs, qint64 nowMs);
+// "under a minute", "about 6 min", "about 1 h 20 min": a time left, rounded up to the minute.
+QString about(qint64 milliseconds);
 
 } // namespace selecta::app::format
