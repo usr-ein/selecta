@@ -150,11 +150,11 @@ private:
 // notifications (Toasts), which MainWindow shows whatever happens.
 //
 // A system notification goes out only while the user is away from Selecta (the AwayCheck says so: its window isn't
-// the active one), only with "Show notifications" on, and only for: a private message, someone naming you in a room, a Get
-// tracks batch that finished, an album that arrived (complete or not) or failed, and the Wishlist finding new files.
-// Messages and mentions coalesce per conversation and per room until the user is back: one notification, its count and
-// the latest line. The Dock badge counts unread messages plus what arrived while the user was away (albums and Get
-// tracks lines); the arrivals are cleared once the user is back (userReturned()).
+// the active one), only with "Show notifications" on, and only for: a private message, someone naming you in a room, a
+// Get tracks batch that finished, an album that arrived (complete or not) or failed, and the Wishlist finding new
+// files. Messages and mentions coalesce per conversation and per room until the user is back: one notification, its
+// count and the latest line. The Dock badge counts unread messages plus what arrived while the user was away (albums
+// and Get tracks lines); the arrivals are cleared once the user is back (userReturned()).
 //
 // Main thread only. The sink, if any, must outlive the Notifier; a null sink means no system notifications here.
 class Notifier : public QObject
@@ -215,7 +215,7 @@ private:
 
     NotificationSink *m_sink;
     AwayCheck m_away;
-    qint64 m_run; // when this run started: ids of one-off news don't replace an earlier run's
+    qint64 m_run = 0; // when this run started: ids of one-off news don't replace an earlier run's
     bool m_enabled = true;
     int m_unread = 0;
     int m_arrivals = 0;

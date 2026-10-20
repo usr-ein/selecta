@@ -6,11 +6,10 @@
 #include <QLoggingCategory>
 #include <QString>
 
-#include <cstddef>
-#include <deque>
-
 #import <AppKit/AppKit.h>
 #import <UserNotifications/UserNotifications.h>
+#include <cstddef>
+#include <deque>
 
 using namespace Qt::StringLiterals;
 
@@ -41,11 +40,11 @@ void onMainThread(dispatch_block_t work)
 
 QString targetPart(NSDictionary *info, NSString *key)
 {
-    id value = info[key];
+    id const value = info[key];
     if (![value isKindOfClass:[NSString class]]) {
         return {};
     }
-    NSString *text = value;
+    NSString *const text = value;
     const QString part = QString::fromNSString(text);
     return part.size() <= kMaxTargetLength ? part : QString();
 }
@@ -112,7 +111,7 @@ MacNotificationSink::~MacNotificationSink()
 {
     m_delegate.owner = nullptr; // answers still on their way find nobody
     @autoreleasepool {
-        UNUserNotificationCenter *center = UNUserNotificationCenter.currentNotificationCenter;
+        UNUserNotificationCenter *const center = UNUserNotificationCenter.currentNotificationCenter;
         if (center.delegate == m_delegate) {
             center.delegate = nil;
         }
@@ -135,7 +134,8 @@ QString MacNotificationSink::describe() const
     QString text;
     switch (m_permission) {
     case Permission::Unknown:
-        text = m_asking ? u"macOS Notification Center: asking the user"_s : u"macOS Notification Center: not asked yet"_s;
+        text =
+            m_asking ? u"macOS Notification Center: asking the user"_s : u"macOS Notification Center: not asked yet"_s;
         break;
     case Permission::Allowed:
         text = u"macOS Notification Center: allowed"_s;
@@ -150,16 +150,16 @@ QString MacNotificationSink::describe() const
 void MacNotificationSink::checkPermission()
 {
     m_checking = true;
-    SelectaNotificationDelegate *delegate = m_delegate;
+    SelectaNotificationDelegate *const delegate = m_delegate;
     @autoreleasepool {
         [UNUserNotificationCenter.currentNotificationCenter
             getNotificationSettingsWithCompletionHandler:^(UNNotificationSettings *settings) {
-              const UNAuthorizationStatus status = settings.authorizationStatus;
-              onMainThread(^{
-                if (MacNotificationSink *owner = delegate.owner) {
-                    owner->permissionKnown(status);
-                }
-              });
+                const UNAuthorizationStatus status = settings.authorizationStatus;
+                onMainThread(^{
+                    if (MacNotificationSink *owner = delegate.owner) {
+                        owner->permissionKnown(status);
+                    }
+                });
             }];
     }
 }
@@ -188,18 +188,18 @@ void MacNotificationSink::permissionKnown(UNAuthorizationStatus status)
     }
     m_asked = true;
     m_asking = true;
-    SelectaNotificationDelegate *delegate = m_delegate;
+    SelectaNotificationDelegate *const delegate = m_delegate;
     @autoreleasepool {
         [UNUserNotificationCenter.currentNotificationCenter
             requestAuthorizationWithOptions:(UNAuthorizationOptionAlert | UNAuthorizationOptionSound)
                           completionHandler:^(BOOL granted, NSError *error) {
-                            NSString *problem = error.localizedDescription;
-                            onMainThread(^{
-                              if (MacNotificationSink *owner = delegate.owner) {
-                                  owner->permissionAnswered(granted == YES,
-                                                            problem ? QString::fromNSString(problem) : QString());
-                              }
-                            });
+                              NSString *const problem = error.localizedDescription;
+                              onMainThread(^{
+                                  if (MacNotificationSink *owner = delegate.owner) {
+                                      owner->permissionAnswered(granted == YES,
+                                                                problem ? QString::fromNSString(problem) : QString());
+                                  }
+                              });
                           }];
     }
 }
@@ -239,35 +239,37 @@ void MacNotificationSink::deliverWaiting()
 
 void MacNotificationSink::deliver(const SystemNotification &notification)
 {
-    SelectaNotificationDelegate *delegate = m_delegate;
+    SelectaNotificationDelegate *const delegate = m_delegate;
     @autoreleasepool {
-        UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
+        UNMutableNotificationContent *const content = [[UNMutableNotificationContent alloc] init];
         content.title = notification.title.toNSString();
         content.body = notification.body.toNSString();
         if (!notification.thread.isEmpty()) {
             content.threadIdentifier = notification.thread.toNSString();
         }
-        content.userInfo =
-            @{kViewKey : notification.target.view.toNSString(), kArgumentKey : notification.target.argument.toNSString()};
+        content.userInfo = @{
+            kViewKey : notification.target.view.toNSString(),
+            kArgumentKey : notification.target.argument.toNSString()
+        };
         if (notification.sound) {
             content.sound = UNNotificationSound.defaultSound;
         }
-        NSString *identifier = notification.id.isEmpty() ? NSUUID.UUID.UUIDString : notification.id.toNSString();
-        UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier
-                                                                              content:content
-                                                                              trigger:nil];
+        NSString *const identifier = notification.id.isEmpty() ? NSUUID.UUID.UUIDString : notification.id.toNSString();
+        UNNotificationRequest *const request = [UNNotificationRequest requestWithIdentifier:identifier
+                                                                                    content:content
+                                                                                    trigger:nil];
         [UNUserNotificationCenter.currentNotificationCenter
             addNotificationRequest:request
              withCompletionHandler:^(NSError *error) {
-               if (error == nil) {
-                   return;
-               }
-               NSString *problem = error.localizedDescription;
-               onMainThread(^{
-                 if (MacNotificationSink *owner = delegate.owner) {
-                     owner->deliveryFailed(QString::fromNSString(problem));
+                 if (error == nil) {
+                     return;
                  }
-               });
+                 NSString *const problem = error.localizedDescription;
+                 onMainThread(^{
+                     if (MacNotificationSink *owner = delegate.owner) {
+                         owner->deliveryFailed(QString::fromNSString(problem));
+                     }
+                 });
              }];
     }
 }
@@ -275,7 +277,7 @@ void MacNotificationSink::deliver(const SystemNotification &notification)
 bool runsInAppBundle()
 {
     @autoreleasepool {
-        NSBundle *bundle = NSBundle.mainBundle;
+        NSBundle *const bundle = NSBundle.mainBundle;
         return bundle.bundleIdentifier.length > 0 && [bundle.bundleURL.pathExtension isEqualToString:@"app"];
     }
 }
@@ -305,18 +307,18 @@ std::unique_ptr<NotificationSink> createSystemNotificationSink()
 // A click on one of Selecta's notifications: Selecta comes forward and shows what it was about.
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
     didReceiveNotificationResponse:(UNNotificationResponse *)response
-             withCompletionHandler:(void (^)(void))completionHandler
+             withCompletionHandler:(void (^)())completionHandler
 {
     (void)center;
     if ([response.actionIdentifier isEqualToString:UNNotificationDefaultActionIdentifier]) {
-        NSDictionary *info = response.notification.request.content.userInfo;
+        NSDictionary *const info = response.notification.request.content.userInfo;
         onMainThread(^{
-          selecta::app::MacNotificationSink *owner = self.owner;
-          if (owner == nullptr) {
-              return;
-          }
-          [NSApp activate];
-          owner->clicked({targetPart(info, kViewKey), targetPart(info, kArgumentKey)});
+            selecta::app::MacNotificationSink *owner = self.owner;
+            if (owner == nullptr) {
+                return;
+            }
+            [NSApp activate];
+            owner->clicked({targetPart(info, kViewKey), targetPart(info, kArgumentKey)});
         });
     }
     completionHandler();

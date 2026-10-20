@@ -944,11 +944,8 @@ TEST_F(MainWindowTest, NewsWhileAwayReachesTheSystemAndAClickOpensIt)
     EXPECT_EQ(notifications.posted.constFirst().body, u"Got the B-side?"_s);
 
     // The Dock badge: unread messages, and what arrived while away.
-    Q_EMIT engine->conversationsChanged({selecta::core::Conversation{.peer = u"vinyl_ghost"_s,
-                                                                     .lastText = message.text,
-                                                                     .lastAtMs = now,
-                                                                     .lastOutgoing = false,
-                                                                     .unread = 1}});
+    Q_EMIT engine->conversationsChanged({selecta::core::Conversation{
+        .peer = u"vinyl_ghost"_s, .lastText = message.text, .lastAtMs = now, .lastOutgoing = false, .unread = 1}});
     EXPECT_EQ(notifier->badge(), 1);
     selecta::core::AlbumReport report;
     report.albumId = 4;

@@ -52,8 +52,9 @@ QString shortened(const QString &text, qsizetype max)
 }
 
 // Control characters from the network become spaces; line breaks stay only where allowed.
-QString cleaned(QString text, bool keepLineBreaks)
+QString cleaned(const QString &original, bool keepLineBreaks)
 {
+    QString text = original;
     for (QChar &c : text) {
         if (c.category() == QChar::Other_Control && !(keepLineBreaks && c == u'\n')) {
             c = u' ';
@@ -99,8 +100,7 @@ QString RecordingNotificationSink::describe() const
 
 bool RecordingNotificationSink::click(const QString &id) const
 {
-    const auto found = std::find_if(m_posted.cbegin(), m_posted.cend(),
-                                    [&id](const SystemNotification &kept) { return kept.id == id; });
+    const auto found = std::ranges::find_if(m_posted, [&id](const SystemNotification &kept) { return kept.id == id; });
     if (found == m_posted.cend()) {
         return false;
     }
@@ -284,8 +284,7 @@ void Notifier::albumChanged(const core::AlbumDownload &album)
     if (!isAway()) {
         return;
     }
-    const QString name =
-        album.release && !album.release->album.isEmpty() ? album.release->album : album.folderName();
+    const QString name = album.release && !album.release->album.isEmpty() ? album.release->album : album.folderName();
     SystemNotification notification;
     notification.id = u"album-failed:%1:%2"_s.arg(m_run).arg(album.id);
     notification.thread = u"albums"_s;
@@ -342,14 +341,16 @@ SystemNotification Notifier::batchNotification(const FinishedBatch &batch)
     notification.thread = u"get-tracks"_s;
     notification.title = tr("Get tracks finished");
     const bool named = batch.arrived + batch.failed == 1 && !batch.track.isEmpty();
-    if (batch.failed == 0) {
-        notification.body = named              ? tr("“%1” is in your Inbox.").arg(batch.track)
-                            : batch.arrived == 1 ? tr("1 track is in your Inbox.")
-                                                 : tr("%1 tracks are in your Inbox.").arg(batch.arrived);
+    if (batch.failed == 0 && named) {
+        notification.body = tr("“%1” is in your Inbox.").arg(batch.track);
+    } else if (batch.failed == 0) {
+        notification.body = batch.arrived == 1 ? tr("1 track is in your Inbox.")
+                                               : tr("%1 tracks are in your Inbox.").arg(batch.arrived);
+    } else if (batch.arrived == 0 && named) {
+        notification.body = tr("“%1” couldn't be downloaded.").arg(batch.track);
     } else if (batch.arrived == 0) {
-        notification.body = named               ? tr("“%1” couldn't be downloaded.").arg(batch.track)
-                            : batch.failed == 1 ? tr("1 track couldn't be downloaded.")
-                                                : tr("%1 tracks couldn't be downloaded.").arg(batch.failed);
+        notification.body = batch.failed == 1 ? tr("1 track couldn't be downloaded.")
+                                              : tr("%1 tracks couldn't be downloaded.").arg(batch.failed);
     } else {
         const QString arrived =
             batch.arrived == 1 ? tr("1 track is in your Inbox") : tr("%1 tracks are in your Inbox").arg(batch.arrived);

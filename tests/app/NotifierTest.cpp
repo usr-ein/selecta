@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/Notifications.h"
-
 #include "core/AlbumService.h"
 #include "core/Albums.h"
 #include "core/GetTracks.h"
@@ -97,7 +96,8 @@ TEST_F(NotifierTest, NothingReachesTheSystemWhenTurnedOff)
 {
     notifier.setEnabled(false);
     notifier.messageAdded(message(u"vinyl_ghost"_s, u"Got the B-side?"_s));
-    notifier.roomLineAdded(u"dnb"_s, {.atMs = 0, .user = u"lena"_s, .text = u"me: hi"_s, .own = false, .mention = true});
+    notifier.roomLineAdded(u"dnb"_s,
+                           {.atMs = 0, .user = u"lena"_s, .text = u"me: hi"_s, .own = false, .mention = true});
     notifier.wishlistFound({.id = 3, .text = u"Okuma Drift"_s, .createdAt = 0, .lastRunMs = 0, .found = 2}, 2);
     EXPECT_TRUE(sink.posted.isEmpty());
 
@@ -114,7 +114,8 @@ TEST_F(NotifierTest, NothingReachesTheSystemWhenTurnedOff)
 
 TEST_F(NotifierTest, BeingNamedInARoomNotifiesWithTheRoom)
 {
-    notifier.roomLineAdded(u"dnb"_s, {.atMs = 0, .user = u"lena"_s, .text = u"hello all"_s, .own = false, .mention = false});
+    notifier.roomLineAdded(u"dnb"_s,
+                           {.atMs = 0, .user = u"lena"_s, .text = u"hello all"_s, .own = false, .mention = false});
     notifier.roomLineAdded(u"dnb"_s, {.atMs = 0, .user = u"me"_s, .text = u"me again"_s, .own = true, .mention = true});
     EXPECT_TRUE(sink.posted.isEmpty());
 
@@ -129,11 +130,9 @@ TEST_F(NotifierTest, BeingNamedInARoomNotifiesWithTheRoom)
     EXPECT_EQ(sink.posted.constFirst().target, (NotificationTarget{u"rooms"_s, u"dnb"_s}));
     EXPECT_TRUE(sink.posted.constFirst().sound);
 
-    notifier.roomLineAdded(u"dnb"_s, {.atMs = 0,
-                                      .user = u"kassia"_s,
-                                      .text = u"selecta_test: and the A-side"_s,
-                                      .own = false,
-                                      .mention = true});
+    notifier.roomLineAdded(
+        u"dnb"_s,
+        {.atMs = 0, .user = u"kassia"_s, .text = u"selecta_test: and the A-side"_s, .own = false, .mention = true});
     ASSERT_EQ(sink.posted.size(), 2);
     EXPECT_EQ(sink.posted.constLast().id, sink.posted.constFirst().id);
     EXPECT_EQ(sink.posted.constLast().title, u"2 mentions of you in dnb"_s);
@@ -261,7 +260,7 @@ TEST_F(NotifierTest, TheBadgeCountsUnreadMessagesAndArrivalsWhileAway)
 
 TEST_F(NotifierTest, AFinishedGetTracksBatchNotifiesWhileAwayAndIsAlwaysReported)
 {
-    QSignalSpy finished(&notifier, &Notifier::getTracksFinished);
+    const QSignalSpy finished(&notifier, &Notifier::getTracksFinished);
     notifier.getLinesReset({line(1, u"Okuma Drift"_s, u"Neon Rain"_s, DownloadState::Queued),
                             line(2, u"Kassia Moreau"_s, u"Harbour Lights"_s, DownloadState::Queued)});
     GetLine first = line(1, u"Okuma Drift"_s, u"Neon Rain"_s, DownloadState::Transferring);
@@ -299,10 +298,11 @@ TEST_F(NotifierTest, AFinishedGetTracksBatchNotifiesWhileAwayAndIsAlwaysReported
 TEST(GetTracksBatchTest, ABatchEndsWhenNothingIsOnItsWay)
 {
     GetTracksBatch batch;
-    EXPECT_FALSE(batch.reset({line(1, u"A"_s, u"One"_s, DownloadState::Queued),
-                              line(2, u"B"_s, u"Two"_s, DownloadState::Queued),
-                              line(3, u"C"_s, u"Three"_s, DownloadState::None)})
-                     .finished);
+    EXPECT_FALSE(
+        batch
+            .reset({line(1, u"A"_s, u"One"_s, DownloadState::Queued), line(2, u"B"_s, u"Two"_s, DownloadState::Queued),
+                    line(3, u"C"_s, u"Three"_s, DownloadState::None)})
+            .finished);
     EXPECT_EQ(batch.pending(), 2);
     GetTracksBatch::Step step = batch.update(line(1, u"A"_s, u"One"_s, DownloadState::Arrived));
     EXPECT_EQ(step.arrived, 1);
@@ -480,7 +480,7 @@ TEST(RecordingNotificationSinkTest, KeepsTheLatestAndClicksThemById)
 {
     selecta::app::RecordingNotificationSink sink;
     Notifier notifier(&sink, [] { return true; });
-    QSignalSpy activated(&notifier, &Notifier::activated);
+    const QSignalSpy activated(&notifier, &Notifier::activated);
     notifier.messageAdded(message(u"vinyl_ghost"_s, u"one"_s));
     notifier.messageAdded(message(u"vinyl_ghost"_s, u"two"_s)); // replaces the first, like Notification Center
     ASSERT_EQ(sink.posted().size(), 1);
@@ -495,7 +495,7 @@ TEST(RecordingNotificationSinkTest, KeepsTheLatestAndClicksThemById)
     }
     EXPECT_EQ(sink.posted().size(), static_cast<qsizetype>(selecta::app::RecordingNotificationSink::kKept));
     EXPECT_EQ(sink.posted().constLast().target.argument,
-              u"peer%1"_s.arg(2 * selecta::app::RecordingNotificationSink::kKept - 1));
+              u"peer%1"_s.arg((2 * selecta::app::RecordingNotificationSink::kKept) - 1));
 }
 
 TEST(SystemNotificationSinkTest, OutsideAnAppBundleThereIsNone)

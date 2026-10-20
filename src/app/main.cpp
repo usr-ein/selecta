@@ -264,8 +264,8 @@ int runSelecta(int argc, char **argv)
                                                              : selecta::playback::AudioOutput::createDefault(),
                                             std::make_shared<selecta::audio::AnalysisCache>(analysisDir));
 
-    // System notifications (UI-6): macOS's Notification Center from the app bundle. Headless runs (automated
-    // inspection) keep them for the debug socket instead: nothing reaches the screen, and nobody is asked for permission.
+    // System notifications (UI-6): macOS's Notification Center from the app bundle. Headless runs keep them for the
+    // debug socket instead: nothing reaches the screen, and nobody is asked for permission.
     const std::unique_ptr<selecta::app::NotificationSink> notifications =
         options.headless ? std::make_unique<selecta::app::RecordingNotificationSink>()
                          : selecta::app::createSystemNotificationSink();

@@ -319,7 +319,7 @@ QJsonValue DebugServer::state()
 QJsonValue DebugServer::notifications(const QJsonObject &args, QString *error)
 {
     const Notifier *notifier = m_window.notifier();
-    NotificationSink *sink = notifier->sink();
+    const NotificationSink *sink = notifier->sink();
     const auto *kept = dynamic_cast<const RecordingNotificationSink *>(sink);
     if (const QString id = args.value("click"_L1).toString(); !id.isEmpty()) {
         if (kept == nullptr || !kept->click(id)) {

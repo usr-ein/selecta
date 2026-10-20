@@ -220,7 +220,7 @@ void MainWindow::createNotifications()
     connect(&m_services.engine, &core::EngineHost::albumReported, this, &MainWindow::albumReported);
 
     // What also reaches the system while the user is away (UI-6, NET-7); the Notifier decides.
-    core::EngineHost &engine = m_services.engine;
+    const core::EngineHost &engine = m_services.engine;
     connect(&engine, &core::EngineHost::messageAdded, m_notifier, &Notifier::messageAdded);
     connect(&engine, &core::EngineHost::roomLineAdded, m_notifier, &Notifier::roomLineAdded);
     connect(&engine, &core::EngineHost::albumReported, m_notifier, &Notifier::albumReported);
