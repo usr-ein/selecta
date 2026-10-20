@@ -40,6 +40,18 @@ selecta_add_test_suite(selecta_slsk_tests
         DevnetTest.cpp
     LIBRARIES selecta_slsk_testing selecta_devnet_core)
 
+# slsk against a real Soulfind on this machine (devenv/README.md). Soulfind listens on every interface, so these are
+# opt-in twice: built only with SELECTA_SOULFIND_TESTS=ON (CTest label `devenv`), and run only with SELECTA_DEVENV=1.
+# Nothing here downloads Soulfind: fetch the pinned build by hand (devenv/fetch-soulfind.sh).
+option(SELECTA_SOULFIND_TESTS "Build the slsk tests against a real Soulfind (it listens on every interface)" OFF)
+if(SELECTA_SOULFIND_TESTS)
+    add_executable(selecta_slsk_devenv_tests "${PROJECT_SOURCE_DIR}/tests/unit_main.cpp" devenv/SoulfindTest.cpp)
+    target_link_libraries(selecta_slsk_devenv_tests PRIVATE selecta_slsk_testing Qt6::Core Qt6::Test GTest::gtest)
+    target_compile_definitions(selecta_slsk_devenv_tests PRIVATE SELECTA_DEVENV_DIR="${PROJECT_SOURCE_DIR}/devenv")
+    selecta_set_warnings(selecta_slsk_devenv_tests)
+    gtest_discover_tests(selecta_slsk_devenv_tests DISCOVERY_MODE PRE_TEST PROPERTIES LABELS devenv)
+endif()
+
 if(SELECTA_SLSK_FUZZ)
     add_subdirectory("${PROJECT_SOURCE_DIR}/tests/fuzz/slsk" "${CMAKE_BINARY_DIR}/tests/fuzz/slsk")
 endif()

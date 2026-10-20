@@ -131,6 +131,10 @@ exactly once per session.
   the one call that reports (every cancellation) before it returns.
 - **Tokens**: random start in [1, 2^32/1000], increment, wrap, skip 0; indirect-connection tokens are unique among
   pending ones (a `PierceFireWall` carries nothing else).
+- **Peers on this machine**: an address the server gives that is one of this machine's own interface addresses is
+  dialled as 127.0.0.1 (direct dials and dial-backs). Soulfind hands out the LAN address for clients that log in from
+  127.0.0.1, and the macOS firewall in stealth mode silently drops connections to that address for programs it
+  doesn't know; over loopback, clients on one machine reach each other and can listen on 127.0.0.1 alone.
 
 ## Transfers
 
@@ -255,6 +259,7 @@ settings and accepts any login (or only `--user`/`--password`).
 | 8 | `ConnectFailed` and `ProtocolViolation` are distinct end reasons | The governor's event list has no counterpart; reported to the head implementer |
 | 9 | `TransferManager` queues signals raised inside a slot until the current one has reached every receiver | core/ will connect several receivers (a controller that cancels, a model that displays); without the queue a receiver connected after the controller would see `Cancelled` before the `Transferring` that caused it |
 | 10 | Failures are never reported from inside the call that started the work (`PeerNetwork`) | The caller holds the id first; no re-entrant callback while its own state is half-updated (the crash this fixed: a synchronous `fileConnectionFailed` finishing the upload being adopted) |
+| 11 | A peer at one of this machine's own addresses is dialled over loopback | Found against Soulfind: with the firewall in stealth mode, two local clients couldn't reach each other at the LAN address Soulfind gives out; loopback always reaches the same listener |
 
 Ported behaviour (not code) follows Nicotine+ (GPL-3.0-or-later) `pynicotine/slskproto.py`, `slskmessages.py`,
 `uploads.py` at `f3b9d4d`: caps, parent selection and child limit, connection replacement, upload close handling.
@@ -284,5 +289,10 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
     queue control, and `FakeServer` on a chosen port with an optional single account; 19 tests, one of which writes
     a corpus with ffmpeg (skipped without it) and checks every format probes as planned. S4 merged into main as
     `974a017`.
-- **Next:** S6 devenv (pinned Soulfind on 127.0.0.1, `devenv`-labelled tests), S7 selecta-cli commands.
+  - S6 `devenv/`: Soulfind pinned by GitHub asset id and SHA-256 (`soulfind.pin`), `fetch-soulfind.sh` (download
+    and verify, by hand only), `run-soulfind.sh --all-interfaces` (throwaway database), README with the safety
+    notes and the optional reference peers. `tests/slsk/devenv/` (CTest label `devenv`, built only with
+    `SELECTA_SOULFIND_TESTS=ON`, run only with `SELECTA_DEVENV=1`): login, relogin and a wrong password, search and
+    download over the direct and the indirect path against the real server; 3 tests, green here.
+- **Next:** S7 selecta-cli commands.
 - **Open questions:** none blocking.

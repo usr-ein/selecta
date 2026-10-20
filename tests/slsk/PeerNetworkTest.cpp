@@ -9,6 +9,7 @@
 #include "slsk/Providers.h"
 #include "slsk/ServerSession.h"
 
+#include <QNetworkInterface>
 #include <QRandomGenerator>
 #include <QSignalSpy>
 #include <QTcpSocket>
@@ -207,6 +208,32 @@ TEST_F(PeerNetworkTest, SynchronousPermitWorksToo)
     const QSignalSpy infos(&peers, &PeerNetwork::userInfoReceived);
     ASSERT_TRUE(peers.requestUserInfo(u"alice"_s, permit(Operation::UserInfo)));
     EXPECT_TRUE(waitFor([&] { return infos.size() == 1; }));
+}
+
+TEST_F(PeerNetworkTest, APeerAtOurOwnAddressIsReachedOverLoopback)
+{
+    // A local server hands out this machine's LAN address for clients on 127.0.0.1 (Soulfind does); the peer listens
+    // on 127.0.0.1 only, so only loopback reaches it.
+    QHostAddress lan;
+    const QList<QHostAddress> addresses = QNetworkInterface::allAddresses();
+    for (const QHostAddress &address : addresses) {
+        if (address.protocol() == QAbstractSocket::IPv4Protocol && !address.isLoopback()) {
+            lan = address;
+            break;
+        }
+    }
+    if (lan.isNull()) {
+        GTEST_SKIP() << "no LAN address on this machine";
+    }
+    FakePeer carol(u"carol"_s, &server);
+    carol.answerIndirect = false;
+    ASSERT_TRUE(carol.start());
+    server.addVirtualUser(u"carol"_s, lan, carol.port(), &carol);
+    carol.userInfo = peer::UserInfoResponse{u"same machine"_s, std::nullopt, 1, 0, true, std::nullopt};
+    const QSignalSpy infos(&peers, &PeerNetwork::userInfoReceived);
+    ASSERT_TRUE(peers.requestUserInfo(u"carol"_s, permit(Operation::UserInfo)));
+    ASSERT_TRUE(waitFor([&] { return infos.size() == 1; }));
+    EXPECT_EQ(infos.at(0).at(1).value<peer::UserInfoResponse>().description, u"same machine"_s);
 }
 
 TEST_F(PeerNetworkTest, RequestsToOnePeerShareOneConnectionAndOneLookup)
