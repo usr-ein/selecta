@@ -60,6 +60,9 @@ public:
     // Finds the best file for these lines (all lines still to find when empty), paced by the governor.
     void findTracks(const QList<qint64> &ids = {});
     void stopFindingTracks();
+    // Downloads the chosen file of these lines (every ticked line when empty) into the Inbox, converted and tagged.
+    void downloadTracks(const QList<qint64> &ids = {});
+    void cancelTrackDownloads(const QList<qint64> &ids);
     QList<GetLine> getLines() const { return m_getLines; }
 
     // --- the Soulseek network (Settings → Network) ---

@@ -76,11 +76,16 @@ if [ -n "${FAKE_YTDLP_LOG:-}" ]; then
     trap 'echo "end $kind" >> "$FAKE_YTDLP_LOG"' EXIT
 fi
 
-hang() {
+# A background child in this process group: the runner's kill must reach it too.
+start_child() {
     sleep 30 &
     if [ -n "${FAKE_YTDLP_PIDFILE:-}" ]; then
         echo "$!" > "$FAKE_YTDLP_PIDFILE"
     fi
+}
+
+hang() {
+    start_child
     wait
     exit 0
 }
@@ -179,9 +184,15 @@ written=0
 while [ "$written" -lt "$total" ]; do
     dd if=/dev/zero bs=8192 count=1 2> /dev/null >> "$file"
     written=$((written + 8192))
+    if [ "$mode" = stall ]; then
+        start_child # before the progress line: once the runner reports started(), there is a child to kill
+    fi
     echo "SELECTA-PROGRESS $written $total.0 1" >&2
     case "$mode" in
-        stall) hang ;;
+        stall)
+            wait
+            exit 0
+            ;;
         die)
             echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2
             exit 1

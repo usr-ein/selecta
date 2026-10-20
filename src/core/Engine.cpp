@@ -2,6 +2,7 @@
 #include "core/Engine.h"
 
 #include "base/Clock.h"
+#include "base/Version.h"
 #include "core/GovernorStore.h"
 #include "governor/Limits.h"
 #include "meta/SpotifyLinks.h"
@@ -137,6 +138,36 @@ bool Engine::start()
     connect(m_inbox.get(), &InboxService::changed, this, &Engine::inboxChanged);
     connect(m_inbox.get(), &InboxService::finished, this, &Engine::inboxOperationFinished);
 
+    // Downloads, then the arrival pipeline that turns each complete file into an Inbox item (D27, D29).
+    TransferService::Options transferOptions;
+    transferOptions.incomingDir = m_options.incomingDir;
+    m_transfers = std::make_unique<TransferService>(*m_db, *m_governor, *m_network, *m_activity,
+                                                    std::move(transferOptions), m_options.wallClock);
+    ArrivalService::Options arrivalOptions;
+    arrivalOptions.stagingDir = m_options.stagingDir;
+    arrivalOptions.encodedBy = u"Selecta "_s + QString(base::kVersion);
+    arrivalOptions.session = m_options.session;
+    m_arrival = std::make_unique<ArrivalService>(*m_db, *m_inbox, *m_activity, m_options.trash,
+                                                 std::move(arrivalOptions), m_options.wallClock);
+    m_arrival->setMeta(m_meta.get());
+    connect(m_transfers.get(), &TransferService::completed, m_arrival.get(), &ArrivalService::start);
+    connect(m_transfers.get(), &TransferService::changed, m_arrival.get(),
+            [arrival = m_arrival.get()](const Download &d) {
+                if (d.state == Download::State::Cancelled) {
+                    arrival->cancel(d.id);
+                }
+            });
+    connect(m_arrival.get(), &ArrivalService::finished, this, [this](qint64 id, const ArrivalResult &result) {
+        if (result.ok) {
+            m_transfers->arrived(id, result.inboxItem);
+        } else {
+            m_transfers->arrivalFailed(id, result.message);
+        }
+    });
+    m_getTracks->setTransfers(m_transfers.get());
+    connect(m_transfers.get(), &TransferService::changed, m_getTracks.get(), &GetTracksService::downloadChanged);
+    connect(m_transfers.get(), &TransferService::progress, m_getTracks.get(), &GetTracksService::downloadProgress);
+
     pruneActivity();
     m_pruneTimer = new QTimer(this);
     m_pruneTimer->setInterval(kActivityPruneInterval);
@@ -153,6 +184,8 @@ bool Engine::start()
     m_inbox->reconcile();
     m_meta->restore();
     m_network->start(m_options.network);
+    m_transfers->load();
+    m_getTracks->downloadsRestored(m_transfers->unfinished());
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -167,9 +200,14 @@ void Engine::stop()
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
     m_getTracks.reset();
+    m_arrival.reset(); // cancels conversions in flight (they run again at the next launch) and records finished ones
     m_search.reset();
     m_searchNetwork.reset();
-    m_network.reset(); // before the token store it reads from (owned by m_meta)
+    if (m_transfers) {
+        m_transfers->shutdown(); // unfinished downloads stay saved; the manager closes their files as it goes
+    }
+    m_network.reset(); // before the token store it reads from (owned by m_meta), and after shutdown()
+    m_transfers.reset();
     m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();

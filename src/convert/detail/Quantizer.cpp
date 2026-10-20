@@ -29,7 +29,9 @@ void Quantizer::quantize(std::span<const float> in, std::span<qint32> out)
     const std::size_t count = std::min(in.size(), out.size());
     for (std::size_t i = 0; i < count; ++i) {
         double value = static_cast<double>(in[i]) * m_scale;
-        if (m_dither) {
+        // Only samples that need rounding get noise: digital silence and audio already on the grid (padded 16-bit)
+        // pass unchanged, so reducing them is lossless.
+        if (m_dither && value != std::floor(value)) {
             value += uniform() - uniform(); // triangular, ±1 LSB
         }
         if (!(value > m_min)) { // also catches NaN

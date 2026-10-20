@@ -8,9 +8,10 @@
 namespace selecta::convert::detail {
 
 // Float samples in [-1, 1] to integers of 16 or 24 bits (conversion §2.2), with TPDF dither of ±1 LSB or plain
-// rounding. Without dither a sample already on the target grid comes back exactly (k / 2^(bits-1) → k), which is what
-// makes a 16- or 24-bit source bit-identical after conversion. Values beyond full scale are clipped and counted.
-// The dither noise is deterministic (fixed seed): the same input gives the same output.
+// rounding. A sample already on the target grid comes back exactly (k / 2^(bits-1) → k) with or without dither: that
+// makes a 16- or 24-bit source bit-identical after conversion, keeps digital silence silent, and reduces padded 24-bit
+// audio to 16 bits losslessly. Values beyond full scale are clipped and counted. The dither noise is deterministic
+// (fixed seed): the same input gives the same output.
 //
 // Threading: one thread at a time.
 class Quantizer

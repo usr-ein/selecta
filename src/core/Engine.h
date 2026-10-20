@@ -2,11 +2,13 @@
 #pragma once
 
 #include "core/ActivityLog.h"
+#include "core/ArrivalService.h"
 #include "core/GetTracksService.h"
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
 #include "core/SearchService.h"
+#include "core/TransferService.h"
 #include "governor/Governor.h"
 
 #include <QObject>
@@ -43,6 +45,11 @@ struct EngineOptions
     // Opens a URL in the browser, for the Spotify sign-in; called on the engine thread.
     std::function<bool(const QUrl &)> openUrl;
     MetaEndpoints metaEndpoints; // empty: the real services
+    // Downloads: partial and complete originals (incoming), and converted files before they are published (staging).
+    // Empty: downloads can't be stored (tests that don't download).
+    QString incomingDir;
+    QString stagingDir;
+    std::optional<int> session; // this run's session number, recorded with downloads
 };
 
 // The services on the engine thread (PLAN §2.3, the network thread): the governor and its saved state and the
@@ -87,6 +94,8 @@ public:
     GetTracksService &getTracks() { return *m_getTracks; }
     NetworkService &network() { return *m_network; }
     SearchService &search() { return *m_search; }
+    TransferService &transfers() { return *m_transfers; }
+    ArrivalService &arrival() { return *m_arrival; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -124,6 +133,8 @@ private:
     std::unique_ptr<NetworkService> m_network;
     std::unique_ptr<SearchNetwork> m_searchNetwork;
     std::unique_ptr<SearchService> m_search;
+    std::unique_ptr<TransferService> m_transfers;
+    std::unique_ptr<ArrivalService> m_arrival;
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     bool m_started = false;

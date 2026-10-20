@@ -2,6 +2,7 @@
 #include "core/GetTracksService.h"
 
 #include "core/SearchService.h"
+#include "core/TransferService.h"
 #include "match/Normalizer.h"
 #include "match/Tracklist.h"
 #include "storage/Database.h"
@@ -176,6 +177,11 @@ void GetTracksService::remove(const QList<qint64> &ids)
     if (ids.isEmpty()) {
         return;
     }
+    for (const qint64 id : ids) {
+        if (const GetLine *line = lineWithId(id)) {
+            cancelDownloadOf(*line);
+        }
+    }
     if (!m_store.remove(ids)) {
         qCWarning(lcGetTracks) << "couldn't remove lines:" << m_db.lastError();
         return;
@@ -201,6 +207,9 @@ void GetTracksService::remove(const QList<qint64> &ids)
 
 void GetTracksService::clear()
 {
+    for (const GetLine &line : std::as_const(m_lines)) {
+        cancelDownloadOf(line);
+    }
     if (!m_store.clear()) {
         qCWarning(lcGetTracks) << "couldn't clear the list:" << m_db.lastError();
         return;
@@ -465,6 +474,196 @@ void GetTracksService::store(const GetLine &line)
         qCWarning(lcGetTracks) << "couldn't save line" << line.id << ':' << m_db.lastError();
     }
     Q_EMIT lineChanged(line);
+}
+
+void GetTracksService::download(const QList<qint64> &ids)
+{
+    if (!m_transfers) {
+        return;
+    }
+    const QList<qint64> order = [this, &ids] {
+        QList<qint64> chosen;
+        for (const GetLine &line : std::as_const(m_lines)) {
+            if (ids.isEmpty() ? line.ticked : ids.contains(line.id)) {
+                chosen.append(line.id);
+            }
+        }
+        return chosen;
+    }();
+    for (const qint64 id : order) {
+        GetLine *line = lineWithId(id);
+        if (line == nullptr || !line->best) {
+            continue;
+        }
+        using DownloadState = GetLine::DownloadState;
+        if (line->downloadState != DownloadState::None && line->downloadState != DownloadState::Failed) {
+            continue; // on its way, or already in the Inbox
+        }
+        startDownload(*line);
+    }
+}
+
+void GetTracksService::cancelDownloads(const QList<qint64> &ids)
+{
+    for (const qint64 id : ids) {
+        if (const GetLine *line = lineWithId(id)) {
+            cancelDownloadOf(*line);
+        }
+    }
+}
+
+void GetTracksService::startDownload(GetLine &line)
+{
+    if (!line.best) {
+        return;
+    }
+    const FileChoice &best = *line.best;
+    DownloadSpec spec;
+    spec.peer = best.peer;
+    spec.remotePath = best.remotePath;
+    spec.size = best.size;
+    spec.file = best;
+    spec.release = line.release;
+    spec.getLine = line.id;
+    line.downloadId = 0;
+    line.downloadState = GetLine::DownloadState::Queued;
+    line.downloadProgress = -1.0;
+    line.message.clear();
+    const qint64 lineId = line.id;
+    const std::optional<qint64> downloadId = m_transfers->enqueue(spec); // reports back through downloadChanged()
+    GetLine *current = lineWithId(lineId);
+    if (current == nullptr) {
+        return;
+    }
+    if (!downloadId) {
+        current->downloadState = GetLine::DownloadState::Failed;
+        current->message = tr("Selecta couldn't start the download.");
+    } else {
+        current->downloadId = *downloadId;
+    }
+    store(*current);
+}
+
+void GetTracksService::cancelDownloadOf(const GetLine &line)
+{
+    using DownloadState = GetLine::DownloadState;
+    if (m_transfers && line.downloadId != 0 &&
+        (line.downloadState == DownloadState::Queued || line.downloadState == DownloadState::Transferring ||
+         line.downloadState == DownloadState::Converting)) {
+        m_transfers->cancel(line.downloadId);
+    }
+}
+
+bool GetTracksService::tryAlternative(GetLine &line, const QString &reason)
+{
+    const QString failedPeer = line.best ? line.best->peer : QString();
+    while (!line.alternatives.isEmpty()) {
+        const FileChoice next = line.alternatives.takeFirst();
+        if (next.peer == failedPeer) {
+            continue; // the same peer just failed
+        }
+        line.best = next;
+        startDownload(line);
+        if (GetLine *current = lineWithId(line.id);
+            current && current->downloadState != GetLine::DownloadState::Failed) {
+            current->message = tr("%1; trying %2's copy instead").arg(reason, next.peer);
+            store(*current);
+        }
+        return true;
+    }
+    return false;
+}
+
+void GetTracksService::downloadChanged(const Download &download)
+{
+    if (!download.getLine) {
+        return;
+    }
+    GetLine *line = lineWithId(*download.getLine);
+    if (line == nullptr || (line->downloadId != 0 && line->downloadId != download.id)) {
+        return; // not this line's current download
+    }
+    line->downloadId = download.id;
+    line->message = download.message;
+    using DownloadState = GetLine::DownloadState;
+    switch (download.state) {
+    case Download::State::Waiting:
+    case Download::State::Queued:
+        line->downloadState = DownloadState::Queued;
+        line->downloadProgress = -1.0;
+        break;
+    case Download::State::Transferring:
+        line->downloadState = DownloadState::Transferring;
+        break;
+    case Download::State::Converting:
+        line->downloadState = DownloadState::Converting;
+        line->downloadProgress = -1.0;
+        break;
+    case Download::State::Arrived:
+        line->downloadState = DownloadState::Arrived;
+        line->downloadProgress = -1.0;
+        break;
+    case Download::State::Failed:
+        line->downloadProgress = -1.0;
+        // A file that arrived whole but couldn't be converted or published isn't the peer's fault: no other copy.
+        if ((download.size > 0 && download.received >= download.size) || !tryAlternative(*line, download.message)) {
+            line = lineWithId(*download.getLine); // tryAlternative may have changed the list
+            if (line != nullptr && line->downloadId == download.id) {
+                line->downloadState = DownloadState::Failed;
+                line->message = download.message;
+            }
+        } else {
+            return; // stored by the new download
+        }
+        break;
+    case Download::State::Cancelled:
+        line->downloadState = DownloadState::None;
+        line->downloadProgress = -1.0;
+        line->downloadId = 0;
+        break;
+    }
+    if (line != nullptr) {
+        store(*line);
+    }
+}
+
+void GetTracksService::downloadProgress(qint64 downloadId, qint64 bytesDone, qint64 bytesTotal)
+{
+    for (GetLine &line : m_lines) {
+        if (line.downloadId != downloadId) {
+            continue;
+        }
+        const double fraction =
+            bytesTotal > 0 ? std::clamp(static_cast<double>(bytesDone) / static_cast<double>(bytesTotal), 0.0, 1.0)
+                           : -1.0;
+        if (std::abs(fraction - line.downloadProgress) >= 0.01 || (fraction >= 1.0 && line.downloadProgress < 1.0)) {
+            line.downloadProgress = fraction;
+            Q_EMIT lineChanged(line); // transient: not saved
+        }
+        return;
+    }
+}
+
+void GetTracksService::downloadsRestored(const QList<Download> &unfinished)
+{
+    QSet<qint64> busyLines;
+    for (const Download &download : unfinished) {
+        if (download.getLine) {
+            busyLines.insert(*download.getLine);
+        }
+    }
+    using DownloadState = GetLine::DownloadState;
+    for (GetLine &line : m_lines) {
+        const bool inFlight = line.downloadState == DownloadState::Queued ||
+                              line.downloadState == DownloadState::Transferring ||
+                              line.downloadState == DownloadState::Converting;
+        if (inFlight && !busyLines.contains(line.id)) {
+            line.downloadState = DownloadState::None;
+            line.downloadId = 0;
+            line.message = tr("The download was interrupted; get it again.");
+            store(line);
+        }
+    }
 }
 
 GetLine *GetTracksService::lineWithId(qint64 id)

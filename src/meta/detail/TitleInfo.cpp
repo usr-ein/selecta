@@ -20,6 +20,14 @@ constexpr std::array<QStringView, 9> kJunkWords = {u"slowed",  u"nightcore", u"8
                                                    u"tribute", u"cover",     u"bassboosted", u"reverbed"};
 constexpr std::array<QStringView, 5> kJunkPhrases = {u"sped up", u"speed up", u"bass boosted", u"in the style of",
                                                      u"8d audio"};
+// DJ-mix segments besides "(Mixed)": a compilation's continuous mix cut into tracks (Tomorrowland's "Streaming Mix").
+constexpr std::array<QStringView, 5> kDjMixPhrases = {u"mix cut", u"streaming mix", u"dj mix", u"continuous mix",
+                                                      u"mixed by"};
+
+bool containsPhrase(const QString &text, QStringView phrase)
+{
+    return QString(u' ' + text + u' ').contains(QString(u' ' + phrase.toString() + u' '));
+}
 
 // Tokens of `all` that aren't in `core` (multiset difference, order kept).
 QStringList remainder(const QStringList &all, const QStringList &core)
@@ -54,11 +62,13 @@ TitleInfo analyseTitle(const QString &title, const QString &explicitVersion)
         }
     }
     for (const QStringView phrase : kJunkPhrases) {
-        if (QString(u' ' + restText + u' ').contains(QString(u' ' + phrase.toString() + u' '))) {
+        if (containsPhrase(restText, phrase)) {
             info.junk.append(phrase.toString());
         }
     }
-    info.djMix = info.version.mixed || restText.contains(u"mix cut"_s);
+    info.djMix = info.version.mixed || std::ranges::any_of(kDjMixPhrases, [&](QStringView phrase) {
+                     return containsPhrase(restText, phrase);
+                 });
     return info;
 }
 

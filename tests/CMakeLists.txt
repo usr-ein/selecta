@@ -31,16 +31,6 @@ selecta_add_test_suite(selecta_unit_tests
         base/ClockTest.cpp
         base/LoggingTest.cpp
         base/PathsTest.cpp
-        core/ActivityLogTest.cpp
-        core/EngineTest.cpp
-        core/FileRankingTest.cpp
-        core/GetTracksServiceTest.cpp
-        core/GovernorPacerTest.cpp
-        core/GovernorStoreTest.cpp
-        core/InboxServiceTest.cpp
-        core/MetaServicesTest.cpp
-        core/NetworkServiceTest.cpp
-        core/SearchServiceTest.cpp
         governor/GovernorTest.cpp
         governor/PeerLedgerTest.cpp
         governor/QueryHygieneTest.cpp
@@ -54,7 +44,7 @@ selecta_add_test_suite(selecta_unit_tests
         storage/DatabaseTest.cpp
         storage/MigrationsTest.cpp
         storage/SessionLogTest.cpp
-    LIBRARIES selecta_base selecta_governor selecta_storage selecta_library selecta_core)
+    LIBRARIES selecta_base selecta_governor selecta_storage selecta_library)
 
 
 # Library test suites: tests/<library>/CMakeLists.txt, owned together with src/<library>/ (PLAN §9).
@@ -70,6 +60,25 @@ endforeach()
 
 # Head implementer's media-dependent modules.
 if(SELECTA_WITH_MEDIA)
+    selecta_add_test_suite(selecta_core_tests
+        SOURCES
+            core/ActivityLogTest.cpp
+            core/ArrivalServiceTest.cpp
+            core/DownloadsTest.cpp
+            core/EngineTest.cpp
+            core/FileRankingTest.cpp
+            core/GetTracksServiceTest.cpp
+            core/GovernorPacerTest.cpp
+            core/GovernorStoreTest.cpp
+            core/InboxServiceTest.cpp
+            core/MetaServicesTest.cpp
+            core/NetworkServiceTest.cpp
+            core/SearchServiceTest.cpp
+            core/TransferServiceTest.cpp
+        LIBRARIES selecta_core selecta_media_test_support selecta_slsk_testing Qt6::Gui)
+    if(SELECTA_STATIC_QT)
+        qt_import_plugins(selecta_core_tests INCLUDE Qt6::QJpegPlugin) # covers in the arrival tests
+    endif()
     add_subdirectory(playback)
     selecta_add_test_suite(selecta_ui_tests GUI
         SOURCES

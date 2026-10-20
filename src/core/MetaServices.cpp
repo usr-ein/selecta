@@ -44,6 +44,17 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
                    : std::make_unique<meta::DeezerClient>(m_network.get(), m_pacer, &m_cache, clock, nullptr,
                                                           options.endpoints.deezerApi);
     m_resolver = std::make_unique<meta::ReleaseResolver>(m_spotifyClient.get(), m_deezer.get());
+    m_musicBrainz = options.endpoints.musicBrainzApi.isEmpty()
+                        ? std::make_unique<meta::MusicBrainzClient>(m_network.get(), m_pacer, &m_cache, clock)
+                        : std::make_unique<meta::MusicBrainzClient>(m_network.get(), m_pacer, &m_cache, clock, nullptr,
+                                                                    options.endpoints.musicBrainzApi);
+    if (options.endpoints.coverDownloads) {
+        meta::CoverFetcher::Config covers;
+        if (!options.endpoints.coverArtArchive.isEmpty()) {
+            covers.coverArtArchiveUrl = options.endpoints.coverArtArchive;
+        }
+        m_covers = std::make_unique<meta::CoverFetcher>(std::move(covers), m_network.get(), m_pacer, clock);
+    }
     // Spotify data cached for a sign-in goes with it (Developer Policy §I.2).
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::signedOut, this, [this] { m_cache.removePrefix(u"spotify"_s); });
     connect(m_spotifyAuth.get(), &meta::SpotifyAuth::stateChanged, this, &MetaServices::publish);
@@ -56,6 +67,8 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
 MetaServices::~MetaServices()
 {
     // The resolver uses the clients, and the clients use the sign-in.
+    m_covers.reset();
+    m_musicBrainz.reset();
     m_resolver.reset();
     m_deezer.reset();
     m_spotifyClient.reset();

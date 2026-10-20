@@ -66,6 +66,8 @@ struct GetLine
     DownloadState downloadState = DownloadState::None;
     QString message; // why a step failed, in words
     qint64 addedAt = 0;
+    qint64 downloadId = 0;          // the download for the chosen file (not saved: restored from the downloads)
+    double downloadProgress = -1.0; // 0…1 while transferring, -1 otherwise (not saved)
 };
 
 // Reads and writes Get tracks lines (table get_lines). Uses the Database on its owning thread; failures are reported

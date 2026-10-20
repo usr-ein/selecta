@@ -139,4 +139,19 @@ private:
     std::unique_ptr<Impl> m_impl;
 };
 
+// Stream facts without decoding and without reading the whole file, for scans of thousands of files (Decoder::open()
+// indexes every frame of a complete MP3 or FLAC). Reads the leading ID3v2 headers (the tags themselves are skipped),
+// the format header and, for MPEG audio, the first frames with the Xing/LAME tag; for FLAC the metadata block headers
+// and STREAMINFO; for WAV and AIFF the chunk headers: tens of kilobytes. MP4 (wherever its `moov` is), Ogg and the
+// other formats FFmpeg reads are opened by its demuxer, which reads what their headers need (an MP4's `moov`, an
+// Ogg's last page for the length), and are never decoded.
+//
+// totalFrames is exact when the header carries it (STREAMINFO, the Xing/LAME frame count, chunk sizes, an MP4 index:
+// exactLength true), otherwise estimated from the size and the bitrate (exactLength false). bitrateKbps is the
+// header's or the estimate. `mpeg` is left empty: nothing is indexed. Of the options only the safety bounds apply.
+//
+// Threading: reentrant. Failure codes: those of Decoder::open(), and Corrupt for a file that ends inside its header.
+Result<StreamInfo> probeStreamInfo(std::shared_ptr<ByteSource> source, const DecoderOptions &options = {});
+Result<StreamInfo> probeStreamInfo(const QString &path);
+
 } // namespace selecta::audio

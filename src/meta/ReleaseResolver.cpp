@@ -146,6 +146,7 @@ struct Scored
     Candidate candidate;
     QString coreKey;
     QString versionKey;
+    match::VersionInfo version;
 };
 
 // The length difference in seconds, when both sides know their length.
@@ -168,6 +169,7 @@ Scored scoreRelease(const LineFacts &line, const Release &release)
     Scored scored;
     scored.coreKey = releaseTitle.core.key;
     scored.versionKey = releaseTitle.version.key();
+    scored.version = releaseTitle.version;
     Candidate &candidate = scored.candidate;
     candidate.release = release;
     candidate.version = match::VersionClassifier::compare(lineTitle.version, releaseTitle.version);
@@ -251,6 +253,9 @@ Scored scoreRelease(const LineFacts &line, const Release &release)
     if (isrcRule) {
         candidate.confidence = Confidence::Exact;
         candidate.reasons.prepend(u"ISRC %1 matches"_s.arg(line.isrc));
+        if (weights == 0) {
+            candidate.score = 1.0; // an ISRC alone: nothing else to compare, and the identifier agrees
+        }
     } else {
         candidate.confidence = tierFor(candidate.score);
     }
@@ -258,17 +263,22 @@ Scored scoreRelease(const LineFacts &line, const Release &release)
 }
 
 // The better of two candidates: an exact one first, then the higher score.
+bool isCompilation(const Release &release)
+{
+    return release.albumType.compare(u"compilation"_s, Qt::CaseInsensitive) == 0;
+}
+
+// The better of two candidates: an exact one first, then the higher score, then the original release over a
+// compilation's copy (its album, date and track number are the ones to tag with).
 bool better(const Candidate &a, const Candidate &b)
 {
     if ((a.confidence == Confidence::Exact) != (b.confidence == Confidence::Exact)) {
         return a.confidence == Confidence::Exact;
     }
-    return a.score > b.score;
-}
-
-bool isCompilation(const Release &release)
-{
-    return release.albumType.compare(u"compilation"_s, Qt::CaseInsensitive) == 0;
+    if (a.score != b.score) {
+        return a.score > b.score;
+    }
+    return !isCompilation(a.release) && isCompilation(b.release);
 }
 
 // The copy whose album a merged candidate shows: Spotify's (the primary source), then an album or single over a
@@ -340,12 +350,24 @@ QList<Scored> merged(const QList<Scored> &scored)
 }
 
 // A recording or version different from another candidate's: the Confident margin is measured against those only.
+// A shared ISRC is one recording. Otherwise the same title in the same (or probably the same) version, within ±3 s
+// when both lengths are known, counts as the same track: compilations re-register tracks under their own ISRCs, and a
+// copy of the chosen track is no reason for doubt.
 bool differentRecording(const Scored &a, const Scored &b)
 {
-    if (!a.candidate.release.isrc.isEmpty() && !b.candidate.release.isrc.isEmpty()) {
-        return a.candidate.release.isrc != b.candidate.release.isrc;
+    const Release &ra = a.candidate.release;
+    const Release &rb = b.candidate.release;
+    if (!ra.isrc.isEmpty() && ra.isrc == rb.isrc) {
+        return false;
     }
-    return a.versionKey != b.versionKey || a.coreKey != b.coreKey;
+    const match::VersionCompatibility version = match::VersionClassifier::compare(a.version, b.version);
+    if (a.coreKey != b.coreKey || !versionCompatible(version)) {
+        return true;
+    }
+    if (ra.durationMs.has_value() && rb.durationMs.has_value() && *ra.durationMs > 0 && *rb.durationMs > 0) {
+        return static_cast<double>(std::abs(*ra.durationMs - *rb.durationMs)) > kExactWindowSec * 1000.0;
+    }
+    return false;
 }
 
 // Tiers for candidates sorted best first. Confident only for the best, and only with a margin over every other

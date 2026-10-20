@@ -5,6 +5,7 @@
 #include "slsk/PermitSource.h"
 #include "slsk/ServerSession.h"
 #include "slsk/TokenGenerator.h"
+#include "slsk/TransferManager.h"
 
 #include <QByteArray>
 #include <QHostAddress>
@@ -116,6 +117,8 @@ public:
     bool isOnline() const { return m_server->isLoggedIn(); }
     slsk::ServerSession &server() { return *m_server; }
     slsk::PeerNetwork &peers() { return *m_peers; }
+    // Downloads and uploads over the peer network (TransferService drives them).
+    slsk::TransferManager &transfers() { return *m_transfers; }
 
     // Sends a search with a Search permit from the governor and opens its token for results; returns the token, or 0
     // when offline (the permit is dropped).
@@ -152,6 +155,7 @@ private:
     std::unique_ptr<slsk::ServerSession> m_server;
     std::unique_ptr<GovernorPermits> m_permits;
     std::unique_ptr<slsk::PeerNetwork> m_peers;
+    std::unique_ptr<slsk::TransferManager> m_transfers; // uses the peers and the session
     slsk::TokenGenerator m_searchTokens;
     QSet<quint32> m_openSearches;
     QTimer *m_retryTimer = nullptr;

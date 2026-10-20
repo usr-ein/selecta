@@ -60,7 +60,7 @@ public:
     bool isBranchRoot() const;      // the server feeds us searches directly
     int branchLevel() const;
     QString branchRoot() const;
-    QStringList children() const;
+    QStringList childUsernames() const; // QObject::children() is something else
     int maxChildren() const;
 
 Q_SIGNALS:

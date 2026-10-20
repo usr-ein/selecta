@@ -18,7 +18,9 @@ namespace selecta::audio::detail {
 class FfmpegBackend final : public Backend
 {
 public:
-    FfmpegBackend(std::shared_ptr<ByteSource> source, const ProbeResult &probe, const DecoderOptions &options);
+    // `headerOnly`: open() reads what the demuxer needs to open the file and never decodes (probeStreamInfo()).
+    FfmpegBackend(std::shared_ptr<ByteSource> source, const ProbeResult &probe, const DecoderOptions &options,
+                  bool headerOnly = false);
     ~FfmpegBackend() override;
     FfmpegBackend(const FfmpegBackend &) = delete;
     FfmpegBackend &operator=(const FfmpegBackend &) = delete;
@@ -60,6 +62,7 @@ private:
     AVRational m_timeBase{1, 1};
     qint64 m_originPts = AV_NOPTS_VALUE;
     bool m_growing = false;
+    bool m_headerOnly = false;
     int m_nextEntry = 0;      // index entry of the next packet (gating while growing)
     qint64 m_nextRaw = 0;     // running position for packets without timestamps
     qint64 m_dropBefore = -1; // after an internal reposition: discard decoded samples before this

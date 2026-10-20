@@ -19,11 +19,11 @@ foreach(_module IN LISTS _selecta_libraries)
 endforeach()
 
 add_subdirectory(library)
-add_subdirectory(core)
-# The app previews, analyses and converts audio: it needs the media libraries.
+# The engine converts arrivals and the app previews and analyses audio: both need the media libraries.
 if(SELECTA_WITH_MEDIA)
+    add_subdirectory(core)
     add_subdirectory(playback)
     add_subdirectory(app)
 else()
-    message(STATUS "SELECTA_WITH_MEDIA is OFF: building the libraries only, not the app")
+    message(STATUS "SELECTA_WITH_MEDIA is OFF: building the libraries only, not the engine or the app")
 endif()

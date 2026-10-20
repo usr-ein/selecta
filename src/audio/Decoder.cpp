@@ -44,6 +44,7 @@ struct Decoder::Impl
 
     std::shared_ptr<ByteSource> source;
     DecoderOptions options;
+    bool headerOnly = false; // probeStreamInfo(): stream facts from the headers, no index, nothing decoded
     detail::ProbeResult probe;
     std::unique_ptr<Backend> backend;
     detail::OutputStage output;
@@ -152,16 +153,19 @@ Decoder::OpenStatus Decoder::Impl::continueOpen()
     bool own = false;
     switch (probe.container) {
     case Container::MpegAudio:
-        backend = std::make_unique<detail::IndexedBackend>(detail::IndexedBackend::Kind::Mpeg, source, probe, options);
+        backend = std::make_unique<detail::IndexedBackend>(detail::IndexedBackend::Kind::Mpeg, source, probe, options,
+                                                           headerOnly);
         own = true;
         break;
     case Container::Flac:
-        backend = std::make_unique<detail::IndexedBackend>(detail::IndexedBackend::Kind::Flac, source, probe, options);
+        backend = std::make_unique<detail::IndexedBackend>(detail::IndexedBackend::Kind::Flac, source, probe, options,
+                                                           headerOnly);
         own = true;
         break;
     case Container::Wav:
     case Container::Aiff:
-        backend = std::make_unique<detail::IndexedBackend>(detail::IndexedBackend::Kind::Pcm, source, probe, options);
+        backend = std::make_unique<detail::IndexedBackend>(detail::IndexedBackend::Kind::Pcm, source, probe, options,
+                                                           headerOnly);
         own = true;
         break;
     case Container::Mp4:
@@ -169,7 +173,7 @@ Decoder::OpenStatus Decoder::Impl::continueOpen()
             error = makeError(ErrorCode::NeedsCompleteFile, u"the MP4 index comes after the audio"_s);
             return OpenStatus::NeedsCompleteFile;
         }
-        backend = std::make_unique<detail::FfmpegBackend>(source, probe, options);
+        backend = std::make_unique<detail::FfmpegBackend>(source, probe, options, headerOnly);
         break;
     case Container::Ogg:
     case Container::Other:
@@ -178,7 +182,7 @@ Decoder::OpenStatus Decoder::Impl::continueOpen()
             error = makeError(ErrorCode::NeedsCompleteFile, u"this format can only be decoded once complete"_s);
             return OpenStatus::NeedsCompleteFile;
         }
-        backend = std::make_unique<detail::FfmpegBackend>(source, probe, options);
+        backend = std::make_unique<detail::FfmpegBackend>(source, probe, options, headerOnly);
         break;
     }
 
@@ -204,7 +208,7 @@ Decoder::OpenStatus Decoder::Impl::continueOpen()
             return fail(openError);
         }
         qCDebug(lcAudio) << "falling back to FFmpeg's demuxer:" << openError.toString();
-        backend = std::make_unique<detail::FfmpegBackend>(source, probe, options);
+        backend = std::make_unique<detail::FfmpegBackend>(source, probe, options, headerOnly);
         Error ffmpegError;
         status = backend->open(ffmpegError);
         if (status != Backend::Status::Ok) {
@@ -555,6 +559,47 @@ Result<std::unique_ptr<Decoder>> Decoder::clone(const DecoderOptions &options) c
         return c.error;
     }
     return copy;
+}
+
+Result<StreamInfo> probeStreamInfo(std::shared_ptr<ByteSource> source, const DecoderOptions &options)
+{
+    if (!source) {
+        return makeError(ErrorCode::InvalidArgument, u"no source"_s);
+    }
+    if (options.maxHeaderBytes <= 0 || options.maxDurationSeconds <= 0) {
+        return makeError(ErrorCode::InvalidArgument, u"invalid probe options"_s);
+    }
+    detail::installFfmpegLogging();
+    Decoder::Impl impl;
+    impl.source = std::move(source);
+    impl.options = options;
+    impl.options.sampleRate = 0;
+    impl.options.channels = 0;
+    impl.headerOnly = true;
+    impl.state = Decoder::Impl::State::Opening;
+    switch (impl.continueOpen()) {
+    case Decoder::OpenStatus::Ready:
+        break;
+    case Decoder::OpenStatus::Failed:
+        return impl.error;
+    case Decoder::OpenStatus::NeedMoreData:
+        return makeError(ErrorCode::Corrupt, u"the file ends before its header does"_s);
+    case Decoder::OpenStatus::NeedsCompleteFile:
+        return impl.error.isError() ? impl.error
+                                    : makeError(ErrorCode::NeedsCompleteFile, u"the file isn't complete"_s);
+    }
+    StreamInfo info = impl.info;
+    info.mpeg.reset(); // nothing was indexed
+    return info;
+}
+
+Result<StreamInfo> probeStreamInfo(const QString &path)
+{
+    Result<std::shared_ptr<FileSource>> source = FileSource::open(path);
+    if (!source.ok()) {
+        return source.error();
+    }
+    return probeStreamInfo(source.takeValue());
 }
 
 } // namespace selecta::audio
