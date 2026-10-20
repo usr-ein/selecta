@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QStandardPaths>
+#include <QTest>
 
 #include <gtest/gtest.h>
 
@@ -15,6 +16,9 @@ int main(int argc, char **argv)
         qputenv("QT_QPA_PLATFORM", "minimal");
     }
     const QApplication app(argc, argv);
+    // A failing QCOMPARE, QVERIFY or QTRY_* throws, so GoogleTest fails the test. Without it the macro only returns
+    // from the test body, and the test passes: no QTest logger runs outside QTest::qExec().
+    QTest::setThrowOnFail(true);
     QApplication::setApplicationName(QStringLiteral("SelectaUiTests"));
     QStandardPaths::setTestModeEnabled(true);
     return RUN_ALL_TESTS();
