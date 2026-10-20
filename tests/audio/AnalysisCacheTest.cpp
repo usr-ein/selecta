@@ -57,7 +57,7 @@ QualityReport syntheticReport(int columns = 800, int bins = 256, int seed = 1)
         QByteArray levels(qsizetype{columns} * bins, '\0');
         for (qsizetype i = 0; i < levels.size(); ++i) {
             const qsizetype bin = i % bins;
-            levels[i] = static_cast<char>(bin < bins * 3 / 4 ? 150 - (bin / 4) + ((i / bins + seed) % 7) : 0);
+            levels[i] = static_cast<char>(bin < bins * 3 / 4 ? 150 - (bin / 4) + (((i / bins) + seed) % 7) : 0);
         }
         report.spectrogram = Spectrogram::fromLevels(44100, qint64{44100} * 360, columns, bins, levels).value();
     }
@@ -427,8 +427,8 @@ TEST(AnalysisCacheBlobs, QualityHostileSizesDoNotAllocate)
     // A payload size that disagrees with the blob.
     EXPECT_FALSE(AnalysisCache::decodeQuality(resealed(withLe32(blob, 56, 0x7FFFFFFFU))).ok());
     // A bomb: a payload inflating far beyond the declared grid.
-    QualityReport bomb = syntheticReport(10, 8);
-    const QByteArray zeros(4 * 1024 * 1024, '\0');
+    const QualityReport bomb = syntheticReport(10, 8);
+    const QByteArray zeros(qsizetype{4} * 1024 * 1024, '\0');
     uLongf packedSize = compressBound(static_cast<uLong>(zeros.size()));
     QByteArray packed(static_cast<qsizetype>(packedSize), Qt::Uninitialized);
     ASSERT_EQ(compress2(reinterpret_cast<Bytef *>(packed.data()), &packedSize,

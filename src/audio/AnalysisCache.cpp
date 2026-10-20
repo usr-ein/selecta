@@ -492,7 +492,7 @@ Result<QualityReport> AnalysisCache::decodeQuality(QByteArrayView blob)
     report.sourceBitDepth = static_cast<int>(getLe16(blob, 28));
     report.effectiveBitDepth = static_cast<int>(getLe16(blob, 30));
     report.contentBandwidthHz = asInt(32);
-    const auto findingCount = static_cast<quint8>(blob[36]);
+    const int findingCount = static_cast<quint8>(blob[36]);
     const quint32 columns = getLe16(blob, 42);
     const quint32 bins = getLe16(blob, 44);
     const quint64 frames = getLe64(blob, 48);
@@ -531,7 +531,7 @@ Result<QualityReport> AnalysisCache::decodeQuality(QByteArrayView blob)
         frames > static_cast<quint64>(kMaxSeconds) * static_cast<quint64>(report.sampleRate)) {
         return makeError(ErrorCode::Corrupt, u"invalid spectrogram size in quality blob"_s);
     }
-    const auto rawSize = static_cast<qsizetype>(columns * bins);
+    const qsizetype rawSize = static_cast<qsizetype>(columns) * static_cast<qsizetype>(bins);
     QByteArray levels;
     if ((flags & kQualityCompressed) != 0) {
         levels.resize(rawSize);

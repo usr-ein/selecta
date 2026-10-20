@@ -17,6 +17,7 @@ extern "C" {
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <gtest/gtest.h>
 #include <iostream>
@@ -104,11 +105,11 @@ Pcm decoded(const QByteArray &file, int sampleRate = 0)
     return decodeAll(file, options).pcm;
 }
 
-// White noise with nothing at or above `cutoffHz`: random phases on every bin below it of a 2^17-point inverse real
-// FFT, repeated to `seconds` and scaled to `rms`; the same signal on both channels.
-Pcm brickwallNoise(double cutoffHz, double seconds, int sampleRate, double rms)
+// White noise with nothing at or above `cutoffHz`: random phases (from `seed`) on every bin below it of a 2^17-point
+// inverse real FFT, repeated to `seconds` and scaled to `rms`; the same signal on both channels.
+Pcm brickwallNoise(double cutoffHz, double seconds, int sampleRate, double rms, std::uint32_t seed)
 {
-    constexpr int kPeriod = 1 << 17;
+    constexpr int kPeriod = 131072; // 2^17
     AVTXContext *context = nullptr;
     av_tx_fn inverse = nullptr;
     const float scale = 1.0F;
@@ -117,7 +118,7 @@ Pcm brickwallNoise(double cutoffHz, double seconds, int sampleRate, double rms)
         return {};
     }
     std::vector<AVComplexFloat> spectrum((kPeriod / 2) + 1, AVComplexFloat{0.0F, 0.0F});
-    std::mt19937 random(1234);
+    std::mt19937 random(seed);
     std::uniform_real_distribution<double> phase(0.0, 2.0 * std::numbers::pi);
     for (std::size_t k = 1; k < spectrum.size(); ++k) {
         const double phi = phase(random);
@@ -255,14 +256,15 @@ TEST(Spectrogram, LevelMappingIsLinearInDb)
         const auto code = static_cast<quint8>(level);
         EXPECT_EQ(Spectrogram::levelForDb(Spectrogram::dbForLevel(code)), code);
     }
-    for (double db = -119.9; db < 0.0; db += 0.37) {
+    for (int step = 0; step < 325; ++step) { // -119.9 dB up to just below 0 dB
+        const double db = -119.9 + (0.37 * step);
         EXPECT_NEAR(Spectrogram::dbForLevel(Spectrogram::levelForDb(db)), db, (120.0 / 255.0 / 2.0) + 1e-9) << db;
     }
 }
 
 TEST(Spectrogram, FromLevelsValidatesTheGrid)
 {
-    const QByteArray levels(4 * 3, '\x10');
+    const QByteArray levels(qsizetype{4} * 3, '\x10');
     const Result<Spectrogram> good = Spectrogram::fromLevels(48000, 1000, 4, 3, levels);
     ASSERT_TRUE(good.ok());
     const Spectrogram &s = good.value();
@@ -385,7 +387,8 @@ TEST(Spectrogram, ASineLandsInItsBin)
 TEST(Spectrogram, ALowpassEdgeStaysSharp)
 {
     // Noise with nothing above 16 kHz, like an MP3's lowpass but exact.
-    const QByteArray file = makeWav(brickwallNoise(16000.0, 5.0, 44100, 0.1), {.bits = 32, .floatingPoint = true});
+    const QByteArray file =
+        makeWav(brickwallNoise(16000.0, 5.0, 44100, 0.1, 1234), {.bits = 32, .floatingPoint = true});
     const QualityReport report = analyse(file, chunked(withSpectrogram()));
     const Spectrogram s = gridOf(report);
     const int edge = s.binForFrequency(16000.0);
@@ -636,7 +639,7 @@ std::vector<float> monoSine(double frequency, qint64 frames, double amplitude = 
 // Streams `mono` (frames [from, mono.size())) through `builder` in pieces of the given sizes, as the quality pass
 // does, and finishes it at the end.
 std::vector<SpectrogramSlot> stream(SpectrogramBuilder &builder, const std::vector<float> &mono, qint64 from,
-                                    std::vector<qint64> pieces)
+                                    const std::vector<qint64> &pieces)
 {
     PowerSpectrum fft;
     if (!fft.init().ok()) {
@@ -678,17 +681,17 @@ TEST(SpectrogramBuilder, AnExactLengthGivesOneSlotPerColumn)
     const qint64 length = 200000;
     const std::vector<float> mono = monoSine(1000, length);
     SpectrogramBuilder builder(64, SlotGeometry{length, 100}, 0, -1, 100);
-    const std::vector<SpectrogramSlot> slots = stream(builder, mono, 0, {});
-    ASSERT_EQ(slots.size(), 100U);
-    for (std::size_t i = 0; i < slots.size(); ++i) {
-        EXPECT_EQ(slots[i].start, static_cast<qint64>(i) * length / 100);
-        EXPECT_EQ(slots[i].end, static_cast<qint64>(i + 1) * length / 100);
-        EXPECT_EQ(slots[i].windows, 1); // 2 000-frame columns: one window each
-        EXPECT_EQ(slots[i].rows.size(), 64U);
+    const std::vector<SpectrogramSlot> built = stream(builder, mono, 0, {});
+    ASSERT_EQ(built.size(), 100U);
+    for (std::size_t i = 0; i < built.size(); ++i) {
+        EXPECT_EQ(built[i].start, static_cast<qint64>(i) * length / 100);
+        EXPECT_EQ(built[i].end, static_cast<qint64>(i + 1) * length / 100);
+        EXPECT_EQ(built[i].windows, 1); // 2 000-frame columns: one window each
+        EXPECT_EQ(built[i].rows.size(), 64U);
     }
     // Pieces of any size give the same slots, bit for bit.
     SpectrogramBuilder again(64, SlotGeometry{length, 100}, 0, -1, 100);
-    EXPECT_TRUE(sameSlots(stream(again, mono, 0, {1, 777, 4096, 13, 30000}), slots));
+    EXPECT_TRUE(sameSlots(stream(again, mono, 0, {1, 777, 4096, 13, 30000}), built));
 
     // Long columns average up to eight windows.
     SpectrogramBuilder wide(64, SlotGeometry{length, 4}, 0, -1, 4);
@@ -723,10 +726,10 @@ TEST(SpectrogramBuilder, AStreamShorterThanAnnounced)
     // Announced 200 000 frames, ended at 120 000 (a truncated file): the columns cover what was decoded.
     const std::vector<float> mono = monoSine(1000, 120000);
     SpectrogramBuilder builder(64, SlotGeometry{200000, 100}, 0, -1, 100);
-    std::vector<SpectrogramSlot> slots = stream(builder, mono, 0, {});
-    ASSERT_EQ(slots.size(), 60U);
-    EXPECT_EQ(slots.back().end, 120000);
-    const Result<Spectrogram> s = detail::assembleSpectrogram(44100, 120000, 100, 64, std::move(slots));
+    std::vector<SpectrogramSlot> built = stream(builder, mono, 0, {});
+    ASSERT_EQ(built.size(), 60U);
+    EXPECT_EQ(built.back().end, 120000);
+    const Result<Spectrogram> s = detail::assembleSpectrogram(44100, 120000, 100, 64, std::move(built));
     ASSERT_TRUE(s.ok());
     EXPECT_EQ(s.value().columns(), 60);
     EXPECT_EQ(s.value().frameCount(), 120000);
@@ -738,13 +741,13 @@ TEST(SpectrogramBuilder, AStreamLongerThanAnnouncedStaysBounded)
     // columns still cover the whole stream evenly.
     const std::vector<float> mono = monoSine(1000, 3000000);
     SpectrogramBuilder builder(32, SlotGeometry{50000, 100}, 0, -1, 100);
-    std::vector<SpectrogramSlot> slots = stream(builder, mono, 0, {});
-    EXPECT_LE(slots.size(), 200U + 8U);
-    EXPECT_GE(slots.size(), 100U);
-    for (std::size_t i = 1; i < slots.size(); ++i) {
-        ASSERT_EQ(slots[i].start, slots[i - 1].end) << "contiguous";
+    std::vector<SpectrogramSlot> built = stream(builder, mono, 0, {});
+    EXPECT_LE(built.size(), 200U + 8U);
+    EXPECT_GE(built.size(), 100U);
+    for (std::size_t i = 1; i < built.size(); ++i) {
+        ASSERT_EQ(built[i].start, built[i - 1].end) << "contiguous";
     }
-    const Result<Spectrogram> s = detail::assembleSpectrogram(44100, 3000000, 100, 32, std::move(slots));
+    const Result<Spectrogram> s = detail::assembleSpectrogram(44100, 3000000, 100, 32, std::move(built));
     ASSERT_TRUE(s.ok());
     EXPECT_EQ(s.value().columns(), 100);
     const int bin = s.value().binForFrequency(1000.0);
@@ -759,10 +762,10 @@ TEST(SpectrogramBuilder, AnUnknownLength)
     // No announced length: narrow slots merging as the stream goes on.
     const std::vector<float> mono = monoSine(1000, 2000000);
     SpectrogramBuilder builder(32, SlotGeometry{}, 0, -1, 100);
-    std::vector<SpectrogramSlot> slots = stream(builder, mono, 0, {});
-    EXPECT_GE(slots.size(), 100U);
-    EXPECT_LE(slots.size(), 200U + 8U);
-    const Result<Spectrogram> s = detail::assembleSpectrogram(44100, 2000000, 100, 32, std::move(slots));
+    std::vector<SpectrogramSlot> built = stream(builder, mono, 0, {});
+    EXPECT_GE(built.size(), 100U);
+    EXPECT_LE(built.size(), 200U + 8U);
+    const Result<Spectrogram> s = detail::assembleSpectrogram(44100, 2000000, 100, 32, std::move(built));
     ASSERT_TRUE(s.ok());
     EXPECT_EQ(s.value().columns(), 100);
     for (int c = 0; c < 100; ++c) {

@@ -266,7 +266,7 @@ struct ChunkResult
     bool anyNonZero = false;
     std::vector<double> spectrumSums;
     int spectrumWindows = 0;
-    std::vector<detail::SpectrogramSlot> slots;
+    std::vector<detail::SpectrogramSlot> spectrogramSlots;
     std::optional<qint64> endOfStream; // where the stream ended, when this chunk reached the end
     std::optional<Error> error;
 };
@@ -288,8 +288,8 @@ void runChunk(Decoder &decoder, detail::PowerSpectrum &fft, const PassSetup &set
     const auto neededFrom = [&sampler, &builder]() -> std::optional<qint64> {
         std::optional<qint64> needed = sampler.neededFrom();
         if (builder) {
-            if (const std::optional<qint64> slots = builder->neededFrom()) {
-                needed = needed ? std::min(*needed, *slots) : slots;
+            if (const std::optional<qint64> builderNeeds = builder->neededFrom()) {
+                needed = needed ? std::min(*needed, *builderNeeds) : builderNeeds;
             }
         }
         return needed;
@@ -342,7 +342,7 @@ void runChunk(Decoder &decoder, detail::PowerSpectrum &fft, const PassSetup &set
     result.spectrumSums = sampler.sums();
     result.spectrumWindows = sampler.windows();
     if (builder) {
-        result.slots = builder->takeSlots();
+        result.spectrogramSlots = builder->takeSlots();
     }
 }
 
@@ -575,7 +575,7 @@ Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, 
     std::vector<double> spectrum(kSpectrumFftBins, 0.0);
     int windows = 0;
     std::optional<qint64> end;
-    std::vector<detail::SpectrogramSlot> slots;
+    std::vector<detail::SpectrogramSlot> allSlots;
     for (ChunkResult &result : work->results) {
         onGrid = onGrid && result.onGrid;
         anyNonZero = anyNonZero || result.anyNonZero;
@@ -583,16 +583,16 @@ Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, 
             spectrum[k] += result.spectrumSums[k];
         }
         windows += result.spectrumWindows;
-        if (result.endOfStream) {
-            end = end ? std::min(*end, *result.endOfStream) : result.endOfStream;
+        if (const std::optional<qint64> ended = result.endOfStream) {
+            end = end ? std::min(*end, *ended) : *ended;
         }
-        std::ranges::move(result.slots, std::back_inserter(slots));
+        std::ranges::move(result.spectrogramSlots, std::back_inserter(allSlots));
     }
     measureSpectrum(spectrum, windows, info.sampleRate, report);
     addFindings(info, setup.gridCheck && onGrid && anyNonZero, report);
     if (options.spectrogram) {
         Result<Spectrogram> spectrogram =
-            detail::assembleSpectrogram(info.sampleRate, end.value_or(0), columns, setup.rows, std::move(slots));
+            detail::assembleSpectrogram(info.sampleRate, end.value_or(0), columns, setup.rows, std::move(allSlots));
         if (!spectrogram.ok()) {
             return spectrogram.error();
         }

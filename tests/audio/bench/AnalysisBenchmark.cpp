@@ -13,7 +13,7 @@
 #include <QCoreApplication>
 
 #include <benchmark/benchmark.h>
-#include <cstdlib>
+#include <cstddef>
 #include <memory>
 #include <string_view>
 
@@ -24,9 +24,9 @@ namespace {
 
 double benchSeconds()
 {
-    const char *value = std::getenv("SELECTA_BENCH_SECONDS"); // NOLINT(concurrency-mt-unsafe): read before any thread
-    const double seconds = value != nullptr ? std::atof(value) : 360.0; // NOLINT(cert-err34-c): a bench knob
-    return seconds >= 1.0 ? seconds : 360.0;
+    bool ok = false;
+    const double seconds = qEnvironmentVariable("SELECTA_BENCH_SECONDS").toDouble(&ok);
+    return ok && seconds >= 1.0 ? seconds : 360.0;
 }
 
 const Pcm &sixMinutes()

@@ -89,15 +89,15 @@ private:
     int m_windows = 0;
 };
 
-// Where the spectrogram's columns ("slots") fall: slot g starts at floor(g · length / slots) for a known length, at
+// Where the spectrogram's columns ("slots") fall: slot g starts at floor(g · length / count) for a known length, at
 // g · kUnknownLengthSlotFrames otherwise. Slots past the planned count continue at the same pace (a stream longer than
 // announced).
 struct SlotGeometry
 {
     qint64 length = 0; // announced length in frames; ≤ 0 when unknown
-    qint64 slots = 0;  // planned slots for a known length
+    qint64 count = 0;  // planned slots for a known length
 
-    bool known() const { return length > 0 && slots > 0; }
+    bool known() const { return length > 0 && count > 0; }
     qint64 start(qint64 slot) const;
     // The first slot starting at or after `frame` (≥ 0).
     qint64 firstAtOrAfter(qint64 frame) const;
@@ -156,11 +156,11 @@ private:
     std::vector<SpectrogramSlot> m_slots;
 };
 
-// The finished grid: slots (every chunk's, in order) over the `frames` decoded frames, reduced to at most `columns`
-// columns of `rows` level bytes. With more slots than columns, column c averages the slots whose middle falls in its
-// span (the slot under its middle when none does); otherwise each slot is a column. Slots starting at or after
+// The finished grid: `allSlots` (every chunk's, in order) over the `frames` decoded frames, reduced to at most
+// `columns` columns of `rows` level bytes. With more slots than columns, column c averages the slots whose middle falls
+// in its span (the slot under its middle when none does); otherwise each slot is a column. Slots starting at or after
 // `frames` are dropped.
 Result<Spectrogram> assembleSpectrogram(int sampleRate, qint64 frames, int columns, int rows,
-                                        std::vector<SpectrogramSlot> slots);
+                                        std::vector<SpectrogramSlot> allSlots);
 
 } // namespace selecta::audio::detail

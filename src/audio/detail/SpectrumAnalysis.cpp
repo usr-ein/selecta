@@ -215,7 +215,7 @@ std::optional<qint64> SpectrumSampler::neededFrom() const
 
 qint64 SlotGeometry::start(qint64 slot) const
 {
-    return known() ? (slot * length) / slots : slot * kUnknownLengthSlotFrames;
+    return known() ? (slot * length) / count : slot * kUnknownLengthSlotFrames;
 }
 
 qint64 SlotGeometry::firstAtOrAfter(qint64 frame) const
@@ -223,8 +223,8 @@ qint64 SlotGeometry::firstAtOrAfter(qint64 frame) const
     if (frame <= 0) {
         return 0;
     }
-    // The smallest g with floor(g · length / slots) ≥ frame is ceil(frame · slots / length).
-    return known() ? ((frame * slots) + length - 1) / length
+    // The smallest g with floor(g · length / count) ≥ frame is ceil(frame · count / length).
+    return known() ? ((frame * count) + length - 1) / length
                    : (frame + kUnknownLengthSlotFrames - 1) / kUnknownLengthSlotFrames;
 }
 
@@ -266,7 +266,7 @@ void SpectrogramBuilder::beginSlot()
 qint64 SpectrogramBuilder::windowStart(int window) const
 {
     const qint64 span = m_slotEnd - m_slotStart;
-    const qint64 centre = m_slotStart + (((2 * qint64{window}) + 1) * span) / (2 * qint64{m_slotWindows});
+    const qint64 centre = m_slotStart + ((((2 * qint64{window}) + 1) * span) / (2 * qint64{m_slotWindows}));
     qint64 start = centre - (kFftSize / 2);
     // Within the announced length, whole windows of audio: the last ones end at the end instead of running past it.
     if (m_geometry.known() && m_slotStart < m_geometry.length) {
@@ -364,18 +364,19 @@ void SpectrogramBuilder::finish(const MonoHistory &history, qint64 end, PowerSpe
 // Assembly
 
 Result<Spectrogram> assembleSpectrogram(int sampleRate, qint64 frames, int columns, int rows,
-                                        std::vector<SpectrogramSlot> slots)
+                                        std::vector<SpectrogramSlot> allSlots)
 {
     const bool rowsMatch = std::ranges::all_of(
-        slots, [rows](const SpectrogramSlot &slot) { return std::cmp_equal(slot.rows.size(), rows); });
+        allSlots, [rows](const SpectrogramSlot &slot) { return std::cmp_equal(slot.rows.size(), rows); });
     if (rows < 1 || rows > kSpectrogramMaxBins || !rowsMatch) {
         return makeError(ErrorCode::Internal, u"spectrogram slots with %1 rows don't fit"_s.arg(rows));
     }
-    std::erase_if(slots, [frames](const SpectrogramSlot &slot) { return slot.start >= frames || slot.windows <= 0; });
-    if (!slots.empty()) {
-        slots.back().end = frames; // the last column runs to the end of the audio
+    std::erase_if(allSlots,
+                  [frames](const SpectrogramSlot &slot) { return slot.start >= frames || slot.windows <= 0; });
+    if (!allSlots.empty()) {
+        allSlots.back().end = frames; // the last column runs to the end of the audio
     }
-    const auto available = static_cast<qint64>(slots.size());
+    const auto available = static_cast<qint64>(allSlots.size());
     const int out = static_cast<int>(std::min<qint64>(std::max(0, columns), available));
     QByteArray levels(qsizetype{out} * rows, '\0');
     const auto put = [&levels, rows](int column, const auto &power) {
@@ -386,7 +387,7 @@ Result<Spectrogram> assembleSpectrogram(int sampleRate, qint64 frames, int colum
     };
     if (available <= out) {
         for (int c = 0; c < out; ++c) {
-            put(c, slots[static_cast<std::size_t>(c)].rows);
+            put(c, allSlots[static_cast<std::size_t>(c)].rows);
         }
     } else {
         // Column c spans [c · frames / out, (c + 1) · frames / out): the window-weighted mean of the slots whose
@@ -400,8 +401,8 @@ Result<Spectrogram> assembleSpectrogram(int sampleRate, qint64 frames, int colum
             const qint64 to = ((qint64{c} + 1) * frames) / out;
             std::ranges::fill(sum, 0.0);
             qint64 windows = 0;
-            while (next < slots.size() && middle(slots[next]) < to) {
-                const SpectrogramSlot &slot = slots[next++];
+            while (next < allSlots.size() && middle(allSlots[next]) < to) {
+                const SpectrogramSlot &slot = allSlots[next++];
                 for (std::size_t r = 0; r < sum.size(); ++r) {
                     sum[r] += double{slot.rows[r]} * slot.windows;
                 }
@@ -415,10 +416,10 @@ Result<Spectrogram> assembleSpectrogram(int sampleRate, qint64 frames, int colum
                 continue;
             }
             const qint64 centre = from + ((to - from) / 2);
-            while (under + 1 < slots.size() && slots[under + 1].start <= centre) {
+            while (under + 1 < allSlots.size() && allSlots[under + 1].start <= centre) {
                 ++under;
             }
-            put(c, slots[under].rows);
+            put(c, allSlots[under].rows);
         }
     }
     return Spectrogram::fromLevels(sampleRate, frames, out, rows, std::move(levels));
