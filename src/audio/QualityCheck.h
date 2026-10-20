@@ -35,8 +35,8 @@ struct QualityReport
     // The lowpass a LAME tag records, for MP3s that have one.
     std::optional<int> lameLowpassHz;
 
-    int sourceBitDepth = 0;     // as declared (PCM, FLAC, ALAC); 0 for lossy codecs
-    int effectiveBitDepth = 0;  // 16 when every sample of a 24/32-bit file has its low 8 (or 16) bits clear
+    int sourceBitDepth = 0;    // as declared (PCM, FLAC, ALAC); 0 for lossy codecs
+    int effectiveBitDepth = 0; // 16 when every sample of a 24/32-bit file has its low 8 (or 16) bits clear
     int sampleRate = 0;
     int contentBandwidthHz = -1; // for rates above 48 kHz: the highest frequency with content, -1 otherwise
 

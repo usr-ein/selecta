@@ -18,23 +18,23 @@ namespace selecta::audio {
 
 enum class ErrorCode {
     None,
-    OpenFailed,        // the file can't be opened (missing, permissions, not a regular file)
-    ReadFailed,        // an I/O error while reading
-    WriteFailed,       // an I/O error while writing (cache, encoder output, tags)
-    DiskFull,          // a write failed for lack of space
-    OutputExists,      // the output path already exists; media code never overwrites
-    Unsupported,       // a format, codec or option this build doesn't handle
-    NeedsCompleteFile, // the format can't be decoded while it downloads (e.g. M4A with `moov` at the end)
-    SourceFailed,      // the download feeding a growing source failed or was cancelled
-    Corrupt,           // malformed or hostile data
-    TooLarge,          // a safety bound was exceeded (tag, picture, frame, duration, image size)
-    DecoderError,      // FFmpeg or the decoder reported an error
-    EncoderError,      // LAME, FFmpeg or soxr reported an error while encoding
-    TagError,          // TagLib couldn't read or write the tags
+    OpenFailed,         // the file can't be opened (missing, permissions, not a regular file)
+    ReadFailed,         // an I/O error while reading
+    WriteFailed,        // an I/O error while writing (cache, encoder output, tags)
+    DiskFull,           // a write failed for lack of space
+    OutputExists,       // the output path already exists; media code never overwrites
+    Unsupported,        // a format, codec or option this build doesn't handle
+    NeedsCompleteFile,  // the format can't be decoded while it downloads (e.g. M4A with `moov` at the end)
+    SourceFailed,       // the download feeding a growing source failed or was cancelled
+    Corrupt,            // malformed or hostile data
+    TooLarge,           // a safety bound was exceeded (tag, picture, frame, duration, image size)
+    DecoderError,       // FFmpeg or the decoder reported an error
+    EncoderError,       // LAME, FFmpeg or soxr reported an error while encoding
+    TagError,           // TagLib couldn't read or write the tags
     VerificationFailed, // the output didn't pass OutputVerifier
-    Cancelled,         // the caller cancelled the operation
-    InvalidArgument,   // the caller passed an invalid option or state
-    Internal,          // an unexpected failure (allocation, library misuse); a bug if it ever shows up
+    Cancelled,          // the caller cancelled the operation
+    InvalidArgument,    // the caller passed an invalid option or state
+    Internal,           // an unexpected failure (allocation, library misuse); a bug if it ever shows up
 };
 
 // Stable English name of a code, e.g. "NeedsCompleteFile", for logs and tests.
@@ -64,10 +64,10 @@ template <typename T>
 class Result
 {
 public:
-    Result(T value) // NOLINT(google-explicit-constructor): implicit, like std::expected
+    Result(T value) // NOLINT(cppcoreguidelines-explicit-constructor,misc-explicit-constructor): like std::expected
         : m_data(std::in_place_index<0>, std::move(value))
     {}
-    Result(Error error) // NOLINT(google-explicit-constructor)
+    Result(Error error) // NOLINT(cppcoreguidelines-explicit-constructor,misc-explicit-constructor)
         : m_data(std::in_place_index<1>, std::move(error))
     {}
 
@@ -118,7 +118,7 @@ class Result<void>
 {
 public:
     Result() = default;
-    Result(Error error) // NOLINT(google-explicit-constructor)
+    Result(Error error) // NOLINT(cppcoreguidelines-explicit-constructor,misc-explicit-constructor)
         : m_error(std::move(error))
     {}
 

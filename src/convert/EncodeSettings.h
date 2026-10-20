@@ -45,11 +45,11 @@ struct EncodeSettings
 struct ResolvedOutput
 {
     int sampleRate = 0;
-    int bitDepth = 0;       // 0 for MP3
-    bool resample = false;  // libsoxr runs (I-RESAMPLE)
-    bool dither = false;    // TPDF dither to 16-bit (I-DITHER)
-    bool upsample = false;  // only when settings ask for a higher rate explicitly (W-UPSAMPLE)
-    bool upDepth = false;   // only when settings ask for a larger word length explicitly (W-UPDEPTH)
+    int bitDepth = 0;      // 0 for MP3
+    bool resample = false; // libsoxr runs (I-RESAMPLE)
+    bool dither = false;   // TPDF dither to 16-bit (I-DITHER)
+    bool upsample = false; // only when settings ask for a higher rate explicitly (W-UPSAMPLE)
+    bool upDepth = false;  // only when settings ask for a larger word length explicitly (W-UPDEPTH)
 };
 ResolvedOutput resolveOutput(const audio::StreamInfo &source, const EncodeSettings &settings);
 

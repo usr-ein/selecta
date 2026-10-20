@@ -23,9 +23,9 @@ struct SourceQuality
     int bitDepth = 0;          // declared, lossless only
     int effectiveBitDepth = 0; // 16 for padded 24-bit (exact check), else bitDepth
     int channels = 0;
-    int bitrateKbps = 0;       // average
+    int bitrateKbps = 0; // average
     bool constantBitrate = false;
-    QString encoder;           // e.g. "LAME3.100"
+    QString encoder;                            // e.g. "LAME3.100"
     std::optional<audio::QualityReport> checks; // spectral and bit-depth checks, when analyzeQuality() ran
 };
 
@@ -39,14 +39,14 @@ Result<SourceQuality> probeSourceQuality(const QString &path, bool runChecks,
 
 // The rows of the warning matrix (conversion §6.2).
 enum class SourceClass {
-    LosslessGenuine,  // 16-bit, 44.1–48 kHz
-    LosslessHiRes,    // 24-bit and/or above 48 kHz
-    LosslessSuspect,  // likely from lossy, padded 24-bit or upsampled
-    Mp3High,          // MP3 320 CBR or V0-class VBR, not suspect
-    Mp3Lower,         // other MP3s, and "320" files that are likely upconverted
-    Aac,              // AAC/M4A (rekordbox plays it)
-    LossyUnplayable,  // Ogg Vorbis, Opus, WMA… (rekordbox can't play them)
-    OtherLossless,    // APE, WavPack, DSD…
+    LosslessGenuine, // 16-bit, 44.1–48 kHz
+    LosslessHiRes,   // 24-bit and/or above 48 kHz
+    LosslessSuspect, // likely from lossy, padded 24-bit or upsampled
+    Mp3High,         // MP3 320 CBR or V0-class VBR, not suspect
+    Mp3Lower,        // other MP3s, and "320" files that are likely upconverted
+    Aac,             // AAC/M4A (rekordbox plays it)
+    LossyUnplayable, // Ogg Vorbis, Opus, WMA… (rekordbox can't play them)
+    OtherLossless,   // APE, WavPack, DSD…
 };
 
 enum class Action {
@@ -58,17 +58,17 @@ enum class Action {
 
 // Short ids follow conversion §6.3.
 enum class Notice {
-    LossyToLossless, // W-LOSSY-TO-LOSSLESS
-    LossyUp,         // W-LOSSY-UP
-    Generation,      // W-GENERATION
-    Upsample,        // W-UPSAMPLE
-    UpDepth,         // W-UPDEPTH
-    Suspect,         // W-SUSPECT
-    NotPlayable,     // W-NOT-PLAYABLE
-    HardwareRate,    // W-HW-RATE
-    WavTags,         // W-WAV-TAGS
-    Resample,        // I-RESAMPLE
-    Dither,          // I-DITHER
+    LossyToLossless,   // W-LOSSY-TO-LOSSLESS
+    LossyUp,           // W-LOSSY-UP
+    Generation,        // W-GENERATION
+    Upsample,          // W-UPSAMPLE
+    UpDepth,           // W-UPDEPTH
+    Suspect,           // W-SUSPECT
+    NotPlayable,       // W-NOT-PLAYABLE
+    HardwareRate,      // W-HW-RATE
+    WavTags,           // W-WAV-TAGS
+    Resample,          // I-RESAMPLE
+    Dither,            // I-DITHER
     LosslessReduction, // info: reducing padded 24-bit to 16-bit loses nothing
 };
 
@@ -94,8 +94,8 @@ struct Advice
     QList<Notice> notices; // warnings first, then information
     Badge badge = Badge::None;
     int outputSampleRate = 0;
-    int outputBitDepth = 0;   // 0 for MP3
-    double sizeFactor = 0.0;  // estimated output size ÷ source size; 0 when unknown
+    int outputBitDepth = 0;  // 0 for MP3
+    double sizeFactor = 0.0; // estimated output size ÷ source size; 0 when unknown
 
     bool needsConfirmation() const { return action == Action::Ask; }
     bool hasNotice(Notice notice) const { return notices.contains(notice); }

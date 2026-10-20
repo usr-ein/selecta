@@ -64,12 +64,12 @@ inline constexpr QStringView Work = u"WORK";
 inline constexpr QStringView Subtitle = u"SUBTITLE";
 inline constexpr QStringView Mood = u"MOOD";
 inline constexpr QStringView DiscSubtitle = u"DISCSUBTITLE";
-inline constexpr QStringView EncodedBy = u"ENCODEDBY";   // ID3 TENC
-inline constexpr QStringView Encoding = u"ENCODING";     // ID3 TSSE: encoder settings
+inline constexpr QStringView EncodedBy = u"ENCODEDBY"; // ID3 TENC
+inline constexpr QStringView Encoding = u"ENCODING";   // ID3 TSSE: encoder settings
 inline constexpr QStringView Copyright = u"COPYRIGHT";
-inline constexpr QStringView TaggingDate = u"TAGGINGDATE";     // ID3v2.4 TDTG
+inline constexpr QStringView TaggingDate = u"TAGGINGDATE";       // ID3v2.4 TDTG
 inline constexpr QStringView ProducedNotice = u"PRODUCEDNOTICE"; // ID3v2.4 TPRO
-inline constexpr QStringView SourceUrl = u"URL";        // the source link (D30): ID3 WOAS/WXXX, Vorbis URL
+inline constexpr QStringView SourceUrl = u"URL";                 // the source link (D30): ID3 WOAS/WXXX, Vorbis URL
 } // namespace keys
 
 // An embedded picture. Pictures are bounded when read (TagReadOptions).

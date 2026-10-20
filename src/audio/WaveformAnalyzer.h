@@ -123,8 +123,7 @@ public:
 Q_SIGNALS:
     // New columns [firstColumn, firstColumn + columns.size()) while a preview downloads; expectedColumns is -1 when the
     // length is unknown. Not emitted for complete sources, which report finished() directly.
-    void columnsAdded(const QList<selecta::audio::WaveformColumn> &columns, qint64 firstColumn,
-                      qint64 expectedColumns);
+    void columnsAdded(const QList<selecta::audio::WaveformColumn> &columns, qint64 firstColumn, qint64 expectedColumns);
     // The source can't be analysed until the download completes (e.g. M4A with `moov` at the end); the job carries
     // on by itself once it has.
     void waitingForCompleteFile();

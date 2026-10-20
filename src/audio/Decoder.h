@@ -26,7 +26,7 @@ struct DecoderOptions
 
     // Safety bounds for untrusted files. Exceeding one fails open() with TooLarge.
     qint64 maxHeaderBytes = qint64{64} * 1024 * 1024; // tags and metadata before the audio (ID3v2 with artwork, FLAC
-                                                       // PICTURE blocks, an MP4 `moov`)
+                                                      // PICTURE blocks, an MP4 `moov`)
     qint64 maxDurationSeconds = qint64{12} * 3600;    // a longer declared duration is treated as corrupt
 };
 
@@ -46,9 +46,9 @@ struct ReadResult
 // Counters that tell whether a file decoded cleanly (OutputVerifier, quality checks).
 struct DecoderStats
 {
-    qint64 decodeErrors = 0;  // packets the codec rejected (their audio is replaced by silence of the same length)
-    qint64 skippedBytes = 0;  // bytes skipped while resynchronising on corrupt data
-    bool truncated = false;   // a complete source ended inside a frame, or before the length its header announced
+    qint64 decodeErrors = 0; // packets the codec rejected (their audio is replaced by silence of the same length)
+    qint64 skippedBytes = 0; // bytes skipped while resynchronising on corrupt data
+    bool truncated = false;  // a complete source ended inside a frame, or before the length its header announced
 };
 
 // Decodes an audio file to interleaved float PCM in [-1, 1], at a requested rate and channel layout.
@@ -105,9 +105,9 @@ public:
     qint64 lengthFrames() const;
 
     // Decodes up to `maxFrames` frames into `destination` (room for maxFrames × channels() floats). Returns the frames
-    // written and a status. A short count with Ok is normal. NeedMoreData may come with frames > 0: use them, then wait.
-    // EndOfStream comes with the last frames (possibly 0). Failure codes: DecoderError, ReadFailed, SourceFailed (the
-    // download failed before the data the decoder needed), Corrupt.
+    // written and a status. A short count with Ok is normal. NeedMoreData may come with frames > 0: use them, then
+    // wait. EndOfStream comes with the last frames (possibly 0). Failure codes: DecoderError, ReadFailed, SourceFailed
+    // (the download failed before the data the decoder needed), Corrupt.
     ReadResult read(float *destination, qint64 maxFrames);
 
     // The output frame the next read() returns, or the pending seek target.
