@@ -81,6 +81,8 @@ if(SELECTA_WITH_MEDIA)
             core/ManualSearchServiceTest.cpp
             core/MetaServicesTest.cpp
             core/NetworkServiceTest.cpp
+            core/PortMapClientTest.cpp
+            core/PortMapperTest.cpp
             core/PreviewCacheTest.cpp
             core/ResultAnnotatorTest.cpp
             core/RoomServiceTest.cpp
@@ -107,6 +109,7 @@ if(SELECTA_WITH_MEDIA)
             app/MainWindowTest.cpp
             app/NavModelTest.cpp
             app/NotifierTest.cpp
+            app/PortMappingSettingsTest.cpp
             app/PresetsTest.cpp
             app/SearchResultsModelTest.cpp
             app/SpotifyTermsTest.cpp

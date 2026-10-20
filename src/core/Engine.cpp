@@ -124,6 +124,9 @@ bool Engine::start()
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 
     m_network = std::make_unique<NetworkService>(*m_governor, *m_activity, m_meta->tokens(), m_options.wallClock);
+    if (m_options.portMapping) {
+        m_network->enablePortMapping(*m_options.portMapping);
+    }
     connect(m_network.get(), &NetworkService::statusChanged, this, &Engine::networkStatusChanged);
 
     m_searchNetwork = std::make_unique<NetworkSearch>(*m_network);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/PortMapper.h"
 #include "slsk/Client.h"
 #include "slsk/DistributedNode.h"
 #include "slsk/PeerNetwork.h"
@@ -44,6 +45,7 @@ struct NetworkConfig
     quint16 listenPort = 2234; // where peers connect to us
     bool connectAtLaunch = true;
     bool liveAllowedByUser = false; // SAFE-3: the run-time half of "may this build reach the live network"
+    bool portMapping = true;        // NET-3: open listenPort on the router (NAT-PMP, UPnP)
 
     bool operator==(const NetworkConfig &) const = default;
 };
@@ -65,6 +67,8 @@ struct NetworkStatus
     qint64 retryAtMs = 0; // Reconnecting: when the next attempt is due (Unix time, ms)
     bool listening = false;
     quint16 listenPort = 0;
+    PortMappingStatus portMapping; // NET-3: Unavailable unless enablePortMapping() was called
+    int peersReachedUs = 0;        // distinct peers that connected to our listening port this session
 };
 
 // slsk's PermitSource on the Governor: one PeerLookup permit per new outbound peer connection, delivered on a later
@@ -105,6 +109,9 @@ public:
     NetworkService(NetworkService &&) = delete;
     NetworkService &operator=(NetworkService &&) = delete;
 
+    // Lets this run open the listening port on the router (NET-3), as NetworkConfig::portMapping says. Without it the
+    // router is never touched (tests, isolated runs). Call before start().
+    void enablePortMapping(PortMapper::Options options);
     // Loads the saved password for the configured user and connects if connectAtLaunch is set.
     void start(const NetworkConfig &config);
     // New settings; reconnects when the server, account or port changed while connected.
@@ -173,6 +180,9 @@ private:
     void scheduleRetry(qint64 delayMs, const QString &detail);
     void setState(NetworkStatus::State state, const QString &detail = {});
     void ensureListening();
+    void updatePortMapping();
+    // The port peers should dial: the router's external port when it mapped another one.
+    quint16 advertisedPort() const;
     void log(const QString &outcome, const QString &explanation);
 
     governor::Governor &m_governor;
@@ -194,6 +204,8 @@ private:
     int m_lookupId = -1;          // the host lookup in flight, or -1
     int m_passwordGeneration = 0; // drops a stored password read that a typed password replaced
     NetworkStatus m_status;
+    std::unique_ptr<PortMapper> m_portMapper;
+    QSet<QString> m_reachedBy; // peers that connected to our listening port (bounded: kReachedByMax)
 };
 
 } // namespace selecta::core

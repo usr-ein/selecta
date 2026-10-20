@@ -27,6 +27,8 @@ qt_add_library(selecta_core STATIC
     NetworkService.h NetworkService.cpp
     OwnRelease.h OwnRelease.cpp
     PeerStats.h PeerStats.cpp
+    PortMapClient.h PortMapClient.cpp
+    PortMapper.h PortMapper.cpp
     PreviewCache.h PreviewCache.cpp
     ReleaseJson.h ReleaseJson.cpp
     ResultAnnotator.h ResultAnnotator.cpp
@@ -43,4 +45,12 @@ qt_add_library(selecta_core STATIC
 add_library(Selecta::Core ALIAS selecta_core)
 target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match
     selecta_meta selecta_slsk selecta_audio selecta_convert selecta_collection selecta_share Qt6::Core Qt6::Network)
+# libnatpmp (vcpkg, static; no CMake package): only its default-gateway lookup, for NAT-PMP (NET-3).
+find_path(SELECTA_NATPMP_INCLUDE_DIR natpmp.h REQUIRED)
+find_library(SELECTA_NATPMP_LIBRARY natpmp REQUIRED)
+target_include_directories(selecta_core SYSTEM PRIVATE "${SELECTA_NATPMP_INCLUDE_DIR}")
+target_link_libraries(selecta_core PRIVATE "${SELECTA_NATPMP_LIBRARY}")
+if(WIN32)
+    target_link_libraries(selecta_core PRIVATE ws2_32 iphlpapi)
+endif()
 selecta_set_warnings(selecta_core)

@@ -208,6 +208,10 @@ Q_SIGNALS:
     void distributedMessageReceived(const QString &username, quint32 code, const QByteArray &payload);
     void distributedDisconnected(const QString &username);
 
+    // A peer opened a connection to our listening port and identified itself (PeerInit, or PierceFireWall answering
+    // our ConnectToPeer): proof that the port is reachable from the outside (NET-3's reachability check).
+    void reachedByPeer(const QString &username);
+
 private:
     friend class internal::PeerNetworkPrivate;
     std::unique_ptr<internal::PeerNetworkPrivate> d;

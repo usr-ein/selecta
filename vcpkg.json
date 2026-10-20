@@ -25,6 +25,7 @@
         "widgets"
       ]
     },
+    "libnatpmp",
     "rapidfuzz-cpp",
     "zlib"
   ],

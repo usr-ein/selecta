@@ -61,6 +61,8 @@ public:
     void setPreviewSettings(core::PreviewSource source, const QString &ytDlpPath);
     void setYtDlpStatus(bool ok, const QString &description);
     core::NetworkConfig networkConfig() const { return m_network; }
+    // The line under "Open the port on the router automatically" (NET-3).
+    static QString portMappingText(const core::PortMappingStatus &mapping, quint16 listenPort);
     // Caches (CACHE-2): what each holds.
     void setCacheSizes(const core::CacheStatus &engine, qint64 waveformBytes);
     // "Show notifications" (UI-6), reflected without emitting showNotificationsChanged.
@@ -138,6 +140,9 @@ private:
     QLineEdit *m_networkPassword = nullptr;
     QSpinBox *m_listenPort = nullptr;
     QCheckBox *m_connectAtLaunch = nullptr;
+    QCheckBox *m_portMapping = nullptr;
+    QLabel *m_portMappingState = nullptr;
+    QLabel *m_reachability = nullptr;
     QPushButton *m_networkSave = nullptr;
     QPushButton *m_networkConnect = nullptr;
     QComboBox *m_previewSource = nullptr;
