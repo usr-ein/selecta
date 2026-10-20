@@ -32,9 +32,11 @@ protected:
         start(std::make_unique<selecta::meta::InMemoryTokenStore>());
     }
 
-    void start(std::unique_ptr<selecta::meta::InMemoryTokenStore> store)
+    // `allowed`: the user accepted the notice on Spotify's terms (D30).
+    void start(std::unique_ptr<selecta::meta::InMemoryTokenStore> store, bool allowed = true)
     {
         MetaServices::Options options;
+        options.spotifyAllowed = allowed;
         options.tokens = std::move(store);
         options.openUrl = [this](const QUrl &url) {
             opened = url;
@@ -134,6 +136,43 @@ TEST_F(MetaServicesTest, RestoreReadsWhatWasSaved)
     services->restore();
     ASSERT_TRUE(settle([this] { return services->spotifyStatus().clientId == kClientId; }));
     ASSERT_TRUE(settle([this] { return services->spotifyStatus().state == State::SignedOut; }));
+}
+
+TEST_F(MetaServicesTest, UntilTheTermsAreAcceptedSpotifyIsNeverSignedInTo)
+{
+    // Credentials saved before the user answered the notice (D30): read and shown, never used.
+    auto store = std::make_unique<selecta::meta::InMemoryTokenStore>();
+    std::ignore = store->write(QString(MetaServices::kClientIdAccount), kClientId.toUtf8());
+    std::ignore = store->write(QString(MetaServices::kClientSecretAccount), "not-a-real-secret");
+    QTest::qWait(10);
+    services.reset();
+    start(std::move(store), false);
+    EXPECT_FALSE(services->isSpotifyAllowed());
+    services->restore();
+    ASSERT_TRUE(settle([this] { return services->spotifyStatus().clientId == kClientId; }));
+    EXPECT_EQ(services->spotifyStatus().state, State::SignedOut);
+    EXPECT_TRUE(services->spotifyStatus().hasSecret);
+    // A client-credentials sign-in would fail here (nothing listens) and say so: no word means none was tried.
+    QTest::qWait(100);
+    EXPECT_TRUE(services->spotifyStatus().error.isEmpty()) << services->spotifyStatus().error.toStdString();
+    EXPECT_FALSE(services->spotify().isAvailable());
+
+    // New credentials are saved, still without a sign-in; the browser sign-in is refused, and says why.
+    services->setSpotifyCredentials(kClientId, "another-secret", false);
+    QTest::qWait(100);
+    EXPECT_TRUE(services->spotifyStatus().error.isEmpty());
+    services->signInToSpotify();
+    EXPECT_FALSE(opened.isValid());
+    EXPECT_FALSE(services->spotifyStatus().error.isEmpty());
+    EXPECT_NE(services->spotifyStatus().state, State::Authorizing);
+
+    // Accepted: the next step signs in.
+    services->allowSpotify();
+    EXPECT_TRUE(services->isSpotifyAllowed());
+    services->signInToSpotify();
+    ASSERT_TRUE(settle([this] { return opened.isValid(); }));
+    EXPECT_EQ(opened.host(), u"127.0.0.1"_s); // the fake accounts service, never Spotify
+    EXPECT_EQ(services->spotifyStatus().state, State::Authorizing);
 }
 
 TEST_F(MetaServicesTest, SignInOpensTheBrowser)

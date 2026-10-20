@@ -119,6 +119,7 @@ bool Engine::start()
     metaOptions.tokens = m_options.tokenStore ? m_options.tokenStore() : std::make_unique<meta::InMemoryTokenStore>();
     metaOptions.openUrl = m_options.openUrl;
     metaOptions.endpoints = m_options.metaEndpoints;
+    metaOptions.spotifyAllowed = m_options.spotifyAllowed;
     m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 

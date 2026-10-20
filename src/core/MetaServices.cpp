@@ -25,6 +25,7 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
     , m_pacer(governor, activity, this)
     , m_tokens(std::move(options.tokens))
     , m_cache(clock)
+    , m_spotifyAllowed(options.spotifyAllowed)
 {
     Q_ASSERT(m_tokens);
     qRegisterMetaType<SpotifyStatus>();
@@ -137,6 +138,10 @@ void MetaServices::applyCredentials(const QString &clientId)
 {
     m_error.clear();
     m_spotifyAuth->setClientId(clientId);
+    if (!m_spotifyAllowed) {
+        publish(); // saved and shown, never signed in with until the user accepts the terms notice (D30)
+        return;
+    }
     if (!m_secret.isEmpty()) {
         m_spotifyAuth->signInWithClientSecret(m_secret).then(this,
                                                              [this](const meta::Result<void> &r) { finished(r); });
@@ -148,6 +153,11 @@ void MetaServices::applyCredentials(const QString &clientId)
 
 void MetaServices::signInToSpotify()
 {
+    if (!m_spotifyAllowed) {
+        m_error = tr("Spotify isn't used until you accept the notice about its terms.");
+        publish();
+        return;
+    }
     m_error.clear();
     m_spotifyAuth->signIn(meta::SpotifyAuth::playlistScopes()).then(this, [this](const meta::Result<void> &r) {
         finished(r);

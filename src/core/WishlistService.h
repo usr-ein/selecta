@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/SearchFilter.h"
 #include "core/SearchService.h"
 
 #include <QList>
@@ -28,14 +29,16 @@ struct WishlistItem
     qint64 createdAt = 0; // Unix time, ms
     qint64 lastRunMs = 0; // 0: not run yet
     int found = 0;        // files its runs found that the user hasn't looked at yet
+    QString preset;       // the name of the filter preset it runs with (SRCH-8); empty: any audio file
+    SearchFilter filter;  // only files that pass it count as found
 
     friend bool operator==(const WishlistItem &, const WishlistItem &) = default;
 };
 
 // The wishlist (PRD SRCH-14, NET-6) on the engine thread: saved searches run again in the background, one at a time,
 // one per interval the server sets (the server's WishlistSearch message, through the governor's budget, which keeps
-// a reserve for searches typed by hand). Each run remembers the files it saw; files it hadn't seen before count as
-// found, until the user looks.
+// a reserve for searches typed by hand). Each run remembers the files it saw that pass the search's filter preset;
+// files it hadn't seen before count as found, until the user looks.
 //
 // Threading: engine thread. Ownership: the database and the SearchService outlive it.
 class WishlistService : public QObject
@@ -53,9 +56,11 @@ public:
     WishlistService(WishlistService &&) = delete;
     WishlistService &operator=(WishlistService &&) = delete;
 
-    // Saves a search; the same search (same words, any order or case) is saved once. Returns its id; nullopt for
-    // text with nothing to search.
-    std::optional<qint64> add(const QString &text);
+    // Saves a search with the filter preset it runs with; the same search (same words, any order or case) is saved
+    // once, and saving it again changes its preset. Returns its id; nullopt for text with nothing to search.
+    std::optional<qint64> add(const QString &text, const QString &preset = {}, const SearchFilter &filter = {});
+    // Another preset for a saved search: what its runs count as found from now on.
+    void setPreset(qint64 id, const QString &preset, const SearchFilter &filter);
     void remove(qint64 id);
     // The user looked at what it found: nothing new until the next run finds more.
     void markSeen(qint64 id);

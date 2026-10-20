@@ -26,6 +26,11 @@ struct FileResult
 // Moves within one volume use an atomic exclusive rename; across volumes, copy → flush → verify (SHA-256) → rename,
 // then the source is removed. A crash at any step leaves either the old or the new file, never neither.
 //
+// What goes into the Inbox came from a peer (D20): it carries the macOS quarantine attribute before it appears there
+// (NFR-4, library/Quarantine.h), and keeps the one it already has. Moves and copies keep a file's attribute, filing
+// into the collection included; nothing ever adds one to a collection file. A volume that can't take the attribute
+// doesn't stop a file: the log says so.
+//
 // Thread-safe: holds only immutable configuration. File I/O is blocking: call it from worker threads, never from the
 // UI or engine threads.
 class FileOps
@@ -38,8 +43,8 @@ public:
 
     QString inboxRoot() const { return m_inboxRoot; }
 
-    // Moves `sourceFile` (typically a verified temporary file) to `relativePath` inside the Inbox. If that name is
-    // taken, " (2)", " (3)"… is added before the extension. Creates parent folders.
+    // Moves `sourceFile` (typically a verified temporary file) to `relativePath` inside the Inbox, quarantined. If that
+    // name is taken, " (2)", " (3)"… is added before the extension. Creates parent folders.
     FileResult publishIntoInbox(const QString &sourceFile, const QString &relativePath) const;
 
     // Files an Inbox file into a collection root at `relativePath`: copy (or rename on the same volume), verify, then
@@ -59,9 +64,9 @@ public:
     FileResult trashFromInbox(const QString &path) const;
 
     // Moves `sourceFolder` (a staged album, outside the Inbox) to `relativeFolder` inside the Inbox, with everything in
-    // it: renamed on one volume, else copied and verified into a hidden folder next to the target that is then renamed
-    // into place. A name already taken gets " (2)", " (3)"… Creates parent folders. The staged folder goes once the
-    // album is in place.
+    // it, all quarantined: renamed on one volume, else copied and verified into a hidden folder next to the target that
+    // is then renamed into place. A name already taken gets " (2)", " (3)"… Creates parent folders. The staged folder
+    // goes once the album is in place.
     FileResult publishFolderIntoInbox(const QString &sourceFolder, const QString &relativeFolder) const;
 
     // Puts a file Selecta made (a conversion, in its staging folder) at `targetPath`, in a folder the user chose: a new
@@ -70,7 +75,8 @@ public:
     FileResult placeNewFile(const QString &stagedFile, const QString &targetPath) const;
 
     // Puts `newFile` (a verified copy, next to it) in the place of `inboxFile` in one atomic rename, so the name only
-    // ever holds the old file or the new one (re-tagging, DL-4). Both must be inside the Inbox, on one volume.
+    // ever holds the old file or the new one (re-tagging, DL-4). Both must be inside the Inbox, on one volume. The new
+    // file takes the old one's quarantine attribute.
     FileResult replaceInInbox(const QString &newFile, const QString &inboxFile) const;
 
     // Whether `path` (existing or not) resolves inside `root`.

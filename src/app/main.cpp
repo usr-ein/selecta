@@ -206,6 +206,7 @@ int runSelecta(int argc, char **argv)
     engineOptions.stagingDir = dataDir + u"/Downloads/Converting"_s;
     engineOptions.previewDir = paths::cacheDir() + u"/Previews"_s; // a session's previews only
     engineOptions.ytDlpPath = settings.ytDlpPath();
+    engineOptions.spotifyAllowed = settings.spotifyTermsAccepted(); // META-4, D30
     if (session > 0) {
         engineOptions.session = session;
     }

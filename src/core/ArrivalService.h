@@ -48,9 +48,10 @@ library::naming::Fields namingFieldsOf(const convert::MetadataModel &tags);
 // The arrival pipeline (PRD DL-3, D29, D30) on the engine thread: a completed download becomes an Inbox item. The
 // release's tags are completed first (label and genre from MusicBrainz by ISRC, the cover), then a worker converts the
 // file to the Inbox format (MP3 320 CBR, ID3v2.3, cover embedded), verified, or keeps lossy audio that can't be
-// improved as it is with fresh tags; publishes it into Inbox/Singles under the naming template; and disposes of the
-// original: a converted lossless original goes to the Trash, a copied one is deleted. The Inbox item and the history
-// entry are recorded back on the engine thread.
+// improved as it is with fresh tags; publishes it into Inbox/Singles under the naming template, with the macOS
+// quarantine attribute (NFR-4: the download's own, if it had one, else Selecta's); and disposes of the original: a
+// converted lossless original goes to the Trash, a copied one is deleted. The Inbox item and the history entry are
+// recorded back on the engine thread.
 //
 // Threading: engine thread; the file work runs on a pool of its own, one conversion per worker. Results come back
 // through a mutex-guarded mailbox. Ownership: the database, Inbox service, activity log and metadata services outlive

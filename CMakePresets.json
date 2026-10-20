@@ -55,8 +55,14 @@
     {
       "name": "dev",
       "displayName": "Debug",
+      "description": "Debug with line tables only (-g1): file:line backtraces, builds about half the size.",
       "inherits": [ "base", "vcpkg-static" ],
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_FLAGS_DEBUG": "-g1",
+        "CMAKE_CXX_FLAGS_DEBUG": "-g1",
+        "CMAKE_OBJCXX_FLAGS_DEBUG": "-g1"
+      }
     },
     {
       "name": "linux",

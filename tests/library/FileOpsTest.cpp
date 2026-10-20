@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "library/FileOps.h"
 
+#include "library/Quarantine.h"
+#include "support/QuarantineSupport.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QTemporaryDir>
 
 #include <gtest/gtest.h>
+#include <unistd.h>
 
 using namespace Qt::StringLiterals;
 using selecta::library::FileOps;
+namespace quarantine = selecta::library::quarantine;
 
 namespace {
 
@@ -256,4 +261,151 @@ TEST_F(FileOpsTest, PublishingAnAlbumAcrossVolumesCopiesAndVerifies)
     EXPECT_EQ(readFile(inbox + u"/Albums/Artist - Album/01 - One.mp3"_s), "one");
     EXPECT_FALSE(QFileInfo::exists(staged));
     EXPECT_FALSE(fileOps.publishFolderIntoInbox(staged, u"../outside"_s).ok);
+}
+
+TEST_F(FileOpsTest, WhatIsPublishedIntoTheInboxIsQuarantined)
+{
+    if (!quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    for (const bool copying : {false, true}) { // renamed into place, or copied across volumes
+        FileOps fileOps = ops();
+        fileOps.setForceCopy(copying);
+        const QString suffix = copying ? u"copied"_s : u"renamed"_s;
+
+        // A single.
+        const QString temp = incoming + u"/a.mp3"_s;
+        ASSERT_TRUE(writeFile(temp, "audio"));
+        const auto single = fileOps.publishIntoInbox(temp, u"Singles/%1.mp3"_s.arg(suffix));
+        ASSERT_TRUE(single.ok) << single.error.toStdString();
+        EXPECT_EQ(readFile(single.path), "audio");
+        EXPECT_EQ(quarantine::agentOf(single.path), u"Selecta"_s) << suffix.toStdString();
+
+        // An album: the folder and everything in it.
+        const QString staged = incoming + u"/album-"_s + suffix;
+        ASSERT_TRUE(writeFile(staged + u"/01 - One.mp3"_s, "one"));
+        ASSERT_TRUE(writeFile(staged + u"/cover.jpg"_s, "cover"));
+        ASSERT_TRUE(writeFile(staged + u"/CD2/01 - Two.mp3"_s, "two"));
+        const auto album = fileOps.publishFolderIntoInbox(staged, u"Albums/"_s + suffix);
+        ASSERT_TRUE(album.ok) << album.error.toStdString();
+        const QStringList paths{album.path, album.path + u"/01 - One.mp3"_s, album.path + u"/cover.jpg"_s,
+                                album.path + u"/CD2"_s, album.path + u"/CD2/01 - Two.mp3"_s};
+        for (const QString &path : paths) {
+            EXPECT_EQ(quarantine::agentOf(path), u"Selecta"_s) << path.toStdString();
+        }
+    }
+}
+
+TEST_F(FileOpsTest, AQuarantineAttributeAlreadyThereIsKeptOnTheWayIn)
+{
+    if (!quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    for (const bool copying : {false, true}) {
+        FileOps fileOps = ops();
+        fileOps.setForceCopy(copying);
+        const QString temp = incoming + u"/a.mp3"_s;
+        ASSERT_TRUE(writeFile(temp, "audio"));
+        ASSERT_TRUE(selecta::testing::setQuarantine(temp, selecta::testing::safariApproved()));
+        const auto result = fileOps.publishIntoInbox(temp, u"Singles/A.mp3"_s);
+        ASSERT_TRUE(result.ok) << result.error.toStdString();
+        EXPECT_EQ(quarantine::value(result.path), selecta::testing::safariApproved());
+    }
+}
+
+TEST_F(FileOpsTest, AFileThatCantBeQuarantinedStillArrives)
+{
+    if (!quarantine::isSupported() || ::geteuid() == 0) {
+        GTEST_SKIP() << "needs the attribute, and a user that read-only files stop";
+    }
+    const QString temp = incoming + u"/locked.mp3"_s;
+    ASSERT_TRUE(writeFile(temp, "audio"));
+    ASSERT_TRUE(QFile::setPermissions(temp, QFileDevice::ReadOwner | QFileDevice::ReadGroup));
+    const auto result = ops().publishIntoInbox(temp, u"Singles/Locked.mp3"_s);
+    ASSERT_TRUE(result.ok) << result.error.toStdString(); // the log says it has no attribute
+    EXPECT_EQ(readFile(result.path), "audio");
+    EXPECT_TRUE(quarantine::value(result.path).isEmpty());
+}
+
+TEST_F(FileOpsTest, FilingKeepsTheQuarantineAttributeAndNeverAddsOne)
+{
+    if (!quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    for (const bool copying : {false, true}) {
+        FileOps fileOps = ops();
+        fileOps.setForceCopy(copying);
+        const QString name = copying ? u"copied"_s : u"renamed"_s;
+
+        // A quarantined single keeps exactly its attribute in the collection, and stays byte for byte the same.
+        const QString single = inbox + u"/Singles/"_s + name + u".mp3"_s;
+        ASSERT_TRUE(writeFile(single, "audio"));
+        ASSERT_TRUE(quarantine::mark(single));
+        const QByteArray attribute = quarantine::value(single);
+        const auto filed = fileOps.fileIntoCollection(single, collection, u"Singles/"_s + name + u".mp3"_s);
+        ASSERT_TRUE(filed.ok) << filed.error.toStdString();
+        EXPECT_EQ(readFile(filed.path), "audio");
+        EXPECT_EQ(quarantine::value(filed.path), attribute) << name.toStdString();
+        EXPECT_FALSE(QFileInfo::exists(single));
+
+        // A file that came without one (from before Selecta set it) is filed as it is: nothing is added.
+        const QString plain = inbox + u"/Singles/plain-"_s + name + u".mp3"_s;
+        ASSERT_TRUE(writeFile(plain, "plain"));
+        const auto filedPlain = fileOps.fileIntoCollection(plain, collection, u"Singles/plain-"_s + name + u".mp3"_s);
+        ASSERT_TRUE(filedPlain.ok) << filedPlain.error.toStdString();
+        EXPECT_TRUE(quarantine::value(filedPlain.path).isEmpty());
+
+        // An album, with every file and folder in it.
+        const QString album = inbox + u"/Albums/"_s + name;
+        ASSERT_TRUE(writeFile(album + u"/01.mp3"_s, "one"));
+        ASSERT_TRUE(writeFile(album + u"/CD2/01.mp3"_s, "two"));
+        ASSERT_TRUE(quarantine::markTree(album));
+        const auto filedAlbum = fileOps.fileFolderIntoCollection(album, collection, u"Albums/"_s + name);
+        ASSERT_TRUE(filedAlbum.ok) << filedAlbum.error.toStdString();
+        const QStringList paths{filedAlbum.path, filedAlbum.path + u"/01.mp3"_s, filedAlbum.path + u"/CD2"_s,
+                                filedAlbum.path + u"/CD2/01.mp3"_s};
+        for (const QString &path : paths) {
+            EXPECT_EQ(quarantine::agentOf(path), u"Selecta"_s) << path.toStdString();
+        }
+        EXPECT_EQ(readFile(filedAlbum.path + u"/CD2/01.mp3"_s), "two");
+        EXPECT_FALSE(QFileInfo::exists(album));
+    }
+}
+
+TEST_F(FileOpsTest, AReplacedInboxFileKeepsItsQuarantineAttribute)
+{
+    if (!quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    // Re-tagging: a copy made by reading and writing (no attribute) takes the place of the quarantined file.
+    const QString file = inbox + u"/Singles/Song.mp3"_s;
+    const QString copy = inbox + u"/Singles/.Song.mp3.selecta-part"_s;
+    ASSERT_TRUE(writeFile(file, "old tags") && writeFile(copy, "new tags"));
+    ASSERT_TRUE(selecta::testing::setQuarantine(file, selecta::testing::safariApproved()));
+    const auto result = ops().replaceInInbox(copy, file);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(readFile(file), "new tags");
+    EXPECT_EQ(quarantine::value(file), selecta::testing::safariApproved());
+
+    // One that had none (from before Selecta set it) gets Selecta's: it is a download all the same.
+    const QString older = inbox + u"/Singles/Older.mp3"_s;
+    const QString olderCopy = inbox + u"/Singles/.Older.mp3.selecta-part"_s;
+    ASSERT_TRUE(writeFile(older, "old") && writeFile(olderCopy, "new"));
+    ASSERT_TRUE(ops().replaceInInbox(olderCopy, older).ok);
+    EXPECT_EQ(quarantine::agentOf(older), u"Selecta"_s);
+}
+
+TEST_F(FileOpsTest, ANewFilePlacedAcrossVolumesKeepsItsQuarantineAttribute)
+{
+    if (!quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    FileOps fileOps = ops();
+    fileOps.setForceCopy(true);
+    const QString staged = incoming + u"/converted.mp3"_s;
+    ASSERT_TRUE(writeFile(staged, "mp3"));
+    ASSERT_TRUE(selecta::testing::setQuarantine(staged, selecta::testing::safariApproved()));
+    const auto placed = fileOps.placeNewFile(staged, dir.filePath(u"converted.mp3"_s));
+    ASSERT_TRUE(placed.ok) << placed.error.toStdString();
+    EXPECT_EQ(quarantine::value(placed.path), selecta::testing::safariApproved());
 }

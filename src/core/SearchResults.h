@@ -72,6 +72,9 @@ match::RemoteAttributes remoteAttributesOf(const SearchHit &hit);
 match::ReleaseReference referenceOf(const meta::Release &release);
 // A result as a download's file (what the transfer and the arrival pipeline record).
 FileChoice fileChoiceOf(const SearchResult &result);
+// A hit as far as a filter needs it (SearchFilter::hiddenReason() without a release): its path, kind and quality. No
+// release fit and no ownership: for Get tracks and the Wishlist, which judge files without the Search view. Pure.
+SearchResult filterableResult(const SearchHit &hit);
 
 // Turns hits into results (PRD SRCH-6, SRCH-7, SRCH-11, SRCH-18): each remote folder is parsed once with its siblings,
 // quality is assessed from the attributes and the size, files are scored against the release when there is one, and
