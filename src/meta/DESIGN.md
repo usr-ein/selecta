@@ -394,7 +394,7 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
   - M5 (merged): `ToolProcess`, `YtDlpOutput`, `YtDlpRunner`/`YtDlpFetch` (discovery, version, search, pick, fetch,
     error map, pause, cleanup) against the fake yt-dlp script, `ClipSource`; `Config::disabled()` for isolated runs.
   - M6: `selecta-cli` `meta-search`, `meta-isrc`, `meta-ytdlp-search` over `GovernorPacer`; the manual smoke run
-    above, and the resolver fixes it led to. 328 tests (+2 opt-in Keychain tests).
+    above, and the resolver fixes it led to. 329 tests (+2 opt-in Keychain tests), green under `ctest -j8`.
 - **Next:** nothing planned in meta. ADR-011 (previews through the user's own yt-dlp) is for the head implementer to
   write from the "yt-dlp previews" section.
 - **Open questions:** none blocking.
@@ -405,3 +405,7 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
   `detail::ServiceGate::pollAll()` (or use `testing::awaitAdvancing`).
 - A flow's `LoopbackReceiver`/`QTimer` are deleted with `deleteLater()`: a flow can end inside their own signals.
 - `QT_USE_QSTRINGBUILDER` is on: wrap `a + b` in `QByteArray(...)`/`QString(...)` before calling members on it.
+- Process tests (`YtDlpRunnerTest`, `ToolProcessTest`) run real shells, so a loaded machine slows them: injected
+  timeouts are seconds, not milliseconds, waits have 30-s ceilings and return as soon as their condition holds, and a
+  test kills the fake only once its background child's pid file exists. Check changes with
+  `ctest -j16 -R 'YtDlp|ToolProcess' --repeat until-fail:3`.

@@ -72,10 +72,11 @@ protected:
         writeWrapper(u""_s);
         config.executable = bin(u"yt-dlp"_s);
         config.searchDirectories = {dir.filePath(u"bin"_s)}; // Deno only when a test puts one there
-        config.versionTimeout = 5s;
-        config.searchTimeout = 10s;
-        config.idleTimeout = 3s;
-        config.totalTimeout = 10s;
+        // Generous: only the tests about timeouts set short ones (kHangTimeout); a loaded machine never trips these.
+        config.versionTimeout = 30s;
+        config.searchTimeout = 30s;
+        config.idleTimeout = 30s;
+        config.totalTimeout = 60s;
         config.today = [] { return QDate(2026, 10, 20); };
     }
 
@@ -545,7 +546,7 @@ TEST_F(YtDlpRunnerTest, StalledAndEndlessFetchesTimeOut)
     EXPECT_FALSE(QFileInfo::exists(QDir(cache()).filePath(u"KmTopic00Ex.m4a"_s)));
 
     m_runner.reset();
-    config.idleTimeout = 2s; // progress lines every 50 ms keep resetting it
+    config.idleTimeout = 30s; // only the total timeout ends an endless stream of progress lines
     config.totalTimeout = kHangTimeout;
     setMode(u"endless"_s);
     const std::unique_ptr<YtDlpFetch> endless(runner().fetch(u"KmTopic00Ex"_s, cache()));

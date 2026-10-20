@@ -28,7 +28,7 @@ ToolProcess::Spec shell(const QString &script)
     spec.arguments = {u"-c"_s, script};
     spec.workingDirectory = u"/"_s;
     spec.environment.insert(u"PATH"_s, u"/usr/bin:/bin"_s);
-    spec.totalTimeout = 10s;
+    spec.totalTimeout = 30s; // generous: only the timeout tests set short ones
     return spec;
 }
 
@@ -155,11 +155,23 @@ TEST(ToolProcess, KillAndTimeoutsEndTheWholeProcessGroup)
     EXPECT_TRUE(processGone(static_cast<pid_t>(stalled->out.first().toInt())));
 
     ToolProcess::Spec busy = shell(u"while :; do echo x; sleep 0.05; done"_s);
-    busy.idleTimeout = 2s;  // a line every 50 ms keeps resetting it…
-    busy.totalTimeout = 3s; // …so only the total timeout can end the run
+    busy.idleTimeout = 0ms;
+    busy.totalTimeout = 1s; // ends a run that never stops printing, however slowly it started
     const auto endless = start(busy);
     ASSERT_TRUE(finish(*endless));
     EXPECT_EQ(endless->process->outcome().end, ToolOutcome::End::TotalTimeout);
+}
+
+TEST(ToolProcess, OutputKeepsARunAlive)
+{
+    // Lines for about 4 s against a 3-s idle timeout: each one resets it, so the run ends on its own.
+    ToolProcess::Spec chatty = shell(u"i=0; while [ $i -lt 40 ]; do echo x; sleep 0.1; i=$((i+1)); done"_s);
+    chatty.idleTimeout = 3s;
+    chatty.totalTimeout = 0ms;
+    const auto run = start(std::move(chatty));
+    ASSERT_TRUE(finish(*run));
+    EXPECT_EQ(run->process->outcome().end, ToolOutcome::End::Exited);
+    EXPECT_EQ(run->process->outcome().exitCode, 0);
 }
 
 TEST(ToolProcess, DestroyingARunningProcessKillsIt)
