@@ -182,8 +182,10 @@ QWidget *SettingsView::createLibraryBox(QWidget *parent)
     const auto pickerRow = [this, box, form](bool albums, const QString &label, const QString &chooseName,
                                              const QString &role) {
         auto *row = new QWidget(box);
-        auto *layout = new QHBoxLayout(row);
-        layout->setContentsMargins(0, 0, 0, 0);
+        auto *rowLayout = new QVBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(4);
+        auto *picker = new QHBoxLayout;
         auto *field = new QLineEdit(row);
         const QString name = albums ? u"settings.albumsFolder"_s : u"settings.tracksFolder"_s;
         field->setObjectName(name);
@@ -194,13 +196,14 @@ QWidget *SettingsView::createLibraryBox(QWidget *parent)
         choose->setObjectName(name + u".choose"_s);
         choose->setAccessibleName(chooseName);
         connect(choose, &QPushButton::clicked, this, [this, albums] { chooseFolder(albums); });
-        layout->addWidget(field, 1);
-        layout->addWidget(choose);
-        form->addRow(label + u':', row);
-        auto *note = new QLabel(role, box);
+        picker->addWidget(field, 1);
+        picker->addWidget(choose);
+        auto *note = new QLabel(role, row);
         note->setWordWrap(true);
         note->setForegroundRole(QPalette::PlaceholderText);
-        form->addRow(QString(), note);
+        rowLayout->addLayout(picker);
+        rowLayout->addWidget(note);
+        form->addRow(label + u':', row);
         return field;
     };
     m_tracksFolder = pickerRow(false, tr("Tracks folder"), tr("Choose the tracks folder"),
