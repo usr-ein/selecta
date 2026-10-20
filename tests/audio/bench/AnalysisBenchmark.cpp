@@ -1,29 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Analysis speed (A2, NFR-2: < 300 ms for a 6-minute track once downloaded). Run from a Release build:
+// Analysis speed (A2, NFR-2: < 300 ms for a 6-minute track once downloaded; A7: the quality checks with the
+// spectrogram, aim < 400 ms). Run from a Release build:
 //   selecta_audio_bench --benchmark_min_time=2s
-// The test signal is synthetic: six minutes of tones over noise, encoded at start-up.
+// The test signal is synthetic: six minutes of tones over noise (SELECTA_BENCH_SECONDS overrides 360; the ctest smoke
+// run uses a few seconds), encoded on first use.
 #include "SyntheticAudio.h"
 #include "audio/BandAnalyzer.h"
 #include "audio/Decoder.h"
+#include "audio/QualityCheck.h"
 #include "audio/WaveformAnalyzer.h"
 
 #include <QCoreApplication>
 
 #include <benchmark/benchmark.h>
+#include <cstddef>
 #include <memory>
+#include <string_view>
 
 using namespace selecta::audio;
 using namespace selecta::testing;
 
 namespace {
 
-constexpr double kSeconds = 360.0;
+double benchSeconds()
+{
+    bool ok = false;
+    const double seconds = qEnvironmentVariable("SELECTA_BENCH_SECONDS").toDouble(&ok);
+    return ok && seconds >= 1.0 ? seconds : 360.0;
+}
 
 const Pcm &sixMinutes()
 {
     static const Pcm pcm = [] {
-        Pcm signal = tones({55, 220, 880, 3520, 9000}, kSeconds, 44100, 2, 0.12);
-        const Pcm noise = whiteNoise(kSeconds, 17, 44100, 2, 0.15);
+        const double seconds = benchSeconds();
+        Pcm signal = tones({55, 220, 880, 3520, 9000}, seconds, 44100, 2, 0.12);
+        const Pcm noise = whiteNoise(seconds, 17, 44100, 2, 0.15);
         for (std::size_t i = 0; i < signal.samples.size(); ++i) {
             signal.samples[i] += noise.samples[i];
         }
@@ -32,17 +43,17 @@ const Pcm &sixMinutes()
     return pcm;
 }
 
-const QByteArray &file(const char *format)
+const QByteArray &file(std::string_view format)
 {
-    static const QByteArray mp3 = makeMp3(sixMinutes(), {});
-    static const QByteArray flac = makeFlac(sixMinutes());
-    static const QByteArray wav = makeWav(sixMinutes());
-    if (std::string_view(format) == "mp3") {
+    if (format == "mp3") {
+        static const QByteArray mp3 = makeMp3(sixMinutes(), {});
         return mp3;
     }
-    if (std::string_view(format) == "flac") {
+    if (format == "flac") {
+        static const QByteArray flac = makeFlac(sixMinutes());
         return flac;
     }
+    static const QByteArray wav = makeWav(sixMinutes());
     return wav;
 }
 
@@ -83,6 +94,24 @@ void analysis(benchmark::State &state, const char *format, int threads)
     }
 }
 
+// The quality checks (A3), with the spectrogram (A7) when asked: one decoding pass, chunked unless threads is 1.
+void quality(benchmark::State &state, const char *format, bool spectrogram, int threads)
+{
+    const auto source = std::make_shared<MemorySource>(file(format));
+    QualityOptions options;
+    options.spectrogram = spectrogram;
+    options.maxThreads = threads;
+    while (state.KeepRunning()) {
+        const Result<QualityReport> report = analyzeQuality(source, options);
+        if (!report.ok() || report.value().spectrogram.has_value() != spectrogram) {
+            state.SkipWithError("quality check failed");
+            return;
+        }
+        int cutoff = report.value().cutoffHz;
+        benchmark::DoNotOptimize(cutoff);
+    }
+}
+
 void bandSplit(benchmark::State &state)
 {
     std::vector<float> mono(static_cast<std::size_t>(sixMinutes().frames()));
@@ -103,6 +132,11 @@ void bandSplit(benchmark::State &state)
 BENCHMARK_CAPTURE(decodeOnly, mp3_320, "mp3")->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(decodeOnly, flac_16, "flac")->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(decodeOnly, wav_16, "wav")->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(quality, flac_16_spectrogram_parallel, "flac", true, 0)->Unit(benchmark::kMillisecond)->UseRealTime();
+BENCHMARK_CAPTURE(quality, flac_16_parallel, "flac", false, 0)->Unit(benchmark::kMillisecond)->UseRealTime();
+BENCHMARK_CAPTURE(quality, flac_16_spectrogram_sequential, "flac", true, 1)->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(quality, flac_16_sequential, "flac", false, 1)->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(quality, mp3_320_spectrogram_parallel, "mp3", true, 0)->Unit(benchmark::kMillisecond)->UseRealTime();
 BENCHMARK(bandSplit)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(analysis, mp3_320_sequential, "mp3", 1)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(analysis, mp3_320_parallel, "mp3", 0)->Unit(benchmark::kMillisecond)->UseRealTime();

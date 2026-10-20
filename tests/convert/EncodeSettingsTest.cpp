@@ -199,6 +199,9 @@ TEST(EncodeSettings, Labels)
     flac.sampleRate = 48000;
     EXPECT_EQ(describeSettings(flac), u"FLAC, 48 kHz"_s);
     EXPECT_EQ(describeSettings(format(OutputFormat::Alac)), u"ALAC"_s);
+    EncodeSettings low = format(OutputFormat::Aiff);
+    low.sampleRate = 22050;
+    EXPECT_EQ(describeSettings(low), u"AIFF, 22.05 kHz"_s);
     EXPECT_EQ(describeSettings(format(OutputFormat::KeepAudio)), u"Original audio"_s);
 
     EXPECT_EQ(fileExtension(OutputFormat::Mp3), u"mp3"_s);
@@ -216,4 +219,25 @@ TEST(EncodeSettings, Labels)
     fast.bitrateKbps = 256;
     fast.algorithmQuality = 7;
     EXPECT_EQ(lameSettingsString(fast), u"LAME3.100 -b 256 -q 7"_s);
+}
+
+TEST(EncodeSettings, SampleRates)
+{
+    for (const int rate : {32000, 44100, 48000}) {
+        EXPECT_TRUE(isMp3SampleRate(rate)) << rate;
+    }
+    for (const int rate : {0, -44100, 8000, 11025, 16000, 22050, 24000, 37800, 44056, 88200, 96000}) {
+        EXPECT_FALSE(isMp3SampleRate(rate)) << rate; // MPEG-2 rates included: Selecta writes MPEG-1 only
+    }
+    // Exact, with no trailing zeros.
+    EXPECT_EQ(describeRate(44100), u"44.1 kHz"_s);
+    EXPECT_EQ(describeRate(48000), u"48 kHz"_s);
+    EXPECT_EQ(describeRate(22050), u"22.05 kHz"_s);
+    EXPECT_EQ(describeRate(11025), u"11.025 kHz"_s);
+    EXPECT_EQ(describeRate(176400), u"176.4 kHz"_s);
+    EXPECT_EQ(describeRate(352800), u"352.8 kHz"_s);
+    EXPECT_EQ(describeRate(100000), u"100 kHz"_s);
+    EXPECT_EQ(describeRate(44056), u"44.056 kHz"_s);
+    EXPECT_EQ(describeRate(500), u"0.5 kHz"_s);
+    EXPECT_EQ(describeRate(0), u"0 kHz"_s);
 }

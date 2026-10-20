@@ -32,8 +32,8 @@ struct EncodeSettings
     OutputFormat format = OutputFormat::Mp3;
     Mp3Settings mp3;
     // Output rate in Hz; 0 picks automatically. MP3: the source rate when it is 32, 44.1 or 48 kHz, else 44.1 kHz
-    // (D-4; sources below 32 kHz are upsampled, which the advisor flags). Lossless: the source rate, or, above
-    // maxSampleRate, the highest rate of the source's family (44.1 or 48 kHz times a power of two) that fits. An
+    // (D-4; a source below 44.1 kHz is then upsampled, which the advisor asks about). Lossless: the source rate, or,
+    // above maxSampleRate, the highest rate of the source's family (44.1 or 48 kHz times a power of two) that fits. An
     // explicit rate is used as given: MP3 accepts 32000, 44100 or 48000; lossless 8000…384000.
     int sampleRate = 0;
     // Lossless word length: 16 or 24; 0 picks from the source (16-bit and below → 16; 20-, 24- and 32-bit and float
@@ -61,9 +61,14 @@ struct ResolvedOutput
 };
 ResolvedOutput resolveOutput(const audio::StreamInfo &source, const EncodeSettings &settings);
 
+// The rates Selecta writes MP3 at (MPEG-1 Layer III, which 320 kbps needs): 32, 44.1 and 48 kHz.
+bool isMp3SampleRate(int sampleRate);
+
 // "MP3 320 kbps CBR", "MP3 V0", "AIFF", "FLAC", "WAV", "ALAC", "Original audio"; explicit choices are appended
 // ("AIFF, 16-bit, 44.1 kHz").
 QString describeSettings(const EncodeSettings &settings);
+// A sample rate as it is usually written, exactly: "44.1 kHz", "22.05 kHz", "11.025 kHz", "96 kHz".
+QString describeRate(int sampleRate);
 // File extension without the dot: "mp3", "aiff", "flac", "wav", "m4a"; empty for KeepAudio (the source's extension).
 QString fileExtension(OutputFormat format);
 // The LAME settings string Selecta records in ENCODING/TSSE, e.g. "LAME3.100 -b 320" or "LAME3.100 -V 0".

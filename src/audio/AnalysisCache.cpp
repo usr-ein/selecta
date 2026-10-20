@@ -38,6 +38,23 @@ constexpr std::string_view kOverviewMagic = "SLWO";
 constexpr auto kOverviewSuffix = ".swo"_L1;
 constexpr auto kDetailSuffix = ".swd"_L1;
 
+// Quality reports (see DESIGN.md, "Cache format"): a fixed 60-byte header, the spectrogram's levels, a CRC-32.
+constexpr std::string_view kQualityMagic = "SLQR";
+constexpr auto kQualitySuffix = ".sqr"_L1;
+constexpr int kQualityHeaderBytes = 60;
+constexpr quint32 kQualitySpectrogram = 1U << 0U;
+constexpr quint32 kQualityLikelyKbps = 1U << 1U;
+constexpr quint32 kQualityLameLowpass = 1U << 2U;
+constexpr quint32 kQualityCompressed = 1U << 3U;
+constexpr quint32 kQualityKnownFlags =
+    kQualitySpectrogram | kQualityLikelyKbps | kQualityLameLowpass | kQualityCompressed;
+constexpr int kFindingSlots = 5;
+static_assert(static_cast<int>(QualityFinding::LikelyUpsampled) + 1 == kFindingSlots, "one slot per finding");
+constexpr int kMaxBitDepth = 64;
+constexpr int kMaxKbpsOrHz = 1000000;
+constexpr qint64 kMaxSpectrogramBytes = qint64{kSpectrogramMaxColumns} * kSpectrogramMaxBins;
+constexpr qint64 kMaxQualityBlobBytes = (2 * kMaxSpectrogramBytes) + kQualityHeaderBytes + kCrcBytes;
+
 void putLe16(QByteArray &out, quint32 v)
 {
     out.append(static_cast<char>(v & 0xFFU));
@@ -148,6 +165,43 @@ Result<BlobHeader> parseBlob(QByteArrayView blob, std::string_view magic)
 QString keyFileName(const CacheKey &key, QLatin1StringView suffix)
 {
     return key.toHex() + suffix;
+}
+
+// A blob file's bytes: nullopt when there is none, empty when it is larger than `maxBytes` (treated as corrupt).
+std::optional<QByteArray> readBlob(const QString &path, qint64 maxBytes)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return std::nullopt;
+    }
+    if (file.size() > maxBytes) {
+        return QByteArray();
+    }
+    return file.readAll();
+}
+
+// Recency for the next session's scan.
+void touchFile(const QString &path)
+{
+    QFile file(path);
+    if (file.open(QIODevice::ReadWrite)) {
+        file.setFileTime(QDateTime::currentDateTimeUtc(), QFileDevice::FileModificationTime);
+    }
+}
+
+bool inRange(qint64 value, qint64 low, qint64 high)
+{
+    return value >= low && value <= high;
+}
+
+// The scalar fields a quality blob can hold, checked the same way on both sides of the codec.
+bool storableQuality(const QualityReport &r)
+{
+    const int nyquist = r.sampleRate / 2;
+    return inRange(r.sampleRate, 1, kMaxSampleRate) && inRange(r.cutoffHz, -1, nyquist) &&
+           inRange(r.contentBandwidthHz, -1, nyquist) && inRange(r.sourceBitDepth, 0, kMaxBitDepth) &&
+           inRange(r.effectiveBitDepth, 0, kMaxBitDepth) && inRange(r.likelySourceKbps.value_or(1), 1, kMaxKbpsOrHz) &&
+           inRange(r.lameLowpassHz.value_or(1), 1, kMaxKbpsOrHz) && r.findings.size() <= kFindingSlots;
 }
 
 } // namespace
@@ -356,27 +410,210 @@ Result<Waveform> AnalysisCache::decodeOverview(QByteArrayView blob)
     return Waveform::fromOverview(h.sampleRate, h.frameCount, std::move(overview));
 }
 
+QByteArray AnalysisCache::encodeQuality(const QualityReport &report)
+{
+    if (!storableQuality(report)) {
+        return {};
+    }
+    quint32 flags = 0;
+    flags |= report.likelySourceKbps ? kQualityLikelyKbps : 0U;
+    flags |= report.lameLowpassHz ? kQualityLameLowpass : 0U;
+    QByteArray payload;
+    const Spectrogram *spectrogram = report.spectrogram ? &*report.spectrogram : nullptr;
+    if (spectrogram != nullptr) {
+        if (spectrogram->isNull() || spectrogram->sampleRate() != report.sampleRate) {
+            return {};
+        }
+        flags |= kQualitySpectrogram;
+        const QByteArray &levels = spectrogram->levels();
+        if (!levels.isEmpty()) {
+            uLongf compressedSize = compressBound(static_cast<uLong>(levels.size()));
+            payload.resize(static_cast<qsizetype>(compressedSize));
+            if (compress2(reinterpret_cast<Bytef *>(payload.data()), &compressedSize,
+                          reinterpret_cast<const Bytef *>(levels.constData()), static_cast<uLong>(levels.size()),
+                          6) != Z_OK) {
+                return {};
+            }
+            payload.truncate(static_cast<qsizetype>(compressedSize));
+            flags |= kQualityCompressed;
+        }
+    }
+    QByteArray blob;
+    blob.reserve(kQualityHeaderBytes + payload.size() + kCrcBytes);
+    blob.append(kQualityMagic.data(), static_cast<qsizetype>(kQualityMagic.size()));
+    putLe16(blob, kBlobVersion);
+    putLe16(blob, kQualityVersion);
+    putLe32(blob, static_cast<quint32>(report.sampleRate));
+    putLe32(blob, flags);
+    putLe32(blob, static_cast<quint32>(report.cutoffHz)); // signed, two's complement
+    putLe32(blob, static_cast<quint32>(report.likelySourceKbps.value_or(0)));
+    putLe32(blob, static_cast<quint32>(report.lameLowpassHz.value_or(0)));
+    putLe16(blob, static_cast<quint32>(report.sourceBitDepth));
+    putLe16(blob, static_cast<quint32>(report.effectiveBitDepth));
+    putLe32(blob, static_cast<quint32>(report.contentBandwidthHz));
+    blob.append(static_cast<char>(report.findings.size()));
+    for (int i = 0; i < kFindingSlots; ++i) {
+        blob.append(i < report.findings.size() ? static_cast<char>(report.findings[i]) : '\0');
+    }
+    putLe16(blob, spectrogram != nullptr ? static_cast<quint32>(spectrogram->columns()) : 0U);
+    putLe16(blob, spectrogram != nullptr ? static_cast<quint32>(spectrogram->bins()) : 0U);
+    putLe16(blob, 0); // reserved
+    putLe64(blob, spectrogram != nullptr ? static_cast<quint64>(spectrogram->frameCount()) : 0U);
+    putLe32(blob, static_cast<quint32>(payload.size()));
+    blob.append(payload);
+    return seal(std::move(blob));
+}
+
+Result<QualityReport> AnalysisCache::decodeQuality(QByteArrayView blob)
+{
+    if (blob.size() < kQualityHeaderBytes + kCrcBytes) {
+        return makeError(ErrorCode::Corrupt, u"quality blob too short"_s);
+    }
+    if (std::memcmp(blob.constData(), kQualityMagic.data(), 4) != 0) {
+        return makeError(ErrorCode::Corrupt, u"not a quality cache blob"_s);
+    }
+    if (getLe16(blob, 4) != kBlobVersion || getLe16(blob, 6) != kQualityVersion) {
+        return makeError(ErrorCode::Corrupt, u"quality blob from another version"_s);
+    }
+    if (crcOf(blob.first(blob.size() - kCrcBytes)) != getLe32(blob, blob.size() - kCrcBytes)) {
+        return makeError(ErrorCode::Corrupt, u"quality blob checksum mismatch"_s);
+    }
+    const quint32 flags = getLe32(blob, 12);
+    const auto asInt = [&blob](qsizetype offset) { return static_cast<qint32>(getLe32(blob, offset)); };
+    QualityReport report;
+    report.sampleRate = asInt(8);
+    report.cutoffHz = asInt(16);
+    if ((flags & kQualityLikelyKbps) != 0) {
+        report.likelySourceKbps = asInt(20);
+    }
+    if ((flags & kQualityLameLowpass) != 0) {
+        report.lameLowpassHz = asInt(24);
+    }
+    report.sourceBitDepth = static_cast<int>(getLe16(blob, 28));
+    report.effectiveBitDepth = static_cast<int>(getLe16(blob, 30));
+    report.contentBandwidthHz = asInt(32);
+    const int findingCount = static_cast<quint8>(blob[36]);
+    const quint32 columns = getLe16(blob, 42);
+    const quint32 bins = getLe16(blob, 44);
+    const quint64 frames = getLe64(blob, 48);
+    const quint32 payloadBytes = getLe32(blob, 56);
+    // Absent optional fields must read 0, as encodeQuality() writes them: anything else is damage.
+    const bool unusedZero = ((flags & kQualityLikelyKbps) != 0 || getLe32(blob, 20) == 0) &&
+                            ((flags & kQualityLameLowpass) != 0 || getLe32(blob, 24) == 0) && getLe16(blob, 46) == 0;
+    if ((flags & ~kQualityKnownFlags) != 0 || !unusedZero || !storableQuality(report) || findingCount > kFindingSlots ||
+        payloadBytes != static_cast<quint64>(blob.size()) - kQualityHeaderBytes - kCrcBytes) {
+        return makeError(ErrorCode::Corrupt, u"invalid fields in quality blob"_s);
+    }
+    for (int i = 0; i < kFindingSlots; ++i) {
+        const auto value = static_cast<quint8>(blob[37 + i]);
+        if (i >= findingCount) {
+            if (value != 0) {
+                return makeError(ErrorCode::Corrupt, u"invalid findings in quality blob"_s);
+            }
+            continue;
+        }
+        const auto finding = static_cast<QualityFinding>(value);
+        if (value >= kFindingSlots || report.findings.contains(finding)) {
+            return makeError(ErrorCode::Corrupt, u"invalid findings in quality blob"_s);
+        }
+        report.findings.append(finding);
+    }
+    const QByteArrayView payload = blob.sliced(kQualityHeaderBytes, payloadBytes);
+    if ((flags & kQualitySpectrogram) == 0) {
+        if (columns != 0 || bins != 0 || frames != 0 || !payload.isEmpty() || (flags & kQualityCompressed) != 0) {
+            return makeError(ErrorCode::Corrupt, u"spectrogram fields without a spectrogram"_s);
+        }
+        return report;
+    }
+    // Bounded before anything is allocated: at most kSpectrogramMaxColumns × kSpectrogramMaxBins bytes.
+    if (columns > static_cast<quint32>(kSpectrogramMaxColumns) || bins < 1 ||
+        bins > static_cast<quint32>(kSpectrogramMaxBins) || frames < columns ||
+        frames > static_cast<quint64>(kMaxSeconds) * static_cast<quint64>(report.sampleRate)) {
+        return makeError(ErrorCode::Corrupt, u"invalid spectrogram size in quality blob"_s);
+    }
+    const qsizetype rawSize = static_cast<qsizetype>(columns) * static_cast<qsizetype>(bins);
+    QByteArray levels;
+    if ((flags & kQualityCompressed) != 0) {
+        levels.resize(rawSize);
+        auto rawLength = static_cast<uLongf>(rawSize);
+        const int result =
+            uncompress(reinterpret_cast<Bytef *>(levels.data()), &rawLength,
+                       reinterpret_cast<const Bytef *>(payload.constData()), static_cast<uLong>(payload.size()));
+        if (result != Z_OK || std::cmp_not_equal(rawLength, rawSize)) {
+            return makeError(ErrorCode::Corrupt, u"spectrogram doesn't inflate to its declared size"_s);
+        }
+    } else {
+        if (payload.size() != rawSize) {
+            return makeError(ErrorCode::Corrupt, u"spectrogram of the wrong size"_s);
+        }
+        levels = payload.toByteArray();
+    }
+    Result<Spectrogram> spectrogram =
+        Spectrogram::fromLevels(report.sampleRate, static_cast<qint64>(frames), static_cast<int>(columns),
+                                static_cast<int>(bins), std::move(levels));
+    if (!spectrogram.ok()) {
+        return makeError(ErrorCode::Corrupt, spectrogram.error().message);
+    }
+    report.spectrogram = spectrogram.takeValue();
+    return report;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // AnalysisCache
 
-AnalysisCache::AnalysisCache(QString directory, qint64 detailBudgetBytes, qint64 overviewBudgetBytes)
+AnalysisCache::AnalysisCache(QString directory, qint64 detailBudgetBytes, qint64 overviewBudgetBytes,
+                             qint64 qualityBudgetBytes)
     : m_directory(std::move(directory))
 {
     m_detail.budget = std::max<qint64>(0, detailBudgetBytes);
     m_overview.budget = std::max<qint64>(0, overviewBudgetBytes);
+    m_quality.budget = std::max<qint64>(0, qualityBudgetBytes);
 }
 
 AnalysisCache::~AnalysisCache() = default;
 
+QString AnalysisCache::folderFor(Tier tier) const
+{
+    switch (tier) {
+    case Tier::Overview:
+        return m_directory + u"/overview"_s;
+    case Tier::Detail:
+        return m_directory + u"/detail"_s;
+    case Tier::Quality:
+        break;
+    }
+    return m_directory + u"/quality"_s;
+}
+
+QLatin1StringView AnalysisCache::suffixFor(Tier tier)
+{
+    switch (tier) {
+    case Tier::Overview:
+        return kOverviewSuffix;
+    case Tier::Detail:
+        return kDetailSuffix;
+    case Tier::Quality:
+        break;
+    }
+    return kQualitySuffix;
+}
+
 QString AnalysisCache::pathFor(Tier tier, const CacheKey &key) const
 {
-    return tier == Tier::Detail ? m_directory + u"/detail/"_s + keyFileName(key, kDetailSuffix)
-                                : m_directory + u"/overview/"_s + keyFileName(key, kOverviewSuffix);
+    return folderFor(tier) + u'/' + keyFileName(key, suffixFor(tier));
 }
 
 AnalysisCache::TierState &AnalysisCache::tierState(Tier tier)
 {
-    return tier == Tier::Detail ? m_detail : m_overview;
+    switch (tier) {
+    case Tier::Overview:
+        return m_overview;
+    case Tier::Detail:
+        return m_detail;
+    case Tier::Quality:
+        break;
+    }
+    return m_quality;
 }
 
 void AnalysisCache::ensureScannedLocked()
@@ -385,9 +622,9 @@ void AnalysisCache::ensureScannedLocked()
         return;
     }
     m_scanned = true;
-    for (const Tier tier : {Tier::Overview, Tier::Detail}) {
-        const QString folder = m_directory + (tier == Tier::Detail ? u"/detail"_s : u"/overview"_s);
-        const QLatin1StringView suffix = tier == Tier::Detail ? kDetailSuffix : kOverviewSuffix;
+    for (const Tier tier : kTiers) {
+        const QString folder = folderFor(tier);
+        const QLatin1StringView suffix = suffixFor(tier);
         // Oldest first, so recency survives restarts through file modification times.
         const QFileInfoList files =
             QDir(folder).entryInfoList(QDir::Files | QDir::NoDotAndDotDot, QDir::Time | QDir::Reversed);
@@ -450,32 +687,23 @@ Result<void> AnalysisCache::writeBlob(Tier tier, const CacheKey &key, const QByt
     return {};
 }
 
+void AnalysisCache::discard(Tier tier, const CacheKey &key)
+{
+    QFile::remove(pathFor(tier, key));
+    const std::scoped_lock lock(m_mutex);
+    TierState &state = tierState(tier);
+    const auto it = state.entries.find(key);
+    if (it != state.entries.end()) {
+        state.bytes -= it->bytes;
+        state.entries.erase(it);
+    }
+}
+
 std::optional<Waveform> AnalysisCache::load(const CacheKey &key)
 {
     if (key.isNull()) {
         return std::nullopt;
     }
-    const auto readBlob = [](const QString &path, qint64 maxBytes) -> std::optional<QByteArray> {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly)) {
-            return std::nullopt;
-        }
-        if (file.size() > maxBytes) {
-            return QByteArray(); // oversized: treated as corrupt
-        }
-        return file.readAll();
-    };
-    const auto discard = [this](Tier tier, const CacheKey &k) {
-        QFile::remove(pathFor(tier, k));
-        const std::scoped_lock lock(m_mutex);
-        TierState &state = tierState(tier);
-        const auto it = state.entries.find(k);
-        if (it != state.entries.end()) {
-            state.bytes -= it->bytes;
-            state.entries.erase(it);
-        }
-    };
-
     const QString detailPath = pathFor(Tier::Detail, key);
     if (const std::optional<QByteArray> blob = readBlob(detailPath, kMaxDetailBlobBytes)) {
         Result<Waveform> waveform = decodeDetail(*blob);
@@ -484,10 +712,7 @@ std::optional<Waveform> AnalysisCache::load(const CacheKey &key)
                 const std::scoped_lock lock(m_mutex);
                 touchLocked(Tier::Detail, key, blob->size());
             }
-            QFile file(detailPath); // recency for the next session's scan
-            if (file.open(QIODevice::ReadWrite)) {
-                file.setFileTime(QDateTime::currentDateTimeUtc(), QFileDevice::FileModificationTime);
-            }
+            touchFile(detailPath);
             return waveform.takeValue();
         }
         qCDebug(lcAudio) << "discarding cached detail:" << waveform.error().toString();
@@ -538,12 +763,56 @@ Result<void> AnalysisCache::store(const CacheKey &key, const Waveform &waveform)
     return {};
 }
 
+std::optional<QualityReport> AnalysisCache::loadQuality(const CacheKey &key)
+{
+    if (key.isNull()) {
+        return std::nullopt;
+    }
+    const QString path = pathFor(Tier::Quality, key);
+    const std::optional<QByteArray> blob = readBlob(path, kMaxQualityBlobBytes);
+    if (!blob) {
+        return std::nullopt;
+    }
+    Result<QualityReport> report = decodeQuality(*blob);
+    if (!report.ok()) {
+        qCDebug(lcAudio) << "discarding cached quality report:" << report.error().toString();
+        discard(Tier::Quality, key);
+        return std::nullopt;
+    }
+    {
+        const std::scoped_lock lock(m_mutex);
+        touchLocked(Tier::Quality, key, blob->size());
+    }
+    touchFile(path);
+    return report.takeValue();
+}
+
+Result<void> AnalysisCache::storeQuality(const CacheKey &key, const QualityReport &report)
+{
+    if (key.isNull() || report.sampleRate <= 0) {
+        return makeError(ErrorCode::InvalidArgument, u"only finished quality reports are cached"_s);
+    }
+    const QByteArray blob = encodeQuality(report);
+    if (blob.isEmpty()) {
+        return makeError(ErrorCode::InvalidArgument, u"this quality report can't be cached"_s);
+    }
+    if (Result<void> written = writeBlob(Tier::Quality, key, blob); !written.ok()) {
+        return written;
+    }
+    const std::scoped_lock lock(m_mutex);
+    ensureScannedLocked();
+    touchLocked(Tier::Quality, key, blob.size());
+    evictLocked(Tier::Quality);
+    return {};
+}
+
 void AnalysisCache::remove(const CacheKey &key)
 {
-    QFile::remove(pathFor(Tier::Detail, key));
-    QFile::remove(pathFor(Tier::Overview, key));
+    for (const Tier tier : kTiers) {
+        QFile::remove(pathFor(tier, key));
+    }
     const std::scoped_lock lock(m_mutex);
-    for (const Tier tier : {Tier::Overview, Tier::Detail}) {
+    for (const Tier tier : kTiers) {
         TierState &state = tierState(tier);
         const auto it = state.entries.find(key);
         if (it != state.entries.end()) {
@@ -557,14 +826,19 @@ qint64 AnalysisCache::totalBytes()
 {
     const std::scoped_lock lock(m_mutex);
     ensureScannedLocked();
-    return m_detail.bytes + m_overview.bytes;
+    return m_detail.bytes + m_overview.bytes + m_quality.bytes;
+}
+
+qint64 AnalysisCache::budgetBytes() const
+{
+    return m_detail.budget + m_overview.budget + m_quality.budget;
 }
 
 void AnalysisCache::clear()
 {
     const std::scoped_lock lock(m_mutex);
     ensureScannedLocked();
-    for (const Tier tier : {Tier::Overview, Tier::Detail}) {
+    for (const Tier tier : kTiers) {
         TierState &state = tierState(tier);
         for (auto it = state.entries.cbegin(); it != state.entries.cend(); ++it) {
             QFile::remove(pathFor(tier, it.key()));
@@ -584,6 +858,12 @@ qint64 AnalysisCache::overviewBytes() const
 {
     const std::scoped_lock lock(m_mutex);
     return m_overview.bytes;
+}
+
+qint64 AnalysisCache::qualityBytes() const
+{
+    const std::scoped_lock lock(m_mutex);
+    return m_quality.bytes;
 }
 
 } // namespace selecta::audio
