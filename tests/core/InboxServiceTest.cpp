@@ -317,3 +317,48 @@ TEST_F(InboxServiceTest, QuittingWithWorkInFlightStillRecordsIt)
     EXPECT_EQ(inbox.count(), 0);
     EXPECT_EQ(whereabouts(), HistoryEntry::Whereabouts::Filed);
 }
+
+// The update that moved the Inbox into Selecta's data folder (P-001, PRD D39): an item of the old Inbox, whose file is
+// still in the old folder, leaves the list without a word in History. History says "In the Inbox" as before, never
+// "Moved to the Trash": the file was never trashed.
+TEST(InboxAfterTheMove, TheOldItemsLeaveAndHistoryStaysAsItWas)
+{
+    const QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    selecta::storage::Database db;
+    ASSERT_TRUE(db.open(dir.filePath(u"selecta.sqlite3"_s)));
+    const auto all = selecta::storage::selectaMigrations();
+    const auto beforeTheMove = static_cast<std::size_t>(selecta::storage::kInboxMovedVersion - 1);
+    ASSERT_TRUE(selecta::storage::migrate(db, all.first(beforeTheMove)).ok()); // the old Inbox's last schema
+
+    // Before the update: one single in the old Inbox (by default ~/Music/Selecta/Inbox), with its History entry.
+    const QString oldFile = dir.filePath(u"Music/Selecta/Inbox/Singles/Okuma Drift - Neon Rain.mp3"_s);
+    ASSERT_TRUE(writeFile(oldFile, "audio"));
+    InboxItem item;
+    item.relativePath = u"Singles/Okuma Drift - Neon Rain.mp3"_s;
+    item.state = InboxItem::State::Ready;
+    item.createdAt = 1000;
+    const auto id = selecta::library::InboxStore(db).add(item);
+    ASSERT_TRUE(id.has_value());
+    HistoryEntry entry;
+    entry.completedAt = 1000;
+    entry.peer = u"vinyl_ghost"_s;
+    entry.remotePath = item.relativePath.toUtf8();
+    entry.inboxItem = id;
+    ASSERT_TRUE(selecta::library::HistoryStore(db).add(entry).has_value());
+
+    // The update: the database's migrations, then the Inbox in Selecta's data folder.
+    ASSERT_TRUE(selecta::storage::migrate(db, all).ok());
+    LibraryConfig config;
+    config.inboxRoot = dir.filePath(u"data/Inbox"_s);
+    ASSERT_TRUE(QDir().mkpath(config.inboxRoot));
+    InboxService service(db, config, [](const QString &, QString *) { return false; });
+    service.reconcile();
+
+    EXPECT_TRUE(service.entries().isEmpty());
+    const QList<HistoryEntry> after = selecta::library::HistoryStore(db).recent(10);
+    ASSERT_EQ(after.size(), 1);
+    EXPECT_EQ(after.first().whereabouts, HistoryEntry::Whereabouts::Inbox);
+    EXPECT_FALSE(after.first().inboxItem.has_value());
+    EXPECT_TRUE(QFileInfo::exists(oldFile)); // left where it is
+}

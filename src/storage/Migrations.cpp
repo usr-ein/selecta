@@ -327,6 +327,14 @@ constexpr std::array kMigrations{
         ALTER TABLE supersede_flags ADD COLUMN track_key TEXT NOT NULL DEFAULT '';
         ALTER TABLE supersede_flags ADD COLUMN track_ms INTEGER NOT NULL DEFAULT 0;
     )sql"},
+    // The Inbox moved into Selecta's data folder (P-001, PRD D39), and the new one starts empty: the items recorded for
+    // the old one are forgotten, whatever folder it was. Their files stay where they are, and History keeps what it
+    // says about them. The foreign keys do the rest, as when any Inbox item goes: History, downloads and album
+    // downloads lose their links to the items, and the flags of the items' singles go with them. Its version is
+    // kInboxMovedVersion.
+    Migration{18, R"sql(
+        DELETE FROM inbox_items;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

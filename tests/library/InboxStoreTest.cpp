@@ -161,7 +161,9 @@ TEST(InboxStoreMigration, ItemsFromBeforeTheSpectrumCheckReadAsUnchecked)
     ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(15)).ok());
     ASSERT_TRUE(db.exec(u"INSERT INTO inbox_items (kind, relative_path, state, created_at) "
                         "VALUES ('single', 'Singles/old.mp3', 'ready', 1);"_s));
-    ASSERT_TRUE(selecta::storage::migrate(db, migrations).ok());
+    // Up to the old Inbox's last schema: the next migration forgets the old Inbox's items (P-001, the Inbox moved).
+    const auto beforeTheMove = static_cast<std::size_t>(selecta::storage::kInboxMovedVersion - 1);
+    ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(beforeTheMove)).ok());
     InboxStore store(db);
     const auto old = store.findByPath(u"Singles/old.mp3"_s);
     ASSERT_TRUE(old.has_value());
