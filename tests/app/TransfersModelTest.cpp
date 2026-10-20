@@ -3,6 +3,7 @@
 
 #include "app/MeterDelegate.h"
 #include "app/models/PeersModel.h"
+#include "governor/Limits.h"
 
 #include <QSignalSpy>
 
@@ -56,6 +57,9 @@ TEST(TransfersModel, GroupsByFolderThenByPeer)
     EXPECT_EQ(text(model, 1, TransfersModel::StatusColumn, album), u"In your Inbox"_s);
     EXPECT_EQ(text(model, 0, TransfersModel::StatusColumn, model.index(1, 0)), u"Failed: File not shared."_s);
     EXPECT_EQ(model.downloadsAt(album), (QList<qint64>{1, 2}));
+    // A folder's meter, in words for VoiceOver.
+    EXPECT_TRUE(
+        model.index(0, TransfersModel::ProgressColumn).data(Qt::AccessibleTextRole).toString().endsWith(u" %"_s));
 
     model.setGrouping(TransfersModel::Grouping::Peer);
     ASSERT_EQ(model.rowCount(), 2);
@@ -131,4 +135,8 @@ TEST(PeersModel, SaysWhereEachPeerStandsAgainstTheLimits)
     EXPECT_EQ(model.index(0, PeersModel::TodayColumn).data().toString(), u"3"_s);
     EXPECT_DOUBLE_EQ(model.index(1, PeersModel::LimitColumn).data(MeterDelegate::FractionRole).toDouble(), 0.5);
     EXPECT_EQ(model.index(1, PeersModel::LimitColumn).data(MeterDelegate::LevelRole).toInt(), 1);
+    // The meter, in words for VoiceOver; the other cells read as they show.
+    EXPECT_EQ(model.index(1, PeersModel::LimitColumn).data(Qt::AccessibleTextRole).toString(),
+              u"25 of %1 files today"_s.arg(selecta::governor::limits::kPeerDailyStopFiles));
+    EXPECT_EQ(model.index(0, PeersModel::PeerColumn).data(Qt::AccessibleTextRole).toString(), u"vinyl_ghost"_s);
 }

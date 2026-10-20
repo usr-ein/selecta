@@ -1,0 +1,54 @@
+{
+  "id": "Kestrel Moon Glass Harbour Extended Mix",
+  "title": "Kestrel Moon Glass Harbour Extended Mix",
+  "_type": "playlist",
+  "webpage_url": "ytsearch10:Kestrel Moon Glass Harbour Extended Mix",
+  "extractor": "youtube:search",
+  "extractor_key": "YoutubeSearch",
+  "playlist_count": 3,
+  "epoch": 1792459928,
+  "entries": [
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "FanUpload01",
+      "url": "https://www.youtube.com/watch?v=FanUpload01",
+      "title": "Kestrel Moon - Glass Harbour (Extended Mix)",
+      "duration": 392,
+      "channel_id": "UCFanUpload01xxxxxxxxxxx",
+      "channel": "Filippos Sgouros",
+      "uploader": "Filippos Sgouros",
+      "view_count": 48000,
+      "live_status": null,
+      "channel_is_verified": false
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "FanUpload02",
+      "url": "https://www.youtube.com/watch?v=FanUpload02",
+      "title": "Glass Harbour - Kestrel Moon (extended)",
+      "duration": 390,
+      "channel_id": "UCFanUpload02xxxxxxxxxxx",
+      "channel": "Kelly K",
+      "uploader": "Kelly K",
+      "view_count": 9000,
+      "live_status": null,
+      "channel_is_verified": false
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "KmVideo0001",
+      "url": "https://www.youtube.com/watch?v=KmVideo0001",
+      "title": "Kestrel Moon - Glass Harbour (Official Video)",
+      "duration": 254,
+      "channel_id": "UCKmVideo0001xxxxxxxxxxx",
+      "channel": "Kestrel Moon",
+      "uploader": "Kestrel Moon",
+      "view_count": 900000,
+      "live_status": null,
+      "channel_is_verified": true
+    }
+  ]
+}

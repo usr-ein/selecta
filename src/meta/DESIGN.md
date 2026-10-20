@@ -118,7 +118,8 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
 5. **Player:** `ClipSource::clipFor(release)` → stream `Clip::url` from memory before `expiresAt` (never store it:
    Deezer's terms), with the attribution and `pageUrl`. YouTube previews, on an explicit audition only:
    `YtDlpRunner::search(YtDlpRunner::searchText(release))` → `pick(candidates, release)` (nullopt: "No YouTube match
-   within ±3 s", fall back to the clip or the peer's file) → `fetch(id, <preview cache>/yt)` → open
+   within ±3 s", fall back to the clip or the peer's file; a pick whose `channel` is `Other`, or none, earns one more
+   search with `topicSearchText(release)`, the two result lists merged) → `fetch(id, <preview cache>/yt)` → open
    `YtDlpFetch::started(path)` with the growing-file reader; `finished()` says when the file is complete. Delete the
    job (or `cancel()`) when the audition ends early. `AgeRestricted`, `GeoBlocked` and `Unavailable` mean "try the next
    candidate once"; `RateLimited`/`BotCheck` start the hour's pause (`paused()`, `pausedUntil()`); `ToolNotFound`,

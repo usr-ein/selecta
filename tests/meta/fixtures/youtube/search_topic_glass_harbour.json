@@ -1,0 +1,40 @@
+{
+  "id": "Kestrel Moon Glass Harbour Extended Mix",
+  "title": "Kestrel Moon - Topic Glass Harbour Extended Mix",
+  "_type": "playlist",
+  "webpage_url": "ytsearch10:Kestrel Moon Glass Harbour Extended Mix",
+  "extractor": "youtube:search",
+  "extractor_key": "YoutubeSearch",
+  "playlist_count": 2,
+  "epoch": 1792459928,
+  "entries": [
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "KmTopic00Ex",
+      "url": "https://www.youtube.com/watch?v=KmTopic00Ex",
+      "title": "Glass Harbour (Extended Mix)",
+      "duration": 391,
+      "channel_id": "UCKmTopic00Exxxxxxxxxxxx",
+      "channel": "Kestrel Moon - Topic",
+      "uploader": "Kestrel Moon - Topic",
+      "view_count": 3100,
+      "live_status": null,
+      "channel_is_verified": false
+    },
+    {
+      "_type": "url",
+      "ie_key": "Youtube",
+      "id": "FanUpload01",
+      "url": "https://www.youtube.com/watch?v=FanUpload01",
+      "title": "Kestrel Moon - Glass Harbour (Extended Mix)",
+      "duration": 392,
+      "channel_id": "UCFanUpload01xxxxxxxxxxx",
+      "channel": "Filippos Sgouros",
+      "uploader": "Filippos Sgouros",
+      "view_count": 48000,
+      "live_status": null,
+      "channel_is_verified": false
+    }
+  ]
+}

@@ -3,6 +3,7 @@
 
 #include "app/Icons.h"
 
+#include <QAccessible>
 #include <QEvent>
 #include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
@@ -142,6 +143,7 @@ QString Toasts::show(const QString &title, const QString &body, Kind kind, const
         for (qsizetype i = 0; i < actions.size(); ++i) {
             auto *button = new QPushButton(actions.at(i).label, toast);
             button->setObjectName(u"%1.action.%2"_s.arg(name).arg(i));
+            button->installEventFilter(this); // focus on it holds the toast, as the pointer does
             connect(button, &QPushButton::clicked, this, [this, toast, run = actions.at(i).run] {
                 dismiss(toast);
                 if (run) {
@@ -161,6 +163,7 @@ QString Toasts::show(const QString &title, const QString &body, Kind kind, const
     close->setText(u"×"_s);
     close->setAccessibleName(tr("Dismiss"));
     close->setToolTip(tr("Dismiss"));
+    close->installEventFilter(this);
     connect(close, &QToolButton::clicked, this, [this, toast] { dismiss(toast); });
     row->addWidget(close, 0, Qt::AlignTop);
 
@@ -179,6 +182,9 @@ QString Toasts::show(const QString &title, const QString &body, Kind kind, const
     }
     QWidget::show();
     place();
+    // VoiceOver reads it out without moving its cursor there (UI-5).
+    QAccessibleAnnouncementEvent announcement(toast, toast->text);
+    QAccessible::updateAccessibility(&announcement);
     return name;
 }
 
@@ -229,6 +235,13 @@ bool Toasts::eventFilter(QObject *watched, QEvent *event)
             toast->timer->stop();
         } else if (event->type() == QEvent::Leave) {
             toast->timer->start();
+        }
+    } else if (const auto *owner = qobject_cast<const Toast *>(watched->parent()); owner && owner->timer) {
+        // One of its buttons, reached with Tab: the toast waits while the keyboard is on it.
+        if (event->type() == QEvent::FocusIn) {
+            owner->timer->stop();
+        } else if (event->type() == QEvent::FocusOut && !owner->underMouse()) {
+            owner->timer->start();
         }
     }
     return QWidget::eventFilter(watched, event);

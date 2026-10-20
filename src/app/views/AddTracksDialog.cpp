@@ -35,6 +35,7 @@ AddTracksDialog::AddTracksDialog(QWidget *parent)
     m_editor->setPlaceholderText(tr("Okuma Drift - Neon Rain\nHalden & Rue - Tidewater (Original Mix)\n"
                                     "https://open.spotify.com/playlist/…"));
     m_editor->setTabChangesFocus(true);
+    m_editor->setAccessibleName(tr("Tracks"));
     QFont mono = m_editor->font();
     mono.setStyleHint(QFont::Monospace);
     m_editor->setFont(mono);

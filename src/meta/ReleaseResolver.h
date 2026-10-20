@@ -68,15 +68,18 @@ struct Resolution
 // - identifiers first: with an ISRC, Spotify's isrc: search (when signed in) and Deezer's ISRC lookup;
 // - then text: Spotify (field-filtered, ≤ 10 hits) when signed in; Deezer (plain, 25 hits) when Spotify isn't
 //   available or has nothing Likely; a second search with the version words when the line names a version and
-//   nothing compatible came back.
+//   nothing compatible came back;
+// - when a compilation's copy leads (album type "compilation", or an album by "Various Artists"), one Spotify isrc:
+//   search for its ISRC, which usually brings the original single or album.
 // Every hit is scored — never "first hit wins": title 0.40, artist 0.30, length 0.20, album 0.05, label 0.05, missing
 // evidence leaving the denominator; the length counts only when the versions don't conflict (1 within ±3 s, then
 // exp(−0.1·(Δ−3))); a version conflict scores 0 (kept as an "other version" alternative); DJ-mix segments ×0.3 and
 // derivative junk ("slowed", "nightcore", …) ×0.2 unless the line asks for them; the same title by another artist
 // ×0.5; an unspecified line against an explicit version without a length to tell ×0.9. DJ versions (remix, extended,
-// dub, edit) are never penalised as words. Candidates sharing an ISRC across sources are merged (Spotify's first, with
-// Deezer's ID and link kept), and agreement of two sources on the best candidate's ISRC raises it one tier (at most
-// Confident).
+// dub, edit) are never penalised as words. Candidates sharing an ISRC are merged (Spotify's first, with Deezer's ID and
+// link kept; then the original release: not a compilation, the artist's own, the earliest), a compilation's copy in
+// the lead gives way to the original of the same recording scoring within the Confident margin, and agreement of two
+// sources on the best candidate's ISRC raises it one tier (at most Confident).
 //
 // Threading: lives on the meta thread; futures finish there. Ownership: the clients must outlive the resolver; either
 // may be null (not configured). Failures: InvalidArgument for a line with neither artist nor title nor ISRC; when

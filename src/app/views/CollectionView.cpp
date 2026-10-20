@@ -96,6 +96,7 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
     connect(folders, &QPushButton::clicked, this, &CollectionView::settingsRequested);
     m_unreadableTitle->setObjectName(u"collection.unreadableTitle"_s);
     m_unreadable->setObjectName(u"collection.unreadable"_s);
+    m_unreadable->setAccessibleName(tr("Files that couldn't be read"));
     m_unreadable->setSelectionMode(QAbstractItemView::NoSelection);
     m_unreadable->setFrameShape(QFrame::NoFrame);
     m_formats->setObjectName(u"collection.formats"_s);
@@ -108,11 +109,13 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
     sectionFont.setWeight(QFont::DemiBold);
     m_filedTitle->setFont(sectionFont);
     m_filed->setObjectName(u"collection.filed"_s);
+    m_filed->setAccessibleName(tr("Recently filed"));
     m_filed->setFrameShape(QFrame::NoFrame);
     m_filed->setSelectionMode(QAbstractItemView::NoSelection);
     m_filed->setMaximumHeight(200);
     m_flagsTitle->setObjectName(u"collection.flagsTitle"_s);
     m_flags->setObjectName(u"collection.flags"_s);
+    m_flags->setAccessibleName(tr("Singles also on an album"));
     m_flags->setFrameShape(QFrame::NoFrame);
     m_flags->setContextMenuPolicy(Qt::CustomContextMenu);
     m_flags->setMaximumHeight(180);

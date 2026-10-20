@@ -61,8 +61,9 @@ public:
     void setPreviewSettings(core::PreviewSource source, const QString &ytDlpPath);
     void setYtDlpStatus(bool ok, const QString &description);
     core::NetworkConfig networkConfig() const { return m_network; }
-    // Caches (CACHE-2): what each holds.
-    void setCacheSizes(const core::CacheStatus &engine, qint64 waveformBytes);
+    // Caches (CACHE-2): what each holds; the analysis cache (waveforms, spectrum checks) with its budget, 0 when
+    // unknown.
+    void setCacheSizes(const core::CacheStatus &engine, qint64 analysisBytes, qint64 analysisBudgetBytes = 0);
     // "Show notifications" (UI-6), reflected without emitting showNotificationsChanged.
     void setShowNotifications(bool show);
 

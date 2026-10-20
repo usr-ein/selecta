@@ -2,11 +2,14 @@
 #include "app/views/InboxInspector.h"
 
 #include "app/Format.h"
+#include "app/SpectrogramView.h"
 #include "app/views/EditTagsDialog.h"
 #include "app/views/ReleasePickerDialog.h"
+#include "audio/AnalysisCache.h"
 #include "convert/TagReader.h"
 #include "core/EngineHost.h"
 #include "core/ReleaseJson.h"
+#include "core/SpectrumCheck.h"
 
 #include <QBuffer>
 #include <QDesktopServices>
@@ -74,6 +77,12 @@ QString tagSourceText(const QString &source)
     return InboxInspector::tr("The file's own tags: no release matched it. Choose Release finds one.");
 }
 
+// A measured frequency, to a tenth of a kilohertz: "16.7 kHz", "22 kHz".
+QString kiloHertz(int hz)
+{
+    return hz % 1000 == 0 ? u"%1 kHz"_s.arg(hz / 1000) : u"%1 kHz"_s.arg(hz / 1000.0, 0, 'f', 1);
+}
+
 } // namespace
 
 InboxInspector::FileTags InboxInspector::readFileTags(const QString &path)
@@ -119,6 +128,10 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     , m_alsoOn(body(u"inspector.inbox.alsoOn"_s, this))
     , m_source(body(u"inspector.inbox.source"_s, this))
     , m_openRelease(new QPushButton(this))
+    , m_spectrum(new QWidget(this))
+    , m_spectrumText(body(u"inspector.inbox.spectrumText"_s, this))
+    , m_spectrogram(new SpectrogramView(this))
+    , m_spectrumNote(body(u"inspector.inbox.spectrumNote"_s, this))
 {
     setObjectName(u"inspector.inbox"_s);
 
@@ -212,6 +225,24 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     layout->addWidget(m_openRelease, 0, Qt::AlignLeft);
     layout->addWidget(heading(tr("Where it came from"), details));
     layout->addWidget(m_source);
+
+    // PREV-9: what the spectrum of the file as downloaded says, and the spectrogram to judge it by eye.
+    m_spectrum->setObjectName(u"inspector.inbox.spectrum"_s);
+    m_spectrumText->setTextFormat(Qt::PlainText);
+    auto *spectrumLayout = new QVBoxLayout(m_spectrum);
+    spectrumLayout->setContentsMargins(0, 0, 0, 0);
+    spectrumLayout->setSpacing(6);
+    spectrumLayout->addWidget(heading(tr("Spectrum"), m_spectrum));
+    spectrumLayout->addWidget(m_spectrumText);
+    m_spectrogram->setObjectName(u"inspector.inbox.spectrogram"_s);
+    m_spectrogram->setFixedHeight(120);
+    spectrumLayout->addWidget(m_spectrogram);
+    m_spectrumNote->setForegroundRole(QPalette::PlaceholderText);
+    m_spectrumNote->setText(tr("A hard edge right across the track is typical of a lossy encoder; old recordings and "
+                               "dark masters fade out gradually instead."));
+    spectrumLayout->addWidget(m_spectrumNote);
+    m_spectrum->hide();
+    layout->addWidget(m_spectrum);
     layout->addStretch(1);
 
     auto *scroll = new QScrollArea(this);
@@ -223,6 +254,11 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->addWidget(m_pages);
+}
+
+void InboxInspector::setAnalysisCache(std::shared_ptr<audio::AnalysisCache> cache)
+{
+    m_cache = std::move(cache);
 }
 
 std::optional<qint64> InboxInspector::itemId() const
@@ -261,6 +297,7 @@ void InboxInspector::showItem(const std::optional<library::InboxItem> &item, con
     m_release->setEnabled(single && ready);
     m_preview->setEnabled(ready);
     refreshProvenance();
+    showSpectrum();
 
     m_cover->setPixmap({});
     m_cover->setText(tr("No cover"));
@@ -322,8 +359,11 @@ void InboxInspector::showTags(const FileTags &read)
 
 void InboxInspector::setAlsoOn(const QStringList &albums)
 {
-    // The arrival's warning first: it's about the file itself (DL-10, CONV-2).
+    // What the arrival found about the file itself first: its spectrum (PREV-9), its warning (DL-10, CONV-2).
     QStringList lines;
+    if (const QString badge = m_item ? core::spectrumBadge(*m_item) : QString(); !badge.isEmpty()) {
+        lines.append(tr("⚠ %1.").arg(badge));
+    }
     if (m_item && !m_item->warning.isEmpty()) {
         lines.append(tr("⚠ %1").arg(m_item->warning));
     }
@@ -373,6 +413,75 @@ void InboxInspector::refreshProvenance()
     }
     source.append(tr("In your Inbox as %1.").arg(QFileInfo(m_item->relativePath).fileName()));
     m_source->setText(source.join(u' '));
+}
+
+void InboxInspector::showSpectrum()
+{
+    m_spectrogram->clear();
+    const bool shown = m_item && m_item->kind == library::InboxItem::Kind::Single && m_item->qualityChecked;
+    m_spectrum->setVisible(shown);
+    if (!shown) {
+        return;
+    }
+    // From what the item keeps; the cached report adds the details.
+    QStringList lines;
+    for (const QString &name : std::as_const(m_item->qualityFindings)) {
+        if (const std::optional<audio::QualityFinding> finding = audio::findingFromName(name)) {
+            lines.append(tr("⚠ %1.").arg(audio::findingBadge(*finding, m_item->qualitySourceKbps)));
+        }
+    }
+    if (lines.isEmpty()) {
+        lines.append(m_item->qualityCutoffHz
+                         ? tr("✓ The spectrum reaches %1: nothing suggests a source of lower quality than it claims.")
+                               .arg(kiloHertz(*m_item->qualityCutoffHz))
+                         : tr("Too short, too quiet or too band-limited to judge from the spectrum."));
+    } else if (m_item->qualityCutoffHz) {
+        lines.append(tr("The spectrum stops at %1.").arg(kiloHertz(*m_item->qualityCutoffHz)));
+    }
+    m_spectrumText->setText(lines.join(u'\n'));
+    m_spectrumNote->setVisible(!m_item->qualityFindings.isEmpty());
+    m_spectrogram->setCutoff(m_item->qualityCutoffHz);
+
+    const std::optional<audio::CacheKey> key = audio::CacheKey::fromHex(m_item->qualityKey);
+    if (!key || !m_cache) {
+        m_spectrogram->setMessage(tr("No spectrogram was kept for this file."));
+        return;
+    }
+    m_spectrogram->setMessage(tr("Loading…"));
+    // Off the main thread: a cache read is a file read and an inflate.
+    const auto promise = std::make_shared<QPromise<std::optional<audio::QualityReport>>>();
+    QFuture<std::optional<audio::QualityReport>> future = promise->future();
+    promise->start();
+    QThreadPool::globalInstance()->start([promise, cache = m_cache, key = *key] {
+        promise->addResult(cache->loadQuality(key));
+        promise->finish();
+    });
+    future.then(this, [self = QPointer<InboxInspector>(this),
+                       request = m_request](const std::optional<audio::QualityReport> &report) {
+        if (self && request == self->m_request) {
+            self->showReport(report);
+        }
+    });
+}
+
+void InboxInspector::showReport(const std::optional<audio::QualityReport> &report)
+{
+    if (!report || !report->spectrogram) {
+        m_spectrogram->setMessage(tr("The spectrogram is no longer in the cache."));
+        return;
+    }
+    if (!report->findings.isEmpty()) {
+        QStringList lines;
+        for (const audio::QualityFinding finding : report->findings) {
+            lines.append(tr("⚠ %1.").arg(audio::describeFinding(finding, *report)));
+        }
+        m_spectrumText->setText(lines.join(u'\n'));
+    }
+    m_spectrogram->setSpectrogram(*report->spectrogram);
+    m_spectrogram->setCutoff(report->cutoffHz > 0 ? std::optional<int>(report->cutoffHz) : std::nullopt);
+    if (report->spectrogram->isEmpty()) {
+        m_spectrogram->setMessage(tr("No audio to show."));
+    }
 }
 
 } // namespace selecta::app

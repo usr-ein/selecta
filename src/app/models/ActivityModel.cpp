@@ -108,6 +108,7 @@ QVariant ActivityModel::data(const QModelIndex &index, int role) const
             return {};
         }
     case Qt::ToolTipRole:
+    case Qt::AccessibleDescriptionRole:
         return entry.explanation.isEmpty() ? QVariant() : QVariant(entry.explanation);
     case Qt::ForegroundRole:
         if (index.column() == Outcome && isWarning(entry.outcome)) {

@@ -18,6 +18,9 @@
 #include <mutex>
 #include <optional>
 
+namespace selecta::audio {
+class AnalysisCache;
+}
 namespace selecta::storage {
 class Database;
 }
@@ -46,7 +49,8 @@ QString tagSourceOf(const std::optional<meta::Release> &release);
 library::naming::Fields namingFieldsOf(const convert::MetadataModel &tags);
 
 // The arrival pipeline (PRD DL-3, D29, D30) on the engine thread: a completed download becomes an Inbox item. The
-// release's tags are completed first (label and genre from MusicBrainz by ISRC, the cover), then a worker converts the
+// release's tags are completed first (label and genre from MusicBrainz by ISRC, the cover), then a worker checks the
+// file's spectrum (PREV-9: the findings stay with the item, the spectrogram goes into the analysis cache), converts the
 // file to the Inbox format (MP3 320 CBR, ID3v2.3, cover embedded), verified, or keeps lossy audio that can't be
 // improved as it is with fresh tags; publishes it into Inbox/Singles under the naming template, with the macOS
 // quarantine attribute (NFR-4: the download's own, if it had one, else Selecta's); and disposes of the original: a
@@ -70,6 +74,9 @@ public:
         std::optional<int> session; // recorded with Inbox items and history entries
         int maxConcurrent = 0;      // 0: half the cores, at most 4
         int metadataTimeoutMs = 20'000;
+        // Where the spectrum check keeps its reports and spectrograms (thread-safe, shared with the app's inspector);
+        // null: the findings are still kept with the item, without a spectrogram to show.
+        std::shared_ptr<audio::AnalysisCache> analysisCache;
     };
 
     ArrivalService(storage::Database &db, InboxService &inbox, ActivityLog &activity,

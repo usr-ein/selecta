@@ -115,3 +115,60 @@ TEST_F(InboxStoreTest, DatabaseRejectsBadValues)
     EXPECT_FALSE(db.exec(u"INSERT INTO inbox_items (kind, relative_path, state, size_bytes, created_at) "
                          u"VALUES ('single', 'y', 'ready', -5, 1);"));
 }
+
+TEST_F(InboxStoreTest, KeepsTheSpectrumCheck)
+{
+    // Not checked: every quality field empty.
+    const auto plain = store.add(single(u"Singles/plain.mp3"_s));
+    ASSERT_TRUE(plain.has_value());
+    const auto unchecked = store.find(*plain);
+    ASSERT_TRUE(unchecked.has_value());
+    EXPECT_FALSE(unchecked->qualityChecked);
+    EXPECT_TRUE(unchecked->qualityFindings.isEmpty());
+    EXPECT_FALSE(unchecked->qualityCutoffHz.has_value());
+    EXPECT_FALSE(unchecked->qualitySourceKbps.has_value());
+    EXPECT_TRUE(unchecked->qualityKey.isEmpty());
+
+    InboxItem item = single(u"Singles/suspect.mp3"_s);
+    item.qualityChecked = true;
+    item.qualityFindings = {u"from-lossy"_s, u"padded-24-bit"_s};
+    item.qualityCutoffHz = 16742;
+    item.qualitySourceKbps = 128;
+    item.qualityKey = QString(64, u'a');
+    const auto id = store.add(item);
+    ASSERT_TRUE(id.has_value()) << db.lastError().toStdString();
+    item.id = *id;
+    auto loaded = store.find(*id);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(*loaded, item);
+
+    // Updated like every other field: checked, nothing found, nothing cached.
+    item.qualityFindings.clear();
+    item.qualityCutoffHz = 20241;
+    item.qualitySourceKbps.reset();
+    item.qualityKey.clear();
+    ASSERT_TRUE(store.update(item)) << db.lastError().toStdString();
+    loaded = store.find(*id);
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_EQ(*loaded, item);
+}
+
+TEST(InboxStoreMigration, ItemsFromBeforeTheSpectrumCheckReadAsUnchecked)
+{
+    selecta::storage::Database db;
+    ASSERT_TRUE(db.open(u":memory:"_s));
+    const auto migrations = selecta::storage::selectaMigrations();
+    ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(15)).ok());
+    ASSERT_TRUE(db.exec(u"INSERT INTO inbox_items (kind, relative_path, state, created_at) "
+                        "VALUES ('single', 'Singles/old.mp3', 'ready', 1);"_s));
+    ASSERT_TRUE(selecta::storage::migrate(db, migrations).ok());
+    InboxStore store(db);
+    const auto old = store.findByPath(u"Singles/old.mp3"_s);
+    ASSERT_TRUE(old.has_value());
+    EXPECT_FALSE(old->qualityChecked);
+    EXPECT_TRUE(old->qualityFindings.isEmpty());
+    EXPECT_FALSE(old->qualityCutoffHz.has_value());
+    EXPECT_TRUE(old->qualityKey.isEmpty());
+    // The flag is a boolean.
+    EXPECT_FALSE(db.exec(u"UPDATE inbox_items SET quality_checked = 2;"_s));
+}

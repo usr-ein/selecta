@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/RoomsView.h"
 
+#include "app/Accessibility.h"
 #include "app/PeerMenu.h"
 #include "core/EngineHost.h"
 
@@ -181,6 +182,7 @@ QWidget *RoomsView::createLeft()
 {
     m_joinedModel->setHorizontalHeaderLabels({tr("Room"), tr("Unread")});
     m_joined->setHeaderHidden(true);
+    m_joined->setAccessibleName(tr("Your rooms"));
     connect(m_joined->selectionModel(), &QItemSelectionModel::currentChanged, this, [this](const QModelIndex &index) {
         const QString room = index.siblingAtColumn(0).data(kNameRole).toString();
         if (!room.isEmpty() && room != m_room) {
@@ -190,7 +192,8 @@ QWidget *RoomsView::createLeft()
 
     m_filter->setObjectName(u"rooms.filter"_s);
     m_filter->setPlaceholderText(tr("Find or create a room"));
-    m_filter->setClearButtonEnabled(true);
+    m_filter->setAccessibleName(tr("Find or create a room"));
+    a11y::addClearButton(m_filter);
     connect(m_filter, &QLineEdit::returnPressed, this, &RoomsView::joinTyped);
     connect(m_filter, &QLineEdit::textChanged, this, [this](const QString &text) {
         m_listProxy->setFilterFixedString(text.trimmed());
@@ -208,6 +211,8 @@ QWidget *RoomsView::createLeft()
     m_list->setSortingEnabled(true);
     m_list->sortByColumn(1, Qt::DescendingOrder); // the busiest first
     connect(m_list, &QTreeView::doubleClicked, this, &RoomsView::joinSelected);
+    a11y::onReturn(m_list, [this] { joinSelected(); });
+    m_list->setAccessibleName(tr("All rooms"));
     m_join->setObjectName(u"rooms.join"_s);
     m_join->setToolTip(tr("Join the room picked in the list, or the name typed above"));
     connect(m_join, &QPushButton::clicked, this, [this] {
@@ -259,6 +264,7 @@ QWidget *RoomsView::createRoomPage()
     m_lines->setObjectName(u"rooms.lines"_s);
     m_lines->setFrameShape(QFrame::NoFrame);
     m_lines->setOpenLinks(false); // lines are shown as typed
+    m_lines->setAccessibleName(tr("Conversation"));
     m_lines->document()->setMaximumBlockCount(core::RoomService::kKeptLines);
     m_members->setObjectName(u"rooms.members"_s);
     m_members->setModel(m_membersModel);
@@ -270,6 +276,13 @@ QWidget *RoomsView::createRoomPage()
     connect(m_members, &QListView::customContextMenuRequested, this, &RoomsView::membersMenu);
     connect(m_members, &QListView::doubleClicked, this,
             [this](const QModelIndex &index) { Q_EMIT messageRequested(index.data().toString()); });
+    a11y::onReturn(m_members, [this] {
+        if (const QModelIndex current = m_members->currentIndex(); current.isValid()) {
+            Q_EMIT messageRequested(current.data().toString());
+        }
+    });
+    m_members->setAccessibleName(tr("Members"));
+    a11y::addMenuKey(m_members);
 
     m_problem->setObjectName(u"rooms.problem"_s);
     m_problem->setWordWrap(true);
@@ -277,6 +290,7 @@ QWidget *RoomsView::createRoomPage()
     m_problem->hide();
     m_input->setObjectName(u"rooms.input"_s);
     m_input->setMaxLength(core::SocialService::kMaxTextLength);
+    m_input->setAccessibleName(tr("Your message"));
     m_send->setObjectName(u"rooms.send"_s);
     connect(m_input, &QLineEdit::returnPressed, this, &RoomsView::post);
     connect(m_input, &QLineEdit::textChanged, this, [this] { m_problem->hide(); });
@@ -374,6 +388,13 @@ void RoomsView::rebuildJoined()
             count = room.state == core::Room::State::Failed ? tr("Refused") : tr("Joining");
         }
         auto *unread = new QStandardItem(room.mentions > 0 ? tr("@ %1").arg(count) : count);
+        if (room.state == core::Room::State::Joined) {
+            QString words = room.unread > 0 ? tr("%1 unread").arg(count) : tr("Nothing unread");
+            if (room.mentions > 0) {
+                words += tr(", and you were mentioned");
+            }
+            unread->setData(words, Qt::AccessibleTextRole);
+        }
         unread->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         if (room.unread > 0) {
             QFont bold = name->font();

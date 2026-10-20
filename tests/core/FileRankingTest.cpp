@@ -146,3 +146,18 @@ TEST(FileRanking, QueriesComeFromTheRelease)
     EXPECT_TRUE(FileRanking::query(blocked, {u"neon"_s}, &why).isEmpty());
     EXPECT_FALSE(why.isEmpty());
 }
+
+TEST(FileRanking, PeersTakenFromLessComeFirstAllElseEqual)
+{
+    // FAIR-5: the same file from two peers with free slots; the one we took less from today ranks first.
+    SearchOutcome outcome;
+    outcome.hits = {hit(u"busy_today"_s, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 320, 372, 14'900'000),
+                    hit(u"fresh"_s, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 320, 372, 14'900'000)};
+    const auto load = [](const QString &peer) { return peer == u"busy_today"_s ? 12 : 0; };
+    const auto ranked = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset), load);
+    ASSERT_EQ(ranked.files.size(), 2);
+    EXPECT_EQ(ranked.files[0].peer, u"fresh"_s);
+    // Without the load, the order is by name: the tie-break is the load, nothing else.
+    const auto plain = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset));
+    EXPECT_EQ(plain.files[0].peer, u"busy_today"_s);
+}
