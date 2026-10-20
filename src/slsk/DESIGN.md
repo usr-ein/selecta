@@ -278,36 +278,30 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
 
 ## Progress
 
-- **Done:**
-  - Public headers and this design (S1–S5 API, `Client`).
-  - S1 codec: `Codec`, `Zlib`, `Types`, the three message families, `Frame`; 125 tests; five libFuzzer targets
-    (`tests/fuzz/slsk/`, 60 s smoke clean). Merged into main as `9f95706`.
-  - S2 `ServerSession` with `FakeServer` (`tests/slsk/fixtures/`): 34 tests (the connect-timeout one skips on macOS,
-    which completes connections past a full backlog). Merged into main.
+- **Done** (contract S1–S7):
+  - S1 codec: `Codec`, `Zlib`, `Types`, the three message families, `Frame`; five libFuzzer targets
+    (`tests/fuzz/slsk/`, 60 s smoke clean at S1 and again at S7). Merged as `9f95706`.
+  - S2 `ServerSession` with `FakeServer` (`tests/slsk/fixtures/`). Merged.
   - S3 `PeerNetwork` with `FakePeer` and `TestPermits`: listener, direct/indirect race, dial-backs, requests and
-    answers, caps, timers, socket cap, `F` hand-off and `D` traffic; 44 tests. `MetaTypes` registers every signal type.
-    Merged into main.
+    answers, caps, timers, socket cap, `F` hand-off and `D` traffic; `MetaTypes` registers every signal type. Merged.
   - S4 `TransferManager`: downloads (resume from the device's size, size-0 fallback, token matching, both `F`
     directions, denials classified, withdrawn and unsolicited requests answered `Cancelled`, `UploadFailed` echo
     ignored), uploads (TransferRequest, offset validation, streaming under a shared speed limit, linger,
     `SendUploadSpeed`, `UploadFailed`/`UploadDenied`, downloader-opened `F` connections), stable ids, coalesced
-    progress, ordered signals, every wait timed; 38 tests (PeerNetwork now 44). The fixtures are a static library,
-    `selecta_slsk_testing` (`#include "fixtures/FakeServer.h"` …), for core/'s end-to-end tests.
+    progress, ordered signals, every wait timed. The fixtures became the static library `selecta_slsk_testing`
+    (`#include "fixtures/FakeServer.h"` …) for core/'s end-to-end tests. Merged as `974a017`.
+  - `selecta-devnet` (see above): `FakePeer` streams uploads from files at a set speed, with a search hook and queue
+    control; `FakeServer` takes a port and an optional single account.
   - S5 `DistributedNode` and `Client`: parent selection, branch reports, raw forwarding to children with the
     duplicate guard, branch roots, child limits, reset; the facade with search tokens, both search routes merged into
-    `IncomingSearch`, and `answerSearch()`; 15 tests.
-  - `selecta-devnet` (see above), with `FakePeer` streaming uploads from files at a set speed, a search hook, and
-    queue control, and `FakeServer` on a chosen port with an optional single account; 19 tests, one of which writes
-    a corpus with ffmpeg (skipped without it) and checks every format probes as planned. S4 merged into main as
-    `974a017`.
-  - S6 `devenv/`: Soulfind pinned by GitHub asset id and SHA-256 (`soulfind.pin`), `fetch-soulfind.sh` (download
-    and verify, by hand only), `run-soulfind.sh --all-interfaces` (throwaway database), README with the safety
-    notes and the optional reference peers. `tests/slsk/devenv/` (CTest label `devenv`, built only with
-    `SELECTA_SOULFIND_TESTS=ON`, run only with `SELECTA_DEVENV=1`): login, relogin and a wrong password, search and
-    download over the direct and the indirect path against the real server; 3 tests, green here.
-  - S7 `selecta-cli slsk-*` (see above). 6 tests run the commands as processes against the fakes (refusing
-    non-local servers, login and a wrong password, search, browse, download with resume and a refusal, share with a
-    search answered and an upload); 2 devenv tests run two `selecta-cli` processes against Soulfind, sharing and
-    searching and downloading over the direct and the indirect path (contract acceptance 3), green here.
+    `IncomingSearch`, and `answerSearch()`.
+  - S6 `devenv/`: Soulfind pinned by GitHub asset id and SHA-256 (`soulfind.pin`), `fetch-soulfind.sh` (by hand
+    only), `run-soulfind.sh --all-interfaces` (throwaway database), README with the safety notes and the optional
+    reference peers; `tests/slsk/devenv/` (label `devenv`, built only with `SELECTA_SOULFIND_TESTS=ON`, run only
+    with `SELECTA_DEVENV=1`). devnet, S5 and S6 merged as `bb81648`.
+  - S7 `selecta-cli slsk-*` (see above), tested as processes against the fakes and, opt-in, two of them against
+    Soulfind over the direct and the indirect path (contract acceptance 3).
+  - Tests: 284 in `selecta_slsk_tests` (dev, ASan and TSan clean), 5 opt-in devenv tests against a real Soulfind
+    (green here).
 - **Next:** nothing left in the contract; review feedback.
 - **Open questions:** none blocking.
