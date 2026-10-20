@@ -114,6 +114,19 @@
       }
     },
     {
+      "name": "beta",
+      "displayName": "Beta",
+      "description": "The maintainer's test build: optimised, line tables (-g1), the live network allowed (the user still opts in, SAFE-3), developer tools for --debug-server. Never for automated runs (CLAUDE.md).",
+      "inherits": "release",
+      "cacheVariables": {
+        "SELECTA_ENABLE_LIVE_SERVER": "ON",
+        "SELECTA_DEVTOOLS": "ON",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO": "-O2 -g1 -DNDEBUG",
+        "CMAKE_CXX_FLAGS_RELWITHDEBINFO": "-O2 -g1 -DNDEBUG",
+        "CMAKE_OBJCXX_FLAGS_RELWITHDEBINFO": "-O2 -g1 -DNDEBUG"
+      }
+    },
+    {
       "name": "ci",
       "displayName": "CI (dependencies from the environment)",
       "inherits": "base",
@@ -128,6 +141,7 @@
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "lint", "configurePreset": "lint" },
     { "name": "release", "configurePreset": "release" },
+    { "name": "beta", "configurePreset": "beta" },
     { "name": "ci", "configurePreset": "ci" }
   ],
   "testPresets": [

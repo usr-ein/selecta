@@ -108,6 +108,7 @@ if(SELECTA_WITH_MEDIA)
             app/AccessibilityTest.cpp
             app/ActivityModelTest.cpp
             app/AppIconTest.cpp
+            app/DiagnosticsTest.cpp
             app/ConverterViewTest.cpp
             app/FormatTest.cpp
             app/GetTracksModelTest.cpp

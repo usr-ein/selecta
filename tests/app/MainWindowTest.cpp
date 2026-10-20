@@ -1577,16 +1577,15 @@ TEST_F(MainWindowTest, OwnedSearchResultsOfferCorrections)
     using selecta::core::Ownership;
     const auto result = [](int index, const QString &name, Ownership ownership, quint64 ownedId,
                            selecta::match::Tier tier) {
-        selecta::core::SearchResult r;
+        selecta::core::SearchHit hit;
+        hit.peer = u"vinyl_ghost"_s;
+        hit.path = (u"@@vinyl\\Music\\"_s + name).toUtf8();
+        hit.extension = u"flac"_s;
+        hit.size = 40'000'000;
+        hit.attributes.duration = 372;
+        // As the engine makes it, quality included: without it the default preset hides every file (Format).
+        selecta::core::SearchResult r = selecta::core::filterableResult(hit);
         r.index = index;
-        r.hit.peer = u"vinyl_ghost"_s;
-        r.hit.path = (u"@@vinyl\\Music\\"_s + name).toUtf8();
-        r.hit.extension = u"flac"_s;
-        r.hit.size = 40'000'000;
-        r.hit.attributes.duration = 372;
-        r.path = selecta::core::decodeRemotePath(r.hit.path);
-        r.folder = selecta::core::remoteFolderOf(r.path);
-        r.name = selecta::core::remoteNameOf(r.path);
         r.parsed = selecta::match::RemotePathParser::parse(r.path);
         r.ownership = ownership;
         r.ownedId = ownedId;
@@ -1595,14 +1594,24 @@ TEST_F(MainWindowTest, OwnedSearchResultsOfferCorrections)
         }
         return r;
     };
-    Q_EMIT engine->searchResultsReset(
-        searchId,
-        {result(0, u"Okuma Drift - Neon Rain.flac"_s, Ownership::InCollection, 5, selecta::match::Tier::Exact),
-         result(1, u"Okuma Drift - Low Tide.flac"_s, Ownership::LikelyInCollection, 6, selecta::match::Tier::Likely),
-         result(2, u"Okuma Drift - Night Signals.flac"_s, Ownership::None, 0, selecta::match::Tier::None)});
+    const QList<selecta::core::SearchResult> results{
+        result(0, u"Okuma Drift - Neon Rain.flac"_s, Ownership::InCollection, 5, selecta::match::Tier::Exact),
+        result(1, u"Okuma Drift - Low Tide.flac"_s, Ownership::LikelyInCollection, 6, selecta::match::Tier::Likely),
+        result(2, u"Okuma Drift - Night Signals.flac"_s, Ownership::None, 0, selecta::match::Tier::None)};
     auto *table = window->findChild<QTreeView *>(u"search.results"_s);
     ASSERT_NE(table, nullptr);
-    QTRY_VERIFY_WITH_TIMEOUT(rowWithText(*table->model(), u"Night Signals"_s).isValid(), 5000);
+    // The running engine answers the search too (offline: nothing), and its answer may land after these results:
+    // give them again until they stay.
+    const auto shown = [&] {
+        if (rowWithText(*table->model(), u"Night Signals"_s).isValid()) {
+            return true;
+        }
+        Q_EMIT engine->searchResultsReset(searchId, results);
+        return false;
+    };
+    ASSERT_TRUE(QTest::qWaitFor(shown, 5000)) << window->findChild<QLabel *>(u"search.summary"_s)->text().toStdString();
+    QTest::qWait(200);
+    ASSERT_TRUE(QTest::qWaitFor(shown, 5000));
 
     const QStringList sure = contextMenuOn(table, rowWithText(*table->model(), u"Neon Rain"_s));
     EXPECT_TRUE(sure.contains(u"Not What I Have"_s)) << sure.join(u", "_s).toStdString();
@@ -1651,14 +1660,14 @@ TEST_F(MainWindowTest, NotWhatIHaveFindsAGetTracksLine)
         const QList<selecta::core::GetLine> lines = engine->getLines();
         return lines.isEmpty() ? FindState::Idle : lines.constFirst().findState;
     };
-    QTRY_COMPARE_WITH_TIMEOUT(lineState(), FindState::Owned, 10000); // after the collection scan
+    ASSERT_TRUE(QTest::qWaitFor([&] { return lineState() == FindState::Owned; }, 10000)); // after the collection scan
     auto *table = window->findChild<QTreeView *>(u"get.lines"_s);
     ASSERT_NE(table, nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 1; }, 5000));
 
     const QStringList texts = contextMenuOn(table, table->model()->index(0, 1), u"Not What I Have, Find It"_s);
     EXPECT_TRUE(texts.contains(u"Not What I Have, Find It"_s)) << texts.join(u", "_s).toStdString();
-    QTRY_VERIFY_WITH_TIMEOUT(lineState() != FindState::Owned, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return lineState() != FindState::Owned; }, 5000));
     engine->stop();
 
     selecta::storage::Database check;
@@ -1726,24 +1735,25 @@ TEST_F(MainWindowTest, NotTheSameTrackDropsAFlagForGood)
     ASSERT_TRUE(window->navigateTo(u"collection"_s));
     auto *flagList = window->findChild<QListView *>(u"collection.flags"_s);
     ASSERT_NE(flagList, nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(flagList->model()->rowCount(), 1, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return flagList->model()->rowCount() == 1; }, 5000));
     const QStringList texts =
         contextMenu(flagList, flagList->visualRect(flagList->model()->index(0, 0)).center(), u"Not the Same Track"_s);
     EXPECT_TRUE(texts.contains(u"Not the Same Track"_s)) << texts.join(u", "_s).toStdString();
     EXPECT_TRUE(texts.contains(u"Dismiss"_s));
-    QTRY_COMPARE_WITH_TIMEOUT(flagList->model()->rowCount(), 0, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return flagList->model()->rowCount() == 0; }, 5000));
 
     // The Inbox single: its status said "also on"; the action is in its menu.
     ASSERT_TRUE(window->navigateTo(u"inbox"_s));
     auto *items = window->findChild<QTreeView *>(u"inbox.items"_s);
     ASSERT_NE(items, nullptr);
-    QTRY_VERIFY_WITH_TIMEOUT(rowWithText(*items->model(), u"Low Tide"_s).isValid(), 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return rowWithText(*items->model(), u"Low Tide"_s).isValid(); }, 5000));
     const QModelIndex single = rowWithText(*items->model(), u"Low Tide"_s);
     EXPECT_EQ(single.siblingAtColumn(4).data().toString(), u"⚑ Also on “Night Signals”"_s);
     const QStringList inboxTexts = contextMenuOn(items, single, u"Not the Same Track"_s);
     EXPECT_TRUE(inboxTexts.contains(u"Not the Same Track"_s)) << inboxTexts.join(u", "_s).toStdString();
-    QTRY_COMPARE_WITH_TIMEOUT(rowWithText(*items->model(), u"Low Tide"_s).siblingAtColumn(4).data().toString(),
-                              u"Ready"_s, 5000);
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] { return rowWithText(*items->model(), u"Low Tide"_s).siblingAtColumn(4).data().toString() == u"Ready"_s; },
+        5000));
     engine->stop();
 
     selecta::storage::Database check;

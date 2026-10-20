@@ -2,6 +2,7 @@
 #include "app/views/SettingsView.h"
 
 #include "app/Format.h"
+#include "governor/ServerGuard.h"
 #include "library/Naming.h"
 
 #include <QCheckBox>
@@ -75,6 +76,7 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     , m_appearance(new QComboBox(this))
     , m_library(std::move(library))
     , m_network(std::move(networkConfig))
+    , m_liveCompiledIn(info.liveServerCompiledIn)
 {
     setObjectName(u"view.settings"_s);
 
@@ -494,6 +496,21 @@ QWidget *SettingsView::createNetworkBox(QWidget *parent)
     serverLayout->addWidget(new QLabel(tr("Port:"), serverRow));
     serverLayout->addWidget(m_networkPort);
     form->addRow(tr("Server:"), serverRow);
+    if (m_liveCompiledIn) {
+        // SAFE-3: this build may reach the live network, and the user still has to ask for it.
+        m_liveNetwork = new QCheckBox(tr("Use the live Soulseek network"), box);
+        m_liveNetwork->setObjectName(u"settings.network.live"_s);
+        m_liveNetwork->setChecked(m_network.liveAllowedByUser);
+        m_liveNetwork->setToolTip(tr("Off, Selecta connects only to a local test server. On, it connects to the real "
+                                     "Soulseek network with your account; every limit Selecta keeps still applies."));
+        connect(m_liveNetwork, &QCheckBox::toggled, this, [this](bool live) {
+            if (live && governor::classifyServerHost(m_networkHost->text()) != governor::ServerKind::Live) {
+                m_networkHost->setText(u"server.slsknet.org"_s);
+                m_networkPort->setValue(2242);
+            }
+        });
+        form->addRow(QString(), m_liveNetwork);
+    }
 
     m_networkUser = new QLineEdit(m_network.username, box);
     m_networkUser->setObjectName(u"settings.network.username"_s);
@@ -612,6 +629,9 @@ void SettingsView::submitNetwork()
     config.listenPort = static_cast<quint16>(m_listenPort->value());
     config.connectAtLaunch = m_connectAtLaunch->isChecked();
     config.portMapping = m_portMapping->isChecked();
+    if (m_liveNetwork) {
+        config.liveAllowedByUser = m_liveNetwork->isChecked();
+    }
     if (config.host.isEmpty()) {
         config.host = m_network.host;
     }

@@ -219,6 +219,10 @@ public:
     void disconnectNetwork();
     NetworkStatus networkStatus() const { return m_networkStatus; }
 
+    // The engine object, on the engine thread; null when the engine isn't running. Only to queue work to that thread
+    // (a timer parented to it); never call into it from this thread.
+    QObject *engineObject() const { return m_engine.data(); }
+
     // Runs `work(engine)` on the engine thread, if the engine is running. For services that have no dedicated
     // method here yet; `work` must not capture anything owned by the UI thread by reference.
     template <typename Work>
