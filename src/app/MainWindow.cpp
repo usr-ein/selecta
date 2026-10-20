@@ -193,7 +193,13 @@ void MainWindow::createViews()
                        tr("Not built yet (milestone M4).")),
             fixed(tr("No folders indexed")));
 
-    auto *history = new HistoryView(m_services.sessions, m_services.build.session, m_stack);
+    auto *history = new HistoryView(m_services.database, m_services.build.session, m_stack);
+    // Filing and trashing change where downloads are; arrivals add new ones.
+    connect(&m_services.engine, &core::EngineHost::inboxChanged, history, [history] {
+        if (history->isVisible()) {
+            history->refresh();
+        }
+    });
     const QString started =
         QLocale().toString(QDateTime::fromMSecsSinceEpoch(m_services.sessionStartedAtMs).time(), QLocale::ShortFormat);
     addView(u"history"_s, history, fixed(tr("Session %1 started at %2").arg(m_services.build.session).arg(started)));

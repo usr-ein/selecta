@@ -3,6 +3,7 @@
 
 #include "app/AppSettings.h"
 #include "core/EngineHost.h"
+#include "library/HistoryStore.h"
 #include "library/InboxStore.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
@@ -160,7 +161,31 @@ TEST_F(MainWindowTest, HistoryListsTheCurrentSession)
     const auto *table = window->findChild<QAbstractItemView *>(u"history.sessions"_s);
     ASSERT_NE(table, nullptr);
     ASSERT_EQ(table->model()->rowCount(), 1);
-    EXPECT_TRUE(table->model()->index(0, 0).data().toString().startsWith(QString::number(session)));
+    EXPECT_TRUE(table->model()->index(0, 0).data().toString().startsWith(u"Session %1"_s.arg(session)));
+}
+
+TEST_F(MainWindowTest, HistoryShowsDownloadsUnderTheirSession)
+{
+    selecta::library::HistoryEntry entry;
+    entry.session = session;
+    entry.completedAt = 2'000;
+    entry.peer = u"vinyl_ghost"_s;
+    entry.remotePath = QByteArray("@@vinyl\\Okuma Drift - Neon Rain.flac");
+    entry.quality = u"FLAC 16/44.1"_s;
+    entry.artist = u"Okuma Drift"_s;
+    entry.title = u"Neon Rain"_s;
+    entry.whereabouts = selecta::library::HistoryEntry::Whereabouts::Trashed;
+    ASSERT_TRUE(selecta::library::HistoryStore(db).add(entry).has_value());
+
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"history"_s));
+    const auto *table = window->findChild<QAbstractItemView *>(u"history.sessions"_s);
+    ASSERT_NE(table, nullptr);
+    const QModelIndex sessionRow = table->model()->index(0, 0);
+    EXPECT_TRUE(sessionRow.data().toString().contains(u"1 download"_s));
+    ASSERT_EQ(table->model()->rowCount(sessionRow), 1);
+    EXPECT_EQ(table->model()->index(0, 0, sessionRow).data().toString(), u"Okuma Drift — Neon Rain"_s);
+    EXPECT_EQ(table->model()->index(0, 3, sessionRow).data().toString(), u"Moved to the Trash"_s);
 }
 
 TEST_F(MainWindowTest, PauseActionDrivesTheEngineAndIsRemembered)
