@@ -191,6 +191,51 @@ QList<Genre> genres(const QJsonObject &object)
     return list;
 }
 
+namespace {
+
+// A genre's votes at each level, the first level's first: compared lexicographically.
+QList<int> votesOf(const QString &name, const QList<QList<Genre>> &levels)
+{
+    QList<int> votes;
+    votes.reserve(levels.size());
+    for (const QList<Genre> &level : levels) {
+        const auto found = std::ranges::find(level, name, &Genre::name);
+        votes.append(found == level.end() ? 0 : found->count);
+    }
+    return votes;
+}
+
+QList<std::pair<QList<int>, QString>> rankedWithVotes(const QList<QList<Genre>> &levels)
+{
+    QList<std::pair<QList<int>, QString>> ranked;
+    if (levels.isEmpty()) {
+        return ranked;
+    }
+    for (const Genre &genre : levels.first()) {
+        ranked.append({votesOf(genre.name, levels), genre.name});
+    }
+    std::ranges::stable_sort(ranked, [](const auto &a, const auto &b) { return a.first > b.first; });
+    return ranked;
+}
+
+} // namespace
+
+QStringList rankedGenres(const QList<QList<Genre>> &levels)
+{
+    QStringList names;
+    const QList<std::pair<QList<int>, QString>> ranked = rankedWithVotes(levels);
+    for (const auto &[votes, name] : ranked) {
+        names.append(name);
+    }
+    return names;
+}
+
+bool leadingGenresTied(const QList<QList<Genre>> &levels)
+{
+    const QList<std::pair<QList<int>, QString>> ranked = rankedWithVotes(levels);
+    return ranked.size() >= 2 && ranked.at(0).first == ranked.at(1).first;
+}
+
 bool creditsArtist(const Recording &recording, const QStringList &artists)
 {
     if (artists.isEmpty()) {

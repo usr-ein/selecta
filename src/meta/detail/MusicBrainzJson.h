@@ -23,6 +23,14 @@ QList<Recording> recordings(const QJsonObject &object); // "recordings": […] o
 QList<ReleaseInfo> releases(const QJsonObject &object); // "releases": […] of a browse by recording
 QList<Genre> genres(const QJsonObject &object);         // "genres": […], most votes first, zero-vote ones dropped
 
+// The genres of `levels.first()` (most votes first, as genres() gives them) ranked by their votes there, ties broken
+// by their votes at the following levels in turn (the release group's genres, then the recording's, then the
+// artist's); the remaining ties keep MusicBrainz's order. Empty when the first level is.
+QStringList rankedGenres(const QList<QList<Genre>> &levels);
+// True when the two leading genres of rankedGenres(levels) have the same votes at every level: one more level may
+// tell them apart.
+bool leadingGenresTied(const QList<QList<Genre>> &levels);
+
 // True when the recording credits the release's main artist (comparison keys, so "Röyksopp" = "Royksopp").
 bool creditsArtist(const Recording &recording, const QStringList &artists);
 

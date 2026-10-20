@@ -15,6 +15,7 @@
 namespace selecta::meta {
 class YtDlpFetch;
 class YtDlpRunner;
+struct YouTubeCandidate;
 } // namespace selecta::meta
 
 namespace selecta::core {
@@ -22,8 +23,9 @@ namespace selecta::core {
 class PreviewCache;
 
 // Previews from YouTube through the user's own yt-dlp (PRD D26, PREV-11, ADR-011): the release's track is searched,
-// the video within ±3 s of its length is picked, and its audio is fetched into the preview cache and played while it
-// arrives. The audio is lossy and is never filed, shared, converted or tagged. One at a time.
+// the video within ±3 s of its length is picked (the artist's or YouTube Music's upload first; when the search finds
+// neither, a second search aimed at the artist's Topic channel), and its audio is fetched into the preview cache and
+// played while it arrives. The audio is lossy and is never filed, shared, converted or tagged. One at a time.
 //
 // The cache keeps the audio (in its YouTube folder) and which video was picked for the release, so a track heard
 // before plays again at once, with no yt-dlp run, after a restart too (PREV-8).
@@ -61,6 +63,11 @@ Q_SIGNALS:
     void changed(const selecta::core::Preview &preview);
 
 private:
+    static constexpr int kSearchResults = 10;
+
+    // When the first search found nothing from the artist or YouTube Music: a search of the artist's Topic channel,
+    // then the pick from both lists.
+    void searchTopic(qint64 id, const meta::Release &release, const QList<meta::YouTubeCandidate> &first);
     // The video's audio: from the cache when it is there, else fetched.
     void playOrFetch(qint64 id, const meta::Release &release, const QString &videoId, const QString &channel);
     void fetch(qint64 id, const meta::Release &release, const QString &videoId, const QString &channel);

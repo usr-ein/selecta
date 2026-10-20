@@ -324,6 +324,60 @@ TEST(ReleaseResolverTable, CompilationCopiesUnderOtherIsrcsLeaveTheOriginalConfi
     EXPECT_EQ(ReleaseResolver::rank(line(kKestrel, u"Glass Harbour"_s), {single, edit}).confidence, Confidence::Likely);
 }
 
+TEST(ReleaseResolverTable, AVariousArtistsAlbumIsACompilationAndTheArtistsOwnReleaseWins)
+{
+    // Labels file some compilations as albums: "Various Artists" gives them away.
+    Release various = extendedMix();
+    various.album = u"Club Essentials 2026"_s;
+    various.albumType = u"album"_s;
+    various.albumArtists = {u"Various Artists"_s};
+    various.releaseDate = u"2026-01-02"_s;
+    various.spotifyId = u"variousCopy"_s;
+    Release single = extendedMix();
+    single.albumType = u"single"_s;
+    single.albumArtists = {kKestrel};
+    single.releaseDate = u"2026-03-13"_s; // later: still the original
+    single.spotifyId = u"singleCopy"_s;
+    const ResolveQuery query = line(kKestrel, u"Glass Harbour (Extended Mix)"_s);
+    Resolution r = ReleaseResolver::rank(query, {various, single});
+    ASSERT_EQ(r.candidates.size(), 1);
+    EXPECT_EQ(r.candidates.first().release.spotifyId, u"singleCopy"_s);
+    // Two albums: the artist's own over another artist's.
+    Release other = extendedMix();
+    other.albumType = u"album"_s;
+    other.albumArtists = {u"DJ Somebody"_s};
+    other.releaseDate = u"2025-12-01"_s;
+    other.spotifyId = u"otherCopy"_s;
+    Release own = single;
+    own.albumType = u"album"_s;
+    own.spotifyId = u"ownCopy"_s;
+    r = ReleaseResolver::rank(query, {other, own});
+    ASSERT_EQ(r.candidates.size(), 1);
+    EXPECT_EQ(r.candidates.first().release.spotifyId, u"ownCopy"_s);
+}
+
+TEST(ReleaseResolverTable, ACompilationCopyInTheLeadGivesWayToTheOriginal)
+{
+    // The compilation credits the line's artist alone, the single a guest too: the single still wins, being the
+    // original.
+    Release compilation = release(u"Glass Harbour"_s, {kKestrel}, 270000, u"ESXYZ2600001"_s);
+    compilation.album = u"Terrace Mix 7"_s;
+    compilation.albumArtists = {u"Various Artists"_s};
+    compilation.albumType = u"compilation"_s;
+    Release single = release(u"Glass Harbour"_s, {kKestrel, u"Clara Vale"_s}, 270000, u"GBXYZ2600301"_s);
+    single.albumType = u"single"_s;
+    const Resolution r = ReleaseResolver::rank(line(kKestrel, u"Glass Harbour"_s), {compilation, single});
+    ASSERT_EQ(r.candidates.size(), 2);
+    EXPECT_GT(r.candidates.at(1).score, r.candidates.first().score); // the compilation scored higher…
+    EXPECT_EQ(r.candidates.first().release.isrc, u"GBXYZ2600301"_s); // …and the single leads
+    EXPECT_TRUE(r.candidates.first().reasons.join(u" "_s).contains(u"original release"_s));
+    // Another recording (another length) doesn't replace it.
+    Release edit = release(u"Glass Harbour"_s, {kKestrel}, 241000, u"GBXYZ2600302"_s);
+    edit.albumType = u"single"_s;
+    const Resolution kept = ReleaseResolver::rank(line(kKestrel, u"Glass Harbour"_s, 270000), {compilation, edit});
+    EXPECT_EQ(kept.candidates.first().release.isrc, u"ESXYZ2600001"_s);
+}
+
 TEST(ReleaseResolverTable, StreamingMixesAreDjMixSegments)
 {
     const Candidate segment = ReleaseResolver::score(
@@ -501,6 +555,31 @@ TEST_F(ReleaseResolverTest, IsrcLinesStopAtAnExactMatch)
     EXPECT_EQ(QUrlQuery(network.requests().at(1).url).queryItemValue(u"q"_s, QUrl::FullyDecoded),
               u"isrc:GBXYZ2600101"_s);
     EXPECT_EQ(network.requestCount(), 3); // token, Spotify ISRC search, Deezer ISRC lookup: no text search
+}
+
+TEST_F(ReleaseResolverTest, ACompilationCopyIsLookedUpByIsrcForTheOriginalRelease)
+{
+    // Seen live (2026-10-20): "Fred again.. - Delilah (pull me out of this)" resolved to its copy on "Pop Viral"
+    // (Various Artists, 26/50, 2023) because the text search's page didn't hold the single.
+    signIn();
+    network.enqueue("GET", u"^https://api\\.test/v1/search\\?"_s,
+                    FakeResponse::json(fixture(u"spotify/search_delilah_compilation.json"_s)));
+    network.enqueue("GET", u"^https://api\\.test/v1/search\\?"_s,
+                    FakeResponse::json(fixture(u"spotify/search_isrc_delilah.json"_s)));
+    const auto result = resolve(line(u"Fred again.."_s, u"Delilah (pull me out of this)"_s));
+    ASSERT_TRUE(result.has_value() && result->ok());
+    ASSERT_FALSE(result->value().candidates.isEmpty());
+    const Release &chosen = result->value().candidates.first().release;
+    EXPECT_EQ(chosen.album, u"Delilah (pull me out of this)"_s);
+    EXPECT_EQ(chosen.albumType, u"single"_s);
+    EXPECT_EQ(chosen.releaseDate, u"2022-10-17"_s);
+    EXPECT_EQ(chosen.trackNumber, 1);
+    EXPECT_EQ(chosen.isrc, u"GBAHS2201028"_s);
+    EXPECT_GE(result->value().confidence, Confidence::Likely);
+    ASSERT_EQ(network.requestCount(), 3); // token, the text search, one isrc: search
+    EXPECT_EQ(QUrlQuery(network.requests().last().url).queryItemValue(u"q"_s, QUrl::FullyDecoded),
+              u"isrc:GBAHS2201028"_s);
+    EXPECT_EQ(countHost(u"dz.test"_s), 0);
 }
 
 TEST_F(ReleaseResolverTest, AFailingSourceIsReportedWhileTheOtherAnswers)
