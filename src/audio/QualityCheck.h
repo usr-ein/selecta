@@ -95,7 +95,7 @@ struct QualityOptions
 // Failure codes: those of Decoder::open()/read(); InvalidArgument for a missing or incomplete source or options out
 // of range (spectrumFrames, the spectrogram's dimensions); Cancelled when `cancel` is set (checked between buffers of
 // at most 8 192 frames in every chunk).
-Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, QualityOptions options = {},
+Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, const QualityOptions &options = {},
                                      const CancellationFlag *cancel = nullptr);
 
 } // namespace selecta::audio

@@ -798,3 +798,25 @@ TEST(SpectrogramBuilder, EvenWindowStarts)
     const std::vector<qint64> starts = detail::evenWindowStarts(100000, 5);
     EXPECT_EQ(starts, (std::vector<qint64>{0, 23976, 47952, 71928, 100000 - kSpectrumFftSize}));
 }
+
+TEST(Spectrogram, TruncatedFiles)
+{
+    // An interrupted download stored as complete: the chunks planned past the real end find nothing and the grid
+    // covers what decodes, the same in one pass or many. A FLAC's header announces the full length, so its columns
+    // keep their planned span and fewer of them are filled; MP3 and WAV lengths come from what is there.
+    const Pcm cd = quantised(broadband(12.0), 16);
+    const std::vector<std::pair<QByteArray, int>> files = {
+        {makeFlac(cd), 481}, {makeMp3(cd, {.bitrateKbps = 320}), 800}, {makeWav(cd), 800}};
+    for (const auto &[whole, columns] : files) {
+        const QByteArray cut = whole.left((whole.size() * 6) / 10);
+        const Decoded decodedCut = decodeAll(cut, {});
+        ASSERT_TRUE(decodedCut.stats.truncated);
+        const QualityReport one = analyse(cut, sequential(withSpectrogram()));
+        const QualityReport many = analyse(cut, chunked(withSpectrogram()));
+        const Spectrogram s = gridOf(one);
+        EXPECT_EQ(s.frameCount(), decodedCut.pcm.frames());
+        EXPECT_EQ(s.columns(), columns);
+        EXPECT_EQ(many.spectrogram, one.spectrogram);
+        EXPECT_NEAR(many.cutoffHz, one.cutoffHz, 11);
+    }
+}

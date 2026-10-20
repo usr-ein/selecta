@@ -56,9 +56,10 @@ size_t qHash(const CacheKey &key, size_t seed = 0) noexcept;
 //   `overviewBudgetBytes` (default 64 MiB, about 15 000 tracks).
 // - The detail tier keeps the full 150 columns/s waveform detail (~0.1–0.3 MB per track, zlib-compressed), bounded by
 //   `detailBudgetBytes` (default 256 MiB).
-// - The quality tier keeps quality reports (analyzeQuality()) with their spectrogram when they have one (~0.1–0.2 MB
-//   for the default 800 × 256 grid, zlib-compressed; under 100 bytes without), bounded by `qualityBudgetBytes`
-//   (default 64 MiB, about 400 reports with spectrograms).
+// - The quality tier keeps quality reports (analyzeQuality()) with their spectrogram when they have one, bounded by
+//   `qualityBudgetBytes` (default 64 MiB). A report is 64 bytes without a spectrogram; with the default 800 × 256 grid,
+//   zlib-compressed, up to ~120 KB for noise-like material (the worst case) and far less for tonal music, so the
+//   default keeps at least 550 reports with spectrograms.
 //
 // Every blob is versioned (format, and kAnalysisVersion or kQualityVersion) and checksummed. A blob that is corrupt,
 // truncated, oversized or from another version reads as a miss and is deleted, so the caller simply recomputes.

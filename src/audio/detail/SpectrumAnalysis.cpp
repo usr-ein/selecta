@@ -9,6 +9,7 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -365,6 +366,11 @@ void SpectrogramBuilder::finish(const MonoHistory &history, qint64 end, PowerSpe
 Result<Spectrogram> assembleSpectrogram(int sampleRate, qint64 frames, int columns, int rows,
                                         std::vector<SpectrogramSlot> slots)
 {
+    const bool rowsMatch = std::ranges::all_of(
+        slots, [rows](const SpectrogramSlot &slot) { return std::cmp_equal(slot.rows.size(), rows); });
+    if (rows < 1 || rows > kSpectrogramMaxBins || !rowsMatch) {
+        return makeError(ErrorCode::Internal, u"spectrogram slots with %1 rows don't fit"_s.arg(rows));
+    }
     std::erase_if(slots, [frames](const SpectrogramSlot &slot) { return slot.start >= frames || slot.windows <= 0; });
     if (!slots.empty()) {
         slots.back().end = frames; // the last column runs to the end of the audio

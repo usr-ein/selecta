@@ -274,7 +274,8 @@ struct ChunkResult
 void runChunk(Decoder &decoder, detail::PowerSpectrum &fft, const PassSetup &setup, const ChunkPlan &plan,
               const std::function<bool()> &stopped, ChunkResult &result)
 {
-    if (plan.decodeFrom > 0 && decoder.seek(plan.decodeFrom) != DecodeStatus::Ok) {
+    // A worker's decoder carries on from its previous chunk: move it unless it already stands at this one.
+    if (decoder.position() != plan.decodeFrom && decoder.seek(plan.decodeFrom) != DecodeStatus::Ok) {
         result.error = decoder.error();
         return;
     }
@@ -421,7 +422,7 @@ struct PassWork
 
 // Splits [0, length) into `count` chunks (count ≥ 1; one open-ended chunk when the length is unknown).
 std::vector<ChunkPlan> planChunks(qint64 length, int count, const std::vector<qint64> &spectrumStarts,
-                                  const detail::SlotGeometry &geometry)
+                                  detail::SlotGeometry geometry)
 {
     std::vector<ChunkPlan> plans(static_cast<std::size_t>(count));
     const auto beginOf = [length, count](qint64 k) { return (k * length) / count; };
@@ -491,7 +492,7 @@ QString describeFinding(QualityFinding finding, const QualityReport &report)
     return {};
 }
 
-Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, QualityOptions options,
+Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, const QualityOptions &options,
                                      const CancellationFlag *cancel)
 {
     if (!source || !source->snapshot().isComplete()) {
