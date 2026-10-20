@@ -73,8 +73,10 @@ public:
     // --- finding the files (BATCH-4, BATCH-5) ---
     // Where searches go, and the server's excluded phrases (for the query planner). Not owned.
     void setSearch(SearchService *search, std::function<QStringList()> excludedPhrases);
-    void setQualityWanted(QualityWanted wanted) { m_wanted = wanted; }
-    QualityWanted qualityWanted() const { return m_wanted; }
+    // The list's filter preset (BATCH-2, SRCH-8). A new one ranks again the lines already found, from the search
+    // cache when it still has their results.
+    void setFilter(const SearchFilter &filter);
+    SearchFilter filter() const { return m_filter; }
     // Queues a search for each of these lines (every line still to find when empty). Lines still waiting for their
     // release lookup are searched once it is done.
     void find(const QList<qint64> &ids = {});
@@ -131,7 +133,7 @@ private:
     QHash<qint64, QFuture<meta::Result<meta::Resolution>>> m_resolving; // line id → resolution; cancelled if it goes
     SearchService *m_search = nullptr;
     std::function<QStringList()> m_excludedPhrases;
-    QualityWanted m_wanted = QualityWanted::Mp3_320OrLossless;
+    SearchFilter m_filter = builtInPreset(kMp3OrLosslessPreset).value_or(FilterPreset{}).filter;
     QHash<qint64, quint64> m_finding; // line id → its queued or running search
     QSet<qint64> m_findAfterLookup;   // lines to search once their release lookup ends
     TransferService *m_transfers = nullptr;

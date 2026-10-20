@@ -358,3 +358,37 @@ TEST_F(GetTracksServiceTest, StoppingPutsQueuedLinesBack)
     EXPECT_EQ(service->lines().constFirst().findState, GetLine::FindState::Idle);
     EXPECT_FALSE(service->isFinding());
 }
+
+TEST_F(GetTracksServiceTest, AnotherPresetRanksTheFoundLinesAgain)
+{
+    const selecta::base::ManualClock clock;
+    selecta::governor::Governor governor(clock);
+    FindNetwork network;
+    selecta::core::SearchService search(
+        governor, network, clock, {.idle = std::chrono::milliseconds(40), .total = std::chrono::milliseconds(1000)});
+    service->setSearch(&search, [] { return QStringList(); });
+    service->addReleases({release(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000)});
+    service->find();
+    ASSERT_TRUE(QTest::qWaitFor([&network] { return network.sent.size() == 1; }, 3000));
+    search.received(1, u"vinyl_ghost"_s, fileResponse(1, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, 320, 372));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    ASSERT_EQ(service->lines().constFirst().findState, GetLine::FindState::Ready);
+
+    // Lossless only (SRCH-8): the line is ranked again from the results the search just had, without searching the
+    // network again, and the MP3 no longer qualifies.
+    const selecta::core::SearchFilter lossless =
+        selecta::core::builtInPreset(selecta::core::kLosslessPreset).value().filter;
+    service->setFilter(lossless);
+    ASSERT_TRUE(QTest::qWaitFor(
+        [this] { return service->lines().constFirst().findState == GetLine::FindState::NotFound; }, 3000));
+    const GetLine line = service->lines().constFirst();
+    EXPECT_FALSE(line.ticked);
+    EXPECT_TRUE(line.message.contains(u"quality wanted"_s)) << line.message.toStdString();
+    EXPECT_EQ(network.sent.size(), 1);
+
+    // The same preset again changes nothing.
+    service->setFilter(lossless);
+    QTest::qWait(100);
+    EXPECT_EQ(network.sent.size(), 1);
+    EXPECT_EQ(service->lines().constFirst().findState, GetLine::FindState::NotFound);
+}

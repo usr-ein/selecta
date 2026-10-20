@@ -8,6 +8,7 @@
 #include <optional>
 
 class QElapsedTimer;
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QTimer;
@@ -20,6 +21,8 @@ class EngineHost;
 
 namespace selecta::app {
 
+class Presets;
+
 class GetTracksInspector;
 class GetTracksModel;
 
@@ -31,7 +34,7 @@ class GetTracksView : public QWidget
     Q_OBJECT
 
 public:
-    explicit GetTracksView(core::EngineHost &engine, QWidget *parent = nullptr);
+    GetTracksView(core::EngineHost &engine, Presets &presets, QWidget *parent = nullptr);
 
     GetTracksModel *model() const { return m_model; }
     // The inspector panel that follows this view's selection; the window hosts it.
@@ -67,12 +70,15 @@ private:
     void showSelection();
     void showAdded(int added, int duplicates, int unidentified, const QString &note);
     void refreshProgress();
+    // The preset menu follows the saved presets (SRCH-8).
+    void rebuildPresets();
     void contextMenu(QPoint position);
     // BATCH-8: saves the lines nothing was found for (or no sure release), one per line, as pasted.
     void exportUnresolved();
     QStringList unresolvedLines() const;
 
     core::EngineHost &m_engine;
+    Presets &m_presets;
     GetTracksModel *m_model;
     GetTracksInspector *m_inspector;
     QStackedWidget *m_pages;
@@ -80,6 +86,7 @@ private:
     QLabel *m_summary;
     QLabel *m_note;
     QPushButton *m_add;
+    QComboBox *m_preset; // the quality wanted (BATCH-2, SRCH-8)
     QPushButton *m_find;
     QPushButton *m_get;
     QPushButton *m_export; // BATCH-8: the lines not found, as text

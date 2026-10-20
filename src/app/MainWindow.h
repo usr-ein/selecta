@@ -40,6 +40,7 @@ class RoomsView;
 class Inspector;
 class NavModel;
 class PlayerBar;
+class Presets;
 class PreviewController;
 class SearchView;
 class Sidebar;
@@ -154,6 +155,7 @@ private:
     QStackedWidget *m_stack = nullptr;
     Inspector *m_inspector = nullptr;
     PlayerBar *m_player = nullptr;
+    Presets *m_presets = nullptr;
     SettingsView *m_settingsView = nullptr;
     QSplitter *m_mainSplitter = nullptr;
     QSplitter *m_contentSplitter = nullptr;

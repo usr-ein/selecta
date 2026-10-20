@@ -74,7 +74,8 @@ struct ConverterItem
 // tags mapped (Vorbis comments, ID3v2.3 or 2.4), missing fields filled from the folder and file names, the folder's
 // cover embedded when it has none, and the quality warnings of the advisor before anything happens. Each output is
 // made in Selecta's staging folder, verified (it decodes whole, its length and tags are right), then placed next to
-// the original or in the chosen folder as a new file: nothing is ever overwritten, and originals are never touched.
+// the original or in the chosen folder as a new file: nothing is ever overwritten, and originals are never touched. A
+// file made from a quarantined download keeps the original's quarantine attribute (NFR-4).
 //
 // Threading: engine thread; reading and converting run on a pool of its own and come back through a mutex-guarded
 // mailbox. Ownership: the destructor cancels conversions in flight and waits for them.
