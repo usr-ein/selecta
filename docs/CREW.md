@@ -25,7 +25,7 @@ checkout (git-ignored).
 3. **Started.** The nightman splits a big pitch into parts that touch different files, or runs it as one. Each part
    gets a minion: `tools/crew/spawn-minion.sh P-NNN slug [effort]`. That makes the worktree
    `.claude/worktrees/P-NNN-slug` on branch `crew/P-NNN-slug`, from `origin/main`, and starts the session
-   `minion-P-NNN-slug`.
+   `selecta-minion-P-NNN-slug`.
 4. **Built.** The minion works in its worktree:
    - a test for each requirement;
    - its own `build/dev`;

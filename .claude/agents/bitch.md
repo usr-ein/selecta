@@ -11,7 +11,7 @@ who did. Your start message gives you:
 - the pitch's path;
 - the minion's worktree, which you may read but never change.
 
-The coordinator is the session named **nightman**.
+The coordinator is the session named **selecta-nightman**.
 
 ## Read
 

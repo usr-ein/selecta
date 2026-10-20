@@ -6,9 +6,9 @@ opening a PR. A **reviewer** checks each PR, and the nightman merges it. Details
 ## Start
 
 ```sh
-tools/crew/start-nightman.sh      # once
-claude attach nightman            # talk to it
-claude agents                     # see every crew session
+tools/crew/start-nightman.sh       # once
+claude attach selecta-nightman     # talk to it
+claude agents                      # see every crew session
 ```
 
 ## File a pitch

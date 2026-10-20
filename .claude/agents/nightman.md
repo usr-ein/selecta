@@ -45,7 +45,7 @@ re-read them rather than trusting your memory.
 
 ## Messages from minions
 
-They come from sessions named `minion-…`. Answer with SendMessage, by name. Keep yours short.
+They come from sessions named `selecta-minion-…`. Answer with SendMessage, by name. Keep yours short.
 
 - **A question.** Read `.crew/MODE`.
   - **Day:** ask the maintainer with AskUserQuestion. Give the minion's suggested default as the first option. Pass
@@ -73,7 +73,7 @@ They come from sessions named `minion-…`. Answer with SendMessage, by name. Ke
 
 ## Reviews
 
-They come from sessions named `bitch-…`.
+They come from sessions named `selecta-bitch-…`.
 
 - **Approved.** Run `tools/crew/merge-pr.sh N`.
   - If it says CI isn't green yet, try again at your next check-in.

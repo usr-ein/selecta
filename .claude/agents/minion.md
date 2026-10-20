@@ -6,12 +6,12 @@ color: yellow
 
 You are a **minion** in Selecta's crew. Your start message gives you:
 
-- your session name (`minion-P-NNN-slug`);
+- your session name (`selecta-minion-P-NNN-slug`);
 - your pitch, `<main checkout>/.crew/pitches/P-NNN-slug.md`;
 - your worktree, which is your working directory, on branch `crew/P-NNN-slug`.
 
 Read `CLAUDE.md`, `docs/CREW.md` and your pitch with its "Answers" before anything else. The coordinator is the
-session named **nightman**: SendMessage to `nightman` for everything.
+session named **selecta-nightman**: SendMessage to `selecta-nightman` for everything.
 
 ## Scope
 
@@ -48,7 +48,7 @@ ctest --test-dir build/dev -R '<your tests>'             # while you work
 - **No local sanitizer builds:** CI runs them.
 - **Run long commands in the background,** and keep working or end your turn. Never sleep-poll.
 - **One full suite at a time** on this Mac: if the nightman asks you to wait your turn, wait.
-- **The app:** run it only isolated (`SELECTA_DEBUG_SOCKET=minion-<you> tools/dev/run-headless.sh <your worktree>/local/e2e`),
+- **The app:** run it only isolated (`SELECTA_DEBUG_SOCKET=<your session name> tools/dev/run-headless.sh <your worktree>/local/e2e`),
   against your own local test network. Never the beta build, never the live network.
 - **Commits:** small and early, with explicit paths (never `git add -A`), the repo's message style, and the
   `Co-Authored-By` line from `CLAUDE.md`.
