@@ -232,7 +232,7 @@ public:
     void processFrames(quint64 id);
     void handlePeerFrame(quint64 id, const Frame &f);
     void answerRequest(quint64 id, const Frame &f);
-    void handleSearchResults(const QString &username, const QByteArray &payload) const;
+    void handleSearchResults(const QString &username, const QByteArray &payload, const QHostAddress &address) const;
     void handleShareList(const QString &username, const QByteArray &payload);
     void handleUserInfo(const QString &username, const QByteArray &payload);
     void handleFolderContents(const QString &username, const QByteArray &payload);
@@ -1076,10 +1076,13 @@ void PeerNetworkPrivate::handlePeerFrame(quint64 id, const Frame &f)
     case PeerCode::FolderContentsRequest:
         answerRequest(id, f);
         return;
-    case PeerCode::FileSearchResponse:
-        connections.at(id).deliveredResults = true;
-        handleSearchResults(username, f.payload);
+    case PeerCode::FileSearchResponse: {
+        Connection &connection = connections.at(id);
+        connection.deliveredResults = true;
+        handleSearchResults(username, f.payload,
+                            connection.socket != nullptr ? connection.socket->peerAddress() : QHostAddress());
         return;
+    }
     case PeerCode::SharedFileListResponse:
         handleShareList(username, f.payload);
         return;
@@ -1139,7 +1142,8 @@ void PeerNetworkPrivate::answerRequest(quint64 id, const Frame &f)
     }
 }
 
-void PeerNetworkPrivate::handleSearchResults(const QString &username, const QByteArray &payload) const
+void PeerNetworkPrivate::handleSearchResults(const QString &username, const QByteArray &payload,
+                                             const QHostAddress &address) const
 {
     // Cheap check first: results for searches we stopped collecting are dropped uninflated.
     const std::optional<peer::FileSearchResponse::Header> header = peer::FileSearchResponse::peek(payload);
@@ -1152,7 +1156,7 @@ void PeerNetworkPrivate::handleSearchResults(const QString &username, const QByt
         qCDebug(lcSlskPeer).noquote() << "dropped malformed search results from" << username;
         return;
     }
-    Q_EMIT q->searchResponseReceived(username, *response);
+    Q_EMIT q->searchResponseReceived(username, *response, address);
 }
 
 void PeerNetworkPrivate::handleUserInfo(const QString &username, const QByteArray &payload)

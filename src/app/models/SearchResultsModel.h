@@ -5,14 +5,16 @@
 #include "core/SearchResults.h"
 
 #include <QAbstractItemModel>
+#include <QColor>
 #include <QList>
 #include <QString>
 
 namespace selecta::app {
 
 // One search's results for the Search view (PRD SRCH-9…11, SRCH-18): filtered with a core::SearchFilter, sorted by
-// best match or by a column, flat or grouped by remote folder. Mirrors the engine's list: reset() when every result
-// changes, append() as they stream in (then refresh(), which the view paces), update() when some change.
+// default (files that fit the release first, then the shortest expected wait) or by a column, flat or grouped by remote
+// folder. Mirrors the engine's list: reset() when every result changes, append() as they stream in (then refresh(),
+// which the view paces), update() when some change.
 //
 // Every change rebuilds the visible rows with a model reset; the view keeps its selection by result index. Main thread
 // only.
@@ -27,14 +29,29 @@ public:
         QualityColumn,
         LengthColumn,
         PeerColumn,
-        AvailabilityColumn,
+        QueueColumn, // "NQ" or a coloured "Q"; the queue length on hover
+        SpeedColumn, // the peer's upload speed
         ColumnCount
     };
     enum Role {                             // NOLINT(cppcoreguidelines-use-enum-class): Qt item roles are plain ints
         ResultIndexRole = Qt::UserRole + 1, // int: the result's index, -1 for a folder row
         IsFolderRole,                       // bool
+        QueueLevelRole,                     // int (QueueLevel), on the Queue column
     };
-    static constexpr int kBestMatch = -1; // sort column for "Best match" (SRCH-18)
+    static constexpr int kBestMatch = -1; // sort column for the default order: fit, then shortest wait (SRCH-18)
+
+    // How long a peer's queue is, for the Queue column's colour.
+    enum class QueueLevel : quint8 {
+        None,     // a free slot: no queue ("NQ", green)
+        Short,    // up to kShortQueue files ahead (yellow)
+        Long,     // up to kLongQueue (orange)
+        VeryLong, // more (red)
+    };
+    static constexpr quint32 kShortQueue = 10;
+    static constexpr quint32 kLongQueue = 50;
+    static QueueLevel queueLevel(const core::SearchHit &hit);
+    // The level's colour, readable on the current appearance (light or dark).
+    static QColor queueColour(QueueLevel level);
 
     explicit SearchResultsModel(QObject *parent = nullptr);
 
@@ -66,6 +83,9 @@ public:
     static QString statusText(core::Ownership ownership);
     static QString qualityText(const core::SearchResult &result);
     static QString titleText(const core::SearchResult &result);
+    // A country's flag as text: the two regional indicator symbols of its ISO code ("FR" → 🇫🇷); empty for anything
+    // that isn't a country code.
+    static QString flagText(const QString &countryCode);
 
     QModelIndex index(int row, int column, const QModelIndex &parent = {}) const override;
     QModelIndex parent(const QModelIndex &child) const override;
@@ -88,6 +108,8 @@ private:
     void rebuild();
     bool lessThan(int a, int b) const;
     QVariant resultData(const core::SearchResult &result, int column, int role) const;
+    QVariant displayText(const core::SearchResult &result, int column) const;
+    QVariant toolTip(const core::SearchResult &result, int column) const;
     // What VoiceOver reads for a cell: the display text with its symbols in words (UI-5).
     QString accessibleText(const core::SearchResult &result, int column) const;
     QVariant folderData(const Folder &folder, int column, int role) const;

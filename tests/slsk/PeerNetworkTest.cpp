@@ -451,6 +451,8 @@ TEST_F(PeerNetworkTest, SearchResultsOnlyForOpenSearches)
     ASSERT_TRUE(waitFor([&] { return results.size() == 1; }));
     EXPECT_EQ(results.at(0).at(0).toString(), u"alice"_s);
     EXPECT_EQ(results.at(0).at(1).value<peer::FileSearchResponse>().token, 77U);
+    // Where they came from, for the peer's flag.
+    EXPECT_TRUE(results.at(0).at(2).value<QHostAddress>().isLoopback());
     // The peer opened these connections just to deliver results: we close them once read.
     EXPECT_TRUE(waitFor([&] { return !alice->isOpen(second); }));
     peers.closeSearch(77);

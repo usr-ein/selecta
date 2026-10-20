@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/SearchService.h"
 
+#include "MmdbWriter.h"
 #include "base/Clock.h"
+#include "core/CountryDatabase.h"
 #include "core/SearchCache.h"
 #include "governor/Governor.h"
 #include "governor/Limits.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
+#include <QFile>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <gtest/gtest.h>
@@ -101,6 +105,38 @@ TEST_F(SearchServiceTest, CollectsResultsUntilTheyStopComing)
     EXPECT_EQ((*outcome)->hits.constFirst().extension, u"mp3"_s);
     EXPECT_TRUE((*outcome)->error.isEmpty());
     EXPECT_TRUE(network.stopped.contains(100U));
+}
+
+TEST_F(SearchServiceTest, HitsCarryThePeersCountry)
+{
+    const QTemporaryDir dir;
+    selecta::core::testing::MmdbWriter writer;
+    writer.add(u"81.2.69.0"_s, 24, "GB");
+    QFile file(dir.filePath(u"c.mmdb"_s));
+    ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+    file.write(writer.build());
+    file.close();
+    const auto countries = selecta::core::CountryDatabase::open(file.fileName());
+    ASSERT_TRUE(countries);
+
+    auto outcome = queue(u"okuma drift neon rain"_s);
+    ASSERT_TRUE(settle([this] { return network.sent.size() == 1; }));
+    // Without a database, no country.
+    search.received(100, u"before"_s, response(100, u"@@a\\Okuma Drift - Neon Rain.mp3"_s),
+                    QHostAddress(u"81.2.69.10"_s));
+    search.setCountries(countries);
+    search.received(100, u"london"_s, response(100, u"@@a\\Okuma Drift - Neon Rain.mp3"_s),
+                    QHostAddress(u"::ffff:81.2.69.10"_s));
+    search.received(100, u"elsewhere"_s, response(100, u"@@b\\Okuma Drift - Neon Rain.mp3"_s),
+                    QHostAddress(u"8.8.8.8"_s));
+    search.received(100, u"unknown"_s, response(100, u"@@c\\Okuma Drift - Neon Rain.mp3"_s));
+    ASSERT_TRUE(settle([&outcome] { return outcome->has_value(); }));
+    const QList<selecta::core::SearchHit> &hits = (*outcome)->hits;
+    ASSERT_EQ(hits.size(), 4);
+    EXPECT_TRUE(hits.at(0).country.isEmpty());
+    EXPECT_EQ(hits.at(1).country, u"GB"_s);
+    EXPECT_TRUE(hits.at(2).country.isEmpty());
+    EXPECT_TRUE(hits.at(3).country.isEmpty());
 }
 
 TEST_F(SearchServiceTest, ARepeatComesFromTheCacheForFree)

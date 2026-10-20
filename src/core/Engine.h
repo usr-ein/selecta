@@ -8,6 +8,7 @@
 #include "core/ClipPreviews.h"
 #include "core/CollectionService.h"
 #include "core/ConverterService.h"
+#include "core/CountryDatabaseFetcher.h"
 #include "core/GetTracksService.h"
 #include "core/InboxService.h"
 #include "core/ManualSearchService.h"
@@ -84,6 +85,8 @@ struct EngineOptions
     QString ytDlpPath;           // Settings → Previews; empty: the usual places
     // Opening the listening port on the router (NET-3). Empty: the router is never touched (tests, isolated runs).
     std::optional<PortMapper::Options> portMapping;
+    // The country database for peers' flags (P-002). Empty: no flags, nothing downloaded (tests, isolated runs).
+    std::optional<CountryDatabaseOptions> countries;
 };
 
 // Where a preview's audio comes from (PRD PREV-12, D26).
@@ -339,6 +342,7 @@ private:
     std::unique_ptr<SearchNetwork> m_searchNetwork;
     std::unique_ptr<SearchCacheStore> m_searchCache;
     std::unique_ptr<SearchService> m_search;
+    std::unique_ptr<CountryDatabaseFetcher> m_countries;
     std::unique_ptr<ManualSearchService> m_manualSearch;
     std::unique_ptr<TransferService> m_transfers;
     std::unique_ptr<ArrivalService> m_arrival;

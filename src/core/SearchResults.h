@@ -77,6 +77,15 @@ struct SearchResult
     bool fitsRelease() const;
 };
 
+// How long a download from this hit's peer would take to finish, in seconds, as far as the hit tells (PRD SRCH-10): the
+// files queued ahead (none with a free slot; at least one without) and one file of ours, each taken as
+// kTypicalQueuedFileBytes, at the peer's upload speed (kUnknownSpeedBytesPerSecond when the peer didn't say). It
+// depends on the peer only, not on the file's size: files of one peer tie, so the default order's tie-breakers
+// (fit, quality, fairness) decide between them. An estimate to rank by, not a promise. Pure; any thread.
+inline constexpr qint64 kTypicalQueuedFileBytes = 10'000'000; // about a 320 kbps track of four minutes
+inline constexpr qint64 kUnknownSpeedBytesPerSecond = 20'000; // pessimistic: a peer that says nothing is slow
+double expectedWaitSeconds(const SearchHit &hit);
+
 // The folder part of a virtual path, and its last component, with either separator. Pure.
 QString remoteFolderOf(const QString &path);
 QString remoteNameOf(const QString &path);

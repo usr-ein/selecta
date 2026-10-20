@@ -3,10 +3,12 @@
 
 #include "app/Format.h"
 #include "app/Icons.h"
+#include "core/CountryDatabase.h"
 
 #include <QFont>
 #include <QGuiApplication>
 #include <QHash>
+#include <QLocale>
 #include <QPalette>
 #include <QRegularExpression>
 
@@ -50,6 +52,22 @@ QIcon ownershipIcon(core::Ownership ownership)
     return {};
 }
 
+QFont queueFont()
+{
+    QFont font = QGuiApplication::font();
+    font.setWeight(QFont::DemiBold);
+    return font;
+}
+
+// "France" for "FR", in the user's language; empty when unknown.
+QString countryName(const QString &code)
+{
+    if (!core::isCountryCode(code)) {
+        return {};
+    }
+    return QLocale::territoryToString(QLocale::codeToTerritory(code));
+}
+
 QString lastComponents(const QString &folder, int count)
 {
     QStringList parts = folder.split(QRegularExpression(u"[\\\\/]"_s), Qt::SkipEmptyParts);
@@ -59,12 +77,30 @@ QString lastComponents(const QString &folder, int count)
     return parts.join(u" › "_s);
 }
 
-QString availabilityText(const core::SearchHit &hit)
+QString queueText(const core::SearchHit &hit)
+{
+    return hit.freeSlot ? SearchResultsModel::tr("NQ") : SearchResultsModel::tr("Q");
+}
+
+QString queueToolTip(const core::SearchHit &hit)
+{
+    if (hit.freeSlot) {
+        return SearchResultsModel::tr("A free slot: no queue");
+    }
+    return hit.queueLength == 1 ? SearchResultsModel::tr("No free slot; 1 file queued")
+                                : SearchResultsModel::tr("No free slot; %1 files queued").arg(hit.queueLength);
+}
+
+QString speedText(const core::SearchHit &hit)
 {
     const QString speed = format::speed(hit.averageSpeed);
-    QString slot =
-        hit.freeSlot ? SearchResultsModel::tr("Free") : SearchResultsModel::tr("Queue %1").arg(hit.queueLength);
-    return speed.isEmpty() ? slot : slot + u" · "_s + speed;
+    return speed.isEmpty() ? u"—"_s : speed;
+}
+
+QString speedToolTip(const core::SearchHit &hit)
+{
+    return hit.averageSpeed > 0 ? SearchResultsModel::tr("The upload speed the peer reports")
+                                : SearchResultsModel::tr("The peer's upload speed isn't known yet");
 }
 
 } // namespace
@@ -72,6 +108,34 @@ QString availabilityText(const core::SearchHit &hit)
 SearchResultsModel::SearchResultsModel(QObject *parent)
     : QAbstractItemModel(parent)
 {}
+
+SearchResultsModel::QueueLevel SearchResultsModel::queueLevel(const core::SearchHit &hit)
+{
+    if (hit.freeSlot) {
+        return QueueLevel::None;
+    }
+    if (hit.queueLength <= kShortQueue) {
+        return QueueLevel::Short;
+    }
+    return hit.queueLength <= kLongQueue ? QueueLevel::Long : QueueLevel::VeryLong;
+}
+
+QColor SearchResultsModel::queueColour(QueueLevel level)
+{
+    // macOS system colours, darker on a light background so that text stays readable.
+    const bool dark = QGuiApplication::palette().color(QPalette::Base).lightness() < 128;
+    switch (level) {
+    case QueueLevel::None:
+        return dark ? QColor(0x30, 0xD1, 0x58) : QColor(0x1E, 0x8E, 0x3E);
+    case QueueLevel::Short:
+        return dark ? QColor(0xFF, 0xD6, 0x0A) : QColor(0x9A, 0x74, 0x00);
+    case QueueLevel::Long:
+        return dark ? QColor(0xFF, 0x9F, 0x0A) : QColor(0xC9, 0x3C, 0x00);
+    case QueueLevel::VeryLong:
+        break;
+    }
+    return dark ? QColor(0xFF, 0x45, 0x3A) : QColor(0xC4, 0x1E, 0x14);
+}
 
 QString SearchResultsModel::statusText(core::Ownership ownership)
 {
@@ -97,6 +161,20 @@ QString SearchResultsModel::statusText(core::Ownership ownership)
         break;
     }
     return {};
+}
+
+QString SearchResultsModel::flagText(const QString &countryCode)
+{
+    if (!core::isCountryCode(countryCode)) {
+        return {};
+    }
+    constexpr char32_t kRegionalIndicatorA = 0x1F1E6;
+    QString flag;
+    for (const QChar letter : countryCode) {
+        const char32_t symbol = kRegionalIndicatorA + (letter.unicode() - u'A');
+        flag += QString::fromUcs4(&symbol, 1);
+    }
+    return flag;
 }
 
 QString SearchResultsModel::titleText(const core::SearchResult &result)
@@ -194,14 +272,19 @@ void SearchResultsModel::sort(int column, Qt::SortOrder order)
 
 namespace {
 
-// "Best match" (SRCH-18): fit to the release first (length, then names and version), then quality, then
-// availability, then the peer we took least from. nullopt when the two are equal on all of it.
+// The default order (SRCH-18): files that fit the release first, then the shortest expected wait (speed, free slot and
+// queue), then the fit itself (length, then names and version), quality and the peer we took least from. nullopt
+// when the two are equal on all of it.
 std::optional<bool> bestMatchBefore(const core::SearchResult &x, const core::SearchResult &y, bool releaseChosen)
 {
+    if (releaseChosen && x.fitsRelease() != y.fitsRelease()) {
+        return x.fitsRelease();
+    }
+    if (const double xWait = core::expectedWaitSeconds(x.hit), yWait = core::expectedWaitSeconds(y.hit);
+        xWait != yWait) {
+        return xWait < yWait;
+    }
     if (releaseChosen) {
-        if (x.fitsRelease() != y.fitsRelease()) {
-            return x.fitsRelease();
-        }
         if (x.fit && y.fit) {
             if (const int identity = match::ReleaseScorer::compareIdentity(*x.fit, *y.fit); identity != 0) {
                 return identity < 0;
@@ -211,28 +294,38 @@ std::optional<bool> bestMatchBefore(const core::SearchResult &x, const core::Sea
     if (effectiveRank(x) != effectiveRank(y)) {
         return effectiveRank(x) > effectiveRank(y);
     }
-    if (x.hit.freeSlot != y.hit.freeSlot) {
-        return x.hit.freeSlot;
-    }
-    if (x.hit.queueLength != y.hit.queueLength) {
-        return x.hit.queueLength < y.hit.queueLength;
-    }
     if (x.peerFilesToday != y.peerFilesToday) {
         return x.peerFilesToday < y.peerFilesToday; // spread the load over peers (FAIR-5)
     }
     return std::nullopt;
 }
 
-std::optional<bool> availabilityBefore(const core::SearchHit &x, const core::SearchHit &y)
+// Ascending is the shortest queue first: a free slot, then fewer files queued, then the faster peer.
+std::optional<bool> queueBefore(const core::SearchHit &x, const core::SearchHit &y)
 {
     if (x.freeSlot != y.freeSlot) {
         return x.freeSlot;
     }
-    if (x.queueLength != y.queueLength) {
+    if (!x.freeSlot && x.queueLength != y.queueLength) {
         return x.queueLength < y.queueLength;
     }
     if (x.averageSpeed != y.averageSpeed) {
         return x.averageSpeed > y.averageSpeed;
+    }
+    return std::nullopt;
+}
+
+// Ascending is the fastest first, as every other column puts the better file first; then the shorter queue.
+std::optional<bool> speedBefore(const core::SearchHit &x, const core::SearchHit &y)
+{
+    if (x.averageSpeed != y.averageSpeed) {
+        return x.averageSpeed > y.averageSpeed;
+    }
+    if (x.freeSlot != y.freeSlot) {
+        return x.freeSlot;
+    }
+    if (!x.freeSlot && x.queueLength != y.queueLength) {
+        return x.queueLength < y.queueLength;
     }
     return std::nullopt;
 }
@@ -284,8 +377,10 @@ std::optional<bool> columnBefore(int column, const core::SearchResult &x, const 
             return order < 0;
         }
         return std::nullopt;
-    case SearchResultsModel::AvailabilityColumn:
-        return availabilityBefore(x.hit, y.hit);
+    case SearchResultsModel::QueueColumn:
+        return queueBefore(x.hit, y.hit);
+    case SearchResultsModel::SpeedColumn:
+        return speedBefore(x.hit, y.hit);
     default:
         return std::nullopt;
     }
@@ -302,7 +397,7 @@ bool SearchResultsModel::lessThan(int a, int b) const
             return m_sortOrder == Qt::AscendingOrder ? *before : !*before;
         }
     }
-    // Best match, whatever the order; ties of a column too. Then arrival.
+    // The default order, whatever the column's; ties of a column too. Then arrival.
     return bestMatchBefore(x, y, m_releaseChosen).value_or(a < b);
 }
 
@@ -452,54 +547,37 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         return result.index;
     case IsFolderRole:
         return false;
+    case QueueLevelRole:
+        return column == QueueColumn ? QVariant(static_cast<int>(queueLevel(result.hit))) : QVariant();
     case Qt::ForegroundRole:
         if (m_filter.owned == core::SearchFilter::OwnedResults::Dim && core::isOwned(result.ownership)) {
             return QGuiApplication::palette().color(QPalette::Disabled, QPalette::Text);
         }
-        return {};
+        return column == QueueColumn ? QVariant(queueColour(queueLevel(result.hit))) : QVariant();
+    case Qt::FontRole:
+        return column == QueueColumn ? QVariant(queueFont()) : QVariant();
     case Qt::DecorationRole:
         return column == StatusColumn ? QVariant(ownershipIcon(result.ownership)) : QVariant();
     case Qt::TextAlignmentRole:
-        return column == LengthColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter) : QVariant();
-    case Qt::ToolTipRole:
-        switch (column) {
-        case StatusColumn:
-            if (result.ownership == core::Ownership::None) {
-                return {};
-            }
-            return result.ownershipDetail.isEmpty()
-                       ? core::ownershipLabel(result.ownership)
-                       : core::ownershipLabel(result.ownership) + u": "_s + result.ownershipDetail;
-        case TitleColumn:
-            return result.path;
-        case QualityColumn:
-            if (!result.quality.plausible) {
-                return tr("The size suggests about %1 kbps, not what the peer says")
-                    .arg(result.quality.estimatedBitrateKbps);
-            }
-            if (!result.quality.established) {
-                return tr("The peer didn't say what quality this is; ≈ is estimated from its size and length");
-            }
-            return {};
-        case PeerColumn:
-            if (result.peerBackoffMs > 0) {
-                return tr("Selecta is holding off %1 after a refusal").arg(result.hit.peer);
-            }
-            return result.peerFilesToday == 1
-                       ? tr("1 download from %1 today").arg(result.hit.peer)
-                       : tr("%1 downloads from %2 today").arg(result.peerFilesToday).arg(result.hit.peer);
-        default:
-            return {};
+        if (column == LengthColumn || column == SpeedColumn) {
+            return {Qt::AlignRight | Qt::AlignVCenter};
         }
+        return column == QueueColumn ? QVariant(Qt::AlignCenter) : QVariant();
+    case Qt::ToolTipRole:
+        return toolTip(result, column);
     case Qt::AccessibleTextRole:
         return accessibleText(result, column);
     case Qt::AccessibleDescriptionRole:
         return resultData(result, column, Qt::ToolTipRole);
     case Qt::DisplayRole:
-        break;
+        return displayText(result, column);
     default:
         return {};
     }
+}
+
+QVariant SearchResultsModel::displayText(const core::SearchResult &result, int column) const
+{
     switch (column) {
     case StatusColumn:
         return statusText(result.ownership);
@@ -521,13 +599,63 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         }
         return text;
     }
-    case PeerColumn:
+    case PeerColumn: {
+        // The flag before the name, so the names stay aligned when some peers have none.
+        const QString flag = flagText(result.hit.country);
+        const QString peer = flag.isEmpty() ? result.hit.peer : flag + u' ' + result.hit.peer;
         if (result.peerFilesToday > 0) {
-            return u"%1 · %2"_s.arg(result.hit.peer).arg(result.peerFilesToday);
+            return u"%1 · %2"_s.arg(peer).arg(result.peerFilesToday);
         }
-        return result.hit.peer;
-    case AvailabilityColumn:
-        return availabilityText(result.hit);
+        return peer;
+    }
+    case QueueColumn:
+        return queueText(result.hit);
+    case SpeedColumn:
+        return speedText(result.hit);
+    default:
+        return {};
+    }
+}
+
+QVariant SearchResultsModel::toolTip(const core::SearchResult &result, int column) const
+{
+    switch (column) {
+    case StatusColumn:
+        if (result.ownership == core::Ownership::None) {
+            return {};
+        }
+        return result.ownershipDetail.isEmpty()
+                   ? core::ownershipLabel(result.ownership)
+                   : core::ownershipLabel(result.ownership) + u": "_s + result.ownershipDetail;
+    case TitleColumn:
+        return result.path;
+    case QualityColumn:
+        if (!result.quality.plausible) {
+            return tr("The size suggests about %1 kbps, not what the peer says")
+                .arg(result.quality.estimatedBitrateKbps);
+        }
+        if (!result.quality.established) {
+            return tr("The peer didn't say what quality this is; ≈ is estimated from its size and length");
+        }
+        return {};
+    case PeerColumn: {
+        QString tip;
+        if (result.peerBackoffMs > 0) {
+            tip = tr("Selecta is holding off %1 after a refusal").arg(result.hit.peer);
+        } else {
+            tip = result.peerFilesToday == 1
+                      ? tr("1 download from %1 today").arg(result.hit.peer)
+                      : tr("%1 downloads from %2 today").arg(result.peerFilesToday).arg(result.hit.peer);
+        }
+        if (const QString country = countryName(result.hit.country); !country.isEmpty()) {
+            tip += u'\n' + tr("In %1, by its address (IP Geolocation by DB-IP)").arg(country);
+        }
+        return tip;
+    }
+    case QueueColumn:
+        return queueToolTip(result.hit);
+    case SpeedColumn:
+        return speedToolTip(result.hit);
     default:
         return {};
     }
@@ -554,13 +682,19 @@ QString SearchResultsModel::accessibleText(const core::SearchResult &result, int
                    ? tr("%1, same length as the release").arg(length)
                    : tr("%1, %2 against the release").arg(length, format::lengthDelta(delta));
     }
-    case PeerColumn:
+    case PeerColumn: {
+        const QString country = countryName(result.hit.country);
+        QString peer = country.isEmpty() ? result.hit.peer : tr("%1, %2").arg(result.hit.peer, country);
         if (result.peerFilesToday > 0) {
-            return result.peerFilesToday == 1
-                       ? tr("%1, 1 download today").arg(result.hit.peer)
-                       : tr("%1, %2 downloads today").arg(result.hit.peer).arg(result.peerFilesToday);
+            return result.peerFilesToday == 1 ? tr("%1, 1 download today").arg(peer)
+                                              : tr("%1, %2 downloads today").arg(peer).arg(result.peerFilesToday);
         }
-        return result.hit.peer;
+        return peer;
+    }
+    case QueueColumn:
+        return queueToolTip(result.hit);
+    case SpeedColumn:
+        return result.hit.averageSpeed > 0 ? speedText(result.hit) : tr("Speed unknown");
     default:
         return resultData(result, column, Qt::DisplayRole).toString();
     }
@@ -568,6 +702,8 @@ QString SearchResultsModel::accessibleText(const core::SearchResult &result, int
 
 QVariant SearchResultsModel::folderData(const Folder &folder, int column, int role) const
 {
+    // A folder is one peer's: its queue and speed are its first file's.
+    const core::SearchResult *lead = folder.members.isEmpty() ? nullptr : &m_results.at(folder.members.first());
     switch (role) {
     case ResultIndexRole:
         return -1;
@@ -579,7 +715,17 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
         return font;
     }
     case Qt::ToolTipRole:
-        return column == TitleColumn ? folder.path : QVariant();
+        if (column == TitleColumn) {
+            return folder.path;
+        }
+        // A folder is one peer's: its peer, queue and speed are its first file's; nothing else speaks for every file.
+        return lead && (column == PeerColumn || column == QueueColumn || column == SpeedColumn)
+                   ? resultData(*lead, column, role)
+                   : QVariant();
+    case Qt::ForegroundRole:
+    case Qt::TextAlignmentRole:
+    case QueueLevelRole:
+        return lead && (column == QueueColumn || column == SpeedColumn) ? resultData(*lead, column, role) : QVariant();
     case Qt::DisplayRole:
         break;
     default:
@@ -602,10 +748,14 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
         }
         return first;
     }
-    case PeerColumn:
-        return folder.peer;
-    case AvailabilityColumn:
-        return folder.members.isEmpty() ? QVariant() : availabilityText(m_results.at(folder.members.first()).hit);
+    case PeerColumn: {
+        const QString flag = lead != nullptr ? flagText(lead->hit.country) : QString();
+        return flag.isEmpty() ? folder.peer : flag + u' ' + folder.peer;
+    }
+    case QueueColumn:
+        return lead ? queueText(lead->hit) : QVariant();
+    case SpeedColumn:
+        return lead ? speedText(lead->hit) : QVariant();
     default:
         return {};
     }
@@ -613,7 +763,20 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
 
 QVariant SearchResultsModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-    if (orientation != Qt::Horizontal || role != Qt::DisplayRole) {
+    if (orientation != Qt::Horizontal) {
+        return {};
+    }
+    if (role == Qt::ToolTipRole || role == Qt::AccessibleTextRole) {
+        switch (section) {
+        case QueueColumn:
+            return tr("Queue: NQ when a slot is free, otherwise Q coloured by the queue's length");
+        case SpeedColumn:
+            return tr("The peer's upload speed");
+        default:
+            return {};
+        }
+    }
+    if (role != Qt::DisplayRole) {
         return {};
     }
     switch (section) {
@@ -627,8 +790,10 @@ QVariant SearchResultsModel::headerData(int section, Qt::Orientation orientation
         return tr("Length");
     case PeerColumn:
         return tr("Peer · today");
-    case AvailabilityColumn:
-        return tr("Availability");
+    case QueueColumn:
+        return tr("Q");
+    case SpeedColumn:
+        return tr("Speed");
     default:
         return {};
     }

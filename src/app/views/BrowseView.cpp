@@ -80,7 +80,8 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     m_table->setColumnWidth(SearchResultsModel::QualityColumn, 110);
     m_table->setColumnWidth(SearchResultsModel::LengthColumn, 80);
     m_table->setColumnHidden(SearchResultsModel::PeerColumn, true); // one peer
-    m_table->setColumnHidden(SearchResultsModel::AvailabilityColumn, true);
+    m_table->setColumnHidden(SearchResultsModel::QueueColumn, true);
+    m_table->setColumnHidden(SearchResultsModel::SpeedColumn, true);
     m_table->installEventFilter(this); // Return downloads, Space previews
     connect(m_table, &QTreeView::customContextMenuRequested, this, &BrowseView::contextMenu);
     m_table->setAccessibleName(tr("Shared files"));

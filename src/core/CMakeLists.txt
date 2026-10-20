@@ -10,6 +10,8 @@ qt_add_library(selecta_core STATIC
     ClipPreviews.h ClipPreviews.cpp
     CollectionService.h CollectionService.cpp
     CollectionStore.h CollectionStore.cpp
+    CountryDatabase.h CountryDatabase.cpp
+    CountryDatabaseFetcher.h CountryDatabaseFetcher.cpp
     ConverterService.h ConverterService.cpp
     Downloads.h Downloads.cpp
     Engine.h Engine.cpp
@@ -52,6 +54,10 @@ find_path(SELECTA_NATPMP_INCLUDE_DIR natpmp.h REQUIRED)
 find_library(SELECTA_NATPMP_LIBRARY natpmp REQUIRED)
 target_include_directories(selecta_core SYSTEM PRIVATE "${SELECTA_NATPMP_INCLUDE_DIR}")
 target_link_libraries(selecta_core PRIVATE "${SELECTA_NATPMP_LIBRARY}")
+# libmaxminddb (vcpkg, static): reads the DB-IP Lite country database for peers' flags (P-002).
+find_package(maxminddb CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
+target_link_libraries(selecta_core PRIVATE maxminddb::maxminddb ZLIB::ZLIB)
 if(WIN32)
     target_link_libraries(selecta_core PRIVATE ws2_32 iphlpapi)
 endif()
