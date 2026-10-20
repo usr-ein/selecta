@@ -41,6 +41,7 @@ selecta_add_test_suite(selecta_unit_tests
         library/HistoryStoreTest.cpp
         library/InboxStoreTest.cpp
         library/NamingTest.cpp
+        library/QuarantineTest.cpp
         storage/DatabaseTest.cpp
         storage/MigrationsTest.cpp
         storage/SessionLogTest.cpp
@@ -105,6 +106,7 @@ if(SELECTA_WITH_MEDIA)
             app/NavModelTest.cpp
             app/PresetsTest.cpp
             app/SearchResultsModelTest.cpp
+            app/SpotifyTermsTest.cpp
             app/TickDelegateTest.cpp
             app/TransfersModelTest.cpp
             app/WaveformViewTest.cpp

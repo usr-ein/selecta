@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "library/FileOps.h"
 
+#include "library/Quarantine.h"
+
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QLoggingCategory>
 #include <QSaveFile>
 
 #include <array>
@@ -25,6 +28,8 @@ using namespace Qt::StringLiterals;
 
 namespace selecta::library {
 namespace {
+
+Q_LOGGING_CATEGORY(lcFileOps, "selecta.library.fileops")
 
 constexpr int kMaxNameVariants = 999;
 constexpr qint64 kCopyChunk = qint64{1024} * 1024;
@@ -99,6 +104,25 @@ QString describeErrno(int code)
         return u"error %1"_s.arg(code);
     }
     return QString::fromLocal8Bit(buffer.data());
+}
+
+// Everything in the Inbox came from a peer (D20), so it carries the quarantine attribute before it appears there
+// (NFR-4); an attribute it already has stays. A volume that can't take one doesn't stop the file: the log says so.
+void quarantineDownload(const QString &path, bool folder)
+{
+    QString why;
+    if (!(folder ? quarantine::markTree(path, &why) : quarantine::mark(path, &why))) {
+        qCWarning(lcFileOps).noquote() << "no quarantine attribute:" << why;
+    }
+}
+
+// A copy made by reading and writing has none of the original's extended attributes: it gets the quarantine back.
+void keepQuarantine(const QString &from, const QString &to)
+{
+    QString why;
+    if (!quarantine::copy(from, to, &why)) {
+        qCWarning(lcFileOps).noquote() << "the copy lost its quarantine attribute:" << why;
+    }
 }
 
 } // namespace
@@ -181,6 +205,7 @@ FileResult FileOps::copyVerifyRename(const QString &from, const QString &to) con
         QFile::remove(part);
         return FileResult::failure(error.isEmpty() ? u"the copy of %1 doesn't match the original"_s.arg(from) : error);
     }
+    keepQuarantine(from, part);
     if (const int code = renameExclusive(part, to); code != 0) {
         QFile::remove(part);
         return FileResult::failure(u"can't create %1: %2"_s.arg(to, describeErrno(code)));
@@ -207,6 +232,7 @@ FileResult FileOps::publishIntoInbox(const QString &sourceFile, const QString &r
     if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
         return FileResult::failure(u"can't create the folder for %1"_s.arg(target));
     }
+    quarantineDownload(sourceFile, false);
     for (int n = 1; n <= kMaxNameVariants; ++n) {
         const QString candidate = n == 1 ? target : variant(target, n);
         if (QFileInfo::exists(candidate)) {
@@ -350,6 +376,17 @@ FileResult FileOps::copyFolderVerified(const QString &from, const QString &to) c
         if (sha256(copy, &error) != sourceHash) {
             return abandon(error.isEmpty() ? u"the copy of %1 doesn't match the original"_s.arg(source) : error);
         }
+        keepQuarantine(source, copy);
+    }
+    // The folders keep their quarantine attribute too.
+    keepQuarantine(from, stage);
+    QDirIterator folders(from, QDir::Dirs | QDir::Hidden | QDir::NoDotAndDotDot | QDir::NoSymLinks,
+                         QDirIterator::Subdirectories);
+    while (folders.hasNext()) {
+        const QString folder = folders.next();
+        if (const QString copy = stage + u'/' + QDir(from).relativeFilePath(folder); QFileInfo(copy).isDir()) {
+            keepQuarantine(folder, copy);
+        }
     }
     if (const int code = renameExclusive(stage, to); code != 0) {
         return abandon(u"can't create %1: %2"_s.arg(to, describeErrno(code)));
@@ -392,6 +429,7 @@ FileResult FileOps::publishFolderIntoInbox(const QString &sourceFolder, const QS
     if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
         return FileResult::failure(u"can't create the folder for %1"_s.arg(target));
     }
+    quarantineDownload(sourceFolder, true);
     for (int n = 1; n <= kMaxNameVariants; ++n) {
         // Folder names may hold dots ("Mr. Oizo - Analog Worms Attack"): the number goes at the end.
         const QString candidate = n == 1 ? target : u"%1 (%2)"_s.arg(target).arg(n);
@@ -428,6 +466,9 @@ FileResult FileOps::replaceInInbox(const QString &newFile, const QString &inboxF
     if (!QFileInfo(newFile).isFile() || !QFileInfo(inboxFile).isFile()) {
         return FileResult::failure(u"nothing to replace at %1"_s.arg(inboxFile));
     }
+    // The new copy is the same download: it takes the file's quarantine attribute, or gets one.
+    keepQuarantine(inboxFile, newFile);
+    quarantineDownload(newFile, false);
     std::error_code error;
     std::filesystem::rename(std::filesystem::path(newFile.toStdU16String()),
                             std::filesystem::path(inboxFile.toStdU16String()), error); // rename(2): atomic

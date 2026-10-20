@@ -8,6 +8,7 @@
 #include "core/InboxConversion.h"
 #include "core/ReleaseJson.h"
 #include "core/SearchResults.h"
+#include "library/Quarantine.h"
 #include "match/ReleaseScorer.h"
 #include "match/RemotePathParser.h"
 
@@ -294,6 +295,8 @@ AlbumArrivalResult::Track convertOne(const AlbumArrivalJob &job, const Source &s
         track.error = translated("Conversion failed: %1").arg(written.error().message);
         return track;
     }
+    // A quarantine attribute the download has survives the conversion (NFR-4); publishing gives every file one anyway.
+    library::quarantine::copy(source.file->localPath, output);
     track.ok = true;
     track.artist = tags.values(keys::Artist).join(u", "_s);
     track.title = tags.value(keys::Title);
@@ -438,7 +441,7 @@ AlbumArrivalResult arriveAlbum(const AlbumArrivalJob &job, const audio::Cancella
         }
     }
 
-    // Into the Inbox, in one move.
+    // Into the Inbox, in one move, every file quarantined.
     const library::FileOps fileOps(job.library.inboxRoot, {}, job.trash);
     const library::FileResult published =
         fileOps.publishFolderIntoInbox(staging, QDir(job.library.albumsFolder).filePath(folderName));

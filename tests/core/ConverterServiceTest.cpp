@@ -5,6 +5,8 @@
 #include "convert/QualityAdvisor.h"
 #include "convert/TagReader.h"
 #include "convert/TagWriter.h"
+#include "library/Quarantine.h"
+#include "support/QuarantineSupport.h"
 
 #include <QBuffer>
 #include <QDir>
@@ -163,6 +165,27 @@ TEST_F(ConverterServiceTest, ANameAlreadyTakenGetsANumberAndTheFolderCanBeChosen
     ASSERT_EQ(second.state, State::Done) << second.message.toStdString();
     EXPECT_EQ(QFileInfo(second.outputPath).absolutePath(), QFileInfo(options.outputFolder).absoluteFilePath());
     EXPECT_TRUE(second.outputPath.endsWith(u".aiff"_s)) << second.outputPath.toStdString();
+}
+
+TEST_F(ConverterServiceTest, AFileMadeFromADownloadStaysQuarantined)
+{
+    if (!selecta::library::quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    const QString downloaded = album(u"01 - Neon Rain.flac"_s);
+    const QString ripped = album(u"02 - Low Tide.flac"_s);
+    ASSERT_TRUE(writeFile(downloaded, synth::makeFlac(synth::quantised(synth::sine(440.0, 1.0), 16))));
+    ASSERT_TRUE(writeFile(ripped, synth::makeFlac(synth::quantised(synth::sine(330.0, 1.0), 16))));
+    ASSERT_TRUE(selecta::testing::setQuarantine(downloaded, selecta::testing::safariApproved()));
+    service->add({downloaded, ripped});
+    settled();
+    service->start();
+    const QList<ConverterItem> items = settled();
+    ASSERT_EQ(items.size(), 2);
+    ASSERT_EQ(items.at(0).state, State::Done) << items.at(0).message.toStdString();
+    ASSERT_EQ(items.at(1).state, State::Done) << items.at(1).message.toStdString();
+    EXPECT_EQ(selecta::library::quarantine::value(items.at(0).outputPath), selecta::testing::safariApproved());
+    EXPECT_TRUE(selecta::library::quarantine::value(items.at(1).outputPath).isEmpty()); // the user's own file
 }
 
 TEST_F(ConverterServiceTest, ALossyFileAsksBeforeConvertingWithoutGain)

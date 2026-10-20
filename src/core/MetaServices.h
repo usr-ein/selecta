@@ -84,6 +84,10 @@ struct SpotifyStatus
 // store (the Keychain in the app) and Spotify's sign-in. The Spotify Client ID and the optional Client secret
 // (META-1: the secret enables the client-credentials flow) are kept in the token store, never in the settings file.
 //
+// Spotify is used only once allowed (PRD META-4, D30): the app allows it when the user has accepted the notice on
+// Spotify's terms. Until then saved credentials are read and shown, but never signed in with, and a browser sign-in
+// is refused; without a sign-in no Spotify request is made, so releases and tags come from Deezer and MusicBrainz.
+//
 // Threading: engine thread. Ownership: owns everything it creates; the Governor and the activity log outlive it.
 class MetaServices : public QObject
 {
@@ -96,6 +100,8 @@ public:
         // Opens the browser for a Spotify sign-in; called on the engine thread (the app forwards it to the UI thread).
         std::function<bool(const QUrl &)> openUrl;
         MetaEndpoints endpoints;
+        // Whether Spotify may be used from the start: the user accepted the terms notice in an earlier run.
+        bool spotifyAllowed = false;
     };
 
     // Token-store accounts for the credentials. Spotify Client IDs are 32 hex digits, so these can't collide with the
@@ -111,15 +117,21 @@ public:
     MetaServices(MetaServices &&) = delete;
     MetaServices &operator=(MetaServices &&) = delete;
 
-    // Loads the saved Spotify credentials and signs in with them: the client-credentials flow when a secret is saved,
-    // otherwise the stored browser sign-in, if any.
+    // Loads the saved Spotify credentials and, once Spotify is allowed, signs in with them: the client-credentials flow
+    // when a secret is saved, otherwise the stored browser sign-in, if any.
     void restore();
-    // Saves new credentials and signs in with them. An empty Client ID forgets the credentials and the sign-in. An
-    // empty `secret` keeps the saved one when `keepSavedSecret` is set, and deletes it otherwise.
+    // Saves new credentials and, once Spotify is allowed, signs in with them. An empty Client ID forgets the
+    // credentials and the sign-in. An empty `secret` keeps the saved one when `keepSavedSecret` is set, and deletes it
+    // otherwise.
     void setSpotifyCredentials(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
-    // Opens the browser to sign in to Spotify (for playlists and Liked Songs; tags need only the catalogue).
+    // Opens the browser to sign in to Spotify (for playlists and Liked Songs; tags need only the catalogue). Refused,
+    // with the reason in the status, until Spotify is allowed.
     void signInToSpotify();
     void signOutOfSpotify();
+    // The user accepted the notice on Spotify's terms: Spotify may be used from now on. Signs in with nothing by
+    // itself: the user's next step (Save, Sign In) does.
+    void allowSpotify() { m_spotifyAllowed = true; }
+    bool isSpotifyAllowed() const { return m_spotifyAllowed; }
 
     SpotifyStatus spotifyStatus() const;
     meta::SpotifyAuth &spotifyAuth() { return *m_spotifyAuth; }
@@ -162,6 +174,7 @@ private:
     std::unique_ptr<meta::YtDlpRunner> m_ytDlp;
     QByteArray m_secret; // in memory only while set; never logged
     QString m_error;
+    bool m_spotifyAllowed = false;
 };
 
 } // namespace selecta::core

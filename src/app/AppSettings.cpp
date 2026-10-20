@@ -26,6 +26,7 @@ const QString kPreviewVolume = u"player/volume"_s;
 const QString kPreviewSource = u"player/source"_s;
 const QString kPreviewFollows = u"player/followSelection"_s;
 const QString kYtDlpPath = u"player/ytDlp"_s;
+const QString kSpotifyTermsAccepted = u"spotify/termsAccepted"_s;
 const QString kRecentSearchesKey = u"search/recent"_s;
 const QString kConverterTarget = u"converter/target"_s;
 const QString kConverterId3v24 = u"converter/id3v24"_s;
@@ -263,6 +264,20 @@ void AppSettings::setYtDlpPath(const QString &path)
         m_settings.remove(kYtDlpPath);
     } else {
         m_settings.setValue(kYtDlpPath, path.trimmed());
+    }
+}
+
+bool AppSettings::spotifyTermsAccepted() const
+{
+    return m_settings.value(kSpotifyTermsAccepted, false).toBool();
+}
+
+void AppSettings::setSpotifyTermsAccepted(bool accepted)
+{
+    if (accepted) {
+        m_settings.setValue(kSpotifyTermsAccepted, true);
+    } else {
+        m_settings.remove(kSpotifyTermsAccepted);
     }
 }
 

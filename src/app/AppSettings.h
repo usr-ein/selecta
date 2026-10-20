@@ -53,6 +53,10 @@ public:
     QString ytDlpPath() const;
     void setYtDlpPath(const QString &path);
 
+    // The user accepted the one-time notice on Spotify's terms (PRD META-4, D30); until then Spotify isn't used.
+    bool spotifyTermsAccepted() const;
+    void setSpotifyTermsAccepted(bool accepted);
+
     // SRCH-15: the searches typed lately, newest first, at most kRecentSearches.
     static constexpr int kRecentSearches = 30;
     QStringList recentSearches() const;

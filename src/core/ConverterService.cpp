@@ -8,6 +8,7 @@
 #include "convert/TagReader.h"
 #include "convert/Transcoder.h"
 #include "library/FileOps.h"
+#include "library/Quarantine.h"
 #include "match/RemotePathParser.h"
 
 #include <QCoreApplication>
@@ -238,6 +239,10 @@ ConversionResult convertFile(const ConversionJob &job, const audio::Cancellation
     if (!report) {
         QDir(job.stagingDir).removeRecursively();
         return {.ok = false, .outputPath = {}, .error = report.error().message};
+    }
+    // A file made from a download is still one: it keeps the original's quarantine attribute (NFR-4).
+    if (QString why; !library::quarantine::copy(job.path, report.value().outputPath, &why)) {
+        qCWarning(lcConverter).noquote() << why;
     }
     const QString folder = job.settings.outputFolder.isEmpty() ? original.absolutePath() : job.settings.outputFolder;
     const library::FileOps fileOps({}, {});

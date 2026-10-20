@@ -9,6 +9,8 @@
 
 #include <QWidget>
 
+#include <functional>
+
 class QCheckBox;
 class QComboBox;
 class QLabel;
@@ -50,6 +52,9 @@ public:
 
     // Shows the engine's view of the Spotify set-up.
     void setSpotifyStatus(const core::SpotifyStatus &status);
+    // Whether the user accepted the one-time notice on Spotify's terms (PRD META-4, D30). Until then Save (with a
+    // Client ID) and Sign In show it first, and go on only with "Use Spotify Tags".
+    void setSpotifyTermsAccepted(bool accepted);
     // Shows the connection to the Soulseek server.
     void setNetworkStatus(const core::NetworkStatus &status);
     // Previews (PREV-11, PREV-12): where Space previews from, the yt-dlp to run, and what a check of it found.
@@ -62,6 +67,8 @@ public:
 Q_SIGNALS:
     void appearanceRequested(selecta::app::Appearance appearance);
     void libraryConfigChanged(const selecta::core::LibraryConfig &config);
+    // The user accepted the notice on Spotify's terms; emitted just before the Save or Sign In that asked for it.
+    void spotifyTermsAccepted();
     // Save pressed: an empty secret with keepSavedSecret leaves the saved one in place.
     void spotifyCredentialsSubmitted(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
     void spotifySignInRequested();
@@ -87,6 +94,9 @@ private:
     QWidget *createCacheBox(QWidget *parent);
     void submitNetwork();
     void submitSpotify();
+    void signInToSpotify();
+    // Shows the notice on Spotify's terms as a sheet; `accepted` runs once the user chooses "Use Spotify Tags".
+    void askAboutSpotifyTerms(const std::function<void()> &accepted);
     void showLibrary();
     void refreshPreview();
     void chooseInbox();
@@ -108,6 +118,7 @@ private:
     QLabel *m_preview = nullptr;
     QLabel *m_libraryError = nullptr;
     core::SpotifyStatus m_spotify;
+    bool m_spotifyTermsAccepted = false;
     QLabel *m_spotifyState = nullptr;
     QLineEdit *m_spotifyClientId = nullptr;
     QLineEdit *m_spotifySecret = nullptr;

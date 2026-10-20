@@ -366,6 +366,15 @@ void EngineHost::signOutOfSpotify()
     });
 }
 
+void EngineHost::allowSpotify()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.meta().allowSpotify();
+        }
+    });
+}
+
 void EngineHost::addTracks(const QString &text)
 {
     post([text](Engine &engine) { engine.addTracks(text); });
