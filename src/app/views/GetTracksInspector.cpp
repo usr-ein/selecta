@@ -342,7 +342,8 @@ void GetTracksInspector::showLine(const std::optional<core::GetLine> &line)
 void GetTracksInspector::showWayOut(const core::GetLine &line)
 {
     using DownloadState = core::GetLine::DownloadState;
-    const bool notFound = line.findState == core::GetLine::FindState::NotFound && line.downloadState == DownloadState::None;
+    const bool notFound =
+        line.findState == core::GetLine::FindState::NotFound && line.downloadState == DownloadState::None;
     const bool waiting = line.downloadState == DownloadState::Queued;
 
     // Not found, but the track was there below the quality wanted: pick one, and get it anyway.

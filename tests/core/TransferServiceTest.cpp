@@ -376,7 +376,8 @@ TEST_F(TransferServiceTest, AQueuedDownloadSaysItsPlaceAndIsStuckWithoutProgress
     // Asked once for its place, through the governor; the answer shows.
     ASSERT_TRUE(waitFor([&] { return service->download(*id)->placeInQueue == 7; }));
     EXPECT_EQ(holder->receivedOf<PlaceInQueueRequest>().size(), 1);
-    EXPECT_TRUE(service->download(*id)->message.contains(u"place 7"_s)) << service->download(*id)->message.toStdString();
+    EXPECT_TRUE(service->download(*id)->message.contains(u"place 7"_s))
+        << service->download(*id)->message.toStdString();
     EXPECT_FALSE(service->download(*id)->queue.isStuck());
 
     // Two minutes on, no better place and no start: stuck, and the message says so plainly.

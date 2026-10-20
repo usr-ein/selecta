@@ -97,7 +97,7 @@ FileChoice choiceOf(const Entry &entry, const match::ReleaseFit &fit)
 
 // Which scored files a ranking keeps.
 enum class Keep {
-    Related,   // anything of the release, to check if it doesn't fit: the files that passed the preset
+    Related,  // anything of the release, to check if it doesn't fit: the files that passed the preset
     FitsOnly, // only files that fit the release (length, name and version agree): near misses, "of this track"
 };
 
@@ -233,10 +233,10 @@ QString FileRanking::shortfall(HiddenReason reason, const SearchFilter &filter, 
         return translated("its size doesn't match the quality it states");
     case HiddenReason::Length:
         return filter.minDurationSec > 0 && result.durationSec() < filter.minDurationSec ? translated("too short")
-                                                                                          : translated("too long");
+                                                                                         : translated("too long");
     case HiddenReason::Size:
         return filter.minSizeBytes > 0 && std::cmp_less(result.hit.size, filter.minSizeBytes) ? translated("too small")
-                                                                                               : translated("too big");
+                                                                                              : translated("too big");
     case HiddenReason::NoFreeSlot:
         return translated("no free slot");
     case HiddenReason::QueueTooLong:

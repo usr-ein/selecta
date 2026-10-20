@@ -278,8 +278,7 @@ TEST_F(ArrivalServiceTest, LossyAudioBelowTheFormatIsKeptAsIt)
 TEST_F(ArrivalServiceTest, AFileGotAnywayIsKeptAsItAndMarkedBelowTheQualityWanted)
 {
     // Get tracks' near miss: an MP3 192 the list's preset turned down, got anyway.
-    Download download =
-        downloaded(5, u"track.mp3"_s, synth::makeMp3(synth::sine(440.0, 5.0), {.bitrateKbps = 192}));
+    Download download = downloaded(5, u"track.mp3"_s, synth::makeMp3(synth::sine(440.0, 5.0), {.bitrateKbps = 192}));
     selecta::core::FileChoice file;
     file.peer = download.peer;
     file.remotePath = download.remotePath;

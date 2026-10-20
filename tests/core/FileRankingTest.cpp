@@ -172,8 +172,7 @@ TEST(FileRanking, NothingInTheQualityWantedGivesTheTracksNearMisses)
         hit(u"lower_peer"_s, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 128, 372, 5'950'000),
         hit(u"low_peer"_s, u"@@a\\Okuma Drift - Neon Rain (2).mp3"_s, u"mp3"_s, 128, 372, 5'950'000), // its worse copy
         hit(u"aac_peer"_s, u"@@c\\Okuma Drift - Neon Rain.m4a"_s, u"m4a"_s, 256, 372, 11'900'000),
-        hit(u"remix_peer"_s, u"@@d\\Okuma Drift - Neon Rain (Ines Varga Remix).mp3"_s, u"mp3"_s, 192, 401,
-            9'600'000),
+        hit(u"remix_peer"_s, u"@@d\\Okuma Drift - Neon Rain (Ines Varga Remix).mp3"_s, u"mp3"_s, 192, 401, 9'600'000),
         hit(u"other_peer"_s, u"@@e\\Halden Rue - Tidewater.mp3"_s, u"mp3"_s, 192, 401, 9'600'000),
     };
     const auto ranked = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset));

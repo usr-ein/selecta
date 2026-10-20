@@ -138,7 +138,7 @@ TEST(GetTracksInspector, AStuckQueueIsSaidPlainlyWithOneButton)
     EXPECT_TRUE(child<QLabel>(inspector, u"inspector.get.status"_s)->text().startsWith(u"Stuck at the peer"_s));
     EXPECT_TRUE(shown(inspector, u"inspector.get.tryAnotherPeer"_s));
     EXPECT_FALSE(shown(inspector, u"inspector.get.otherFiles.button"_s)); // one button
-    EXPECT_TRUE(shown(inspector, u"inspector.get.otherFiles"_s));        // its choice: the file picked
+    EXPECT_TRUE(shown(inspector, u"inspector.get.otherFiles"_s));         // its choice: the file picked
     QSignalSpy switching(&inspector, &GetTracksInspector::switchRequested);
     child<QPushButton>(inspector, u"inspector.get.tryAnotherPeer"_s)->click();
     ASSERT_EQ(switching.size(), 1);

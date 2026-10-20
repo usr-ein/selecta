@@ -185,7 +185,7 @@ TEST(StuckQueue, AnAnswerThatIsntBetterIsNoProgress)
     history.sighted(kQueued + (5 * kSecond), 12);
     EXPECT_EQ(judgeQueue(history, kQueued + kMinute).kind, Kind::Waiting);
     EXPECT_EQ(judgeQueue(history, kQueued + (2 * kMinute)).kind, Kind::NoProgress); // no better place seen
-    history.sighted(kQueued + (10 * kMinute), 12);                                 // the same place, 10 min on
+    history.sighted(kQueued + (10 * kMinute), 12);                                  // the same place, 10 min on
     const auto stuck = judgeQueue(history, kQueued + (10 * kMinute));
     EXPECT_EQ(stuck.kind, Kind::NoProgress);
     EXPECT_EQ(stuck.sinceMs, kQueued);

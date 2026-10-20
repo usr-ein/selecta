@@ -502,12 +502,14 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
         // The track's files the preset turned down, to get anyway; or files that aren't this track at all.
         line->nearMisses = choices.nearMisses;
         if (!choices.nearMisses.isEmpty()) {
-            line->message = choices.belowQuality == 1
-                                ? tr("1 file of this track found, below the quality wanted.")
-                                : tr("%1 files of this track found, below the quality wanted.").arg(choices.belowQuality);
+            line->message =
+                choices.belowQuality == 1
+                    ? tr("1 file of this track found, below the quality wanted.")
+                    : tr("%1 files of this track found, below the quality wanted.").arg(choices.belowQuality);
         } else if (choices.considered > 0) {
-            line->message = choices.considered == 1 ? tr("1 file found, but not of this track.")
-                                                    : tr("%1 files found, but none of this track.").arg(choices.considered);
+            line->message = choices.considered == 1
+                                ? tr("1 file found, but not of this track.")
+                                : tr("%1 files found, but none of this track.").arg(choices.considered);
         }
     } else {
         line->best = choices.files.constFirst();
@@ -778,7 +780,7 @@ void GetTracksService::getAnyway(qint64 id, const QString &peer, const QByteArra
     line->best = *chosen;
     line->nearMisses.erase(chosen);
     line->alternatives = std::exchange(line->nearMisses, {}); // the copies to try if this one fails
-    line->findState = GetLine::FindState::Check;               // below the quality wanted: the user's call
+    line->findState = GetLine::FindState::Check;              // below the quality wanted: the user's call
     line->ticked = true;
     startDownload(*line);
 }
@@ -814,8 +816,8 @@ void GetTracksService::moveTo(GetLine &line, const FileChoice &choice)
     const qint64 waitedWith = line.downloadId;
     const qint64 id = line.id;
     line.best = choice;
-    line.findState = choice.shortfall.isEmpty() && choice.fitsRelease ? GetLine::FindState::Ready
-                                                                      : GetLine::FindState::Check;
+    line.findState =
+        choice.shortfall.isEmpty() && choice.fitsRelease ? GetLine::FindState::Ready : GetLine::FindState::Check;
     line.placeInQueue.reset();
     line.stuck = false;
     line.peersNote.clear();
