@@ -688,6 +688,10 @@ void SettingsView::submitSpotify()
 
 void SettingsView::signInToSpotify()
 {
+    if (m_spotify.state == meta::SpotifyAuth::State::Authorizing) {
+        Q_EMIT spotifySignInReopenRequested(); // its tab was closed or lost
+        return;
+    }
     if (m_spotifyTermsAccepted) {
         Q_EMIT spotifySignInRequested();
         return;
@@ -783,7 +787,12 @@ void SettingsView::setSpotifyStatus(const core::SpotifyStatus &status)
     m_spotifyState->setText(text);
     const bool configured = status.state != State::NotConfigured;
     const bool userSignedIn = status.state == State::SignedIn && status.mode == Mode::User;
-    m_spotifySignIn->setEnabled(configured && !userSignedIn && status.state != State::Authorizing);
+    // While the sign-in waits in the browser, the button opens its page again.
+    const bool waiting = status.state == State::Authorizing;
+    m_spotifySignIn->setText(waiting ? tr("Open Sign-In Page Again") : tr("Sign In in the Browser…"));
+    m_spotifySignIn->setToolTip(waiting ? tr("If you closed Spotify's sign-in page or can't find it")
+                                        : tr("Needed only to import your playlists and Liked Songs"));
+    m_spotifySignIn->setEnabled(configured && !userSignedIn);
     m_spotifySignOut->setVisible(userSignedIn);
 }
 

@@ -107,6 +107,7 @@ if(SELECTA_WITH_MEDIA)
         SOURCES
             app/AccessibilityTest.cpp
             app/AppIconTest.cpp
+            app/ConverterViewTest.cpp
             app/FormatTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp

@@ -365,30 +365,45 @@ void ConverterService::advise(Entry &entry) const
     item.notices.clear();
     item.askFirst = false;
     item.refused = false;
+    entry.keepAudio = false;
     if (!entry.source) {
         return;
     }
     const convert::SourceQuality &quality = entry.source->quality;
+    const convert::Advice advice = convert::advise(quality, m_settings.target, convert::AdviceContext::Manual);
+    entry.keepAudio = advice.action == convert::Action::KeepAsIs;
     // The tags exactly as they'll be written: encoder fields and the like go when the audio is re-encoded (D-7).
     convert::TagPolicyOptions policy;
-    policy.transcoding = m_settings.target.format != convert::OutputFormat::KeepAudio;
+    policy.transcoding = !entry.keepAudio;
     policy.encodedBy = m_options.encodedBy;
     if (m_settings.target.format == convert::OutputFormat::Mp3) {
         policy.encoderSettings = convert::lameSettingsString(m_settings.target.mp3);
     }
     item.tags = convert::applyTagPolicy(entry.source->tags, policy);
-    const convert::Advice advice = convert::advise(quality, m_settings.target, convert::AdviceContext::Manual);
     for (const convert::Notice notice : advice.notices) {
         const convert::NoticeText text = convert::describeNotice(notice, quality, m_settings.target, advice);
         item.notices.append(text.detail.isEmpty() ? text.shortText : text.shortText + u": "_s + text.detail);
     }
     item.askFirst = advice.action == convert::Action::Ask;
     item.refused = advice.action == convert::Action::Refuse;
+    if (item.refused && advice.notices.isEmpty()) {
+        // The advisor refuses a lossy file to 24 bits or a higher rate without a notice: the row says why.
+        item.verdict = quality.lossless ? tr("a higher sample rate or bit depth only adds size")
+                                        : tr("a lossy file can't fill a higher sample rate or bit depth");
+        item.notices.append(tr("Not offered: %1.").arg(item.verdict));
+        return;
+    }
     if (item.refused || item.askFirst) {
         item.verdict =
             item.notices.isEmpty()
                 ? QString()
                 : convert::describeNotice(advice.notices.constFirst(), quality, m_settings.target, advice).shortText;
+        return;
+    }
+    if (entry.keepAudio && m_settings.target.format != convert::OutputFormat::KeepAudio) {
+        item.verdict = tr("Same format · audio copied as is");
+        item.notices.append(tr("Same format: the audio is copied as it is, not re-encoded; only its tags and cover "
+                               "are completed."));
         return;
     }
     QStringList parts{convert::describeSettings(m_settings.target)};
@@ -425,6 +440,9 @@ void ConverterService::start(const QList<qint64> &ids)
                           .settings = m_settings,
                           .stagingDir = QDir(m_options.stagingDir).filePath(u"converter/%1"_s.arg(id)),
                           .encodedBy = m_options.encodedBy};
+        if (entry.keepAudio) {
+            job.settings.target.format = convert::OutputFormat::KeepAudio; // CONV-2: copied, never re-encoded
+        }
         m_pool.start([this, id, job = std::move(job), cancel = entry.cancel] {
             QElapsedTimer pace;
             pace.start();

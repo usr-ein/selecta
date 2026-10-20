@@ -24,28 +24,34 @@ struct FieldName
     QStringView key;
     const char *label = nullptr;
     QStringView frame; // ID3v2.3
+    QStringView atom;  // MP4, as TagLib maps it (the key: the atom rekordbox reads, conversion §3)
 };
 
 // The fields DJ software reads, in the order a tag editor shows them (CONV-4).
 constexpr std::array kFields{
-    FieldName{keys::Title, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Title"), u"TIT2"},
-    FieldName{keys::Artist, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Artist"), u"TPE1"},
-    FieldName{keys::Album, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Album"), u"TALB"},
-    FieldName{keys::AlbumArtist, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Album artist"), u"TPE2"},
-    FieldName{keys::TrackNumber, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Track"), u"TRCK"},
-    FieldName{keys::DiscNumber, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Disc"), u"TPOS"},
-    FieldName{keys::Date, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Year"), u"TYER"},
-    FieldName{keys::Genre, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Genre"), u"TCON"},
-    FieldName{keys::Bpm, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "BPM"), u"TBPM"},
-    FieldName{keys::InitialKey, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Key"), u"TKEY"},
-    FieldName{keys::Label, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Label"), u"TPUB"},
-    FieldName{keys::Isrc, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "ISRC"), u"TSRC"},
-    FieldName{keys::Composer, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Composer"), u"TCOM"},
-    FieldName{keys::Comment, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Comment"), u"COMM"},
+    FieldName{keys::Title, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Title"), u"TIT2", u"©nam"},
+    FieldName{keys::Artist, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Artist"), u"TPE1", u"©ART"},
+    FieldName{keys::Album, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Album"), u"TALB", u"©alb"},
+    FieldName{keys::AlbumArtist, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Album artist"), u"TPE2",
+              u"aART"},
+    FieldName{keys::TrackNumber, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Track"), u"TRCK", u"trkn"},
+    FieldName{keys::DiscNumber, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Disc"), u"TPOS", u"disk"},
+    FieldName{keys::Date, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Year"), u"TYER", u"©day"},
+    FieldName{keys::Genre, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Genre"), u"TCON", u"©gen"},
+    FieldName{keys::Bpm, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "BPM"), u"TBPM", u"tmpo"},
+    FieldName{keys::InitialKey, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Key"), u"TKEY",
+              u"----:com.apple.iTunes:KEY"},
+    FieldName{keys::Label, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Label"), u"TPUB",
+              u"----:com.apple.iTunes:LABEL"},
+    FieldName{keys::Isrc, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "ISRC"), u"TSRC",
+              u"----:com.apple.iTunes:ISRC"},
+    FieldName{keys::Composer, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Composer"), u"TCOM", u"©wrt"},
+    FieldName{keys::Comment, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Comment"), u"COMM", u"©cmt"},
     FieldName{keys::CatalogNumber, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Catalogue number"),
-              u"TXXX:CATALOGNUMBER"},
-    FieldName{keys::EncodedBy, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Encoded by"), u"TENC"},
-    FieldName{keys::Encoding, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Encoder settings"), u"TSSE"},
+              u"TXXX:CATALOGNUMBER", u"----:com.apple.iTunes:CATALOGNUMBER"},
+    FieldName{keys::EncodedBy, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Encoded by"), u"TENC", u"©enc"},
+    FieldName{keys::Encoding, QT_TRANSLATE_NOOP("selecta::app::ConverterInspector", "Encoder settings"), u"TSSE",
+              u"©too"},
 };
 
 QLabel *body(const QString &name, QWidget *parent)
@@ -56,11 +62,6 @@ QLabel *body(const QString &name, QWidget *parent)
     label->setTextFormat(Qt::PlainText);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     return label;
-}
-
-bool writesId3(const core::ConverterOptions &options)
-{
-    return options.target.format != convert::OutputFormat::Flac && options.target.format != convert::OutputFormat::Alac;
 }
 
 } // namespace
@@ -130,16 +131,20 @@ ConverterInspector::ConverterInspector(QWidget *parent)
 
 QString ConverterInspector::writtenAs(const QString &key, const core::ConverterOptions &options)
 {
-    if (!writesId3(options)) {
-        return key; // FLAC: a Vorbis comment of the same name
+    if (options.target.format == convert::OutputFormat::Flac) {
+        return key; // a Vorbis comment of the same name
     }
+    const bool mp4 = options.target.format == convert::OutputFormat::Alac;
     const bool v24 = options.id3 == convert::Id3Version::V24;
     for (const FieldName &field : kFields) {
         if (field.key == key) {
+            if (mp4) {
+                return field.atom.toString();
+            }
             return field.key == keys::Date && v24 ? u"TDRC"_s : field.frame.toString();
         }
     }
-    return u"TXXX:"_s + key;
+    return (mp4 ? u"----:com.apple.iTunes:"_s : u"TXXX:"_s) + key; // a free-form atom, a TXXX frame
 }
 
 void ConverterInspector::showItem(const std::optional<core::ConverterItem> &item, const core::ConverterOptions &options)
@@ -151,9 +156,11 @@ void ConverterInspector::showItem(const std::optional<core::ConverterItem> &item
     m_pages->setCurrentIndex(1);
     m_title->setText(QFileInfo(item->path).fileName());
     const QString format = convert::describeSettings(options.target);
-    QString tagFormat = tr("Vorbis comments");
-    if (writesId3(options)) {
-        tagFormat = options.id3 == convert::Id3Version::V24 ? tr("ID3v2.4") : tr("ID3v2.3");
+    QString tagFormat = options.id3 == convert::Id3Version::V24 ? tr("ID3v2.4") : tr("ID3v2.3");
+    if (options.target.format == convert::OutputFormat::Flac) {
+        tagFormat = tr("Vorbis comments");
+    } else if (options.target.format == convert::OutputFormat::Alac) {
+        tagFormat = tr("MP4 atoms");
     }
     m_subtitle->setText(item->quality.isEmpty() ? tr("→ %1 · %2").arg(format, tagFormat)
                                                 : tr("%1 → %2 · %3").arg(item->quality, format, tagFormat));
@@ -193,8 +200,12 @@ void ConverterInspector::showItem(const std::optional<core::ConverterItem> &item
         }
     }
     m_tags->setText(rows.isEmpty() ? tr("No tags.") : rows.join(u"<br><br>"_s));
-    if (!writesId3(options)) {
+    if (options.target.format == convert::OutputFormat::Flac) {
         m_explain->setText(tr("FLAC keeps the tags as Vorbis comments, under the same names."));
+    } else if (options.target.format == convert::OutputFormat::Alac) {
+        m_explain->setText(tr("ALAC files (.m4a) keep their tags as MP4 atoms, as iTunes writes them, and the cover "
+                              "as a covr atom. The key goes to ----:com.apple.iTunes:KEY, where rekordbox reads it. "
+                              "Track and disc numbers must be numbers: a vinyl side like A1 is left out."));
     } else if (options.id3 == convert::Id3Version::V24) {
         m_explain->setText(
             tr("ID3v2.4 writes the year as TDRC and allows UTF-8; some older DJ players ignore v2.4 tags."));

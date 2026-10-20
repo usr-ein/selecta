@@ -77,6 +77,8 @@ Q_SIGNALS:
     // Save pressed: an empty secret with keepSavedSecret leaves the saved one in place.
     void spotifyCredentialsSubmitted(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
     void spotifySignInRequested();
+    // "Open Sign-In Page Again", while the sign-in waits in the browser: the same sign-in's page.
+    void spotifySignInReopenRequested();
     void spotifySignOutRequested();
     void networkConfigChanged(const selecta::core::NetworkConfig &config);
     void networkPasswordSubmitted(const QString &password);

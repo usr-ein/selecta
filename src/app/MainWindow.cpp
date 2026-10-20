@@ -731,6 +731,8 @@ void MainWindow::createSettingsView()
             &core::EngineHost::setSpotifyCredentials);
     connect(m_settingsView, &SettingsView::spotifySignInRequested, &m_services.engine,
             &core::EngineHost::signInToSpotify);
+    connect(m_settingsView, &SettingsView::spotifySignInReopenRequested, &m_services.engine,
+            &core::EngineHost::reopenSpotifySignIn);
     connect(m_settingsView, &SettingsView::spotifySignOutRequested, &m_services.engine,
             &core::EngineHost::signOutOfSpotify);
     connect(&m_services.engine, &core::EngineHost::spotifyStatusChanged, m_settingsView,

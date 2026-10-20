@@ -23,8 +23,9 @@ class ConverterModel;
 
 // The Converter (PRD CONV-1…7): files dropped here or added (from anywhere, the Inbox's "Convert…" too) become new
 // files in the format chosen, next to the originals or in a chosen folder, with their tags mapped and the folder's
-// cover embedded. Before converting, each row says what it gives or warns why it gains nothing; those need "Convert
-// anyway". Originals are never changed. The engine converts; this view shows it. Main thread only.
+// cover embedded. Lossless formats also take a sample rate and a bit depth, MP3 a sample rate. Before
+// converting, each row says what it gives or warns why it gains nothing; those need "Convert anyway". Originals are
+// never changed. The engine converts; this view shows it. Main thread only.
 class ConverterView : public QWidget
 {
     Q_OBJECT
@@ -39,7 +40,7 @@ public:
     QString summary() const;
     // The choices made in the bar, as the converter takes them.
     core::ConverterOptions options() const;
-    // "mp3-320" → MP3 320 kbps CBR, … (AppSettings::ConverterState::target).
+    // "mp3-320" → MP3 320 kbps CBR, "alac" → ALAC, … (AppSettings::ConverterState::target).
     static convert::EncodeSettings targetFor(const QString &id);
 
 Q_SIGNALS:
@@ -51,6 +52,9 @@ protected:
 
 private:
     QWidget *createBar();
+    // The choices that depend on the format: the rates it takes (32, 44.1 or 48 kHz for MP3), the bit depth for
+    // lossless formats only (for MP3 it shows "Automatic", disabled), ID3 for MP3, AIFF and WAV.
+    void fitChoicesToTarget();
     void optionsEdited();
     void chooseFolder();
     void addFiles();
@@ -64,6 +68,8 @@ private:
     ConverterModel *m_model;
     ConverterInspector *m_inspector;
     QComboBox *m_target;
+    QComboBox *m_sampleRate;
+    QComboBox *m_bitDepth;
     QComboBox *m_id3;
     QComboBox *m_artwork;
     QComboBox *m_destination;
@@ -74,6 +80,9 @@ private:
     QStackedWidget *m_pages;
     QTreeView *m_table;
     QString m_outputFolder;
+    int m_losslessRate = 0;  // the rate chosen for lossless formats, in Hz; 0: automatic
+    int m_losslessDepth = 0; // likewise the bit depth
+    int m_mp3Rate = 0;       // the rate chosen for MP3
 };
 
 } // namespace selecta::app

@@ -127,6 +127,10 @@ public:
     // Opens the browser to sign in to Spotify (for playlists and Liked Songs; tags need only the catalogue). Refused,
     // with the reason in the status, until Spotify is allowed.
     void signInToSpotify();
+    // Opens the page of the browser sign-in in progress again (its tab was closed or lost). It's the same sign-in, the
+    // same state and loopback listener, so whichever tab the user finishes in completes it. Does nothing unless a
+    // sign-in waits for the browser (Authorizing).
+    void reopenSpotifySignIn();
     void signOutOfSpotify();
     // The user accepted the notice on Spotify's terms: Spotify may be used from now on. Signs in with nothing by
     // itself: the user's next step (Save, Sign In) does.
@@ -173,6 +177,8 @@ private:
     std::unique_ptr<meta::CoverFetcher> m_covers;
     std::unique_ptr<meta::YtDlpRunner> m_ytDlp;
     QByteArray m_secret; // in memory only while set; never logged
+    std::function<bool(const QUrl &)> m_openUrl;
+    QUrl m_signInPage; // the page of the sign-in waiting in the browser; it carries the Client ID: never logged
     QString m_error;
     bool m_spotifyAllowed = false;
 };
