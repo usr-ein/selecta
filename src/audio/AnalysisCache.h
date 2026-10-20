@@ -8,11 +8,11 @@
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QHash>
-#include <QMutex>
 #include <QString>
 #include <QStringView>
 
 #include <array>
+#include <mutex>
 #include <optional>
 
 namespace selecta::audio {
@@ -119,7 +119,7 @@ private:
     Result<void> writeBlob(Tier tier, const CacheKey &key, const QByteArray &blob);
 
     const QString m_directory;
-    mutable QMutex m_mutex;
+    mutable std::mutex m_mutex;
     TierState m_overview;
     TierState m_detail;
     qint64 m_useCounter = 0;

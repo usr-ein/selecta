@@ -96,7 +96,7 @@ private:
 // in the background without touching the destroyed job.
 //
 // Cache: with setCache(), a complete cached result (detail included) is reported without decoding, and a finished
-// analysis is stored under the key.
+// analysis is stored under the key. The cache is shared because work may still be running after the job is gone.
 class WaveformJob : public QObject
 {
     Q_OBJECT
@@ -110,8 +110,8 @@ public:
     WaveformJob(WaveformJob &&) = delete;
     WaveformJob &operator=(WaveformJob &&) = delete;
 
-    // Optional; call before start(). `cache` must outlive the job.
-    void setCache(AnalysisCache *cache, const CacheKey &key);
+    // Optional; call before start().
+    void setCache(std::shared_ptr<AnalysisCache> cache, const CacheKey &key);
 
     // Starts once; later calls do nothing.
     void start();
@@ -130,23 +130,32 @@ Q_SIGNALS:
     void finished(const selecta::audio::Waveform &waveform);
     void failed(const selecta::audio::Error &error);
 
+private Q_SLOTS:
+    void drainMailbox();
+
 private:
-    struct Shared;
+    struct Shared;  // state shared with the worker tasks
+    struct Message; // a result posted by a worker task
+
+    // Hands a message to the job's thread through a mutex-protected mailbox (worker results never travel inside queued
+    // events, which ThreadSanitizer can't follow through Qt). Does nothing once the job is gone.
+    static void post(const std::shared_ptr<Shared> &shared, Message message);
     void scheduleStep();
-    void onStepDone(const ProgressiveAnalyzer::Step &step);
+    void onStepDone(const Message &message);
     void onCompleteDone(const Result<Waveform> &result);
 
     std::shared_ptr<ByteSource> m_source;
     AnalysisOptions m_options;
     std::shared_ptr<Shared> m_shared;
     Subscription m_subscription;
-    AnalysisCache *m_cache = nullptr;
+    std::shared_ptr<AnalysisCache> m_cache;
     CacheKey m_cacheKey;
     bool m_started = false;
     bool m_running = false;
     bool m_stepRunning = false;
     bool m_stepWanted = false;
     bool m_announcedWaiting = false;
+    bool m_checkedCache = false;
 };
 
 } // namespace selecta::audio
