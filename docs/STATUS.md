@@ -4,6 +4,33 @@ Kept up to date by the head implementer (session `main-impl`). Newest first with
 the **Decisions taken autonomously** and **Waiting for the maintainer** sections. The progress report against every PRD
 requirement (2026-10-20): https://claude.ai/code/artifact/e3077d17-237e-44dd-84ce-afc8aa483747
 
+## Road to v1 (fixed 2026-10-20)
+
+**End goal: v1.0 release candidate 1 (`v1.0.0-rc1`) in the maintainer's hands for the live-network test (M9).** That
+is a release-preset build of `main`:
+- every P0 requirement and the v1 P1s below done;
+- CI green;
+- a scripted end-to-end pass on the local test network;
+- a pass against the real metadata services;
+- an ad-hoc-signed app bundle that defaults to the live server (SAFE-3);
+- a test script for the maintainer.
+
+**v1 scope (frozen):**
+- **In:** every P0, plus these P1s: NET-7, NET-8, NET-10, SRCH-14, SRCH-15, BRWS-1, BRWS-2, BATCH-7, BATCH-8, PREV-9,
+  PREV-11, PREV-12, DL-10, DL-12, LIB-6, CONV-8, META-5, META-7, FAIR-5, UI-6.
+- **Out:** SHARE-4 buddy-only folders (D34); NET-3 UPnP/NAT-PMP, until v1.1 (Settings says which port to forward); P2
+  (PREV-10, LIB-7, LIB-8, META-6, META-8, NFR-8); Linux and Windows packages (they compile and test in CI only).
+
+Each step ends at its gate; the next starts only when the gate holds.
+
+| Step | What | Who | Gate |
+|---|---|---|---|
+| 1. Feature-complete | CONV-1 (converter rate, depth, ALAC) and Spotify "Open Again" · PREV-9 app side (badge, spectrogram) · live-test fixes (compilations, YouTube channels, leading brackets, genre, debug socket) · UI-5 VoiceOver and keyboard · BATCH-7 + FAIR-5 in Get tracks · LIB-6 corrections | gaps · media · fixes · a11y · main-impl · next free teammate | All merged into main; full suite green; lint clean |
+| 2. CI green | macOS build, tests, lint, ASan; Linux build and tests; TSan reporting (fully gating once Qt is TSan-built) | ci | A green run on main, linked here |
+| 3. Freeze and QA | Feature freeze. A scripted end-to-end pass of every view on the local test network; the real-services pass again (Spotify sign-in, a playlist, YouTube previews, tags and cover); NFR-2 timings (filter + sort of 10 000 results < 50 ms, waveform < 300 ms); every bug found fixed | main-impl + teammates on bugs | QA checklist all pass; no open P0 bug |
+| 4. Release candidate | `release` preset build, version 1.0.0-rc1, live server allowed (both SAFE-3 switches), ad-hoc signed bundle with the icon, user notes in the README, tag `v1.0.0-rc1` pushed | main-impl | The RC launches in a fresh user data folder and reaches the local test network; the tag is on origin |
+| 5. Maintainer tests v1 (M9) | The live-network script: pre-flight (PLAN §5.5) with a dedicated account, then a playlist through Get tracks to tagged MP3 320s in the Inbox, previews, filing, sharing and the ratio, messages and rooms. Issues go to triage, then rc2 | maintainer | Two weeks of personal use without bans → M10 (Developer ID signing and notarisation by the maintainer, DMG, `v1.0.0`) |
+
 ## Milestones
 
 | Milestone | State | Notes |

@@ -122,4 +122,20 @@ QString ago(qint64 thenMs, qint64 nowMs)
     return QCoreApplication::translate("selecta::app::format", "%1 days ago").arg(hours / 24);
 }
 
+QString about(qint64 milliseconds)
+{
+    constexpr qint64 kMinute = 60'000;
+    if (milliseconds < kMinute) {
+        return QCoreApplication::translate("selecta::app::format", "under a minute");
+    }
+    const qint64 minutes = (milliseconds + kMinute - 1) / kMinute;
+    if (minutes < 60) {
+        return QCoreApplication::translate("selecta::app::format", "about %1 min").arg(minutes);
+    }
+    const qint64 rest = minutes % 60;
+    return rest == 0
+               ? QCoreApplication::translate("selecta::app::format", "about %1 h").arg(minutes / 60)
+               : QCoreApplication::translate("selecta::app::format", "about %1 h %2 min").arg(minutes / 60).arg(rest);
+}
+
 } // namespace selecta::app::format

@@ -36,3 +36,13 @@ TEST(FormatTest, LengthRoundsToTheSecond)
     EXPECT_TRUE(format::length(std::nullopt).isEmpty());
     EXPECT_TRUE(format::length(0).isEmpty());
 }
+
+TEST(FormatTest, AboutRoundsUpToTheMinute)
+{
+    EXPECT_EQ(selecta::app::format::about(0), u"under a minute"_s);
+    EXPECT_EQ(selecta::app::format::about(59'999), u"under a minute"_s);
+    EXPECT_EQ(selecta::app::format::about(60'000), u"about 1 min"_s);
+    EXPECT_EQ(selecta::app::format::about(61'000), u"about 2 min"_s);
+    EXPECT_EQ(selecta::app::format::about(3'600'000), u"about 1 h"_s);
+    EXPECT_EQ(selecta::app::format::about(4'800'000), u"about 1 h 20 min"_s);
+}

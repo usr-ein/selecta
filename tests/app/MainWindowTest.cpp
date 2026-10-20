@@ -37,6 +37,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBrowser>
+#include <QToolButton>
 #include <QTreeView>
 #include <QtEndian>
 
@@ -358,7 +359,8 @@ TEST_F(MainWindowTest, InboxItemsPreviewWithSpaceAndDoubleClick)
     ASSERT_TRUE(window->navigateTo(u"inbox"_s));
     auto *table = window->findChild<QTreeView *>(u"inbox.items"_s);
     ASSERT_NE(table, nullptr);
-    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    // Waits are qWaitFor() in ASSERT_TRUE: a QTRY_* that fails only returns from the test, a pass for GoogleTest.
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 1; }, 5000));
     const QModelIndex row = table->model()->index(0, 0, table->model()->index(0, 0));
     ASSERT_TRUE(row.isValid());
     table->setCurrentIndex(row);
@@ -368,11 +370,25 @@ TEST_F(MainWindowTest, InboxItemsPreviewWithSpaceAndDoubleClick)
     const selecta::playback::Player &player = preview->player();
     window->playOrPause(); // what Space does
     EXPECT_TRUE(preview->identity().startsWith(u"file|"_s));
-    QTRY_COMPARE_WITH_TIMEOUT(player.state(), State::Playing, 5000);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return player.state() == State::Playing; }, 5000))
+        << player.error().toStdString();
     auto *title = window->findChild<QLabel *>(u"player.title"_s);
     ASSERT_NE(title, nullptr);
     EXPECT_EQ(title->text(), u"Neon Rain"_s);
-    QTRY_VERIFY_WITH_TIMEOUT(!preview->waveform().isNull(), 5000); // analysed alongside
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !preview->waveform().isNull(); }, 5000)); // analysed alongside
+
+    // Discard is for previews the cache holds: a file of the user's stays where it is, and goes on playing.
+    auto *discard = window->findChild<QAction *>(u"action.discardPreview"_s);
+    ASSERT_NE(discard, nullptr);
+    EXPECT_FALSE(discard->isEnabled());
+    window->discardPreview(); // what D does
+    EXPECT_EQ(player.state(), State::Playing);
+    EXPECT_TRUE(preview->identity().startsWith(u"file|"_s));
+    EXPECT_TRUE(QFileInfo::exists(library.inboxRoot + u"/Singles/Okuma Drift - Neon Rain.wav"_s));
+    const auto *subtitle = window->findChild<QLabel *>(u"player.subtitle"_s);
+    ASSERT_NE(subtitle, nullptr);
+    EXPECT_TRUE(subtitle->text().startsWith(u"Only previews can be discarded"_s)) // said while it plays too
+        << subtitle->text().toStdString();
 
     window->playOrPause(); // the same item again: pause, not restart
     EXPECT_EQ(player.state(), State::Paused);
@@ -388,17 +404,101 @@ TEST_F(MainWindowTest, InboxItemsPreviewWithSpaceAndDoubleClick)
     // The list is rebuilt whenever the Inbox changes: look the row up again rather than keep an old index.
     const QModelIndex again = table->model()->index(0, 0, table->model()->index(0, 0));
     ASSERT_TRUE(again.isValid());
-    QTest::mouseDClick(table->viewport(), Qt::LeftButton, {}, table->visualRect(again).center());
-    QTRY_COMPARE_WITH_TIMEOUT(player.state(), State::Playing, 5000);
+    // QTest sends a double click as the second press alone: the first click comes before it, as with a mouse.
+    const QPoint centre = table->visualRect(again).center();
+    QTest::mouseClick(table->viewport(), Qt::LeftButton, {}, centre);
+    EXPECT_EQ(player.state(), State::Idle); // a click only selects
+    QTest::mouseDClick(table->viewport(), Qt::LeftButton, {}, centre);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return player.state() == State::Playing; }, 5000))
+        << player.error().toStdString();
 
     // A file that went missing says so instead of playing.
     preview->stop();
     ASSERT_TRUE(QFile::remove(library.inboxRoot + u"/Singles/Okuma Drift - Neon Rain.wav"_s));
     window->playOrPause();
     EXPECT_EQ(player.state(), State::Idle);
-    auto *subtitle = window->findChild<QLabel *>(u"player.subtitle"_s);
-    ASSERT_NE(subtitle, nullptr);
     EXPECT_TRUE(subtitle->text().contains(u"isn't there any more"_s)) << subtitle->text().toStdString();
+    engine->stop();
+}
+
+namespace {
+
+// The fake yt-dlp from meta's tests, behind a wrapper that names the search it answers; the real one never runs in
+// tests (CLAUDE.md).
+bool writeFakeYtDlp(const QString &path)
+{
+    const QString fixtures = QStringLiteral(SELECTA_META_FIXTURES);
+    const QByteArray wrapper =
+        u"#!/bin/sh\n"
+        u"FAKE_YTDLP_SEARCH='%1'\n"
+        u"export FAKE_YTDLP_SEARCH\n"
+        u"exec /bin/sh '%2' \"$@\"\n"_s
+            .arg(fixtures + u"/youtube/search_glass_harbour.json"_s, fixtures + u"/fake-yt-dlp"_s)
+            .toUtf8();
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(wrapper) != wrapper.size()) {
+        return false;
+    }
+    file.close();
+    return QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+}
+
+} // namespace
+
+TEST_F(MainWindowTest, DiscardDeletesTheYouTubePreviewFromTheCache)
+{
+    const QString ytDlp = dir.filePath(u"yt-dlp"_s);
+    ASSERT_TRUE(writeFakeYtDlp(ytDlp));
+    selecta::core::EngineOptions options;
+    options.databasePath = dir.filePath(u"engine.sqlite3"_s);
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
+    options.metaEndpoints.ytDlp = true; // the fake one
+    options.ytDlpPath = ytDlp;
+    options.previewDir = dir.filePath(u"Previews"_s);
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"get"_s));
+    engine->addTracks(u"Kestrel Moon - Glass Harbour (Extended Mix) 6:31\n"_s);
+    auto *table = window->findChild<QTreeView *>(u"get.lines"_s);
+    ASSERT_NE(table, nullptr);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return table->model()->rowCount() == 1; }, 5000));
+    const QModelIndex line = table->model()->index(0, 0);
+    table->setCurrentIndex(line);
+    table->selectionModel()->select(line, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    auto *discard = window->findChild<QToolButton *>(u"player.discard"_s);
+    ASSERT_NE(discard, nullptr);
+    EXPECT_FALSE(discard->isEnabled()); // nothing loaded yet
+
+    // Space hears it from YouTube (D26): the fake's video from the Topic channel, fetched into the preview cache.
+    const auto *subtitle = window->findChild<QLabel *>(u"player.subtitle"_s);
+    ASSERT_NE(subtitle, nullptr);
+    QSignalSpy changes(engine.get(), &selecta::core::EngineHost::previewChanged);
+    window->playOrPause();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return preview->identity() == u"youtube|KmTopic00Ex"_s; }, 30'000))
+        << subtitle->text().toStdString();
+    const QString audio = dir.filePath(u"Previews/YouTube/KmTopic00Ex.m4a"_s);
+    ASSERT_TRUE(QTest::qWaitFor(
+        [&] {
+            return !changes.isEmpty() && changes.constLast().at(0).value<selecta::core::Preview>().state ==
+                                             selecta::core::Preview::State::Complete;
+        },
+        30'000));
+    EXPECT_EQ(QFileInfo(audio).size(), 40'960);
+    EXPECT_TRUE(discard->isEnabled());
+
+    QSignalSpy caches(engine.get(), &selecta::core::EngineHost::cachesChanged);
+    discard->click();
+    EXPECT_EQ(preview->player().state(), selecta::playback::Player::State::Idle);
+    EXPECT_TRUE(preview->identity().isEmpty());
+    EXPECT_TRUE(subtitle->text().startsWith(u"Discarded"_s)) << subtitle->text().toStdString();
+    EXPECT_FALSE(discard->isEnabled());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !caches.isEmpty(); }, 5000));
+    EXPECT_EQ(caches.constLast().at(0).value<selecta::core::CacheStatus>().previewBytes, 0);
+    EXPECT_FALSE(QFile::exists(audio));
     engine->stop();
 }
 
