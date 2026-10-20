@@ -2,10 +2,13 @@
 #include "core/GetTracks.h"
 
 #include "core/ReleaseJson.h"
+#include "governor/Limits.h"
 #include "storage/Database.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
+
+#include <algorithm>
 
 using namespace Qt::StringLiterals;
 
@@ -331,6 +334,25 @@ std::optional<FileChoice> fileChoiceFromText(const QByteArray &text)
     choice.fit = object.value(u"fit"_s).toDouble();
     choice.fitsRelease = object.value(u"fitsRelease"_s).toBool();
     return choice;
+}
+
+std::chrono::milliseconds findingTimeLeft(int searchesToStart, int searchesCollecting, int searchesAvailable,
+                                          std::chrono::milliseconds nextIn)
+{
+    using namespace std::chrono;
+    if (searchesToStart <= 0) {
+        return searchesCollecting > 0 ? duration_cast<milliseconds>(governor::limits::kResultsIdle) : 0ms;
+    }
+    const int startNow =
+        std::clamp(searchesAvailable - governor::limits::kGetTracksReservedSearches, 0, searchesToStart);
+    const int later = searchesToStart - startNow;
+    milliseconds untilLastStarts = 0ms;
+    if (later > 0) {
+        const milliseconds refill = duration_cast<milliseconds>(governor::limits::kSearchRefill);
+        const milliseconds first = nextIn > 0ms ? std::min(nextIn, refill) : refill;
+        untilLastStarts = first + (refill * (later - 1));
+    }
+    return untilLastStarts + duration_cast<milliseconds>(governor::limits::kResultsIdle);
 }
 
 } // namespace selecta::core

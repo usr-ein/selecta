@@ -159,9 +159,16 @@ bool Engine::start()
     });
 
     // Downloads, then the arrival pipeline that turns each complete file into an Inbox item (D27, D29).
+    // The preview cache (PREV-8, CACHE-1): what was previewed from peers and YouTube, kept across launches within
+    // its bound. Opening it deletes what a quit or crash left half-written.
+    if (!m_options.previewDir.isEmpty()) {
+        PreviewCache::Options cacheOptions;
+        cacheOptions.now = m_options.wallClock;
+        m_previewCache = std::make_unique<PreviewCache>(m_options.previewDir, std::move(cacheOptions));
+    }
     TransferService::Options transferOptions;
     transferOptions.incomingDir = m_options.incomingDir;
-    transferOptions.previewDir = m_options.previewDir;
+    transferOptions.previewCache = m_previewCache.get();
     m_transfers = std::make_unique<TransferService>(*m_db, *m_governor, *m_network, *m_activity,
                                                     std::move(transferOptions), m_options.wallClock);
     ArrivalService::Options arrivalOptions;
@@ -345,8 +352,7 @@ bool Engine::start()
     m_converter = std::make_unique<ConverterService>(std::move(converterOptions));
     connect(m_converter.get(), &ConverterService::itemsChanged, this, &Engine::converterChanged);
     connect(m_converter.get(), &ConverterService::finished, this, &Engine::conversionsFinished);
-    m_youtube = std::make_unique<YouTubePreviews>(
-        m_meta->ytDlp(), m_options.previewDir.isEmpty() ? QString() : m_options.previewDir + u"/YouTube"_s);
+    m_youtube = std::make_unique<YouTubePreviews>(m_meta->ytDlp(), m_previewCache.get());
     connect(m_youtube.get(), &YouTubePreviews::started, this, &Engine::previewStarted);
     connect(m_youtube.get(), &YouTubePreviews::changed, this, &Engine::previewChanged);
     m_clips = std::make_unique<ClipPreviews>(m_meta->clips(), m_meta->network());
@@ -423,8 +429,9 @@ void Engine::stop()
     }
     m_network.reset(); // before the token store it reads from (owned by m_meta), and after shutdown()
     m_transfers.reset();
-    m_youtube.reset(); // uses m_meta's yt-dlp runner
-    m_clips.reset();   // and its clip source
+    m_youtube.reset();      // uses m_meta's yt-dlp runner
+    m_clips.reset();        // and its clip source
+    m_previewCache.reset(); // after the transfers and the YouTube previews that hold files in it
     m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();
@@ -551,7 +558,7 @@ void Engine::refreshCaches()
     CacheStatus status;
     status.searches = m_searchCache->count();
     status.searchBytes = m_searchCache->sizeBytes();
-    status.previewBytes = m_transfers->previewCacheBytes();
+    status.previewBytes = m_previewCache ? m_previewCache->totalBytes() : 0;
     Q_EMIT cachesChanged(status);
 }
 
@@ -565,8 +572,8 @@ void Engine::clearSearchCache()
 
 void Engine::clearPreviewCache()
 {
-    if (m_transfers) {
-        m_transfers->clearPreviewCache();
+    if (m_previewCache) {
+        m_previewCache->clear(); // a preview playing stays
     }
     refreshCaches();
 }
@@ -913,6 +920,22 @@ void Engine::stopPreview()
         m_clips->stop();
         m_previewId = 0;
     }
+}
+
+void Engine::discardPreview(qint64 previewId)
+{
+    if (!m_started || previewId == 0) {
+        return;
+    }
+    if (previewId == m_previewId) {
+        ++m_previewGeneration; // a fallback still on its way doesn't start anything
+        m_clips->stop();       // a clip lives in memory only: it just stops
+        m_previewId = 0;
+    }
+    if (!m_transfers->discardPreview(previewId)) {
+        m_youtube->discard(previewId);
+    }
+    refreshCaches(); // Settings shows the cache without it
 }
 
 void Engine::addTracks(const QString &text)

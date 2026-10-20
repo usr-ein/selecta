@@ -5,6 +5,7 @@
 #include "core/ReleaseJson.h"
 #include "core/SearchService.h"
 #include "governor/Governor.h"
+#include "governor/Limits.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
@@ -391,4 +392,23 @@ TEST_F(GetTracksServiceTest, AnotherPresetRanksTheFoundLinesAgain)
     QTest::qWait(100);
     EXPECT_EQ(network.sent.size(), 1);
     EXPECT_EQ(service->lines().constFirst().findState, GetLine::FindState::NotFound);
+}
+
+TEST(FindingTimeLeft, FollowsTheGovernorsPace)
+{
+    using std::chrono::milliseconds;
+    using namespace std::chrono_literals;
+    const auto collect = std::chrono::duration_cast<milliseconds>(selecta::governor::limits::kResultsIdle);
+    const auto refill = std::chrono::duration_cast<milliseconds>(selecta::governor::limits::kSearchRefill);
+    const int reserve = selecta::governor::limits::kGetTracksReservedSearches;
+    // Nothing left: nothing to wait for; only collecting: the answers' tail.
+    EXPECT_EQ(selecta::core::findingTimeLeft(0, 0, 6, 0ms), 0ms);
+    EXPECT_EQ(selecta::core::findingTimeLeft(0, 2, 6, 0ms), collect);
+    // What the budget holds beyond the reserve starts at once.
+    EXPECT_EQ(selecta::core::findingTimeLeft(3, 0, 3 + reserve, 0ms), collect);
+    // The rest at one per refill, the first when the governor says.
+    EXPECT_EQ(selecta::core::findingTimeLeft(5, 0, reserve, 10s), 10s + (4 * refill) + collect);
+    EXPECT_EQ(selecta::core::findingTimeLeft(1, 0, 0, 0ms), refill + collect);
+    // A wait longer than a refill is capped at a refill.
+    EXPECT_EQ(selecta::core::findingTimeLeft(1, 0, 0, 10min), refill + collect);
 }

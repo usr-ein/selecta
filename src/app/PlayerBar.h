@@ -3,6 +3,8 @@
 
 #include <QWidget>
 
+class QAction;
+class QHBoxLayout;
 class QLabel;
 class QSlider;
 class QTimer;
@@ -23,8 +25,13 @@ class PlayerBar : public QWidget
 public:
     explicit PlayerBar(PreviewController &preview, QWidget *parent = nullptr);
 
-    // A one-off line in place of the subtitle, e.g. why a preview couldn't start. Cleared by the next track.
+    // A one-off line in place of the subtitle, e.g. why a preview couldn't start, or what K or D did to the one
+    // playing. Cleared by the next track, and when playing starts.
     void showMessage(const QString &message);
+
+    // A button for one of the window's preview actions (Discard…), after the time as the mock has it; named
+    // `objectName`. It follows the action: its icon, tooltip and whether it is enabled.
+    void addPreviewAction(QAction *action, const QString &objectName);
 
     double volume() const;
     void setVolume(double volume); // 0…1
@@ -44,6 +51,7 @@ private:
     QToolButton *m_play;
     QToolButton *m_forward;
     QLabel *m_time;
+    QHBoxLayout *m_actions; // the preview actions' buttons
     QSlider *m_volume;
     WaveformView *m_waveform;
     QTimer *m_ticker; // moves the playhead while playing

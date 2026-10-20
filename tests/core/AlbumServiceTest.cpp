@@ -110,7 +110,6 @@ protected:
 
         selecta::core::TransferService::Options transferOptions;
         transferOptions.incomingDir = dir.filePath(u"incoming"_s);
-        transferOptions.previewDir = dir.filePath(u"previews"_s);
         transferOptions.retryDelaysMs = {100, 100, 100};
         transferOptions.pacedRetryMs = 100;
         transfers = std::make_unique<selecta::core::TransferService>(db, governor, *network, log, transferOptions,
@@ -502,7 +501,6 @@ TEST_F(AlbumServiceTest, AnUnfinishedAlbumGoesOnAfterARestart)
     transfers.reset();
     selecta::core::TransferService::Options transferOptions;
     transferOptions.incomingDir = dir.filePath(u"incoming"_s);
-    transferOptions.previewDir = dir.filePath(u"previews"_s);
     transferOptions.retryDelaysMs = {100, 100, 100};
     transferOptions.pacedRetryMs = 100;
     transfers = std::make_unique<selecta::core::TransferService>(db, governor, *network, log, transferOptions,

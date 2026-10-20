@@ -54,6 +54,8 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include <utility>
+
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
 
@@ -86,6 +88,12 @@ Appearance nextAppearance(Appearance appearance)
         return Appearance::System;
     }
     return Appearance::System;
+}
+
+// Audio the preview cache holds: a peer's file or YouTube's (a Deezer clip lives in memory; a file is the user's).
+bool isCachedPreview(const QString &identity)
+{
+    return identity.startsWith(u"peer|"_s) || identity.startsWith(u"youtube|"_s);
 }
 
 } // namespace
@@ -383,6 +391,7 @@ void MainWindow::createViews()
                 m_playingKey = key;
                 m_playingIdentity = identity;
                 m_services.preview.preview({source, {title, artist, label}, identity});
+                refreshPreviewActions();
             });
     connect(&m_services.engine, &core::EngineHost::previewRefused, this,
             [this](const QString &key, const QString &why) {
@@ -808,6 +817,11 @@ void MainWindow::createActions()
     keep->setObjectName(u"shortcut.keepPreview"_s);
     keep->setContext(Qt::WindowShortcut);
     connect(keep, &QShortcut::activated, this, &MainWindow::keepPreview);
+    // D, beside K: ⌫ (the mock's key) already removes the selected rows in Get tracks and the Wishlist.
+    auto *discard = new QShortcut(QKeySequence(Qt::Key_D), this);
+    discard->setObjectName(u"shortcut.discardPreview"_s);
+    discard->setContext(Qt::WindowShortcut);
+    connect(discard, &QShortcut::activated, this, &MainWindow::discardPreview);
 
     playback::Player &player = m_services.preview.player();
     const std::array skips{
@@ -840,6 +854,12 @@ void MainWindow::createActions()
     keepAction->setToolTip(tr("Put the peer's file you're hearing into your Inbox, without downloading it again (K)"));
     connect(keepAction, &QAction::triggered, this, &MainWindow::keepPreview);
     m_playbackActions.append(keepAction);
+    m_discardPreview = new QAction(icons::symbol(u"trash"_s, u"edit-delete"_s), tr("Discard Preview"), this);
+    m_discardPreview->setObjectName(u"action.discardPreview"_s);
+    m_discardPreview->setToolTip(tr("Delete the preview you're hearing from the preview cache (D)"));
+    connect(m_discardPreview, &QAction::triggered, this, &MainWindow::discardPreview);
+    m_playbackActions.append(m_discardPreview);
+    m_player->addPreviewAction(m_discardPreview, u"player.discard"_s);
     m_followSelection = new QAction(tr("Preview as You Move"), this);
     m_followSelection->setObjectName(u"action.followSelection"_s);
     m_followSelection->setCheckable(true);
@@ -865,8 +885,10 @@ void MainWindow::createActions()
             m_services.engine.stopPreview(); // a nearly complete preview still finishes, for a Get to reuse
             m_previewId = 0;
         }
+        refreshPreviewActions();
     });
     m_playbackActions.append(stop);
+    refreshPreviewActions();
 
     const std::array go{std::pair{u"get"_s, Qt::Key_1},        std::pair{u"inbox"_s, Qt::Key_2},
                         std::pair{u"collection"_s, Qt::Key_3}, std::pair{u"history"_s, Qt::Key_4},
@@ -1133,6 +1155,33 @@ void MainWindow::keepPreview()
     m_player->showMessage(tr("Kept: it goes to your Inbox once it has arrived."));
 }
 
+void MainWindow::discardPreview()
+{
+    if (m_previewId == 0 || !isCachedPreview(m_playingIdentity)) {
+        if (m_playingIdentity.startsWith(u"file|"_s)) {
+            m_player->showMessage(tr("Only previews can be discarded: this file of yours stays where it is."));
+        } else if (m_playingIdentity.startsWith(u"clip|"_s)) {
+            m_player->showMessage(tr("Deezer's 30-second clips aren't kept, so there's nothing to discard."));
+        } else {
+            m_player->showMessage(tr("Nothing to discard: preview a file first."));
+        }
+        return;
+    }
+    const qint64 previewId = std::exchange(m_previewId, 0);
+    m_services.preview.stop();
+    m_askedPreviewKey.clear();
+    m_playingKey.clear();
+    m_playingIdentity.clear();
+    m_services.engine.discardPreview(previewId); // a transfer still under way stops (PREV-6)
+    m_player->showMessage(tr("Discarded: it's gone from the preview cache."));
+    refreshPreviewActions();
+}
+
+void MainWindow::refreshPreviewActions()
+{
+    m_discardPreview->setEnabled(m_previewId != 0 && isCachedPreview(m_playingIdentity));
+}
+
 void MainWindow::selectionMoved()
 {
     if (m_followSelection && m_followSelection->isChecked()) {
@@ -1204,6 +1253,7 @@ void MainWindow::previewInboxSelection(bool toggleIfLoaded)
         m_previewId = 0;
     }
     preview.preview(*local.request);
+    refreshPreviewActions();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

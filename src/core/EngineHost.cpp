@@ -435,6 +435,11 @@ void EngineHost::stopPreview()
     post([](Engine &engine) { engine.stopPreview(); });
 }
 
+void EngineHost::discardPreview(qint64 previewId)
+{
+    post([previewId](Engine &engine) { engine.discardPreview(previewId); });
+}
+
 void EngineHost::setYtDlpPath(const QString &path)
 {
     m_options.ytDlpPath = path; // used if the engine (re)starts
