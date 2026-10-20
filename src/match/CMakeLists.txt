@@ -20,6 +20,7 @@ qt_add_library(selecta_match STATIC
     ReleaseScorer.h ReleaseScorer.cpp
     QueryPlanner.h QueryPlanner.cpp
     Tracklist.h Tracklist.cpp
+    DurationConsensus.h DurationConsensus.cpp
     detail/Alignment.h detail/Alignment.cpp
     detail/Hungarian.h detail/Hungarian.cpp
     detail/IndexData.h

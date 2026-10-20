@@ -114,6 +114,12 @@ Types ── Normalizer ── VersionClassifier ── Lexicon (all word lists,
     collection by itself (T48) unless artist and title both contradict it (similarity < 0.5); its pairs within ±3 s
     count as likely. "As singles" means owned outside the best album. The best album: in collection, tier, tracks
     vouched for, distance, collection before Inbox.
+20. **Duration consensus (§9.1, T51).** Clusters join results at most 3 s apart and span at most 6 s, so a chain
+    never merges two versions; peers count once per cluster. A cluster is named by the explicit version most of its
+    labelled results carry, so one mislabelled file doesn't rename it. "Confident" (BATCH-6) needs ≥ 3 peers in the
+    preferred cluster and no other cluster that could be the wanted version backed by two peers or more: a single
+    peer's odd length (a truncated file) is noise, two unlabelled lengths for an unversioned line are a guess. With
+    T51's data an unversioned line has no preferred cluster (both are named by non-original versions).
 
 ## Integration points
 
@@ -180,8 +186,9 @@ letters, two fuzzy fields, an uncorroborated short-word edit), not retrieval: pr
 - Supersede API, revised with the head implementer (2026-10-20): `decideArrival` for core's arrival pipeline returns
   its own `SupersedeArrivalDecision`; `LocalTrackFacts::quality` is the best evidence of the real quality (the
   source quality from the history, since downloads become MP3 320); every decision carries a one-line `summary`.
-- Next: DurationConsensus (X4), SupersedeDecider (X5). Memory could drop further by interning artist sets and
-  versions apart (records now intern one meta per artist set × version × extra text).
+- Done since: DurationConsensus (X4, decision 20), so X4 is complete.
+- Next: SupersedeDecider (X5). Memory could drop further by interning artist sets and versions apart (records now
+  intern one meta per artist set × version × extra text).
 - Open questions: none (Q-M1 and Q-M2 answered, decisions 11 and 13).
 - Working rules from the head implementer: `tools/lint.sh src/match tests/match` before each commit; a note to
   `main` at each milestone; `Matcher` and everything else safe to call concurrently on one shared index.

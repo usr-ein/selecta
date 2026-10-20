@@ -37,15 +37,17 @@ struct DurationConsensus
 {
     QList<DurationCluster> clusters; // most peers first
     qsizetype preferred = -1;        // index of the wanted version's cluster; -1 when none fits
-    bool confident = false;          // preferred has ≥ 3 peers and no other cluster claims the same version
+    bool confident = false; // preferred has ≥ 3 peers and no other cluster backed by ≥ 2 peers could hold the version
     QStringList explanation;
 };
 
 // Duration consensus for a Get tracks line (note §9.1, T51): clusters usually correspond to versions; explicitly
-// labelled results name their cluster. For a wanted explicit version, the cluster labelled with it is preferred. For
-// an unversioned line (or Original), the preferred cluster is one labelled Original or carrying no explicit label at
-// all; clusters named by an explicit non-original version are not preferred. When several qualify, the one with the
-// most peers wins.
+// labelled results name their cluster (the explicit label most of its results carry). For a wanted explicit version,
+// the cluster labelled with it is preferred. For an unversioned line (or Original), the preferred cluster is one
+// labelled Original or carrying no explicit label at all; clusters named by an explicit non-original version are not
+// preferred. When several qualify, the one with the most peers wins, and it is confident only when no other
+// qualifying cluster is backed by two peers or more (a single peer's odd length is noise). A cluster joins results
+// at most 3 s apart and spans at most 6 s.
 //
 // Threading: pure; any thread. Failure modes: none; samples without a length are ignored, at most
 // kMaxConsensusSamples are used.

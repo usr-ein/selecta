@@ -6,6 +6,7 @@ selecta_add_test_suite(selecta_match_tests
         MatchTestSupport.h
         AlbumMatcherTest.cpp
         ConcurrencyTest.cpp
+        DurationConsensusTest.cpp
         DurationQualityTest.cpp
         MatcherTest.cpp
         NormalizerTest.cpp
