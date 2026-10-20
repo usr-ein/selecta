@@ -207,3 +207,41 @@ TEST_F(NetworkServiceTest, TheListeningPortIsMappedAndPeersThatReachItAreCounted
     EXPECT_EQ(service->status().peersReachedUs, 2);
     service->disconnectNow();
 }
+
+TEST_F(NetworkServiceTest, EachPeerLookupIsLoggedOnceWithItsPurpose)
+{
+    QObject::connect(&governor, &selecta::governor::Governor::decided, &log,
+                     &selecta::core::ActivityLog::recordDecision);
+    // As BrowseService does: the governor allows the browse, then slsk asks for the lookup to reach the peer.
+    ASSERT_TRUE(governor.request(selecta::governor::Operation::Browse, {.peer = u"vinyl_ghost"_s}).allowed());
+    bool called = false;
+    service->permits().requestPeerLookup(u"vinyl_ghost"_s, selecta::slsk::ConnectPurpose::Request,
+                                         [&](const std::optional<selecta::governor::Permit> &) { called = true; });
+    ASSERT_TRUE(settle([&called] { return called; }));
+
+    const auto entries = selecta::core::ActivityLog::recent(db, 10);
+    ASSERT_EQ(entries.size(), 2); // the browse, then one lookup line (not the governor's as well)
+    EXPECT_EQ(entries[1].operation, u"browse"_s);
+    EXPECT_EQ(entries[0].operation, u"peer-lookup"_s);
+    EXPECT_EQ(entries[0].subject, u"vinyl_ghost"_s);
+    EXPECT_EQ(entries[0].outcome, u"allowed"_s);
+    EXPECT_EQ(entries[0].explanation, u"You looked up vinyl_ghost's address to browse their shares."_s);
+}
+
+TEST_F(NetworkServiceTest, ARefusedPeerLookupIsLoggedWithItsReason)
+{
+    int answered = 0;
+    const int asks = selecta::governor::limits::kPeerLookupsInFlight + 1;
+    for (int i = 0; i < asks; ++i) {
+        service->permits().requestPeerLookup(u"searcher%1"_s.arg(i), selecta::slsk::ConnectPurpose::SearchResponse,
+                                             [&](const std::optional<selecta::governor::Permit> &) { ++answered; });
+    }
+    ASSERT_TRUE(settle([&] { return answered == asks; }));
+    const auto newest = selecta::core::ActivityLog::recent(db, 1);
+    ASSERT_EQ(newest.size(), 1);
+    EXPECT_EQ(newest[0].outcome, u"rate-limited"_s);
+    EXPECT_TRUE(newest[0].explanation.startsWith(u"You wanted to look up searcher%1's address to send them your "
+                                                 u"search results"_s.arg(asks - 1)))
+        << newest[0].explanation.toStdString();
+    EXPECT_TRUE(newest[0].explanation.contains(u"Selecta held it back: "_s));
+}

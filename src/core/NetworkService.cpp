@@ -101,7 +101,7 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
     , m_retryTimer(new QTimer(this))
 {
     qRegisterMetaType<NetworkStatus>();
-    m_permits = std::make_unique<GovernorPermits>(m_governor, this);
+    m_permits = std::make_unique<GovernorPermits>(m_governor, m_activity, this);
     m_peers = std::make_unique<slsk::PeerNetwork>(*m_server, *m_permits);
     m_transfers = std::make_unique<slsk::TransferManager>(*m_peers, *m_server);
     m_distributed = std::make_unique<slsk::DistributedNode>(*m_server, *m_peers);
@@ -520,15 +520,17 @@ void NetworkService::stopSearch(quint32 token)
     }
 }
 
-GovernorPermits::GovernorPermits(governor::Governor &governor, QObject *context)
+GovernorPermits::GovernorPermits(governor::Governor &governor, ActivityLog &activity, QObject *context)
     : m_governor(governor)
+    , m_activity(activity)
     , m_context(context)
 {}
 
 void GovernorPermits::requestPeerLookup(const QString &username, slsk::ConnectPurpose purpose, Callback deliver)
 {
-    Q_UNUSED(purpose) // one budget for every purpose for now (governor Limits: peer lookups)
+    // One budget for every purpose for now (governor Limits: peer lookups); the purpose goes to the activity log.
     governor::Decision decision = m_governor.request(governor::Operation::PeerLookup, {.peer = username});
+    m_activity.recordPeerLookup(username, purpose, decision.refusal, decision.explanation);
     if (!m_context) {
         return;
     }

@@ -72,16 +72,18 @@ struct NetworkStatus
 };
 
 // slsk's PermitSource on the Governor: one PeerLookup permit per new outbound peer connection, delivered on a later
-// event-loop turn as slsk asks (never from inside requestPeerLookup()). Engine thread.
+// event-loop turn as slsk asks (never from inside requestPeerLookup()). Each decision goes to the activity log with its
+// purpose. Engine thread; the governor and the activity log outlive it.
 class GovernorPermits final : public slsk::PermitSource
 {
 public:
-    GovernorPermits(governor::Governor &governor, QObject *context);
+    GovernorPermits(governor::Governor &governor, ActivityLog &activity, QObject *context);
 
     void requestPeerLookup(const QString &username, slsk::ConnectPurpose purpose, Callback deliver) override;
 
 private:
     governor::Governor &m_governor;
+    ActivityLog &m_activity;
     QPointer<QObject> m_context;
 };
 
