@@ -95,6 +95,7 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
         refreshNetworkState();
     });
     connect(&m_services.engine, &core::EngineHost::searchBudgetChanged, this, &MainWindow::refreshNetworkState);
+    connect(&m_services.engine, &core::EngineHost::networkStatusChanged, this, &MainWindow::refreshNetworkState);
     refreshNetworkState();
 
     // QCoreApplication::quit() doesn't close windows, so closeEvent isn't enough to keep the window state.
@@ -235,7 +236,8 @@ void MainWindow::createViews()
                        tr("Not built yet (milestone M6).")),
             fixed(tr("Not built yet")));
 
-    m_settingsView = new SettingsView(m_services.build, m_appearance, m_services.settings.libraryConfig(), m_stack);
+    m_settingsView = new SettingsView(m_services.build, m_appearance, m_services.settings.libraryConfig(),
+                                      m_services.settings.networkConfig(), m_stack);
     connect(m_settingsView, &SettingsView::appearanceRequested, this, &MainWindow::setAppearance);
     connect(m_settingsView, &SettingsView::libraryConfigChanged, this, [this](const core::LibraryConfig &config) {
         if (!base::paths::ensureDir(config.inboxRoot)) {
@@ -257,6 +259,21 @@ void MainWindow::createViews()
     connect(&m_services.engine, &core::EngineHost::spotifyStatusChanged, m_settingsView,
             &SettingsView::setSpotifyStatus);
     m_settingsView->setSpotifyStatus(m_services.engine.spotifyStatus());
+    connect(m_settingsView, &SettingsView::networkConfigChanged, this, [this](const core::NetworkConfig &config) {
+        m_services.settings.setNetworkConfig(config);
+        if (!m_services.settings.sync()) {
+            qCWarning(lcUi) << "couldn't write settings to" << m_services.settings.fileName();
+        }
+        m_services.engine.setNetworkConfig(config);
+    });
+    connect(m_settingsView, &SettingsView::networkPasswordSubmitted, &m_services.engine,
+            &core::EngineHost::setNetworkPassword);
+    connect(m_settingsView, &SettingsView::connectRequested, &m_services.engine, &core::EngineHost::connectNetwork);
+    connect(m_settingsView, &SettingsView::disconnectRequested, &m_services.engine,
+            &core::EngineHost::disconnectNetwork);
+    connect(&m_services.engine, &core::EngineHost::networkStatusChanged, m_settingsView,
+            &SettingsView::setNetworkStatus);
+    m_settingsView->setNetworkStatus(m_services.engine.networkStatus());
     addView(u"settings"_s, m_settingsView, fixed(tr("Selecta %1").arg(m_services.build.version)));
 
 #ifndef QT_NO_DEBUG
@@ -549,7 +566,35 @@ void MainWindow::refreshNetworkState()
                              .arg(governor::limits::kSearchBurst)
                              .arg(governor::limits::kSearchRefill.count()));
 
-    m_sidebar->setConnectionStatus(paused ? tr("Network paused") : tr("Not connected"), false);
+    using State = core::NetworkStatus::State;
+    const core::NetworkStatus network = m_services.engine.networkStatus();
+    QString status;
+    bool online = false;
+    switch (network.state) {
+    case State::Online:
+        status = tr("Online as %1").arg(network.username);
+        online = true;
+        break;
+    case State::Connecting:
+        status = tr("Connecting…");
+        break;
+    case State::Reconnecting:
+        status = tr("Reconnecting soon");
+        break;
+    case State::NeedsUser:
+        status = tr("Offline: see Settings");
+        break;
+    case State::Offline:
+        status = tr("Offline");
+        break;
+    case State::NotConfigured:
+        status = tr("Not set up");
+        break;
+    }
+    if (paused) {
+        status = online ? tr("Paused · online as %1").arg(network.username) : tr("Network paused");
+    }
+    m_sidebar->setConnectionStatus(status, online && !paused);
 }
 
 bool MainWindow::isSidebarShown() const

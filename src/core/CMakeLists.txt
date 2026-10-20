@@ -10,8 +10,9 @@ qt_add_library(selecta_core STATIC
     GovernorStore.h GovernorStore.cpp
     InboxService.h InboxService.cpp
     MetaServices.h MetaServices.cpp
+    NetworkService.h NetworkService.cpp
     ReleaseJson.h ReleaseJson.cpp)
 add_library(Selecta::Core ALIAS selecta_core)
-target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match selecta_meta
+target_link_libraries(selecta_core PUBLIC selecta_base selecta_governor selecta_storage selecta_library selecta_match selecta_meta selecta_slsk
     Qt6::Core Qt6::Network)
 selecta_set_warnings(selecta_core)

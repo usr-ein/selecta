@@ -24,6 +24,19 @@ const QString kAlbumFolderTemplate = u"filing/albumFolder"_s;
 const QString kAlbumTrackTemplate = u"filing/albumTrack"_s;
 const QString kCleanNames = u"filing/clean"_s;
 const QString kSeparator = u"filing/separator"_s;
+const QString kServerHost = u"soulseek/host"_s;
+const QString kServerPort = u"soulseek/port"_s;
+const QString kUsername = u"soulseek/username"_s;
+const QString kListenPort = u"soulseek/listenPort"_s;
+const QString kConnectAtLaunch = u"soulseek/connectAtLaunch"_s;
+const QString kLiveAllowed = u"soulseek/liveAllowed"_s;
+
+quint16 portFrom(const QVariant &value, quint16 fallback)
+{
+    bool ok = false;
+    const int port = value.toInt(&ok);
+    return ok && port >= 0 && port <= 65535 ? static_cast<quint16>(port) : fallback;
+}
 
 // A folder name typed in Settings: one plain component, or the default.
 QString folderName(const QString &value, const QString &fallback)
@@ -146,6 +159,31 @@ void AppSettings::setLibraryConfig(const core::LibraryConfig &config)
     m_settings.setValue(kAlbumTrackTemplate, config.templates.albumTrack);
     m_settings.setValue(kCleanNames, config.cleaner.enabled);
     m_settings.setValue(kSeparator, QString(config.cleaner.separator));
+}
+
+core::NetworkConfig AppSettings::networkConfig() const
+{
+    core::NetworkConfig config;
+    const QString host = m_settings.value(kServerHost).toString().trimmed();
+    if (!host.isEmpty()) {
+        config.host = host;
+    }
+    config.port = portFrom(m_settings.value(kServerPort), config.port);
+    config.username = m_settings.value(kUsername).toString().trimmed();
+    config.listenPort = portFrom(m_settings.value(kListenPort), config.listenPort);
+    config.connectAtLaunch = m_settings.value(kConnectAtLaunch, config.connectAtLaunch).toBool();
+    config.liveAllowedByUser = m_settings.value(kLiveAllowed, false).toBool();
+    return config;
+}
+
+void AppSettings::setNetworkConfig(const core::NetworkConfig &config)
+{
+    m_settings.setValue(kServerHost, config.host);
+    m_settings.setValue(kServerPort, config.port);
+    m_settings.setValue(kUsername, config.username);
+    m_settings.setValue(kListenPort, config.listenPort);
+    m_settings.setValue(kConnectAtLaunch, config.connectAtLaunch);
+    m_settings.setValue(kLiveAllowed, config.liveAllowedByUser);
 }
 
 bool AppSettings::sync()

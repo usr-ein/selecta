@@ -3,6 +3,7 @@
 
 #include "app/Appearance.h"
 #include "core/InboxService.h"
+#include "core/NetworkService.h"
 
 #include <QByteArray>
 #include <QSettings>
@@ -40,6 +41,10 @@ public:
     // Settings → Library and Filing (PRD LIB-1, DL-5, DL-13). Missing or invalid values read as the defaults.
     core::LibraryConfig libraryConfig() const;
     void setLibraryConfig(const core::LibraryConfig &config);
+
+    // Settings → Soulseek. The password isn't here: it lives in the Keychain.
+    core::NetworkConfig networkConfig() const;
+    void setNetworkConfig(const core::NetworkConfig &config);
 
     // Writes pending changes to disk. Returns false if the file can't be written.
     bool sync();

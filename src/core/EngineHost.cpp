@@ -26,6 +26,7 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<SpotifyStatus>();
     qRegisterMetaType<GetLine>();
     qRegisterMetaType<QList<GetLine>>();
+    qRegisterMetaType<NetworkStatus>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -66,6 +67,10 @@ void EngineHost::start()
     });
     connect(engine, &Engine::inboxOperationFinished, this, &EngineHost::inboxOperationFinished);
     connect(engine, &Engine::tracksAdded, this, &EngineHost::tracksAdded);
+    connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
+        m_networkStatus = status;
+        Q_EMIT networkStatusChanged(status);
+    });
     connect(engine, &Engine::spotifyStatusChanged, this, [this](const SpotifyStatus &status) {
         m_spotifyStatus = status;
         Q_EMIT spotifyStatusChanged(status);
@@ -207,6 +212,43 @@ void EngineHost::retryTracks(const QList<qint64> &ids)
     post([ids](Engine &engine) {
         if (engine.isStarted()) {
             engine.getTracks().retry(ids);
+        }
+    });
+}
+
+void EngineHost::setNetworkConfig(const NetworkConfig &config)
+{
+    m_options.network = config;
+    post([config](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.network().setConfig(config);
+        }
+    });
+}
+
+void EngineHost::setNetworkPassword(const QString &password)
+{
+    post([password](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.network().setPassword(password);
+        }
+    });
+}
+
+void EngineHost::connectNetwork()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.network().connectNow();
+        }
+    });
+}
+
+void EngineHost::disconnectNetwork()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.network().disconnectNow();
         }
     });
 }

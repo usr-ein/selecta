@@ -5,6 +5,7 @@
 #include "core/GetTracksService.h"
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
+#include "core/NetworkService.h"
 #include "governor/Governor.h"
 
 #include <QObject>
@@ -34,6 +35,7 @@ struct EngineOptions
     std::function<qint64()> wallClock;  // Unix time, ms; default: the system clock
     governor::Governor::Options governor;
     LibraryConfig library;
+    NetworkConfig network;
     library::FileOps::TrashFunction trash; // default: the macOS Trash; tests inject their own
     // Where secrets live: the app passes the Keychain; default: an in-memory store (tests).
     std::function<std::unique_ptr<meta::TokenStore>()> tokenStore;
@@ -81,6 +83,7 @@ public:
     InboxService &inbox() { return *m_inbox; }
     MetaServices &meta() { return *m_meta; }
     GetTracksService &getTracks() { return *m_getTracks; }
+    NetworkService &network() { return *m_network; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -95,6 +98,7 @@ Q_SIGNALS:
     void getLineChanged(const selecta::core::GetLine &line);
     // Lines added, already there, unidentified, and a sentence about anything else worth saying.
     void tracksAdded(int added, int duplicates, int unidentified, const QString &note);
+    void networkStatusChanged(const selecta::core::NetworkStatus &status);
 
 private:
     bool fail(const QString &error);
@@ -112,6 +116,7 @@ private:
     std::unique_ptr<InboxService> m_inbox;
     std::unique_ptr<MetaServices> m_meta;
     std::unique_ptr<GetTracksService> m_getTracks;
+    std::unique_ptr<NetworkService> m_network;
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     bool m_started = false;

@@ -187,6 +187,7 @@ int main(int argc, char *argv[])
     engineOptions.databasePath = paths::databaseFile();
     engineOptions.startPaused = settings.networkPaused();
     engineOptions.library = settings.libraryConfig();
+    engineOptions.network = settings.networkConfig();
     if (!options.isolated) {
         engineOptions.tokenStore = [] {
             return std::make_unique<selecta::meta::KeychainTokenStore>(u"io.github.usr-ein.Selecta"_s);

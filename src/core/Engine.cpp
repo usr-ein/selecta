@@ -94,6 +94,9 @@ bool Engine::start()
     m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 
+    m_network = std::make_unique<NetworkService>(*m_governor, *m_activity, m_meta->tokens(), m_options.wallClock);
+    connect(m_network.get(), &NetworkService::statusChanged, this, &Engine::networkStatusChanged);
+
     m_getTracks = std::make_unique<GetTracksService>(*m_db, m_options.wallClock);
     connect(m_getTracks.get(), &GetTracksService::linesReset, this, &Engine::getLinesReset);
     connect(m_getTracks.get(), &GetTracksService::lineChanged, this, &Engine::getLineChanged);
@@ -117,6 +120,7 @@ bool Engine::start()
     }
     m_inbox->reconcile();
     m_meta->restore();
+    m_network->start(m_options.network);
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -131,6 +135,7 @@ void Engine::stop()
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
     m_getTracks.reset();
+    m_network.reset(); // before the token store it reads from (owned by m_meta)
     m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();

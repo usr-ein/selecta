@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+
+#include "slsk/PeerNetwork.h"
+#include "slsk/PermitSource.h"
+#include "slsk/ServerSession.h"
+#include "slsk/TokenGenerator.h"
+
+#include <QByteArray>
+#include <QHostAddress>
+#include <QHostInfo>
+#include <QMetaType>
+#include <QObject>
+#include <QPointer>
+#include <QSet>
+#include <QString>
+
+#include <functional>
+#include <memory>
+
+class QTimer;
+
+namespace selecta::governor {
+class Governor;
+}
+namespace selecta::meta {
+class TokenStore;
+}
+
+namespace selecta::core {
+
+class ActivityLog;
+
+// The Soulseek account and server (Settings → Network). The password lives in the token store, never here.
+struct NetworkConfig
+{
+    QString host = QStringLiteral("127.0.0.1"); // a local test server unless the build allows the live network
+    quint16 port = 2242;
+    QString username;
+    quint16 listenPort = 2234; // where peers connect to us
+    bool connectAtLaunch = true;
+    bool liveAllowedByUser = false; // SAFE-3: the run-time half of "may this build reach the live network"
+
+    bool operator==(const NetworkConfig &) const = default;
+};
+
+struct NetworkStatus
+{
+    enum class State {
+        NotConfigured, // no username or password yet
+        Offline,       // disconnected by the user
+        Connecting,    // resolving, connecting or logging in
+        Online,
+        Reconnecting, // waiting before the next attempt (ReconnectPolicy)
+        NeedsUser,    // won't retry on its own: rejected login, relogged elsewhere, ban notice, refused server…
+    };
+    State state = State::NotConfigured;
+    QString username;
+    QString server;       // "127.0.0.1:2242"
+    QString detail;       // what happened, in words
+    qint64 retryAtMs = 0; // Reconnecting: when the next attempt is due (Unix time, ms)
+    bool listening = false;
+    quint16 listenPort = 0;
+};
+
+// slsk's PermitSource on the Governor: one PeerLookup permit per new outbound peer connection, delivered on a later
+// event-loop turn as slsk asks (never from inside requestPeerLookup()). Engine thread.
+class GovernorPermits final : public slsk::PermitSource
+{
+public:
+    GovernorPermits(governor::Governor &governor, QObject *context);
+
+    void requestPeerLookup(const QString &username, slsk::ConnectPurpose purpose, Callback deliver) override;
+
+private:
+    governor::Governor &m_governor;
+    QPointer<QObject> m_context;
+};
+
+// The connection to the Soulseek network on the engine thread: the server session (login, keepalive, reconnecting
+// through the governor's ReconnectPolicy), the peer network with its listening port, and the search tokens. Every
+// budgeted step goes through the Governor (ADR-006): the login, each new peer connection (as slsk's PermitSource) and,
+// through the callers, every search.
+//
+// Threading: engine thread. Ownership: owns the slsk components; the Governor, activity log and token store outlive it.
+class NetworkService : public QObject
+{
+    Q_OBJECT
+
+public:
+    using WallClock = std::function<qint64()>;
+
+    // The token-store account holding a Soulseek password.
+    static QString passwordAccount(const QString &username);
+
+    NetworkService(governor::Governor &governor, ActivityLog &activity, meta::TokenStore &tokens, WallClock now = {},
+                   QObject *parent = nullptr);
+    ~NetworkService() override;
+    NetworkService(const NetworkService &) = delete;
+    NetworkService &operator=(const NetworkService &) = delete;
+    NetworkService(NetworkService &&) = delete;
+    NetworkService &operator=(NetworkService &&) = delete;
+
+    // Loads the saved password for the configured user and connects if connectAtLaunch is set.
+    void start(const NetworkConfig &config);
+    // New settings; reconnects when the server, account or port changed while connected.
+    void setConfig(const NetworkConfig &config);
+    // Saves the password (empty: forget it) and connects with it.
+    void setPassword(const QString &password);
+    // The user asked to connect: lifts a "needs you" block and tries now (within the governor's limits).
+    void connectNow();
+    // The user asked to go offline: no reconnecting until connectNow().
+    void disconnectNow();
+
+    NetworkStatus status() const { return m_status; }
+    bool isOnline() const { return m_server->isLoggedIn(); }
+    slsk::ServerSession &server() { return *m_server; }
+    slsk::PeerNetwork &peers() { return *m_peers; }
+
+    // Sends a search with a Search permit from the governor and opens its token for results; returns the token, or 0
+    // when offline (the permit is dropped).
+    quint32 search(const QString &query, governor::Permit permit);
+    // Stops accepting results for this search.
+    void stopSearch(quint32 token);
+
+    // The PeerLookup permits behind every new outbound peer connection.
+    slsk::PermitSource &permits() { return *m_permits; }
+
+Q_SIGNALS:
+    void statusChanged(const selecta::core::NetworkStatus &status);
+    void searchResponseReceived(quint32 token, const QString &username,
+                                const selecta::slsk::peer::FileSearchResponse &response);
+
+private Q_SLOTS:
+    void hostLookedUp(const QHostInfo &info);
+
+private:
+    void attempt();
+    void abortLookup();
+    void connectTo(const QHostAddress &address);
+    void loggedIn(const slsk::LoginInfo &info);
+    void ended(slsk::ServerSession::EndReason reason, const QString &detail);
+    void scheduleRetry(qint64 delayMs, const QString &detail);
+    void setState(NetworkStatus::State state, const QString &detail = {});
+    void ensureListening();
+    void log(const QString &outcome, const QString &explanation);
+
+    governor::Governor &m_governor;
+    ActivityLog &m_activity;
+    meta::TokenStore &m_tokens;
+    WallClock m_now;
+    std::unique_ptr<slsk::ServerSession> m_server;
+    std::unique_ptr<GovernorPermits> m_permits;
+    std::unique_ptr<slsk::PeerNetwork> m_peers;
+    slsk::TokenGenerator m_searchTokens;
+    QSet<quint32> m_openSearches;
+    QTimer *m_retryTimer = nullptr;
+    NetworkConfig m_config;
+    QString m_password;           // in memory only; never logged
+    bool m_wanted = false;        // the user wants to be online (not disconnected by hand)
+    int m_lookupId = -1;          // the host lookup in flight, or -1
+    int m_passwordGeneration = 0; // drops a stored password read that a typed password replaced
+    NetworkStatus m_status;
+};
+
+} // namespace selecta::core
+
+Q_DECLARE_METATYPE(selecta::core::NetworkStatus)
