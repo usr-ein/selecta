@@ -107,6 +107,7 @@ protected:
     {
         auto fake = std::make_unique<FakePeer>(name, &server);
         EXPECT_TRUE(fake->start());
+        fake->answerIndirect = false; // reachable, so reached directly only: one connection (as slsk's own tests)
         return fake;
     }
 
