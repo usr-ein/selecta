@@ -102,6 +102,21 @@ public:
     // After the TransferService restored its queue: lines a quit left downloading without a download are reset.
     void downloadsRestored(const QList<selecta::core::Download> &unfinished);
 
+    // --- other sources (P-004) ---
+    // "Get anyway": downloads one of the near misses of a line nothing was found for (`peer`'s file at `remotePath`),
+    // below the quality wanted. Its other near misses are the copies tried if it fails. On arrival a lossy file is kept
+    // as it is, with tags and cover, and the Inbox marks it below the quality wanted (FileChoice::shortfall). A near
+    // miss the line doesn't have (the list changed since) is ignored.
+    void getAnyway(qint64 id, const QString &peer, const QByteArray &remotePath);
+    // "Try another peer": moves a line whose download still waits for its turn (asked for or queued at the peer, not
+    // arriving) to another peer's file, `peer`'s at `remotePath`; an empty `peer` takes the best one. The other peer's
+    // file is asked for first, through the governor; then the old download is cancelled: its peer learns it when it
+    // offers the file ("Cancelled"), and is never offered again for this line. With no other copy known (Selecta
+    // restarted, or they were all tried), the line is searched for again, the search cache answering a recent search,
+    // and moves to the best other peer found, if any (peersNote says when there is none). Only ever on the user's
+    // word: Selecta never switches by itself.
+    void switchPeer(qint64 id, const QString &peer = {}, const QByteArray &remotePath = {});
+
     // --- what the user owns (BATCH-3, DL-11) ---
     // The collection, Inbox and history snapshot. Lines found in the collection become "You have it", lines in the
     // Inbox "In your Inbox", and both are unticked; a line whose copy went away goes back to be found. Copies the user
@@ -141,6 +156,11 @@ private:
     std::optional<OwnedCopy> ownedCopy(const GetLine &line);
     bool tryAlternative(GetLine &line, const QString &reason);
     void cancelDownloadOf(const GetLine &line);
+    // Downloads `choice` for a line waiting in a peer's queue, then cancels the download it waited with.
+    void moveTo(GetLine &line, const FileChoice &choice);
+    void lookForOtherPeers(GetLine &line);
+    void otherPeersFound(qint64 id, const SearchOutcome &outcome);
+    void stopLookingForPeers(qint64 id);
 
     storage::Database &m_db;
     std::function<qint64()> m_now;
@@ -152,8 +172,9 @@ private:
     std::function<QStringList()> m_excludedPhrases;
     SearchFilter m_filter = builtInPreset(kMp3OrLosslessPreset).value_or(FilterPreset{}).filter;
     FileRanking::PeerLoad m_peerLoad;
-    QHash<qint64, quint64> m_finding; // line id → its queued or running search
-    QSet<qint64> m_findAfterLookup;   // lines to search once their release lookup ends
+    QHash<qint64, quint64> m_finding;      // line id → its queued or running search
+    QSet<qint64> m_findAfterLookup;        // lines to search once their release lookup ends
+    QHash<qint64, quint64> m_peerSearches; // line id → its search for other peers' copies ("Try another peer")
     TransferService *m_transfers = nullptr;
     std::shared_ptr<const match::MatchIndex> m_index;
 };

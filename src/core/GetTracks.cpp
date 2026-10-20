@@ -20,6 +20,8 @@ using ReleaseState = GetLine::ReleaseState;
 using FindState = GetLine::FindState;
 using DownloadState = GetLine::DownloadState;
 
+constexpr qsizetype kMaxShortfallChars = 200; // a few words; anything longer is damage
+
 constexpr auto kColumns =
     u"id, position, raw, dedupe_key, artist, title, duration_hint_ms, isrc, label_hint, release_state, release_json, "
     "release_confidence, find_state, best_json, ticked, download_state, message, added_at";
@@ -299,6 +301,9 @@ QByteArray fileChoiceToText(const FileChoice &choice)
     if (choice.bitDepth) {
         object.insert(u"bitDepth"_s, *choice.bitDepth);
     }
+    if (!choice.shortfall.isEmpty()) {
+        object.insert(u"shortfall"_s, choice.shortfall);
+    }
     return QJsonDocument(object).toJson(QJsonDocument::Compact);
 }
 
@@ -333,6 +338,7 @@ std::optional<FileChoice> fileChoiceFromText(const QByteArray &text)
     choice.queueLength = object.value(u"queueLength"_s).toInt();
     choice.fit = object.value(u"fit"_s).toDouble();
     choice.fitsRelease = object.value(u"fitsRelease"_s).toBool();
+    choice.shortfall = object.value(u"shortfall"_s).toString().left(kMaxShortfallChars); // absent before P-004
     return choice;
 }
 
@@ -358,12 +364,15 @@ std::chrono::milliseconds findingTimeLeft(int searchesToStart, int searchesColle
 qsizetype spreadChoice(const FileChoice &best, const QList<FileChoice> &alternatives, const QHash<QString, int> &load)
 {
     constexpr double kFitSlack = 0.05; // ranking noise: a fit this close is the same match
+    if (!best.shortfall.isEmpty()) {
+        return -1; // got anyway: the user picked this very file
+    }
     qsizetype chosen = -1;
     int chosenLoad = load.value(best.peer);
     for (qsizetype i = 0; i < alternatives.size(); ++i) {
         const FileChoice &candidate = alternatives.at(i);
-        const bool asGood = candidate.fitsRelease == best.fitsRelease && candidate.fit >= best.fit - kFitSlack &&
-                            (candidate.freeSlot || !best.freeSlot);
+        const bool asGood = candidate.shortfall.isEmpty() && candidate.fitsRelease == best.fitsRelease &&
+                            candidate.fit >= best.fit - kFitSlack && (candidate.freeSlot || !best.freeSlot);
         if (asGood && load.value(candidate.peer) < chosenLoad) {
             chosen = i;
             chosenLoad = load.value(candidate.peer);

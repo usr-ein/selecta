@@ -13,6 +13,9 @@
 #include <QLoggingCategory>
 #include <QPointer>
 
+#include <algorithm>
+#include <utility>
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::core {
@@ -229,6 +232,12 @@ void GetTracksService::remove(const QList<qint64> &ids)
             m_finding.erase(it);
         }
         m_findAfterLookup.remove(id);
+        if (const auto it = m_peerSearches.find(id); it != m_peerSearches.end()) {
+            if (m_search) {
+                m_search->cancel(*it);
+            }
+            m_peerSearches.erase(it);
+        }
     }
     const QSet<qint64> gone(ids.cbegin(), ids.cend());
     m_lines.removeIf([&gone](const GetLine &line) { return gone.contains(line.id); });
@@ -253,9 +262,13 @@ void GetTracksService::clear()
         for (const quint64 search : std::as_const(m_finding)) {
             m_search->cancel(search);
         }
+        for (const quint64 search : std::as_const(m_peerSearches)) {
+            m_search->cancel(search);
+        }
     }
     m_finding.clear();
     m_findAfterLookup.clear();
+    m_peerSearches.clear();
     m_lines.clear();
     Q_EMIT linesReset(m_lines);
 }
@@ -469,6 +482,8 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
     if (!line) {
         return;
     }
+    line->foundThisSession = true;
+    line->nearMisses.clear();
     if (!outcome.error.isEmpty()) {
         line->findState = GetLine::FindState::NotFound;
         line->message = outcome.error;
@@ -484,10 +499,15 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
         line->alternatives.clear();
         line->ticked = false;
         line->findState = GetLine::FindState::NotFound;
-        if (choices.considered > 0 && choices.candidates == 0) {
-            line->message = tr("%1 files found, but none in the quality wanted.").arg(choices.considered);
-        } else if (choices.candidates > 0) {
-            line->message = tr("%1 files found, but none of this release.").arg(choices.candidates);
+        // The track's files the preset turned down, to get anyway; or files that aren't this track at all.
+        line->nearMisses = choices.nearMisses;
+        if (!choices.nearMisses.isEmpty()) {
+            line->message = choices.belowQuality == 1
+                                ? tr("1 file of this track found, below the quality wanted.")
+                                : tr("%1 files of this track found, below the quality wanted.").arg(choices.belowQuality);
+        } else if (choices.considered > 0) {
+            line->message = choices.considered == 1 ? tr("1 file found, but not of this track.")
+                                                    : tr("%1 files found, but none of this track.").arg(choices.considered);
         }
     } else {
         line->best = choices.files.constFirst();
@@ -518,6 +538,10 @@ void GetTracksService::stopFinding()
         }
     }
     m_findAfterLookup.clear();
+    const QList<qint64> lookingForPeers = m_peerSearches.keys();
+    for (const qint64 id : lookingForPeers) {
+        stopLookingForPeers(id);
+    }
 }
 
 void GetTracksService::store(const GetLine &line)
@@ -651,6 +675,12 @@ void GetTracksService::downloadChanged(const Download &download)
     }
     line->downloadId = download.id;
     line->message = download.message;
+    const bool atThePeer = download.state == Download::State::Queued;
+    line->placeInQueue = atThePeer ? download.placeInQueue : std::nullopt;
+    line->stuck = atThePeer && download.queue.isStuck();
+    if (download.state != Download::State::Waiting && !atThePeer) {
+        line->peersNote.clear(); // its turn came, or it ended: other peers are beside the point
+    }
     using DownloadState = GetLine::DownloadState;
     switch (download.state) {
     case Download::State::Waiting:
@@ -729,6 +759,172 @@ void GetTracksService::downloadsRestored(const QList<Download> &unfinished)
             line.message = tr("The download was interrupted; get it again.");
             store(line);
         }
+    }
+}
+
+void GetTracksService::getAnyway(qint64 id, const QString &peer, const QByteArray &remotePath)
+{
+    GetLine *line = lineWithId(id);
+    if (line == nullptr || m_transfers == nullptr || line->findState != GetLine::FindState::NotFound ||
+        line->downloadState != GetLine::DownloadState::None) {
+        return;
+    }
+    const auto chosen = std::ranges::find_if(line->nearMisses, [&](const FileChoice &choice) {
+        return choice.peer == peer && choice.remotePath == remotePath;
+    });
+    if (chosen == line->nearMisses.end()) {
+        return; // found again since: not one of its near misses any more
+    }
+    line->best = *chosen;
+    line->nearMisses.erase(chosen);
+    line->alternatives = std::exchange(line->nearMisses, {}); // the copies to try if this one fails
+    line->findState = GetLine::FindState::Check;               // below the quality wanted: the user's call
+    line->ticked = true;
+    startDownload(*line);
+}
+
+void GetTracksService::switchPeer(qint64 id, const QString &peer, const QByteArray &remotePath)
+{
+    GetLine *line = lineWithId(id);
+    // Only a download still waiting for its turn moves: one arriving keeps its bytes.
+    if (line == nullptr || m_transfers == nullptr || !line->best ||
+        line->downloadState != GetLine::DownloadState::Queued || m_peerSearches.contains(id)) {
+        return;
+    }
+    const QString current = line->best->peer;
+    qsizetype pick = -1;
+    for (qsizetype i = 0; i < line->alternatives.size() && pick < 0; ++i) {
+        const FileChoice &choice = line->alternatives.at(i);
+        const bool another = choice.peer != current && !line->leftPeers.contains(choice.peer);
+        if (another && (peer.isEmpty() || (choice.peer == peer && choice.remotePath == remotePath))) {
+            pick = i;
+        }
+    }
+    if (pick >= 0) {
+        const FileChoice choice = line->alternatives.takeAt(pick);
+        moveTo(*line, choice);
+    } else if (peer.isEmpty()) {
+        lookForOtherPeers(*line); // none known: find some
+    }
+}
+
+void GetTracksService::moveTo(GetLine &line, const FileChoice &choice)
+{
+    const FileChoice left = *line.best;
+    const qint64 waitedWith = line.downloadId;
+    const qint64 id = line.id;
+    line.best = choice;
+    line.findState = choice.shortfall.isEmpty() && choice.fitsRelease ? GetLine::FindState::Ready
+                                                                      : GetLine::FindState::Check;
+    line.placeInQueue.reset();
+    line.stuck = false;
+    line.peersNote.clear();
+    // The other peer's file first, so the line never waits nowhere: its download's reports are the line's from here.
+    startDownload(line);
+    GetLine *current = lineWithId(id);
+    if (current == nullptr) {
+        return;
+    }
+    if (current->downloadId == 0) {
+        // It couldn't be asked for: the line keeps its place in the queue it was in.
+        current->alternatives.prepend(choice);
+        current->best = left;
+        current->downloadId = waitedWith;
+        current->downloadState = GetLine::DownloadState::Queued;
+        current->peersNote = tr("Selecta couldn't ask %1 for the file.").arg(choice.peer);
+        store(*current);
+        return;
+    }
+    if (!current->leftPeers.contains(left.peer)) {
+        current->leftPeers.append(left.peer);
+    }
+    // Withdrawn from the peer's queue: there is no message for that, so its offer, if it comes, is answered
+    // "Cancelled" and the peer moves on to its next user at once (references/network-etiquette §5.3). The governor
+    // counts the queue place given back. Its report isn't the line's current download's: the line ignores it.
+    if (waitedWith != 0 && waitedWith != current->downloadId) {
+        m_transfers->cancel(waitedWith);
+    }
+}
+
+void GetTracksService::lookForOtherPeers(GetLine &line)
+{
+    if (m_search == nullptr || m_peerSearches.contains(line.id)) {
+        return;
+    }
+    QString why;
+    const QString query = FileRanking::query(line, m_excludedPhrases ? m_excludedPhrases() : QStringList(), &why);
+    if (query.isEmpty()) {
+        line.peersNote = why;
+        store(line);
+        return;
+    }
+    const qint64 id = line.id;
+    const QPointer<GetTracksService> self(this);
+    // The user waits on this one: it goes ahead of the list's own searches, as a search typed by hand would. The
+    // governor paces it all the same, and a recent identical search is answered from the cache.
+    const quint64 search =
+        m_search->enqueue(query, governor::SearchSource::Manual, [self, id](const SearchOutcome &outcome) {
+            if (self) {
+                self->otherPeersFound(id, outcome);
+            }
+        });
+    m_peerSearches.insert(id, search);
+    line.lookingForPeers = true;
+    line.peersNote.clear();
+    store(line);
+}
+
+void GetTracksService::otherPeersFound(qint64 id, const SearchOutcome &outcome)
+{
+    if (!m_peerSearches.remove(id)) {
+        return; // stopped meanwhile
+    }
+    GetLine *line = lineWithId(id);
+    if (line == nullptr) {
+        return;
+    }
+    line->lookingForPeers = false;
+    line->foundThisSession = true;
+    if (!outcome.error.isEmpty()) {
+        line->peersNote = tr("Selecta couldn't look for another peer: %1").arg(outcome.error);
+        store(*line);
+        return;
+    }
+    const RankedChoices choices = FileRanking::rank(*line, outcome, m_filter, m_peerLoad);
+    // A file got anyway, below the quality wanted, may now have a copy that passes; else the other near misses.
+    const bool below = line->best && !line->best->shortfall.isEmpty();
+    const QList<FileChoice> &found = below && choices.files.isEmpty() ? choices.nearMisses : choices.files;
+    QList<FileChoice> others;
+    for (const FileChoice &choice : found) {
+        if ((!line->best || choice.peer != line->best->peer) && !line->leftPeers.contains(choice.peer)) {
+            others.append(choice);
+        }
+    }
+    line->alternatives = others;
+    if (others.isEmpty()) {
+        line->peersNote = below ? tr("No other peer has it.") : tr("No other peer has it in the quality wanted.");
+        store(*line);
+        return;
+    }
+    if (line->downloadState != GetLine::DownloadState::Queued) {
+        store(*line); // its turn came meanwhile: the other copies stay for later
+        return;
+    }
+    const FileChoice next = line->alternatives.takeFirst();
+    moveTo(*line, next);
+}
+
+void GetTracksService::stopLookingForPeers(qint64 id)
+{
+    if (const auto it = m_peerSearches.find(id); it != m_peerSearches.end()) {
+        if (m_search) {
+            m_search->cancel(*it);
+        }
+        m_peerSearches.erase(it);
+    }
+    if (GetLine *line = lineWithId(id); line != nullptr && line->lookingForPeers) {
+        line->lookingForPeers = false;
+        store(*line);
     }
 }
 
