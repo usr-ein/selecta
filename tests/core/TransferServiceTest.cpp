@@ -711,6 +711,46 @@ TEST_F(TransferServiceTest, NoOtherPeerLeavesTheLineWhereItWaits)
     EXPECT_EQ(rig.line().best->peer, holder->username());
 }
 
+TEST_F(TransferServiceTest, AnOtherCopyThatCantBeAskedForLeavesTheLineAsItWas)
+{
+    auto holder = peer(u"forever_queue"_s);
+    auto sharer = peer(u"free_slot"_s);
+    holder->queueBehaviour = FakePeer::QueueBehaviour::Hold;
+    const QString holderPath = u"@@h\\Okuma Drift - Neon Rain.flac"_s;
+    const QString sharerPath = u"@@s\\Okuma Drift - Neon Rain.mp3"_s;
+    GetTracksRig rig(*service, governor, clock, db, [this] { return now; });
+    rig.addTrack();
+    ASSERT_TRUE(waitFor([&] { return rig.network.sent == 1; }));
+    rig.search.received(1, holder->username(), flacResult(1, holderPath, 42'000'000));
+    rig.search.received(1, sharer->username(), result(1, sharerPath, 14'880'000));
+    ASSERT_TRUE(waitFor([&] { return rig.getTracks.findingCount() == 0; }));
+    const qint64 id = rig.line().id;
+    rig.getTracks.download({id});
+    ASSERT_TRUE(waitFor([&] { return holder->heldCount() == 1; }));
+    now += 2 * 60'000;
+    ASSERT_TRUE(waitFor([&] { return rig.line().stuck; }));
+    const selecta::core::GetLine stuck = rig.line();
+
+    // The database turns the other copy's download down: the line keeps waiting where it was, still stuck (the
+    // transfers wouldn't say it again), and says why; the other copy stays to try.
+    ASSERT_TRUE(db.exec(u"CREATE TRIGGER refuse_downloads BEFORE INSERT ON downloads "
+                        "BEGIN SELECT RAISE(ABORT, 'disk full'); END;"));
+    rig.getTracks.switchPeer(id);
+    const selecta::core::GetLine line = rig.line();
+    EXPECT_EQ(line.best, stuck.best);
+    EXPECT_EQ(line.downloadId, stuck.downloadId);
+    EXPECT_EQ(line.downloadState, selecta::core::GetLine::DownloadState::Queued);
+    EXPECT_EQ(line.findState, stuck.findState);
+    EXPECT_TRUE(line.stuck);
+    EXPECT_EQ(line.message, stuck.message);
+    EXPECT_EQ(line.peersNote, u"Selecta couldn't ask %1 for the file."_s.arg(sharer->username()));
+    EXPECT_EQ(line.alternatives, stuck.alternatives);
+    EXPECT_TRUE(line.leftPeers.isEmpty());
+    EXPECT_EQ(service->download(stuck.downloadId)->state, State::Queued); // its place in the queue is kept
+    EXPECT_EQ(governor.peerQueued(holder->username()), 1);
+    EXPECT_EQ(governor.peerQueued(sharer->username()), 0);
+}
+
 TEST_F(TransferServiceTest, GettingANearMissAnywayDownloadsItBelowTheQualityWanted)
 {
     auto low = peer(u"low_bitrate"_s);

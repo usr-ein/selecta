@@ -812,7 +812,8 @@ void GetTracksService::switchPeer(qint64 id, const QString &peer, const QByteArr
 
 void GetTracksService::moveTo(GetLine &line, const FileChoice &choice)
 {
-    const FileChoice left = *line.best;
+    const GetLine before = line; // where it waits: what it falls back on
+    const QString left = line.best->peer;
     const qint64 waitedWith = line.downloadId;
     const qint64 id = line.id;
     line.best = choice;
@@ -828,21 +829,21 @@ void GetTracksService::moveTo(GetLine &line, const FileChoice &choice)
         return;
     }
     if (current->downloadId == 0) {
-        // It couldn't be asked for: the line keeps its place in the queue it was in.
+        // It couldn't be asked for: the line stays as it was, in the queue it waits in (its status, stuck or not,
+        // included: the transfers report it again only when it changes), with the other copy still to try.
+        *current = before;
         current->alternatives.prepend(choice);
-        current->best = left;
-        current->downloadId = waitedWith;
-        current->downloadState = GetLine::DownloadState::Queued;
         current->peersNote = tr("Selecta couldn't ask %1 for the file.").arg(choice.peer);
         store(*current);
         return;
     }
-    if (!current->leftPeers.contains(left.peer)) {
-        current->leftPeers.append(left.peer);
+    if (!current->leftPeers.contains(left)) {
+        current->leftPeers.append(left);
     }
     // Withdrawn from the peer's queue: there is no message for that, so its offer, if it comes, is answered
-    // "Cancelled" and the peer moves on to its next user at once (references/network-etiquette §5.3). The governor
-    // counts the queue place given back. Its report isn't the line's current download's: the line ignores it.
+    // "Cancelled" and the peer moves on to its next user at once (references/network-etiquette-and-safe-development.md
+    // §5.3). The governor counts the queue place given back. Its report isn't the line's current download's: the line
+    // ignores it.
     if (waitedWith != 0 && waitedWith != current->downloadId) {
         m_transfers->cancel(waitedWith);
     }
