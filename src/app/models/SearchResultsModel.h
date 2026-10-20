@@ -88,6 +88,8 @@ private:
     void rebuild();
     bool lessThan(int a, int b) const;
     QVariant resultData(const core::SearchResult &result, int column, int role) const;
+    // What VoiceOver reads for a cell: the display text with its symbols in words (UI-5).
+    QString accessibleText(const core::SearchResult &result, int column) const;
     QVariant folderData(const Folder &folder, int column, int role) const;
 
     QList<core::SearchResult> m_results; // by index

@@ -63,8 +63,9 @@ public:
     core::NetworkConfig networkConfig() const { return m_network; }
     // The line under "Open the port on the router automatically" (NET-3).
     static QString portMappingText(const core::PortMappingStatus &mapping, quint16 listenPort);
-    // Caches (CACHE-2): what each holds.
-    void setCacheSizes(const core::CacheStatus &engine, qint64 waveformBytes);
+    // Caches (CACHE-2): what each holds; the analysis cache (waveforms, spectrum checks) with its budget, 0 when
+    // unknown.
+    void setCacheSizes(const core::CacheStatus &engine, qint64 analysisBytes, qint64 analysisBudgetBytes = 0);
     // "Show notifications" (UI-6), reflected without emitting showNotificationsChanged.
     void setShowNotifications(bool show);
 

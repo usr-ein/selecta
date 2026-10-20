@@ -140,6 +140,16 @@ INSTANTIATE_TEST_SUITE_P(EdgeCases, ReleaseFitTest,
                                                  .title = u"Glue"_s,
                                                  .releaseMs = 269000,
                                                  .fits = false},
+                                         // Live test 2026-10-20: "Check", not "Ready", for the file named exactly so.
+                                         FitCase{
+                                             .name = "TitleStartingWithBrackets",
+                                             .path = u"flac_fiona\\Lossless\\Peggy Gou - (It Goes Like) Nanana.flac"_s,
+                                             .durationSec = 368,
+                                             .artists = {u"Peggy Gou"_s},
+                                             .title = u"(It Goes Like) Nanana"_s,
+                                             .releaseMs = 367613,
+                                             .fits = true,
+                                             .fit = 1.0},
                                          FitCase{.name = "ExtendedAgainstPlainReleaseDecidedByLength",
                                                  .path = u"Bicep - Glue (Extended Mix).mp3"_s,
                                                  .durationSec = 269,
@@ -211,6 +221,13 @@ TEST(ReleaseScorer, AvailabilityOnlyBreaksTies) // Get tracks ranking
     };
     EXPECT_EQ(ReleaseScorer::rank(files), (QList<qsizetype>{4, 3, 2, 1, 0}));
     EXPECT_TRUE(ReleaseScorer::rank({}).isEmpty());
+
+    // All else equal, the peer taken from less today goes first (FAIR-5), before the name.
+    const QList<RankedFile> loaded{
+        {fits, 4, true, 3, u"alpha"_s, u"e.mp3"_s, 9},
+        {fits, 4, true, 3, u"zulu"_s, u"f.mp3"_s, 1},
+    };
+    EXPECT_EQ(ReleaseScorer::rank(loaded), (QList<qsizetype>{1, 0}));
 }
 
 TEST(ReleaseScorer, CopiesShareThePreparedReference)

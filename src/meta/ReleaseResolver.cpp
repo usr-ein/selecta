@@ -262,10 +262,31 @@ Scored scoreRelease(const LineFacts &line, const Release &release)
     return scored;
 }
 
-// The better of two candidates: an exact one first, then the higher score.
+// A compilation's copy of a track: the service says so ("compilation", Deezer's "compile"), or the album is credited
+// to "Various Artists" (labels file some of theirs as albums). Its album, date and track number aren't the track's.
 bool isCompilation(const Release &release)
 {
-    return release.albumType.compare(u"compilation"_s, Qt::CaseInsensitive) == 0;
+    if (release.albumType.compare(u"compilation"_s, Qt::CaseInsensitive) == 0 ||
+        release.albumType.compare(u"compile"_s, Qt::CaseInsensitive) == 0) {
+        return true;
+    }
+    return std::ranges::any_of(release.albumArtists, [](const QString &artist) {
+        const QString key = match::Normalizer::squash(match::Normalizer::normalize(artist, match::FieldKind::Artist));
+        return key == u"variousartists"_s || key == u"various"_s || key == u"va"_s;
+    });
+}
+
+// The album is the track's main artist's own: one of its album artists is the track's first credited artist.
+bool artistsOwn(const Release &release)
+{
+    if (release.artists.isEmpty() || release.albumArtists.isEmpty()) {
+        return false;
+    }
+    const QString main = match::Normalizer::normalize(release.artists.first(), match::FieldKind::Artist);
+    return std::ranges::any_of(release.albumArtists, [&main](const QString &artist) {
+        return fieldSimilarity(main, match::Normalizer::normalize(artist, match::FieldKind::Artist)) >=
+               kExplainedArtist;
+    });
 }
 
 // The better of two candidates: an exact one first, then the higher score, then the original release over a
@@ -281,8 +302,8 @@ bool better(const Candidate &a, const Candidate &b)
     return !isCompilation(a.release) && isCompilation(b.release);
 }
 
-// The copy whose album a merged candidate shows: Spotify's (the primary source), then an album or single over a
-// compilation, then the earlier release.
+// The copy whose album a merged candidate shows: Spotify's (the primary source), then the original release: an album
+// or single over a compilation, the artist's own over someone else's, then the earlier release.
 bool betterBase(const Release &a, const Release &b)
 {
     if ((a.source == Source::Spotify) != (b.source == Source::Spotify)) {
@@ -290,6 +311,9 @@ bool betterBase(const Release &a, const Release &b)
     }
     if (isCompilation(a) != isCompilation(b)) {
         return !isCompilation(a);
+    }
+    if (artistsOwn(a) != artistsOwn(b)) {
+        return artistsOwn(a);
     }
     return !a.releaseDate.isEmpty() && !b.releaseDate.isEmpty() && a.releaseDate < b.releaseDate;
 }
@@ -396,6 +420,28 @@ void assignTiers(QList<Scored> &sorted, const QHash<QString, QSet<Source>> &isrc
     }
 }
 
+// A compilation's copy in the lead gives way to the original release of the same recording when that is as exact, or
+// scores within the Confident margin: the original's album, date and track number are the ones to tag with.
+void preferOriginal(QList<Scored> &sorted)
+{
+    if (sorted.size() < 2 || !isCompilation(sorted.first().candidate.release)) {
+        return;
+    }
+    const Candidate &lead = sorted.first().candidate;
+    for (qsizetype i = 1; i < sorted.size(); ++i) {
+        const Candidate &other = sorted.at(i).candidate;
+        const bool asSure = lead.confidence == Confidence::Exact ? other.confidence == Confidence::Exact
+                                                                 : other.score >= lead.score - kConfidentMargin;
+        if (asSure && other.score > 0 && !isCompilation(other.release) &&
+            !differentRecording(sorted.first(), sorted.at(i))) {
+            Scored original = sorted.takeAt(i);
+            original.candidate.reasons.append(u"the original release, not a compilation's copy"_s);
+            sorted.prepend(std::move(original));
+            return;
+        }
+    }
+}
+
 Resolution combine(const QList<Scored> &scored)
 {
     QHash<QString, QSet<Source>> isrcSources; // which sources carry each ISRC
@@ -407,6 +453,7 @@ Resolution combine(const QList<Scored> &scored)
     QList<Scored> candidates = merged(scored);
     std::ranges::stable_sort(candidates,
                              [](const Scored &a, const Scored &b) { return better(a.candidate, b.candidate); });
+    preferOriginal(candidates);
     assignTiers(candidates, isrcSources);
     Resolution resolution;
     resolution.candidates.reserve(candidates.size());
@@ -472,6 +519,7 @@ public:
     void start()
     {
         if (!m_line.isrc.isEmpty()) {
+            m_isrcAsked = true;
             spotifyIsrc();
             return;
         }
@@ -569,7 +617,7 @@ private:
     {
         Resolution now = combine(m_scored);
         if (now.confidence == Confidence::Exact) {
-            finish(std::move(now));
+            conclude(std::move(now));
             return;
         }
         textStage();
@@ -578,7 +626,7 @@ private:
     void textStage()
     {
         if (m_line.title.coreDisplay.isEmpty() && m_artist.isEmpty()) {
-            finish(combine(m_scored));
+            conclude(combine(m_scored));
             return;
         }
         if (usable(Source::Spotify)) {
@@ -604,7 +652,7 @@ private:
                                   }
                                   Resolution now = combine(m_scored);
                                   if (goodEnough(now)) {
-                                      finish(std::move(now));
+                                      conclude(std::move(now));
                                   } else if (!withVersion && found && wantsVersionSearch(now)) {
                                       spotifySearch(true);
                                   } else {
@@ -616,7 +664,7 @@ private:
     void deezerSearch(bool withVersion)
     {
         if (!usable(Source::Deezer)) {
-            finish(combine(m_scored));
+            conclude(combine(m_scored));
             return;
         }
         QString text = m_artist + u' ' + m_line.title.coreDisplay;
@@ -633,7 +681,7 @@ private:
                                       if (!goodEnough(now) && !withVersion && found && wantsVersionSearch(now)) {
                                           deezerSearch(true);
                                       } else {
-                                          finish(std::move(now));
+                                          conclude(std::move(now));
                                       }
                                   });
     }
@@ -652,6 +700,26 @@ private:
         return !m_versionWords.isEmpty() && std::ranges::none_of(now.candidates, [](const Candidate &candidate) {
             return versionCompatible(candidate.version) && candidate.score >= kAmbiguousScore;
         });
+    }
+
+    // A compilation's copy in the lead: Spotify's isrc: search lists every release carrying its ISRC, usually the
+    // original single or album too, which the merge then prefers. One more request, once per line.
+    void conclude(Resolution resolution)
+    {
+        const Release *lead = resolution.candidates.isEmpty() ? nullptr : &resolution.candidates.first().release;
+        if (lead == nullptr || m_isrcAsked || resolution.confidence < Confidence::Ambiguous || !isCompilation(*lead) ||
+            lead->isrc.isEmpty() || !usable(Source::Spotify)) {
+            finish(std::move(resolution));
+            return;
+        }
+        m_isrcAsked = true;
+        await<QList<Release>>(m_resolver->m_spotify->searchIsrc(lead->isrc, m_priority), Source::Spotify,
+                              [this](const Result<QList<Release>> &result) {
+                                  if (result.ok()) {
+                                      add(result.value());
+                                  }
+                                  finish(combine(m_scored));
+                              });
     }
 
     void finish(Resolution resolution)
@@ -679,6 +747,7 @@ private:
     QList<MetaError> m_errors;
     QSet<Source> m_failed;
     bool m_answered = false;
+    bool m_isrcAsked = false; // Spotify was asked for an ISRC already (the line's, or a compilation copy's)
 };
 
 ReleaseResolver::ReleaseResolver(SpotifyClient *spotify, DeezerClient *deezer, QObject *parent)

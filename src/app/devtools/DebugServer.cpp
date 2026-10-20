@@ -12,6 +12,7 @@
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QComboBox>
 #include <QDir>
 #include <QDropEvent>
 #include <QFile>
@@ -22,11 +23,13 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocalSocket>
+#include <QLocale>
 #include <QLoggingCategory>
 #include <QMetaEnum>
 #include <QMimeData>
 #include <QPainter>
 #include <QPlainTextEdit>
+#include <QSpinBox>
 #include <QStyleHints>
 #include <QTabWidget>
 #include <QTimer>
@@ -453,10 +456,36 @@ QJsonValue DebugServer::click(const QJsonObject &args, QString *error)
     return {};
 }
 
+namespace {
+
+// An argument as text: "text=2234" arrives as a number, "text=true" as a boolean.
+QString textOf(const QJsonValue &value)
+{
+    return value.isString() ? value.toString() : value.toVariant().toString();
+}
+
+} // namespace
+
+// type name=<field> text=<text> [submit=true]: sets a line or text edit's text; a spin box's value from the text.
 QJsonValue DebugServer::type(const QJsonObject &args, QString *error)
 {
     const QString name = args.value("name"_L1).toString();
-    const QString text = args.value("text"_L1).toString();
+    const QString text = textOf(args.value("text"_L1));
+    if (auto *spin = m_window.findChild<QSpinBox *>(name)) {
+        bool ok = false;
+        const int value = QLocale::c().toInt(text.trimmed(), &ok);
+        if (!ok || value < spin->minimum() || value > spin->maximum()) {
+            *error = u"\"%1\" isn't a whole number from %2 to %3"_s.arg(text).arg(spin->minimum()).arg(spin->maximum());
+            return {};
+        }
+        if (!spin->isEnabled()) {
+            *error = u"spin box is disabled: "_s + name;
+            return {};
+        }
+        spin->setValue(value);
+        Q_EMIT spin->editingFinished(); // as when the user leaves the field
+        return spin->value();
+    }
     if (auto *line = m_window.findChild<QLineEdit *>(name)) {
         line->setText(text);
         if (args.value("submit"_L1).toBool()) {
@@ -472,15 +501,45 @@ QJsonValue DebugServer::type(const QJsonObject &args, QString *error)
         plain->setPlainText(text);
         return true;
     }
-    *error = u"no text field named "_s + name;
+    *error = u"no text field or spin box named "_s + name;
     return {};
 }
 
 // select name=<item view> row=<n> [parent=<n>]: makes a row current and selected (a child row under `parent` in a
-// tree); name=<tab widget> row=<n> shows that page.
+// tree); name=<tab widget> row=<n> shows that page; name=<combo box> row=<n> or text=<item text> picks that item, as
+// the user does (activated() is emitted).
 QJsonValue DebugServer::select(const QJsonObject &args, QString *error)
 {
     const QString name = args.value("name"_L1).toString();
+    if (auto *box = m_window.findChild<QComboBox *>(name)) {
+        int row = args.value("row"_L1).toInt(-1);
+        if (args.contains("text"_L1)) {
+            const QString text = textOf(args.value("text"_L1));
+            row = box->findText(text, Qt::MatchExactly);
+            if (row < 0) {
+                row = box->findText(text, Qt::MatchFixedString); // case-insensitive
+            }
+            if (row < 0) {
+                QStringList items;
+                for (int i = 0; i < box->count(); ++i) {
+                    items.append(box->itemText(i));
+                }
+                *error = u"no item \"%1\" there; items: %2"_s.arg(text, items.join(u" | "_s));
+                return {};
+            }
+        } else if (row < 0 || row >= box->count()) {
+            *error = u"no item %1 there (%2 items)"_s.arg(row).arg(box->count());
+            return {};
+        }
+        if (!box->isEnabled()) {
+            *error = u"combo box is disabled: "_s + name;
+            return {};
+        }
+        box->setCurrentIndex(row);
+        Q_EMIT box->activated(row);
+        Q_EMIT box->textActivated(box->itemText(row));
+        return box->itemText(row);
+    }
     if (auto *tabs = m_window.findChild<QTabWidget *>(name)) { // a page of a tab widget, by its number
         const int page = args.value("row"_L1).toInt(-1);
         if (page < 0 || page >= tabs->count()) {

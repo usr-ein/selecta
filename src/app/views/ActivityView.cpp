@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ActivityView.h"
 
+#include "app/Accessibility.h"
 #include "app/MeterDelegate.h"
 #include "app/PeerMenu.h"
 #include "app/models/ActivityModel.h"
@@ -167,8 +168,8 @@ QWidget *ActivityView::createTransfersPage()
     auto *bar = new QHBoxLayout;
     bar->setContentsMargins(16, 10, 16, 6);
     auto *explanation =
-        new QLabel(tr("Each file Selecta wants, from asking the peer to the Inbox. Right-click to cancel one or try a "
-                      "failed one again."),
+        new QLabel(tr("Each file Selecta wants, from asking the peer to the Inbox. Right-click (or ⌃Return) to cancel "
+                      "one or try a failed one again."),
                    page);
     explanation->setForegroundRole(QPalette::PlaceholderText);
     explanation->setWordWrap(true);
@@ -176,6 +177,8 @@ QWidget *ActivityView::createTransfersPage()
     bar->addWidget(m_grouping);
 
     m_transfersTable->setModel(m_transfers);
+    m_transfersTable->setAccessibleName(tr("Transfers"));
+    a11y::addMenuKey(m_transfersTable);
     m_transfersTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_transfersTable->setItemDelegateForColumn(TransfersModel::ProgressColumn, new MeterDelegate(m_transfersTable));
     m_transfersTable->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -237,6 +240,13 @@ QWidget *ActivityView::createPeersPage()
                              .arg(governor::limits::kPeerDailyWarnFiles)
                              .arg(governor::limits::kPeerDailyStopFiles));
     m_peersTable->setModel(m_peers);
+    m_peersTable->setAccessibleName(tr("Peers"));
+    a11y::addMenuKey(m_peersTable);
+    a11y::onReturn(m_peersTable, [this] { // as a double-click: browse the peer
+        if (const QModelIndex current = m_peersTable->currentIndex(); current.isValid()) {
+            Q_EMIT browseRequested(m_peers->peerAt(current.row()).peer);
+        }
+    });
     m_peersTable->setRootIsDecorated(false);
     m_peersTable->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_peersTable, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
@@ -292,6 +302,7 @@ QWidget *ActivityView::createLogPage()
     m_budget->setWordWrap(true);
 
     m_table->setModel(m_model);
+    m_table->setAccessibleName(tr("Log"));
     m_table->setRootIsDecorated(false);
     m_table->setSelectionMode(QAbstractItemView::SingleSelection);
     m_table->header()->setStretchLastSection(true);

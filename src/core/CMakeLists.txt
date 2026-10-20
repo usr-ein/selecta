@@ -38,6 +38,7 @@ qt_add_library(selecta_core STATIC
     SearchResults.h SearchResults.cpp
     SearchService.h SearchService.cpp
     SocialService.h SocialService.cpp
+    SpectrumCheck.h SpectrumCheck.cpp
     ShareService.h ShareService.cpp
     TransferService.h TransferService.cpp
     WishlistService.h WishlistService.cpp

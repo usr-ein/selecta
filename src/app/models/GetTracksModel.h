@@ -60,6 +60,8 @@ public:
     static QString statusText(const core::GetLine &line);
     static StatusKind statusKind(const core::GetLine &line);
     static QString subtitle(const core::GetLine &line);
+    // What VoiceOver reads for a cell where it differs from the display text: the tick, both lines of the track.
+    static QVariant accessibleText(const core::GetLine &line, int column);
 
     int rowCount(const QModelIndex &parent = {}) const override;
     int columnCount(const QModelIndex &parent = {}) const override;

@@ -205,6 +205,14 @@ int runSelecta(int argc, char **argv)
         .dataDir = dataDir,
         .logDir = paths::logDir(),
     };
+    // Waveforms and spectrum checks (PREV-8, PREV-9): one cache, thread-safe, shared by the player, the inspector and
+    // the arrival pipeline on the engine thread.
+    const QString analysisDir = paths::cacheDir() + u"/analysis"_s;
+    if (!paths::ensureDir(analysisDir)) {
+        qCWarning(lcApp) << "can't create the analysis cache" << analysisDir;
+    }
+    const auto analysisCache = std::make_shared<selecta::audio::AnalysisCache>(analysisDir);
+
     // The engine thread: governor, network, metadata and the arrival pipeline. It opens its own database connection.
     selecta::core::EngineOptions engineOptions;
     engineOptions.databasePath = paths::databaseFile();
@@ -215,6 +223,7 @@ int runSelecta(int argc, char **argv)
     engineOptions.incomingDir = dataDir + u"/Downloads/Incoming"_s;
     engineOptions.stagingDir = dataDir + u"/Downloads/Converting"_s;
     engineOptions.previewDir = paths::cacheDir() + u"/Previews"_s; // kept across launches, 2 GB at most (PREV-8)
+    engineOptions.analysisCache = analysisCache;
     engineOptions.ytDlpPath = settings.ytDlpPath();
     engineOptions.spotifyAllowed = settings.spotifyTermsAccepted(); // META-4, D30
     if (session > 0) {
@@ -269,13 +278,9 @@ int runSelecta(int argc, char **argv)
     engine.start();
 
     // Previews play on the main thread's player; headless runs (automated inspection) stay silent.
-    const QString analysisDir = paths::cacheDir() + u"/analysis"_s;
-    if (!paths::ensureDir(analysisDir)) {
-        qCWarning(lcApp) << "can't create the waveform cache" << analysisDir;
-    }
     selecta::app::PreviewController preview(options.headless ? selecta::playback::AudioOutput::createSilent()
                                                              : selecta::playback::AudioOutput::createDefault(),
-                                            std::make_shared<selecta::audio::AnalysisCache>(analysisDir));
+                                            analysisCache);
 
     // System notifications (UI-6): macOS's Notification Center from the app bundle. Headless runs keep them for the
     // debug socket instead: nothing reaches the screen, and nobody is asked for permission.

@@ -492,6 +492,54 @@ QString describeFinding(QualityFinding finding, const QualityReport &report)
     return {};
 }
 
+QString findingBadge(QualityFinding finding, std::optional<int> likelySourceKbps)
+{
+    switch (finding) {
+    case QualityFinding::LikelyFromLossy:
+        return likelySourceKbps ? u"Likely from a ≈ %1 kbps MP3"_s.arg(*likelySourceKbps)
+                                : u"Likely from a lossy file"_s;
+    case QualityFinding::LikelyUpconvertedMp3:
+        return likelySourceKbps ? u"Likely upconverted from ≈ %1 kbps"_s.arg(*likelySourceKbps)
+                                : u"Likely upconverted from a lower bitrate"_s;
+    case QualityFinding::LikelyReencoded:
+        return u"Likely re-encoded from a lossy file"_s;
+    case QualityFinding::LikelyPadded24Bit:
+        return u"Likely 16-bit, padded"_s;
+    case QualityFinding::LikelyUpsampled:
+        return u"Likely upsampled"_s;
+    }
+    return {};
+}
+
+QString findingName(QualityFinding finding)
+{
+    switch (finding) {
+    case QualityFinding::LikelyFromLossy:
+        return u"from-lossy"_s;
+    case QualityFinding::LikelyUpconvertedMp3:
+        return u"upconverted-mp3"_s;
+    case QualityFinding::LikelyReencoded:
+        return u"reencoded"_s;
+    case QualityFinding::LikelyPadded24Bit:
+        return u"padded-24-bit"_s;
+    case QualityFinding::LikelyUpsampled:
+        return u"upsampled"_s;
+    }
+    return {};
+}
+
+std::optional<QualityFinding> findingFromName(QStringView name)
+{
+    for (const QualityFinding finding :
+         {QualityFinding::LikelyFromLossy, QualityFinding::LikelyUpconvertedMp3, QualityFinding::LikelyReencoded,
+          QualityFinding::LikelyPadded24Bit, QualityFinding::LikelyUpsampled}) {
+        if (name == findingName(finding)) {
+            return finding;
+        }
+    }
+    return std::nullopt;
+}
+
 Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, const QualityOptions &options,
                                      const CancellationFlag *cancel)
 {

@@ -11,6 +11,7 @@
 #include "app/Preview.h"
 #include "app/Sidebar.h"
 #include "app/Toasts.h"
+#include "app/WaveformView.h"
 #include "app/views/ActivityView.h"
 #include "app/views/BrowseView.h"
 #include "app/views/CollectionView.h"
@@ -123,6 +124,17 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     createActions();
     createMenus();
     createToolBar();
+    // Tab goes from the sidebar to the view and its inspector, then to the waveform under them (UI-5); the player was
+    // built first, for the views to connect to it.
+    QWidget *lastOfContent = nullptr;
+    for (QWidget *next = m_contentSplitter->nextInFocusChain(); next != this; next = next->nextInFocusChain()) {
+        if (m_contentSplitter->isAncestorOf(next) && next->focusPolicy() != Qt::NoFocus) {
+            lastOfContent = next;
+        }
+    }
+    if (auto *waveform = m_player->findChild<WaveformView *>(); waveform != nullptr && lastOfContent != nullptr) {
+        QWidget::setTabOrder(lastOfContent, waveform);
+    }
     restoreSavedState();
 
     connect(&m_services.engine, &core::EngineHost::pausedChanged, this, [this](bool paused) {
@@ -362,6 +374,7 @@ void MainWindow::createViews()
     });
     m_inboxView = new InboxView(m_services.engine, m_stack);
     m_inboxView->setLibraryConfig(m_services.settings.libraryConfig());
+    m_inboxView->setAnalysisCache(m_services.preview.sharedAnalysisCache());
     addView(u"inbox"_s, m_inboxView, [this] { return m_inboxView->summary(); });
     m_inspector->addPanel(u"inbox"_s, m_inboxView->inspectorPanel());
     connect(m_inboxView, &InboxView::summaryChanged, this, [this] {
@@ -674,7 +687,8 @@ void MainWindow::createSettingsView()
     // Caches (CACHE-2): sizes when Settings opens, and after each is emptied.
     const auto showCaches = [this](const core::CacheStatus &status) {
         audio::AnalysisCache *waveforms = m_services.preview.analysisCache();
-        m_settingsView->setCacheSizes(status, waveforms ? waveforms->totalBytes() : 0);
+        m_settingsView->setCacheSizes(status, waveforms ? waveforms->totalBytes() : 0,
+                                      waveforms ? waveforms->budgetBytes() : 0);
     };
     connect(&m_services.engine, &core::EngineHost::cachesChanged, this, showCaches);
     connect(this, &MainWindow::viewChanged, this, [this](const QString &id) {

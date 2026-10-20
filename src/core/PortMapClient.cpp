@@ -36,7 +36,7 @@ constexpr int kNoSuchEntry = 714;
 constexpr int kConflict = 718;
 constexpr int kOnlyPermanentLeases = 725;
 
-int sliceOf(const QDeadlineTimer &deadline)
+int sliceOf(QDeadlineTimer deadline)
 {
     return static_cast<int>(std::clamp<qint64>(deadline.remainingTime(), 0, kSlice.count()));
 }
@@ -338,7 +338,8 @@ std::optional<Igd> findIgd(const MapRequest &request, const Cancel &cancel)
             qCDebug(lcPortMap) << "UPnP: no description at" << location.toString();
             continue;
         }
-        for (const detail::IgdService &service : detail::parseDescription(description.response->body, location)) {
+        const QList<detail::IgdService> services = detail::parseDescription(description.response->body, location);
+        for (const detail::IgdService &service : services) {
             if (cancel.load()) {
                 return std::nullopt;
             }
