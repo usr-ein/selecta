@@ -3,9 +3,11 @@
 # Starts the crew's coordinator (docs/CREW.md) as the background session `selecta-nightman`, as the `nightman`
 # agent, in the main checkout. Talk to it with `claude attach selecta-nightman`, or from `claude agents`.
 #
-#   tools/crew/start-nightman.sh [effort: high (default) | max]
+#   tools/crew/start-nightman.sh
+#
+# The nightman always runs at effort max (the maintainer's rule, docs/CREW.md).
 set -euo pipefail
-effort="${1:-high}"
+effort=max
 root="$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)"
 root="${root%/.git}"
 if claude agents --json 2>/dev/null | grep -q '"name": *"selecta-nightman"'; then

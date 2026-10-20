@@ -4,7 +4,9 @@
 # branch crew/P-NNN-slug from origin/main, then starts the background session selecta-minion-P-NNN-slug in it, as the
 # `minion` agent. With --resume, it restarts a minion whose session died, on the worktree it left.
 #
-#   tools/crew/spawn-minion.sh [--resume] P-NNN slug [effort: high (default) | max]
+#   tools/crew/spawn-minion.sh [--resume] P-NNN slug [effort: medium | high (default) | xhigh | max]
+#
+# The nightman picks the effort per pitch (docs/CREW.md); anything outside medium..max is refused.
 set -euo pipefail
 resume=0
 if [[ "${1:-}" == "--resume" ]]; then
@@ -14,6 +16,13 @@ fi
 pitch="${1:?usage: spawn-minion.sh [--resume] P-NNN slug [effort]}"
 slug="${2:?usage: spawn-minion.sh [--resume] P-NNN slug [effort]}"
 effort="${3:-high}"
+case "$effort" in
+    medium | high | xhigh | max) ;;
+    *)
+        echo "effort must be medium, high, xhigh or max (got: $effort)"
+        exit 1
+        ;;
+esac
 root="$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)"
 root="${root%/.git}"
 name="selecta-minion-$pitch-$slug"
@@ -47,5 +56,5 @@ fi
 cd "$tree"
 claude --bg --name "$name" --agent minion --permission-mode bypassPermissions --effort "$effort" \
     --settings "{\"env\":{\"CREW_ROLE\":\"minion\",\"CLAUDE_CODE_EFFORT_LEVEL\":\"$effort\"}}" \
-    --add-dir "$root/.crew" "$prompt"
+    --add-dir "$root/.crew" -- "$prompt"
 echo "started $name in $tree"
