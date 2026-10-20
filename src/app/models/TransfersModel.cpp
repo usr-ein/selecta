@@ -438,8 +438,8 @@ QVariant TransfersModel::groupData(const Group &group, int column, int role) con
         return summary.total > 0 ? static_cast<double>(summary.done) / static_cast<double>(summary.total) : -1.0;
     }
     if (role == Qt::AccessibleTextRole && column == ProgressColumn && summary.total > 0) { // the meter, in words
-        return tr("%1 %").arg(static_cast<int>(static_cast<double>(summary.done) / static_cast<double>(summary.total) *
-                                               100.0));
+        return tr("%1 %").arg(
+            static_cast<int>(static_cast<double>(summary.done) / static_cast<double>(summary.total) * 100.0));
     }
     if (role == Qt::DisplayRole) {
         switch (column) {

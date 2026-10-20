@@ -97,13 +97,13 @@ void label(QPainter &painter, const QString &text, QPointF anchor, bool alignRig
 
 // What assistive technologies see of the waveform (UI-5): a slider over the track, valued in seconds, that steps as
 // Left and Right do. Created by Qt's accessibility on demand, through the factory below; it holds no state of its own.
-class WaveformAccessible : public QAccessibleWidget, public QAccessibleValueInterface
+class WaveformAccessible : public QAccessibleWidget, // NOLINT(misc-multiple-inheritance): Qt's interfaces are mixins
+                           public QAccessibleValueInterface
 {
 public:
     explicit WaveformAccessible(WaveformView *view)
         : QAccessibleWidget(view, QAccessible::Slider)
-    {
-    }
+    {}
 
     void *interface_cast(QAccessible::InterfaceType type) override
     {
@@ -173,7 +173,7 @@ public:
     }
 
 private:
-    WaveformView *view() const { return static_cast<WaveformView *>(widget()); }
+    WaveformView *view() const { return qobject_cast<WaveformView *>(widget()); }
 };
 
 QAccessibleInterface *waveformAccessible(const QString &key, QObject *object)

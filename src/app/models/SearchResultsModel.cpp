@@ -545,7 +545,7 @@ QString SearchResultsModel::accessibleText(const core::SearchResult &result, int
         return quality.plausible ? text : tr("%1, doubtful").arg(text);
     }
     case LengthColumn: {
-        const QString length = format::length(qint64{result.durationSec()} * 1000);
+        QString length = format::length(qint64{result.durationSec()} * 1000);
         if (!m_releaseChosen || m_releaseDurationMs <= 0 || result.durationSec() <= 0) {
             return length;
         }

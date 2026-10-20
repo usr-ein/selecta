@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/BrowseView.h"
 
+#include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
 #include "app/models/SearchResultsModel.h"
@@ -82,6 +83,8 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     m_table->setColumnHidden(SearchResultsModel::AvailabilityColumn, true);
     m_table->installEventFilter(this); // Return downloads, Space previews
     connect(m_table, &QTreeView::customContextMenuRequested, this, &BrowseView::contextMenu);
+    m_table->setAccessibleName(tr("Shared files"));
+    a11y::addMenuKey(m_table);
     connect(m_table, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
         if (m_model->resultAt(index)) {
             Q_EMIT previewRequested();

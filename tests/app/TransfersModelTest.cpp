@@ -58,7 +58,8 @@ TEST(TransfersModel, GroupsByFolderThenByPeer)
     EXPECT_EQ(text(model, 0, TransfersModel::StatusColumn, model.index(1, 0)), u"Failed: File not shared."_s);
     EXPECT_EQ(model.downloadsAt(album), (QList<qint64>{1, 2}));
     // A folder's meter, in words for VoiceOver.
-    EXPECT_TRUE(model.index(0, TransfersModel::ProgressColumn).data(Qt::AccessibleTextRole).toString().endsWith(u" %"_s));
+    EXPECT_TRUE(
+        model.index(0, TransfersModel::ProgressColumn).data(Qt::AccessibleTextRole).toString().endsWith(u" %"_s));
 
     model.setGrouping(TransfersModel::Grouping::Peer);
     ASSERT_EQ(model.rowCount(), 2);

@@ -179,7 +179,8 @@ TEST(SearchResultsModelTest, QualitySaysWhatsEstimatedOrSuspicious)
     for (int row = 0; row < model.rowCount(); ++row) {
         spoken.append(model.index(row, SearchResultsModel::QualityColumn).data(Qt::AccessibleTextRole).toString());
     }
-    EXPECT_TRUE(spoken.filter(u"kbps"_s).size() == 1 && spoken.filter(u"about"_s).size() == 1) << spoken.join(u'|').toStdString();
+    EXPECT_TRUE(spoken.filter(u"kbps"_s).size() == 1 && spoken.filter(u"about"_s).size() == 1)
+        << spoken.join(u'|').toStdString();
     EXPECT_EQ(spoken.filter(u", doubtful"_s).size(), 1) << spoken.join(u'|').toStdString();
     EXPECT_TRUE(spoken.filter(u"≈"_s).isEmpty() && spoken.filter(u"⚠"_s).isEmpty());
 }

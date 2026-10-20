@@ -194,7 +194,7 @@ TEST_F(WaveformViewTest, VoiceOverStepsFiveSecondsAsTheArrowKeysDo)
 {
     view.setDuration(372.0);
     view.setPosition(83.0);
-    QSignalSpy seeks(&view, &WaveformView::seekRequested);
+    const QSignalSpy seeks(&view, &WaveformView::seekRequested);
     QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(&view);
     ASSERT_NE(iface, nullptr);
     QAccessibleActionInterface *actions = iface->actionInterface();
@@ -220,7 +220,7 @@ TEST_F(WaveformViewTest, ArrowKeysStepWithinTheTrack)
 {
     view.setDuration(372.0);
     view.setPosition(370.0);
-    QSignalSpy seeks(&view, &WaveformView::seekRequested);
+    const QSignalSpy seeks(&view, &WaveformView::seekRequested);
     QTest::keyClick(&view, Qt::Key_Right);
     ASSERT_EQ(seeks.size(), 1);
     EXPECT_DOUBLE_EQ(seeks.at(0).at(0).toDouble(), 372.0); // the end, not past it
@@ -256,7 +256,7 @@ TEST_F(WaveformViewTest, SeeksAreToldToVoiceOverButPlayingIsNot)
 TEST_F(WaveformViewTest, WithoutATrackVoiceOverReadsTheMessageAndCantStep)
 {
     view.setMessage(u"Select a track and press Space to preview it"_s);
-    QSignalSpy seeks(&view, &WaveformView::seekRequested);
+    const QSignalSpy seeks(&view, &WaveformView::seekRequested);
     QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(&view);
     ASSERT_NE(iface, nullptr);
     EXPECT_EQ(iface->text(QAccessible::Value), u"Select a track and press Space to preview it"_s);

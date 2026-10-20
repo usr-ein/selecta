@@ -59,6 +59,7 @@ ReleasePickerDialog::ReleasePickerDialog(core::EngineHost &engine, qint64 itemId
     m_status->setWordWrap(true);
     m_list->setObjectName(u"dialog.releasePicker.list"_s);
     m_list->setAlternatingRowColors(true);
+    m_list->setAccessibleName(tr("Releases"));
     m_list->setAttribute(Qt::WA_MacShowFocusRect, false);
     m_list->hide();
 

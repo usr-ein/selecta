@@ -102,6 +102,7 @@ if(SELECTA_WITH_MEDIA)
     add_subdirectory(playback)
     selecta_add_test_suite(selecta_ui_tests GUI
         SOURCES
+            app/AccessibilityTest.cpp
             app/AppIconTest.cpp
             app/FormatTest.cpp
             app/MainWindowTest.cpp

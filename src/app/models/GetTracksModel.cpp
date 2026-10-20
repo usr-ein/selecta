@@ -246,6 +246,23 @@ QString GetTracksModel::subtitle(const GetLine &line)
     return {};
 }
 
+QVariant GetTracksModel::accessibleText(const GetLine &line, int column)
+{
+    switch (column) {
+    case TickColumn:
+        return line.best ? QVariant(tr("Get")) : QVariant(); // read with the tick's state: "Get, ticked"
+    case TrackColumn: {
+        // Both lines the delegate draws; the ✓ before a release in words.
+        const QString track = line.artist.isEmpty() ? line.title : QString(line.artist + u" - "_s + line.title);
+        return line.release && line.releaseState != ReleaseState::None
+                   ? tr("%1. Release: %2").arg(track, format::release(*line.release))
+                   : tr("%1. %2").arg(track, subtitle(line));
+    }
+    default:
+        return {}; // as shown
+    }
+}
+
 int GetTracksModel::rowCount(const QModelIndex &parent) const
 {
     return parent.isValid() ? 0 : static_cast<int>(m_lines.size());
@@ -268,13 +285,13 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
     if (role == StatusKindRole) {
         return static_cast<int>(statusKind(*line));
     }
+    if (role == Qt::AccessibleTextRole) {
+        return accessibleText(*line, index.column());
+    }
     switch (index.column()) {
     case TickColumn:
         if (role == Qt::CheckStateRole && line->best) {
             return line->ticked ? Qt::Checked : Qt::Unchecked;
-        }
-        if (role == Qt::AccessibleTextRole && line->best) {
-            return tr("Get"); // read with the tick's state: "Get, ticked"
         }
         break;
     case TrackColumn:
@@ -287,13 +304,6 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         }
         if (role == Qt::ToolTipRole) {
             return QString(line->raw + u'\n' + subtitle(*line));
-        }
-        if (role == Qt::AccessibleTextRole) {
-            // Both lines the delegate draws; the ✓ before a release in words.
-            const QString track = data(index, Qt::DisplayRole).toString();
-            return line->release && line->releaseState != ReleaseState::None
-                       ? tr("%1. Release: %2").arg(track, format::release(*line->release))
-                       : tr("%1. %2").arg(track, subtitle(*line));
         }
         break;
     case StatusColumn:
