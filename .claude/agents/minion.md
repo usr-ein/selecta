@@ -52,6 +52,11 @@ ctest --test-dir build/dev -R '<your tests>'             # while you work
 - **One full suite at a time** on this Mac: if the nightman asks you to wait your turn, wait.
 - **The app:** run it only isolated (`SELECTA_DEBUG_SOCKET=<your session name> tools/dev/run-headless.sh <your worktree>/local/e2e`),
   against your own local test network. Never the beta build, never the live network.
+- **UI changes:** if the pitch changes what's on screen, check every changed screen in the headless app:
+  - drive it with `tools/dev/app.sh` (`navigate`, `click`, `select`, `type`, `state`);
+  - take a screenshot of each one with `tools/dev/app.sh screenshot`, in light and dark where the look changes;
+  - commit them as `docs/screens/P-NNN-<what>.png`, with nothing personal or secret in them (the throwaway data folder only), and show them in the PR body through their commit URL.
+  No screenshot for a pitch that doesn't change the UI.
 - **Commits:** small and early, with explicit paths (never `git add -A`), the repo's message style, and the
   `Co-Authored-By` line from `CLAUDE.md`.
 

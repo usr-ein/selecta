@@ -32,6 +32,7 @@ Effort: the nightman always runs at `max`, bitches at `high`. A minion runs at `
    - a test for each requirement;
    - its own `build/dev`, compiling through the ccache that every worktree shares;
    - the targeted tests, then the full suite once, then `tools/lint.sh` on the directories it touched.
+   - if it changes the UI: the changed screens driven in the headless app (`tools/dev/run-headless.sh`, `tools/dev/app.sh`), and screenshots committed as `docs/screens/P-NNN-<what>.png` and shown in the PR. No screenshot when the UI doesn't change.
 5. **Pull request.** The minion merges `origin/main` once, then pushes the branch and opens the PR:
    `gh pr create --base main --label review:needed`. The body says what changed, the test and lint results, the
    decisions taken and what's left out. Then it tells the nightman.
@@ -45,7 +46,7 @@ Effort: the nightman always runs at `max`, bitches at `high`. A minion runs at `
    - After three rounds without approval, the nightman decides at night: merge with a follow-up pitch, or park.
    - By day, it asks the maintainer.
 8. **Merged.** The nightman merges once the PR is labelled `review:approved` and CI's gating jobs are green
-   (`tools/crew/merge-pr.sh <PR>`): a merge commit, then local `main` fast-forwarded, then pushed to every remote. It
+   (`tools/crew/merge-pr.sh <PR>`): a squash merge (the only kind the repo allows; GitHub deletes the head branch), then local `main` fast-forwarded, then pushed to every remote. It
    then tells every running minion "main moved". Each merges `origin/main` into its branch when it next builds.
 9. **Cleaned up.** The merged minion runs `tools/crew/cleanup-minion.sh`. It removes its worktree with its build
    folder, and its local branch. The minion tells the nightman, and the nightman stops its session.
