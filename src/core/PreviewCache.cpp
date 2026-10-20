@@ -105,8 +105,7 @@ QString PreviewCache::reserve(const QString &name)
     }
     const QString safe = library::naming::safeComponent(name.isEmpty() ? u"preview"_s : name, kMaxNameBytes);
     for (int attempt = 0; attempt < kReserveAttempts; ++attempt) {
-        QString path =
-            m_directory + u'/' + QString::number(QRandomGenerator::global()->generate64(), 36) + u'-' + safe;
+        QString path = m_directory + u'/' + QString::number(QRandomGenerator::global()->generate64(), 36) + u'-' + safe;
         QFile file(path);
         if (file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
             file.close();
