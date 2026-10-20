@@ -66,6 +66,8 @@ struct EngineOptions
     std::function<std::unique_ptr<meta::TokenStore>()> tokenStore;
     // Opens a URL in the browser, for the Spotify sign-in; called on the engine thread.
     std::function<bool(const QUrl &)> openUrl;
+    // The user accepted the notice on Spotify's terms (PRD META-4, D30); until then Spotify isn't used.
+    bool spotifyAllowed = false;
     MetaEndpoints metaEndpoints; // empty: the real services
     // Downloads: partial and complete originals (incoming), and converted files before they are published (staging).
     // Empty: downloads can't be stored (tests that don't download).

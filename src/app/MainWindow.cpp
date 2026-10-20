@@ -645,6 +645,15 @@ void MainWindow::createSettingsView()
         m_services.engine.setLibraryConfig(config);
         m_inboxView->setLibraryConfig(config);
     });
+    // META-4, D30: the notice on Spotify's terms is answered once; the engine uses Spotify only after a yes.
+    m_settingsView->setSpotifyTermsAccepted(m_services.settings.spotifyTermsAccepted());
+    connect(m_settingsView, &SettingsView::spotifyTermsAccepted, this, [this] {
+        m_services.settings.setSpotifyTermsAccepted(true);
+        if (!m_services.settings.sync()) {
+            qCWarning(lcUi) << "couldn't write settings to" << m_services.settings.fileName();
+        }
+        m_services.engine.allowSpotify();
+    });
     connect(m_settingsView, &SettingsView::spotifyCredentialsSubmitted, &m_services.engine,
             &core::EngineHost::setSpotifyCredentials);
     connect(m_settingsView, &SettingsView::spotifySignInRequested, &m_services.engine,

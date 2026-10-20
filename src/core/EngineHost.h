@@ -55,6 +55,8 @@ public:
     void setSpotifyCredentials(const QString &clientId, const QByteArray &secret, bool keepSavedSecret);
     void signInToSpotify();
     void signOutOfSpotify();
+    // The user accepted the notice on Spotify's terms (D30): Spotify may be used from now on.
+    void allowSpotify();
     SpotifyStatus spotifyStatus() const { return m_spotifyStatus; }
 
     // --- Get tracks ---
