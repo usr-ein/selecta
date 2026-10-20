@@ -9,6 +9,14 @@ set -euo pipefail
 pr="${1:?usage: merge-pr.sh <PR number>}"
 root="$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)"
 root="${root%/.git}"
+# Only the repo's owner may merge. gh may have another of the maintainer's accounts active, so this script uses the
+# owner's login for its own commands and leaves the active account alone.
+owner=$(gh repo view --json owner --jq .owner.login)
+if ! GH_TOKEN=$(gh auth token --user "$owner" 2>/dev/null); then
+    echo "gh isn't logged in as $owner, the repo's owner: gh auth login"
+    exit 1
+fi
+export GH_TOKEN
 
 labels=$(gh pr view "$pr" --json labels --jq '[.labels[].name] | join(",")')
 state=$(gh pr view "$pr" --json state --jq .state)
