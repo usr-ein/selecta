@@ -27,3 +27,29 @@ TEST(ActivityModel, OnlyRefusalsAndFailuresAreWarnings)
     }
     EXPECT_FALSE(ActivityModel::isWarning(QString())); // nothing to say
 }
+
+TEST(ActivityModel, TheDetailsColumnSaysWhoStartedItAndWhy)
+{
+    ActivityModel model;
+    EXPECT_EQ(model.columnCount(), 5);
+    EXPECT_EQ(model.headerData(ActivityModel::Details, Qt::Horizontal).toString(), u"Details"_s);
+    model.reset({selecta::core::ActivityEntry{.id = 2,
+                                              .atMs = 0,
+                                              .operation = u"shares"_s,
+                                              .subject = u"x"_s,
+                                              .outcome = u"browsed"_s,
+                                              .explanation = u"x looked at what you share"_s},
+                 selecta::core::ActivityEntry{.id = 1,
+                                              .atMs = 0,
+                                              .operation = u"search"_s,
+                                              .subject = u"neon rain"_s,
+                                              .outcome = u"allowed"_s,
+                                              .explanation = QString()}});
+    const QString sentence = u"x is browsing your shares: they asked for the list of what you share."_s;
+    EXPECT_EQ(model.data(model.index(0, ActivityModel::Details)).toString(), sentence);
+    EXPECT_EQ(model.data(model.index(0, ActivityModel::Operation), Qt::ToolTipRole).toString(), sentence);
+    EXPECT_EQ(model.data(model.index(0, ActivityModel::Details), Qt::AccessibleDescriptionRole).toString(), sentence);
+    // Nothing to say: no tooltip at all.
+    EXPECT_FALSE(model.data(model.index(1, ActivityModel::Details), Qt::ToolTipRole).isValid());
+    EXPECT_TRUE(model.data(model.index(1, ActivityModel::Details)).toString().isEmpty());
+}

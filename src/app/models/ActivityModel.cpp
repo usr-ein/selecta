@@ -110,12 +110,17 @@ QVariant ActivityModel::data(const QModelIndex &index, int role) const
             return entry.subject;
         case Outcome:
             return humanise(entry.outcome);
+        case Details:
+            return core::ActivityLog::describe(entry);
         default:
             return {};
         }
     case Qt::ToolTipRole:
-    case Qt::AccessibleDescriptionRole:
-        return entry.explanation.isEmpty() ? QVariant() : QVariant(entry.explanation);
+    case Qt::AccessibleDescriptionRole: {
+        // The whole sentence, for a Details cell too narrow to show it.
+        const QString sentence = core::ActivityLog::describe(entry);
+        return sentence.isEmpty() ? QVariant() : QVariant(sentence);
+    }
     case Qt::ForegroundRole:
         if (index.column() == Outcome && isWarning(entry.outcome)) {
             return warningColour();
@@ -142,6 +147,8 @@ QVariant ActivityModel::headerData(int section, Qt::Orientation orientation, int
         return tr("About");
     case Outcome:
         return tr("Outcome");
+    case Details:
+        return tr("Details");
     default:
         return {};
     }
