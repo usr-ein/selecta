@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "support/CrashReport.h"
+
 #include <QCoreApplication>
 #include <QStandardPaths>
-
-#include "support/CrashReport.h"
 
 #include <gtest/gtest.h>
 
