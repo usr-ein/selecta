@@ -181,12 +181,12 @@ private:
     void finishPreview(PreviewSlot &slot, Preview::State state, const QString &message);
     // Lets go of a preview's file: unpinned, and deleted unless the cache keeps it (it never completed, or was
     // discarded) and nothing else holds it.
-    void releasePreviewFile(PreviewSlot &slot);
+    void releasePreviewFile(PreviewSlot &slot) const;
     // Forgets the finished previews: complete files stay in the cache, the others go.
     void forgetFinishedPreviews();
     // The complete copy of this file in the preview cache, if any. A copy of another size (the peer's file changed
     // since) is deleted.
-    std::optional<QString> cachedPreview(const DownloadSpec &spec);
+    std::optional<QString> cachedPreview(const DownloadSpec &spec) const;
     std::optional<Download> reusePreview(const DownloadSpec &spec);
     // A preview still arriving becomes the download when it completes, instead of a second transfer (PREV-5).
     std::optional<qint64> keepPreview(const DownloadSpec &spec);

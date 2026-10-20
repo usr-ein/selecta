@@ -1072,7 +1072,7 @@ void TransferService::finishPreview(PreviewSlot &slot, Preview::State state, con
     Q_EMIT previewChanged(slot.info);
 }
 
-void TransferService::releasePreviewFile(PreviewSlot &slot)
+void TransferService::releasePreviewFile(PreviewSlot &slot) const
 {
     if (!slot.path.isEmpty() && m_options.previewCache) {
         m_options.previewCache->abandon(slot.path); // unpinned; deleted unless the cache keeps it
@@ -1092,7 +1092,7 @@ void TransferService::forgetFinishedPreviews()
     }
 }
 
-std::optional<QString> TransferService::cachedPreview(const DownloadSpec &spec)
+std::optional<QString> TransferService::cachedPreview(const DownloadSpec &spec) const
 {
     PreviewCache *cache = m_options.previewCache;
     if (cache == nullptr) {

@@ -811,7 +811,7 @@ TEST_F(TransferServiceTest, WithoutACachePreviewsHaveNowhereToGo)
     TransferService::Options options;
     options.incomingDir = dir.filePath(u"incoming"_s);
     service = std::make_unique<TransferService>(db, governor, *network, log, options, [this] { return now; });
-    auto ghost = peer(u"vinyl_ghost"_s);
+    const auto ghost = peer(u"vinyl_ghost"_s);
     QString why;
     EXPECT_FALSE(service->startPreview(spec(*ghost, "nowhere.flac", 1000), &why).has_value());
     EXPECT_TRUE(why.contains(u"nowhere"_s)) << why.toStdString();

@@ -316,7 +316,6 @@ TEST_F(YouTubePreviewsTest, WithoutACacheThereIsNowhereToGo)
 {
     selecta::meta::YtDlpRunner runner(config, pacer, clock);
     YouTubePreviews previews(runner, nullptr);
-    QSignalSpy changes(&previews, &YouTubePreviews::changed);
     QString unavailable;
     previews.start(u"line:7"_s, glassHarbour(), [&unavailable](const QString &why) { unavailable = why; });
     ASSERT_TRUE(eventually([&] { return !unavailable.isEmpty(); }));

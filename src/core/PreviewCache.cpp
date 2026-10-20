@@ -105,7 +105,7 @@ QString PreviewCache::reserve(const QString &name)
     }
     const QString safe = library::naming::safeComponent(name.isEmpty() ? u"preview"_s : name, kMaxNameBytes);
     for (int attempt = 0; attempt < kReserveAttempts; ++attempt) {
-        const QString path =
+        QString path =
             m_directory + u'/' + QString::number(QRandomGenerator::global()->generate64(), 36) + u'-' + safe;
         QFile file(path);
         if (file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
@@ -196,7 +196,7 @@ std::optional<QString> PreviewCache::recall(const QString &key)
         return std::nullopt;
     }
     found->usedAt = m_options.now();
-    const QString value = found->value;
+    QString value = found->value;
     save();
     return value;
 }
@@ -273,7 +273,7 @@ void PreviewCache::load()
     }
     QSet<QString> files;
     const QJsonArray entries = root.value("files"_L1).toArray();
-    for (const QJsonValue &value : entries) {
+    for (const auto &value : entries) {
         if (m_entries.size() >= kMaxEntries) {
             break;
         }
@@ -295,7 +295,7 @@ void PreviewCache::load()
         m_entries.insert(key, Entry{name, bytes, usedAt, note});
     }
     const QJsonArray notes = root.value("notes"_L1).toArray();
-    for (const QJsonValue &value : notes) {
+    for (const auto &value : notes) {
         if (m_notes.size() >= kMaxNotes) {
             break;
         }
