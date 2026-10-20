@@ -14,12 +14,14 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLocale>
 #include <QLoggingCategory>
 #include <QTimer>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <limits>
 
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
@@ -91,6 +93,17 @@ QString minutesText(qint64 ms)
 {
     const qint64 minutes = std::max<qint64>(1, (ms + 59'999) / 60'000);
     return minutes == 1 ? TransferService::tr("1 minute") : TransferService::tr("%1 minutes").arg(minutes);
+}
+
+// "21:03": a time of day in the user's format, so a message stays true however long it is shown.
+QString clockTime(qint64 unixMs)
+{
+    return QLocale().toString(QDateTime::fromMSecsSinceEpoch(unixMs).time(), QLocale::ShortFormat);
+}
+
+qint64 msOf(std::chrono::milliseconds duration)
+{
+    return duration.count();
 }
 
 } // namespace
@@ -195,6 +208,9 @@ TransferService::TransferService(storage::Database &db, governor::Governor &gove
     }
     m_retryTimer->setSingleShot(true);
     connect(m_retryTimer, &QTimer::timeout, this, &TransferService::startWaiting);
+    m_queueTimer = new QTimer(this);
+    m_queueTimer->setInterval(static_cast<int>(std::clamp<qint64>(m_options.queueCheckMs, 10, 600'000)));
+    connect(m_queueTimer, &QTimer::timeout, this, &TransferService::watchQueues);
     slsk::TransferManager &transfers = m_network.transfers();
     transfers.setDownloadStorage(m_storage.get());
     connect(&transfers, &slsk::TransferManager::downloadChanged, this, &TransferService::transferChanged);
@@ -229,6 +245,7 @@ void TransferService::shutdown()
     }
     m_shutDown = true;
     m_retryTimer->stop();
+    m_queueTimer->stop();
     disconnect(&m_network.transfers(), nullptr, this, nullptr);
     disconnect(&m_network, nullptr, this, nullptr);
     disconnect(&m_governor, nullptr, this, nullptr);
@@ -505,8 +522,14 @@ void TransferService::tryStart(Download &download)
     download.state = State::Queued;
     download.retryAtMs.reset();
     m_retryAt.remove(download.id);
-    download.message = tr("Queued at %1").arg(download.peer);
+    // In the peer's queue from now (the manager's own first report came before it was ours to take).
+    const qint64 now = m_now();
+    m_queues.insert(download.id, QueueWatch{.queuedAtMs = now, .history = QueueHistory{.progressAtMs = now}});
+    download.placeInQueue.reset();
+    download.queue = {};
+    download.message = queuedMessage(download);
     save(download);
+    scheduleQueueWatch();
 }
 
 void TransferService::transferChanged(const slsk::DownloadInfo &info)
@@ -521,26 +544,47 @@ void TransferService::transferChanged(const slsk::DownloadInfo &info)
         return;
     }
     Download &download = *found;
+    // Its turn came: it leaves the peer's queue, which moves on for our other files there.
+    const auto started = [this, &download, id] {
+        if (m_active.contains(id)) {
+            return;
+        }
+        m_active.insert(id);
+        m_governor.downloadStarted(download.peer);
+        m_queues.remove(id);
+        download.placeInQueue.reset();
+        download.queue = {};
+        queueMoved(download.peer, m_now());
+    };
     switch (info.state) {
-    case slsk::DownloadState::Queued:
-        download.message = info.placeInQueue ? tr("Queued at %1, place %2").arg(download.peer).arg(*info.placeInQueue)
-                                             : tr("Queued at %1").arg(download.peer);
+    case slsk::DownloadState::Queued: {
+        if (m_active.contains(id)) {
+            break; // a stale report: its turn came already
+        }
+        const qint64 now = m_now();
+        auto watch = m_queues.find(id);
+        if (watch == m_queues.end()) {
+            watch = m_queues.insert(id, QueueWatch{.queuedAtMs = now, .history = QueueHistory{.progressAtMs = now}});
+        }
+        if (info.placeInQueue) {
+            // The peer's answer, bounded: a place is a count of users.
+            const int place = static_cast<int>(std::min<quint32>(*info.placeInQueue, std::numeric_limits<int>::max()));
+            watch->history.sighted(now, place);
+            download.placeInQueue = place;
+        }
+        download.message = queuedMessage(download);
         save(download);
+        scheduleQueueWatch(); // asks for its place, and judges it, on the next turn
         break;
+    }
     case slsk::DownloadState::Requested:
     case slsk::DownloadState::Connecting:
-        if (!m_active.contains(id)) {
-            m_active.insert(id);
-            m_governor.downloadStarted(download.peer);
-        }
+        started();
         download.message = tr("Connecting to %1").arg(download.peer);
         save(download);
         break;
     case slsk::DownloadState::Transferring:
-        if (!m_active.contains(id)) {
-            m_active.insert(id);
-            m_governor.downloadStarted(download.peer);
-        }
+        started();
         if (download.state != State::Transferring) {
             download.state = State::Transferring;
             download.message = tr("Downloading from %1").arg(download.peer);
@@ -666,9 +710,167 @@ void TransferService::release(Download &download, qint64 bytes)
 
 void TransferService::forget(qint64 id)
 {
+    if (const auto found = m_live.find(id); found != m_live.end()) {
+        found->placeInQueue.reset();
+        found->queue = {};
+        if (m_active.contains(id)) {
+            queueMoved(found->peer, m_now()); // one of ours from this peer ended: the next one's turn may come
+        }
+    }
+    m_queues.remove(id);
     const slsk::TransferId transfer = m_transferOf.take(id);
     m_downloadOf.remove(transfer);
     m_active.remove(id);
+}
+
+void TransferService::scheduleQueueWatch()
+{
+    if (m_shutDown || m_queueWatchPending) {
+        return;
+    }
+    m_queueWatchPending = true;
+    QMetaObject::invokeMethod(this, &TransferService::watchQueues, Qt::QueuedConnection);
+}
+
+void TransferService::watchQueues()
+{
+    m_queueWatchPending = false;
+    if (m_shutDown) {
+        return;
+    }
+    const qint64 now = m_now();
+    // Our files at each peer: those waiting in its queue, first queued first, and whether one of ours is arriving
+    // from it (a download or a preview), which they wait behind: peers send one file per user at a time.
+    struct PeerQueue
+    {
+        QList<qint64> waiting;
+        bool busy = false;
+    };
+    QHash<QString, PeerQueue> peers;
+    for (auto it = m_queues.cbegin(); it != m_queues.cend(); ++it) {
+        if (const auto found = m_live.constFind(it.key()); found != m_live.cend()) {
+            peers[found->peer].waiting.append(it.key());
+        }
+    }
+    for (const qint64 id : std::as_const(m_active)) {
+        if (const auto found = m_live.constFind(id); found != m_live.cend() && peers.contains(found->peer)) {
+            peers[found->peer].busy = true;
+        }
+    }
+    for (const std::shared_ptr<PreviewSlot> &slot : std::as_const(m_previews)) {
+        if (slot->active && peers.contains(slot->info.peer)) {
+            peers[slot->info.peer].busy = true;
+        }
+    }
+    for (auto it = peers.begin(); it != peers.end(); ++it) {
+        PeerQueue &queue = it.value();
+        std::ranges::sort(queue.waiting, [this](qint64 a, qint64 b) {
+            const qint64 atA = m_queues.value(a).queuedAtMs;
+            const qint64 atB = m_queues.value(b).queuedAtMs;
+            return atA < atB || (atA == atB && a < b);
+        });
+        if (queue.busy) {
+            // Their turn can't come before ours ends: nothing to judge, and no clock running, until then.
+            for (const qint64 id : std::as_const(queue.waiting)) {
+                m_queues[id].history.progressAtMs = now;
+                judged(id, {});
+            }
+            continue;
+        }
+        // The head of our queue at this peer is asked about (governor limits); the files behind it share its fate.
+        const qint64 head = queue.waiting.constFirst();
+        askPlace(it.key(), head, now);
+        const QueueVerdict headVerdict = judgeQueue(m_queues.value(head).history, now);
+        for (const qint64 id : std::as_const(queue.waiting)) {
+            QueueVerdict verdict = headVerdict;
+            if (id != head && verdict.kind == QueueVerdict::Kind::Moving) {
+                verdict = {}; // the head moves; when this one's turn comes isn't known
+            } else if (id != head && verdict.kind == QueueVerdict::Kind::NoProgress) {
+                verdict.sinceMs = std::max(verdict.sinceMs, m_queues.value(id).queuedAtMs);
+            }
+            judged(id, verdict);
+        }
+    }
+    for (auto it = m_nextPlaceAskMs.begin(); it != m_nextPlaceAskMs.end();) {
+        it = peers.contains(it.key()) || it.value() > now ? std::next(it) : m_nextPlaceAskMs.erase(it);
+    }
+    if (m_queues.isEmpty()) {
+        m_queueTimer->stop();
+    } else if (!m_queueTimer->isActive()) {
+        m_queueTimer->start();
+    }
+}
+
+void TransferService::askPlace(const QString &peer, qint64 downloadId, qint64 nowMs)
+{
+    const auto transfer = m_transferOf.constFind(downloadId);
+    if (nowMs < m_nextPlaceAskMs.value(peer, 0) || transfer == m_transferOf.cend() || !m_network.isOnline()) {
+        return;
+    }
+    governor::Request request;
+    request.peer = peer;
+    governor::Decision decision = m_governor.request(governor::Operation::PlaceInQueue, request);
+    if (!decision.permit) {
+        const qint64 wait = decision.retryAfter.count() > 0
+                                ? msOf(std::chrono::duration_cast<std::chrono::milliseconds>(decision.retryAfter))
+                                : m_options.pacedRetryMs;
+        m_nextPlaceAskMs.insert(peer, nowMs + std::max<qint64>(wait, 1000));
+        return;
+    }
+    m_nextPlaceAskMs.insert(peer, nowMs + msOf(governor::limits::kPlaceInQueuePoll));
+    if (!m_network.transfers().requestPlaceInQueue(transfer.value(), std::move(*decision.permit))) {
+        qCDebug(lcTransfers) << "couldn't ask" << peer << "for a place in its queue";
+    }
+}
+
+void TransferService::queueMoved(const QString &peer, qint64 nowMs)
+{
+    for (auto it = m_queues.begin(); it != m_queues.end(); ++it) {
+        if (const auto found = m_live.constFind(it.key()); found != m_live.cend() && found->peer == peer) {
+            it->history.progressAtMs = std::max(it->history.progressAtMs, nowMs);
+        }
+    }
+}
+
+void TransferService::judged(qint64 id, const QueueVerdict &verdict)
+{
+    const auto found = m_live.find(id);
+    if (found == m_live.end() || found->queue == verdict) {
+        return;
+    }
+    found->queue = verdict;
+    found->message = queuedMessage(*found);
+    save(*found);
+}
+
+QString TransferService::queuedMessage(const Download &download) const
+{
+    const QString &peer = download.peer;
+    const QueueVerdict &verdict = download.queue;
+    const std::optional<int> &place = download.placeInQueue;
+    switch (verdict.kind) {
+    case QueueVerdict::Kind::Waiting:
+        break;
+    case QueueVerdict::Kind::Moving:
+        return tr("Queued at %1, place %2: starts around %3")
+            .arg(peer)
+            .arg(place.value_or(0))
+            .arg(clockTime(verdict.startsAtMs));
+    case QueueVerdict::Kind::NoProgress:
+        if (verdict.startsAtMs > 0) {
+            return tr("%1's queue stopped moving: it was due to start at %2").arg(peer, clockTime(verdict.startsAtMs));
+        }
+        return place ? tr("No progress in %1's queue since %2 (place %3)")
+                           .arg(peer, clockTime(verdict.sinceMs))
+                           .arg(*place)
+                     : tr("No progress in %1's queue since %2").arg(peer, clockTime(verdict.sinceMs));
+    case QueueVerdict::Kind::TooSlow:
+        return tr("%1's queue moves slowly: place %2, starts around %3")
+            .arg(peer)
+            .arg(place.value_or(0))
+            .arg(clockTime(verdict.startsAtMs));
+    }
+    return place ? tr("Queued at %1, place %2").arg(peer).arg(*place) : tr("Queued at %1").arg(peer);
 }
 
 void TransferService::save(Download &download)

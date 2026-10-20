@@ -72,6 +72,11 @@ struct Preview
 // for good and says why. A complete file is announced with completed(): the arrival pipeline converts and publishes
 // it, then reports back with arrived() or arrivalFailed().
 //
+// Downloads waiting in a peer's queue are watched (P-004): Selecta asks each peer for the place of the first file it
+// has queued there, through the governor (one request per peer per kPlaceInQueuePoll; a peer may never answer), and
+// judges every queued download with the stuck-queue rule (Downloads.h) as time passes: Download::queue, and its
+// message, say whether it is stuck. Files behind one of our own transfers from the same peer just wait their turn.
+//
 // Files: partial and complete originals live in Options::incomingDir, one folder per download, until the arrival
 // pipeline is done with them. Previews are written into the PreviewCache, which keeps the complete ones.
 //
@@ -93,6 +98,9 @@ public:
         QList<qint64> retryDelaysMs;
         qint64 pacedRetryMs = 60'000; // a download the governor turned away without saying when asks again after this
         PreviewCache *previewCache = nullptr; // where previews go and stay (PREV-8); none: previews can't start
+        // How often queued downloads are judged again, and their places asked for when the governor allows. Tests
+        // shorten it.
+        qint64 queueCheckMs = 15'000;
     };
 
     // A preview that started: its id and what a player reads while the bytes arrive.
@@ -171,6 +179,16 @@ private:
     // The transfer behind a download ended or is being dropped: tells the governor, then forgets the mapping.
     void release(Download &download, qint64 bytes);
     void forget(qint64 id);
+    // --- the queues at peers (the stuck-queue rule) ---
+    // Asks for a watch on the next turn: not inside the transfer manager's signal.
+    void scheduleQueueWatch();
+    // Asks peers for the place of the first file queued there, when due, and judges every queued download.
+    void watchQueues();
+    void askPlace(const QString &peer, qint64 downloadId, qint64 nowMs);
+    // One of our downloads from `peer` started or ended: its queue moved on for the others queued there.
+    void queueMoved(const QString &peer, qint64 nowMs);
+    void judged(qint64 id, const QueueVerdict &verdict);
+    QString queuedMessage(const Download &download) const;
     void save(Download &download);
     bool isDue(qint64 id) const;
     void scheduleRetries();
@@ -221,6 +239,15 @@ private:
     QHash<slsk::TransferId, QIODevice *> m_previewWriters; // open preview files, owned
     QHash<qint64, QDeadlineTimer> m_retryAt;               // when a waiting download may ask again (monotonic)
     QTimer *m_retryTimer = nullptr;
+    struct QueueWatch
+    {
+        qint64 queuedAtMs = 0; // when the peer queued it: the first in its queue goes first
+        QueueHistory history;
+    };
+    QHash<qint64, QueueWatch> m_queues;      // downloads waiting in a peer's queue (Queued, not yet offered)
+    QHash<QString, qint64> m_nextPlaceAskMs; // by peer: when its queue may be asked about again (Unix ms)
+    QTimer *m_queueTimer = nullptr;
+    bool m_queueWatchPending = false;
     QHash<qint64, std::shared_ptr<PreviewSlot>> m_previews; // by preview id, until finished and replaced
     QHash<slsk::TransferId, qint64> m_previewOf;            // a preview's transfer → its id
     QSet<qint64> m_awaitingPreview;                         // downloads that a kept preview will hand its file to
