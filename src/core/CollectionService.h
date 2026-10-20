@@ -39,7 +39,7 @@ struct CollectionStatus
     int done = 0;  // files read so far in this scan
     int total = 0; // files this scan reads (new or changed ones)
     int tracks = 0;
-    int albums = 0; // the albums folder's subfolders that hold audio (collection::albumsOf)
+    int albums = 0;                     // the albums folder's subfolders that hold audio (collection::albumsOf)
     qint64 bytes = 0;                   // the files' total size
     QList<QPair<QString, int>> formats; // "MP3 320", "FLAC"… with how many tracks, the most first (LIB-5)
     int unreadable = 0;

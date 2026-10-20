@@ -207,8 +207,8 @@ QWidget *SettingsView::createLibraryBox(QWidget *parent)
         return field;
     };
     m_tracksFolder = pickerRow(false, tr("Tracks folder"), tr("Choose the tracks folder"),
-                               tr("Loose tracks: the files in this folder. Its subfolders are left out. Filed singles go "
-                                  "here."));
+                               tr("Loose tracks: the files in this folder. Its subfolders are left out. "
+                                  "Filed singles go here."));
     m_albumsFolder = pickerRow(true, tr("Albums folder"), tr("Choose the albums folder"),
                                tr("One album per subfolder, whatever the tags say. Files lying in the folder itself "
                                   "are left out. Filed albums go here, in a folder each."));
@@ -818,8 +818,8 @@ void SettingsView::setSpotifyStatus(const core::SpotifyStatus &status)
 
 void SettingsView::showLibrary()
 {
-    for (const auto &[field, folder] : {std::pair{m_tracksFolder, m_library.tracksRoot},
-                                        std::pair{m_albumsFolder, m_library.albumsRoot}}) {
+    for (const auto &[field, folder] :
+         {std::pair{m_tracksFolder, m_library.tracksRoot}, std::pair{m_albumsFolder, m_library.albumsRoot}}) {
         field->setText(QDir::toNativeSeparators(folder));
         field->setToolTip(QDir::toNativeSeparators(folder));
         field->setCursorPosition(0);
@@ -887,7 +887,7 @@ QString SettingsView::applyLibraryConfig(const core::LibraryConfig &config)
         return problem;
     }
     m_libraryError->hide();
-    m_library = changed;
+    m_library = std::move(changed);
     showLibrary();
     Q_EMIT libraryConfigChanged(m_library);
     return {};
@@ -898,9 +898,12 @@ void SettingsView::chooseFolder(bool albums)
     const QString current = albums ? m_library.albumsRoot : m_library.tracksRoot;
     const QString other = albums ? m_library.tracksRoot : m_library.albumsRoot;
     // Start where the folder is, else next to the other one (they often sit side by side), else at home.
-    const QString start = !current.isEmpty() ? current
-                          : !other.isEmpty() ? QFileInfo(other).absolutePath()
-                                             : QDir::homePath();
+    QString start = QDir::homePath();
+    if (!current.isEmpty()) {
+        start = current;
+    } else if (!other.isEmpty()) {
+        start = QFileInfo(other).absolutePath();
+    }
     const QString folder = QFileDialog::getExistingDirectory(
         this, albums ? tr("Choose the albums folder") : tr("Choose the tracks folder"), start);
     if (folder.isEmpty()) {
@@ -923,11 +926,11 @@ void SettingsView::editsFinished()
     config.templates.albumTrack = templ(m_albumTrackTemplate, m_library.templates.albumTrack);
     config.cleaner.enabled = m_clean->isChecked();
     config.cleaner.separator = separatorOf(m_separator);
-    const bool changed =
-        config.templates.single != m_library.templates.single ||
-        config.templates.albumFolder != m_library.templates.albumFolder ||
-        config.templates.albumTrack != m_library.templates.albumTrack ||
-        config.cleaner.enabled != m_library.cleaner.enabled || config.cleaner.separator != m_library.cleaner.separator;
+    const bool changed = config.templates.single != m_library.templates.single ||
+                         config.templates.albumFolder != m_library.templates.albumFolder ||
+                         config.templates.albumTrack != m_library.templates.albumTrack ||
+                         config.cleaner.enabled != m_library.cleaner.enabled ||
+                         config.cleaner.separator != m_library.cleaner.separator;
     if (changed) {
         applyLibraryConfig(config);
     }

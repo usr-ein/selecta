@@ -89,8 +89,8 @@ TEST_F(LibrarySettingsTest, TheSingleFolderOfEarlierBuildsIsNotGuessed)
         ASSERT_TRUE(settings.sync());
     }
     const QSettings after(iniPath(), QSettings::IniFormat);
-    for (const QString &key : {u"library/inbox"_s, u"library/collections"_s, u"library/singlesFolder"_s,
-                               u"library/albumsFolder"_s}) {
+    for (const QString &key :
+         {u"library/inbox"_s, u"library/collections"_s, u"library/singlesFolder"_s, u"library/albumsFolder"_s}) {
         EXPECT_FALSE(after.contains(key)) << key.toStdString();
     }
     EXPECT_EQ(after.value(u"filing/single"_s).toString(), u"{title} - {artist}"_s);
@@ -166,7 +166,7 @@ TEST_F(LibrarySettingsTest, SettingsAsksForBothFoldersUntilTheyAreChosen)
     EXPECT_TRUE(shown(*view, u"settings.libraryPrompt"_s));
     EXPECT_EQ(text(*view, u"settings.libraryPrompt"_s), u"Choose your tracks folder and your albums folder."_s);
 
-    QSignalSpy changed(view.get(), &SettingsView::libraryConfigChanged);
+    const QSignalSpy changed(view.get(), &SettingsView::libraryConfigChanged);
     EXPECT_EQ(view->applyLibraryConfig(chosen(u"/Music/Tracks"_s, {})), QString());
     EXPECT_EQ(text(*view, u"settings.tracksFolder"_s), u"/Music/Tracks"_s);
     EXPECT_EQ(text(*view, u"settings.libraryPrompt"_s), u"Choose your albums folder: filed albums go there."_s);
@@ -184,7 +184,7 @@ TEST_F(LibrarySettingsTest, SettingsAsksForBothFoldersUntilTheyAreChosen)
 TEST_F(LibrarySettingsTest, TheFoldersMustStayApart)
 {
     auto view = makeView(chosen(u"/Music/Tracks"_s, u"/Music/Albums"_s));
-    QSignalSpy changed(view.get(), &SettingsView::libraryConfigChanged);
+    const QSignalSpy changed(view.get(), &SettingsView::libraryConfigChanged);
     const QString same = view->applyLibraryConfig(chosen(u"/Music/Tracks"_s, u"/Music/Tracks"_s));
     EXPECT_EQ(same, u"The tracks folder and the albums folder must be two different folders."_s);
     EXPECT_TRUE(shown(*view, u"settings.libraryError"_s));
@@ -206,7 +206,7 @@ TEST_F(LibrarySettingsTest, TheInboxIsNeverChosenInSettings)
     auto view = makeView(chosen({}, {}));
     LibraryConfig config = chosen(u"/Music/Tracks"_s, u"/Music/Albums"_s);
     config.inboxRoot = u"/Music/My Inbox"_s;
-    QSignalSpy changed(view.get(), &SettingsView::libraryConfigChanged);
+    const QSignalSpy changed(view.get(), &SettingsView::libraryConfigChanged);
     EXPECT_EQ(view->applyLibraryConfig(config), QString());
     ASSERT_EQ(changed.size(), 1);
     EXPECT_EQ(changed.constFirst().at(0).value<LibraryConfig>().inboxRoot, inbox());

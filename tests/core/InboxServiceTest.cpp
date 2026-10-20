@@ -103,7 +103,8 @@ TEST_F(InboxServiceTest, FilesASingleIntoTheTracksFolder)
 
     ASSERT_EQ(finished.size(), 1);
     EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
-    const QString filed = config.tracksRoot + u"/Okuma_Drift_-_Neon_Rain.mp3"_s; // loose, as the tracks folder holds them
+    const QString filed =
+        config.tracksRoot + u"/Okuma_Drift_-_Neon_Rain.mp3"_s; // loose, as the tracks folder holds them
     EXPECT_TRUE(QFileInfo::exists(filed));
     EXPECT_EQ(inbox.count(), 0);
     EXPECT_EQ(whereabouts(), HistoryEntry::Whereabouts::Filed);

@@ -193,7 +193,8 @@ void CollectionService::startScan(const QStringList &folders, bool full)
         for (const QString &folder : folders) {
             // Outside the collection, or where the roles leave everything out (a subfolder of the tracks folder):
             // nothing to rescan. A collection folder inside the changed one is rescanned with its own role.
-            for (const QString &target : m_folders.rescanFor(folder)) {
+            const QStringList targets = m_folders.rescanFor(folder);
+            for (const QString &target : targets) {
                 if (coveredBy(target, m_excluded) || scanned.contains(target)) {
                     continue; // Selecta's own folders are never part of the collection
                 }

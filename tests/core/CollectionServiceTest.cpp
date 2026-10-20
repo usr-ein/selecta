@@ -236,7 +236,8 @@ TEST_F(CollectionServiceTest, LooseTracksAreNeverCountedAsAlbums)
 
 TEST_F(CollectionServiceTest, TheRolesDecideWhatIsInTheCollection)
 {
-    ASSERT_TRUE(writeTrack(tracks + u"/Old/Kassia Moreau - Night Transit.mp3"_s, u"Kassia Moreau"_s, u"Night Transit"_s));
+    ASSERT_TRUE(
+        writeTrack(tracks + u"/Old/Kassia Moreau - Night Transit.mp3"_s, u"Kassia Moreau"_s, u"Night Transit"_s));
     ASSERT_TRUE(writeTrack(albums + u"/Marlo Vance - Tidal Memory.mp3"_s, u"Marlo Vance"_s, u"Tidal Memory"_s));
     service->setFolders(roles(), {});
     service->waitForIdle();
@@ -248,8 +249,8 @@ TEST_F(CollectionServiceTest, TheRolesDecideWhatIsInTheCollection)
 // After the update, an index made from one folder holding everything keeps only what the two folders' roles hold.
 TEST_F(CollectionServiceTest, AnIndexOfTheOldSingleFolderKeepsWhatTheRolesHold)
 {
-    ASSERT_TRUE(writeTrack(root + u"/Elsewhere/Kassia Moreau - Night Transit.mp3"_s, u"Kassia Moreau"_s,
-                           u"Night Transit"_s));
+    ASSERT_TRUE(
+        writeTrack(root + u"/Elsewhere/Kassia Moreau - Night Transit.mp3"_s, u"Kassia Moreau"_s, u"Night Transit"_s));
     ASSERT_TRUE(writeTrack(tracks + u"/Old/Marlo Vance - Tidal Memory.mp3"_s, u"Marlo Vance"_s, u"Tidal Memory"_s));
     ASSERT_TRUE(writeTrack(albums + u"/Bicep - Isles/01 Atlas.mp3"_s, u"Bicep"_s, u"Atlas"_s));
     // The old setting: ~/Music as a whole (a folder with both roles scans everything, as the single folder did).

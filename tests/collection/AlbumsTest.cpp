@@ -249,7 +249,8 @@ TEST(Albums, EverythingUnderAnAlbumFolderBelongsToIt)
     ASSERT_EQ(albums.size(), 2);
     EXPECT_EQ(albums.at(0).artist, u"Bicep"_s);
     EXPECT_EQ(albums.at(1).title, u"II"_s);
-    EXPECT_EQ(ids.value(u"/Music/albums/Bicep/Isles/01 Atlas.mp3"_s), ids.value(u"/Music/albums/Bicep/Bicep/01 Glue.mp3"_s));
+    EXPECT_EQ(ids.value(u"/Music/albums/Bicep/Isles/01 Atlas.mp3"_s),
+              ids.value(u"/Music/albums/Bicep/Bicep/01 Glue.mp3"_s));
     EXPECT_EQ(ids.size(), 4);
 }
 

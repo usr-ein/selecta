@@ -522,7 +522,7 @@ TEST_F(AlbumServiceTest, AnAlbumsTrackInTheCollectionIsNoSingle)
     file.quality.codec = selecta::match::Codec::Mp3;
     file.quality.bitrateKbps = 320;
     ASSERT_TRUE(selecta::core::CollectionStore(db).apply({file}, {}, {}));
-    auto peer = ghost();
+    const auto peer = ghost();
     const std::optional<AlbumReport> report = arriveAlbum(*peer);
     ASSERT_TRUE(report.has_value());
     EXPECT_TRUE(report->flagged.isEmpty());
