@@ -240,6 +240,7 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     actions->addWidget(m_edit);
     actions->addStretch(1);
     layout->addLayout(actions);
+    m_alsoOn->setTextFormat(Qt::PlainText); // album names from files' tags, and what the arrival noticed
     m_alsoOn->hide();
     layout->addWidget(m_alsoOn);
     layout->addWidget(m_release, 0, Qt::AlignLeft);

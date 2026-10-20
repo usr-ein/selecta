@@ -68,7 +68,9 @@ private:
     // Shows `files` in `choices`; the file picked before stays picked when it is still there, else the first is.
     void setChoices(Choices &choices, const QList<core::FileChoice> &files, const QString &name);
     std::optional<core::FileChoice> picked(const Choices &choices) const;
-    QString choiceText(const core::FileChoice &file) const;
+    // A file's quality, length and peer, on two lines; `place`, once the peer has said it, stands in for the queue
+    // length its search result gave.
+    QString choiceText(const core::FileChoice &file, std::optional<int> place = std::nullopt) const;
 
     QStackedWidget *m_pages;
     QLabel *m_title;
