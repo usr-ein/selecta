@@ -430,6 +430,7 @@ Answers given by the maintainer on 2026-10-19.
 | D35 | Testing against the real metadata services, 2026-10-20 | **Allowed for manual runs**: Spotify (the maintainer signs in for playlists), yt-dlp / YouTube Music, Deezer clips, MusicBrainz and the Cover Art Archive, in isolated runs (`--data-dir … --metadata-network`), paced by the governor. Soulseek stays on the local test network; automated tests still use fakes only. |
 | D36 | App logo, 2026-10-20 | **A round vinyl disc** in the spirit of the old djay icon, whose centre label is the **Jamaican flag** (gold saltire, green and black triangles), with a spindle hole. It is the app icon (a circle) and the window icon. |
 | D37 | How the work is run, 2026-10-20 | Up to five teammates work in parallel in their own worktrees; the head implementer merges their branches into `main` locally and pushes. No pull requests. The CI teammate may push its own branch so GitHub Actions can run. |
+| D38 | Automatic port mapping in v1, 2026-10-20 | **NET-3 is in v1** (the maintainer): UPnP IGD and NAT-PMP/PCP map the listening port, with a reachability check that uses no outside service. Isolated runs and tests never touch the real router. |
 
 ## Appendix B — Raw brief (verbatim)
 
