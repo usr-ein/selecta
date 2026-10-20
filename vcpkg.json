@@ -25,6 +25,7 @@
         "widgets"
       ]
     },
+    "libmaxminddb",
     "libnatpmp",
     "rapidfuzz-cpp",
     "zlib"

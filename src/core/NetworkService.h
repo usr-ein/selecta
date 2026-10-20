@@ -158,8 +158,9 @@ public:
 
 Q_SIGNALS:
     void statusChanged(const selecta::core::NetworkStatus &status);
+    // `address`: where the results came from (null when unknown), for the peer's country (P-002).
     void searchResponseReceived(quint32 token, const QString &username,
-                                const selecta::slsk::peer::FileSearchResponse &response);
+                                const selecta::slsk::peer::FileSearchResponse &response, const QHostAddress &address);
     // A search that reached us, from the server or the distributed network (ShareService answers it).
     void searchRequestReceived(const selecta::slsk::IncomingSearch &search);
     // The server's list of privileged users (they go first in the upload queue).
