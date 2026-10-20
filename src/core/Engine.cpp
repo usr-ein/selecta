@@ -137,6 +137,8 @@ bool Engine::start()
 
     m_getTracks = std::make_unique<GetTracksService>(*m_db, m_options.wallClock);
     m_getTracks->setSearch(m_search.get(), [this] { return m_governor->excludedPhrases(); });
+    m_getTracks->setPeerLoad(
+        [governor = m_governor.get()](const QString &peer) { return governor->peerToday(peer).files; });
     // Release lookups for a whole list go in the background lane: previews the user waits for overtake them.
     m_getTracks->setResolver([resolver = &m_meta->resolver()](const meta::ResolveQuery &query) {
         return resolver->resolve(query, meta::Priority::Background);

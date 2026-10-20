@@ -65,7 +65,8 @@ QString FileRanking::query(const GetLine &line, const QStringList &excludedPhras
     return plan.text;
 }
 
-RankedChoices FileRanking::rank(const GetLine &line, const SearchOutcome &outcome, const SearchFilter &filter)
+RankedChoices FileRanking::rank(const GetLine &line, const SearchOutcome &outcome, const SearchFilter &filter,
+                                const PeerLoad &peerLoad)
 {
     RankedChoices result;
     const match::ReleaseScorer scorer(referenceFor(line));
@@ -116,7 +117,8 @@ RankedChoices FileRanking::rank(const GetLine &line, const SearchOutcome &outcom
                                             .freeSlot = entry.hit->freeSlot,
                                             .queueLength = static_cast<int>(entry.hit->queueLength),
                                             .peer = entry.hit->peer,
-                                            .path = entry.path});
+                                            .path = entry.path,
+                                            .peerLoad = peerLoad ? peerLoad(entry.hit->peer) : 0});
             entries.append(&entry);
             fits.append(fit);
         }

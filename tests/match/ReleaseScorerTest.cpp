@@ -211,6 +211,13 @@ TEST(ReleaseScorer, AvailabilityOnlyBreaksTies) // Get tracks ranking
     };
     EXPECT_EQ(ReleaseScorer::rank(files), (QList<qsizetype>{4, 3, 2, 1, 0}));
     EXPECT_TRUE(ReleaseScorer::rank({}).isEmpty());
+
+    // All else equal, the peer taken from less today goes first (FAIR-5), before the name.
+    const QList<RankedFile> loaded{
+        {fits, 4, true, 3, u"alpha"_s, u"e.mp3"_s, 9},
+        {fits, 4, true, 3, u"zulu"_s, u"f.mp3"_s, 1},
+    };
+    EXPECT_EQ(ReleaseScorer::rank(loaded), (QList<qsizetype>{1, 0}));
 }
 
 TEST(ReleaseScorer, CopiesShareThePreparedReference)

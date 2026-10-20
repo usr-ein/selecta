@@ -54,6 +54,7 @@ struct RankedFile
     int queueLength = 0;   // the peer's queue length (shorter is better)
     QString peer;          // for a deterministic order
     QString path;
+    int peerLoad = 0; // downloads from this peer today: fewer first, all else being equal (FAIR-5)
 };
 
 // Scores remote files against one release (note §17.5 B), position-independently: zones F (filename body), B
