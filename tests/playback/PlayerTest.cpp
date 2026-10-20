@@ -401,8 +401,8 @@ TEST_F(PlayerRenderTest, RendersTheDecodedSignalWithAFadeIn)
     EXPECT_LT(std::abs(first[0]) + std::abs(first[1]), 0.05F); // starts from silence
     std::vector<float> steady = output->pull(4800);
     EXPECT_NEAR(rmsOf(steady), 0.5 / std::sqrt(2.0), 0.02); // the 0.5 sine at full volume
-    QTest::qWait(50);
-    EXPECT_EQ(player.state(), State::Playing);
+    // The decoder thread reports the state: it can come after the sound.
+    EXPECT_TRUE(waitFor([this] { return player.state() == State::Playing; }));
 
     player.setVolume(0.5); // gain 0.25: perceptual curve
     output->pull(480);     // the ramp
