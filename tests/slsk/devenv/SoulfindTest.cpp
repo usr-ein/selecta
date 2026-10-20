@@ -4,19 +4,15 @@
 // (devenv/fetch-soulfind.sh). Each test starts its own Soulfind on a free port with a throwaway database, and stops it
 // afterwards. The clients connect to 127.0.0.1 and listen there only: Soulfind hands out this machine's LAN address,
 // which PeerNetwork reaches over loopback.
+#include "devenv/Soulfind.h"
+
 #include "fixtures/TestPermits.h"
 #include "fixtures/TestUtil.h"
 #include "slsk/Client.h"
 
 #include <QBuffer>
-#include <QDir>
-#include <QFileInfo>
-#include <QProcess>
 #include <QRandomGenerator>
 #include <QSignalSpy>
-#include <QTcpServer>
-#include <QTcpSocket>
-#include <QTemporaryDir>
 
 #include <gtest/gtest.h>
 #include <memory>
@@ -25,104 +21,15 @@ using namespace Qt::StringLiterals;
 using namespace selecta::slsk;
 using namespace std::chrono_literals;
 using selecta::governor::Operation;
+using selecta::slsk::testing::devenvEnabled;
+using selecta::slsk::testing::freePort;
 using selecta::slsk::testing::permit;
+using selecta::slsk::testing::Soulfind;
+using selecta::slsk::testing::soulfindBinary;
 using selecta::slsk::testing::TestPermits;
 using selecta::slsk::testing::waitFor;
 
 namespace {
-
-// A port nobody listens on right now.
-quint16 freePort()
-{
-    QTcpServer probe;
-    if (!probe.listen(QHostAddress::LocalHost, 0)) {
-        return 0;
-    }
-    const quint16 port = probe.serverPort();
-    probe.close();
-    return port;
-}
-
-QString soulfindBinary()
-{
-    if (const QString path = qEnvironmentVariable("SELECTA_SOULFIND"); !path.isEmpty()) {
-        return path;
-    }
-    const QString cached = QStringLiteral(SELECTA_DEVENV_DIR) + u"/.cache/soulfind/current/soulfind"_s;
-    return QFileInfo(cached).isExecutable() ? cached : QString();
-}
-
-// One test's server.
-class Soulfind
-{
-public:
-    Soulfind() = default;
-    Soulfind(const Soulfind &) = delete;
-    Soulfind &operator=(const Soulfind &) = delete;
-    Soulfind(Soulfind &&) = delete;
-    Soulfind &operator=(Soulfind &&) = delete;
-
-    ~Soulfind()
-    {
-        if (m_process.state() != QProcess::NotRunning) {
-            m_process.terminate();
-            if (!m_process.waitForFinished(3000)) {
-                m_process.kill();
-                m_process.waitForFinished(3000);
-            }
-        }
-        if (qEnvironmentVariable("SELECTA_SOULFIND_DEBUG") == u"1"_s) {
-            qInfo().noquote() << "--- Soulfind's output ---\n" << QString::fromLocal8Bit(m_process.readAll());
-        }
-    }
-
-    // Starts it and waits until it accepts connections. Empty on success, else why not.
-    QString start(const QString &binary)
-    {
-        m_port = freePort();
-        if (m_port == 0 || !m_data.isValid()) {
-            return u"no free port or temporary folder"_s;
-        }
-        QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
-#ifdef Q_OS_MACOS
-        // As devenv/run-soulfind.sh: Soulfind needs Homebrew's SQLite on macOS.
-        for (const QString &lib : {u"/opt/homebrew/opt/sqlite/lib"_s, u"/usr/local/opt/sqlite/lib"_s}) {
-            if (QFileInfo(lib).isDir()) {
-                environment.insert(u"DYLD_LIBRARY_PATH"_s, lib);
-                break;
-            }
-        }
-#endif
-        m_process.setProcessEnvironment(environment);
-        m_process.setProcessChannelMode(QProcess::MergedChannels);
-        QStringList arguments{u"--port"_s, QString::number(m_port), u"--database"_s, m_data.filePath(u"soulfind.db"_s)};
-        if (qEnvironmentVariable("SELECTA_SOULFIND_DEBUG") == u"1"_s) {
-            arguments.append(u"--debug"_s);
-        }
-        m_process.start(binary, arguments);
-        if (!m_process.waitForStarted(5000)) {
-            return u"couldn't start %1: %2"_s.arg(binary, m_process.errorString());
-        }
-        const bool up = waitFor(
-            [this] {
-                QTcpSocket probe;
-                probe.connectToHost(QHostAddress::LocalHost, m_port);
-                return probe.waitForConnected(200);
-            },
-            10s);
-        if (!up) {
-            return u"Soulfind didn't listen: %1"_s.arg(QString::fromLocal8Bit(m_process.readAll()));
-        }
-        return {};
-    }
-
-    quint16 port() const { return m_port; }
-
-private:
-    QProcess m_process;
-    QTemporaryDir m_data;
-    quint16 m_port = 0;
-};
 
 // A whole client stack logged in to the test server, sharing at most one file.
 struct Node
@@ -202,7 +109,7 @@ class SoulfindTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        if (qEnvironmentVariable("SELECTA_DEVENV") != u"1"_s) {
+        if (!devenvEnabled()) {
             GTEST_SKIP() << "against a real Soulfind only with SELECTA_DEVENV=1 (devenv/README.md)";
         }
         const QString binary = soulfindBinary();
