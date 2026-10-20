@@ -3,6 +3,7 @@
 
 #include "audio/StreamInfo.h"
 #include "convert/MetadataModel.h"
+#include "convert/TagReader.h"
 
 #include <QByteArray>
 #include <QString>
@@ -10,6 +11,7 @@
 
 #include <taglib/taglib.h>
 #include <taglib/tbytevector.h>
+#include <taglib/tpropertymap.h>
 #include <taglib/tstring.h>
 #include <taglib/tstringlist.h>
 
@@ -62,5 +64,11 @@ inline QByteArray fromTagLib(const TagLib::ByteVector &bytes)
 
 // The container of a file on disk, detected from its content (Selecta's own probe), or Unknown.
 audio::Container detectContainer(const QString &path);
+
+// readTags()'s conversion of a TagLib property map: canonical keys first, aliases only for fields still missing,
+// totals folded into "n/N", at most 512 fields, values bounded by `options`, every field marked `provenance`.
+// `origin` names the file in log messages.
+MetadataModel modelFromProperties(const TagLib::PropertyMap &properties, const TagReadOptions &options,
+                                  Provenance provenance, const QString &origin);
 
 } // namespace selecta::convert::detail

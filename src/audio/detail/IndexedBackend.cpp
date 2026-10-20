@@ -855,6 +855,14 @@ DecoderStats IndexedBackend::stats() const
     } else if (m_index) {
         stats.skippedBytes = m_index->skippedBytes;
         stats.truncated = m_index->truncated;
+        // The whole file is indexed and holds less than its header announced (FLAC STREAMINFO, the LAME tag's frame
+        // count): the end is missing, typically an interrupted download.
+        if (m_index->finished && m_kind == Kind::Flac && m_flac.totalSamples > 0) {
+            stats.truncated = stats.truncated || m_index->totalSamples < m_flac.totalSamples;
+        }
+        if (m_index->finished && m_kind == Kind::Mpeg && m_lame && m_lame->frames > 0) {
+            stats.truncated = stats.truncated || std::cmp_less(m_index->frames.size(), m_lame->frames);
+        }
     }
     return stats;
 }

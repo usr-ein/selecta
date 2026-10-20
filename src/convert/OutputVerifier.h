@@ -27,9 +27,14 @@ struct VerifyExpectations
     QByteArray expectedPcmDigest; // bit-exact check (lossless at unchanged rate and depth): pcmDigest of the source
     int mp3CbrKbps = 0;           // every MPEG frame at this bitrate
     bool requireLameTag = false;  // first frame is Info/Xing with a LAME extension and a valid CRC-16
-    std::optional<MetadataModel> expectedTags; // fields as they should read back (see TagWriter's id3v23View)
-    bool expectFrontCover = false;             // exactly one front cover that decodes
-    QSize expectedCoverSize;                   // when set, the cover must decode at this size
+    // The text fields exactly as they must read back (TagWriter's tagsAsWritten): no field missing, none extra, every
+    // value equal. Read with generous bounds (1 Mi characters per value, 20 MiB per picture).
+    std::optional<MetadataModel> expectedTags;
+    bool expectFrontCover = false; // exactly one picture, a front cover, that decodes
+    QSize expectedCoverSize;       // when set, the cover must decode at this size
+    // Decode errors, resynchronisation and truncation are problems. Off for a copy of a damaged source, whose identical
+    // damage the PCM digest proves.
+    bool requireCleanDecode = true;
 };
 
 struct VerifyReport
@@ -49,9 +54,9 @@ struct VerifyReport
 Result<QByteArray> pcmDigest(const QString &path, const audio::CancellationFlag *cancel = nullptr);
 
 // Decodes the file completely and checks it against `expectations`: no decoder errors, stream facts, length, PCM
-// digest, MP3 frame bitrates and LAME tag, tags and artwork (re-read with TagLib, independently of TagWriter). Returns
-// a report; problems are listed rather than stopping at the first one. An error (not a failed check) means the file
-// couldn't be examined at all.
+// digest, MP3 frame bitrates and LAME tag, tags and artwork (re-read with TagLib), and, for WAV, a RIFF INFO list with
+// the title and artist (what rekordbox reads). Returns a report; problems are listed rather than stopping at the first
+// one. An error (not a failed check) means the file couldn't be examined at all.
 //
 // Threading: reentrant; blocks, so call from a worker. Failure codes: OpenFailed, those of Decoder::open(), Cancelled.
 Result<VerifyReport> verifyOutput(const QString &path, const VerifyExpectations &expectations,

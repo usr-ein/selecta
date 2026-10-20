@@ -99,9 +99,10 @@ TEST(TagPolicy, DenyList)
     keep.transcoding = false;
     keep.stripDjAppData = false;
     for (const QStringView key :
-         {u"ENCODEDBY", u"ENCODING", u"encoder", u"LENGTH", u"COMMENT:ITUNNORM", u"COMMENT:iTunSMPB"}) {
+         {u"ENCODEDBY", u"ENCODING", u"encoder", u"LENGTH", u"ITUNSMPB", u"COMMENT:ITUNNORM", u"COMMENT:iTunSMPB"}) {
         EXPECT_TRUE(isDeniedTagKey(key, transcode)) << key.toString().toStdString();
-        EXPECT_TRUE(isDeniedTagKey(key, keep)) << key.toString().toStdString();
+        // Kept audio: the encoder fields, length and iTunes gapless data still describe it.
+        EXPECT_FALSE(isDeniedTagKey(key, keep)) << key.toString().toStdString();
     }
     for (const QStringView key :
          {u"REPLAYGAIN_TRACK_GAIN", u"replaygain_album_peak", u"MP3GAIN_MINMAX", u"R128_TRACK_GAIN"}) {
@@ -142,4 +143,13 @@ TEST(TagPolicy, AppliedModel)
     EXPECT_EQ(out.value(keys::EncodedBy), u"Selecta 0.1.0"_s);
     EXPECT_EQ(out.provenance(keys::EncodedBy), Provenance::Selecta);
     EXPECT_EQ(out.pictures(), source.pictures());
+
+    // Audio kept as it is: the source's encoder field and ReplayGain stay, Selecta claims nothing, DJ data still goes.
+    options.transcoding = false;
+    const MetadataModel kept = applyTagPolicy(source, options);
+    EXPECT_EQ(kept.value(keys::Encoding), u"Some Encoder 1.0"_s);
+    EXPECT_EQ(kept.provenance(keys::Encoding), Provenance::Embedded);
+    EXPECT_FALSE(kept.contains(keys::EncodedBy));
+    EXPECT_EQ(kept.value(u"REPLAYGAIN_TRACK_GAIN"), u"-6.5 dB"_s);
+    EXPECT_FALSE(kept.contains(u"SERATO_MARKERS_V2"));
 }

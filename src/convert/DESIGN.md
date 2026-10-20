@@ -11,31 +11,44 @@ design), ADR-003, ADR-009, PRD D29/D30, CONV-1…8.
 | `MetadataModel.h` | `MetadataModel`, `Picture`, `Provenance`, `keys::` | Canonical fields (TagLib property keys), multiple values, pictures, per-field provenance. |
 | `TagReader.h` | `readTags()`, `canonicalTagKey()` | TagLib properties + PICTURE complex property, read-only stream, alias table, bounds. |
 | `TagPolicy.h` | `applyTagPolicy()`, `isDeniedTagKey()` | Deny-list (D-7, D-11), TENC/TSSE set by Selecta. |
-| `TagWriter.h` | `writeTags()`, `id3v23View()` | Per-format writing with the ID3v2.3 fix-ups. |
-| `EncodeSettings.h` | `EncodeSettings`, `resolveOutput()` | Output format and the rules for rate and word length (shared by transcoder and advisor). |
+| `TagWriter.h` | `writeTags()`, `id3v23View()`, `tagsAsWritten()` | Per-format writing with the ID3v2.3 fix-ups; the exact read-back, predicted in memory. |
+| `EncodeSettings.h` | `EncodeSettings`, `resolveOutput()`, `checkSettings()` | Output format and the rules for rate, word length and dither (shared by transcoder and advisor). |
 | `Transcoder.h` | `transcode()`, `TranscodeJob` | Decode → soxr → TPDF → encode → tag → verify → rename. Cancellable, with progress. |
 | `OutputVerifier.h` | `verifyOutput()`, `pcmDigest()` | Full decode, length, PCM digest, MP3 frame bitrates and LAME tag, tags and artwork. |
 | `QualityAdvisor.h` | `advise()`, `makeSourceQuality()`, `probeSourceQuality()`, `describeNotice()` | The warning matrix of §6.2 and its UI copy. |
 | `ArtworkProcessor.h` | `processArtwork()`, `inspectImage()` | Baseline sRGB JPEG q90 ≤ 800 px, near-square crop, never upscaled, bounded decoding. |
 | `ArtworkFinder.h` | `chooseFolderCover()` | Folder cover ranking (§5.1), pure. |
 
-Internal (`detail/`): the libmp3lame encoder with its LAME tag, the FFmpeg FLAC and AIFF encoders behind a write
-`AVIOContext`, the plain PCM WAV writer, the TPDF quantiser, the temporary-file and no-overwrite rename helpers.
+Internal (`detail/`):
+
+| File | Role |
+|---|---|
+| `Encoder.h` | The `Encoder` interface (float in, `write()`/`finish()`) and its factories. |
+| `LameEncoder.cpp` | libmp3lame driven directly; the LAME tag frame written over LAME's placeholder by `finish()`. |
+| `FfmpegEncoder.cpp` | FLAC, ALAC (`ipod` muxer) and AIFF (`pcm_s16be`/`pcm_s24be`) through a write `AVIOContext` over the sink. |
+| `WavEncoder.cpp` | The `WAVE_FORMAT_PCM` writer: 44-byte header, sizes patched in `finish()`. |
+| `Quantizer.h` | Float → 16/24-bit integers, TPDF ±1 LSB or plain rounding, deterministic noise. |
+| `OutputFile.h` | `TempOutput` (the `.selecta-part` file), `Sink` (writes with DiskFull/WriteFailed classification), `renameExclusive()`. |
+| `PcmHash.h` | The byte stream `pcmDigest()` hashes (float32 little-endian). |
+| `TranscodeSeam.h` | `transcode()` with a device wrapper: the tests' full-disk simulation. |
+| `TagLibUtil.h` | Qt ↔ TagLib conversions, container detection, readTags()'s property-map conversion. |
 
 ## Pipeline
 
 ```
-source ─▶ audio::Decoder (float, source layout; soxr VHQ only when the rate changes)
-       ─▶ TPDF dither + quantise (16-bit PCM/FLAC targets from deeper sources only)
-       ─▶ encoder: LAME (MP3) | FFmpeg flac | FFmpeg aiff (pcm_s16be/s24be) | own WAV writer
-       ─▶ <output>.<random>.selecta-part (same directory)
+source ─▶ audio::Decoder (float, source layout; soxr VHQ only when the rate changes; > 2 channels downmixed)
+       ─▶ quantise: TPDF dither to 16-bit when the audio isn't on the 16-bit grid, plain rounding otherwise
+       ─▶ encoder: LAME (MP3) | FFmpeg flac | FFmpeg alac in ipod | FFmpeg aiff (pcm_s16be/s24be) | own WAV writer
+       ─▶ <output>.<random>.selecta-part (same folder, created exclusively, unbuffered)
        ─▶ TagWriter (TagLib, from the policy-applied model)
-       ─▶ OutputVerifier
-       ─▶ rename to <output> without overwriting (renamex_np RENAME_EXCL on macOS, link + unlink elsewhere)
+       ─▶ OutputVerifier (full decode; bit-exact digest for lossless at the source's rate, depth and channels)
+       ─▶ fsync ─▶ rename to <output> without replacing (renamex_np RENAME_EXCL, renameat2 RENAME_NOREPLACE,
+          link + unlink, MoveFileEx)
 ```
 
 KeepAudio (the audio-preserving path, §9.4): copy the source bytes into the temporary file, rewrite its tags, verify
-that the decoded PCM digest equals the source's, rename.
+that the decoded PCM digest and length equal the source's, rename. Any failure or cancellation deletes the temporary
+file; the source is only ever opened read-only.
 
 ## Rules carried from the research
 
@@ -51,8 +64,10 @@ that the decoded PCM digest equals the source's, rename.
   description, no ID3v1/APE; TMOO/TSST/TDRL/TDTG/TPRO → TXXX; multi-values joined with ", " (artist fields) or "; ".
   Label → TPUB, ISRC → TSRC, source link → WOAS/WXXX (D30). WAV gets RIFF INFO + an ID3 chunk; FLAC Vorbis comments +
   a PICTURE block.
-- Deny-list (TagPolicy): ReplayGain/MP3Gain when transcoding (D-7); Serato/Traktor fields (D-11); encoder fields,
-  stale LENGTH, iTunes internal comments always. Binary frames (GEOB, PRIV, RVAD…) never enter the model.
+- Deny-list (TagPolicy), when transcoding: ReplayGain/MP3Gain/R128 (D-7), encoder fields, LENGTH and iTunes' gapless
+  and normalisation data, all of which describe the source's encoding; Serato/Traktor fields (D-11) when transcoding
+  or with `stripDjAppData`. A file kept as it is keeps its encoder fields, length and gain: they still describe it.
+  Binary frames (GEOB, PRIV, RVAD…) never enter the model.
 
 ## Tags in practice (C1)
 
@@ -84,6 +99,58 @@ behaviours Selecta relies on or compensates for, each covered by `tests/convert/
 - **What core passes.** `writeTags` writes exactly the model it gets: core fills a `MetadataModel` from its
   `meta::Release` (no `convert` → `meta` dependency) and `applyTagPolicy` removes what must not be copied.
 
+## Conversion in practice (C2)
+
+- **Rates and word lengths** (`resolveOutput`, shared with the advisor so advice describes what happens). MP3: 32,
+  44.1 and 48 kHz kept, everything else to 44.1 kHz (D-4); sources below 32 kHz are upsampled and flagged. Lossless:
+  the source rate, or above `maxSampleRate` the highest rate of the source's family (44.1 or 48 kHz × 2ⁿ) that fits.
+  Depth: ≤ 16-bit → 16, deeper or float → 24, lossy → 16. Dither only for 16-bit results whose samples aren't already
+  on the 16-bit grid (deeper, float or lossy sources, resampled or downmixed audio); 24-bit results are rounded.
+- **MP3.** CBR (128…320) or VBR (V0…V9), `-q 3`, joint stereo (mono stays mono), LAME's own resampler never used,
+  `lame_set_write_id3tag_automatic(0)` so the stream starts with LAME's placeholder frame, which `finish()` replaces
+  with `lame_get_lametag_frame()`. The verifier then demands a LAME encoder string and a valid tag CRC, every frame at
+  the CBR bitrate and, thanks to the tag's delay and padding, exactly the source's length (± one frame accepted).
+- **FFmpeg encoders.** One code path for FLAC (`flac`), ALAC (`ipod`) and AIFF (`aiff`): a write `AVIOContext` with
+  read-free seeking over the sink (muxers patch sizes and STREAMINFO at the end), 16-bit as S16/S16P, 24-bit as
+  S32/S32P left-justified with `bits_per_raw_sample = 24`. FFmpeg's own metadata (vendor comments, `©too`) is wiped
+  when TagLib writes the tags. AIFF and WAV stop with TooLarge before their 32-bit sizes would wrap.
+- **WAV.** `RIFF`/`WAVE`/`fmt `(16 bytes, format 1)/`data`, mono or stereo, 16- or 24-bit, odd data padded; TagLib
+  appends LIST/INFO and `ID3 ` and fixes the RIFF size.
+- **Damaged sources.** A source with packets that don't decode, or that ends before its header says (FLAC
+  STREAMINFO, the LAME frame count, chunk sizes), is refused with Corrupt rather than converted with holes; it can
+  still be filed as it is, where the copy's identical damage is proven by the digest.
+- **Verification.** A complete decode of the temporary file at its own rate and layout. Problems are collected, not
+  stopped at: container, rate, channels, depth, clean decode, length, digest, MP3 bitrates and LAME tag, tags exactly
+  as `tagsAsWritten()` predicts (no field missing, none extra), one decodable front cover at the intended size, and
+  for WAV a RIFF INFO title and artist. `tagsAsWritten()` runs the same TagLib frames, comments or MP4 items the
+  writer builds through TagLib's property map in memory, so format conversions (ID3 numeric genres, MP4 integer
+  atoms, keys MP4 can't name) are predicted rather than reported as failures, while anything lost on the way to disk
+  is caught.
+- **Full disk.** Every write goes through `Sink`, which classifies a failed write as DiskFull (Qt's ENOSPC/EDQUOT
+  message, or under 1 MiB free on the volume) or WriteFailed. Encoders surface the sink's error even when FFmpeg
+  reports its own code. The tests wrap the temporary file in a device that fails like a full disk, for every
+  output format and for KeepAudio.
+- **Decoder fixes made for C2** (`audio/`): ALAC's word length now comes from the opened decoder (it lives in the
+  magic cookie), and `DecoderStats::truncated` is set when a complete FLAC or LAME-tagged MP3 holds less than its
+  header announced, not only when it ends inside a frame.
+
+### Conversion speed
+
+Release build, Apple M2 Pro, other builds running (load average 7). Each figure is one whole `transcode()`: decode,
+encode, tags, full verification decode, fsync and rename (`selecta_convert_bench`).
+
+| Case | Time |
+|---|---|
+| 6 min FLAC 16/44.1 → MP3 320 CBR | 4.6 s (about 80× real time; LAME-bound, one core) |
+| 6 min FLAC → AIFF 16 | 0.94 s |
+| 6 min FLAC → FLAC 16 | 1.7 s |
+| 6 min FLAC → WAV 16 | 0.89 s |
+| 6 min FLAC → ALAC 16 | 2.9 s |
+| 6 min FLAC kept as it is (copy, retag, two decodes) | 1.4 s |
+| 1 min FLAC 24/96 → MP3 320 (soxr VHQ to 44.1 kHz) | 1.1 s |
+
+A conversion keeps one core busy, so the worker pool (CONV-8) can run about one job per performance core.
+
 ## Threading
 
 | API | Thread safety |
@@ -91,7 +158,8 @@ behaviours Selecta relies on or compensates for, each covered by `tests/convert/
 | `MetadataModel`, `EncodeSettings`, `Advice`… | Plain values |
 | `readTags`, `writeTags`, `transcode`, `verifyOutput`, `processArtwork`, `probeSourceQuality` | Reentrant, blocking: workers only |
 | `advise`, `applyTagPolicy`, `chooseFolderCover`, `id3v23View` | Pure |
-| `TranscodeJob` | Lives in its creating thread; work on `QThreadPool::globalInstance()` |
+| `TranscodeJob` | Lives in its creating thread; work on `QThreadPool::globalInstance()`. Results reach it through a mutex-guarded mailbox and a data-free queued call (the WaveformJob pattern, ThreadSanitizer-visible); progress is coalesced to 10 updates a second; nothing is emitted after `cancel()` or destruction. |
+| Parallel conversions | Independent: LAME's `lame_init()`/`lame_init_params()`/`lame_close()` are serialised process-wide, every other state belongs to one job. Tested byte for byte against the same conversions run alone, under TSan. |
 
 ## Integration: the arrival pipeline (core, D29)
 
@@ -100,6 +168,10 @@ behaviours Selecta relies on or compensates for, each covered by `tests/convert/
    `OutputFormat::KeepAudio` (tags rewritten on a copy, audio verified identical) plus the badge; `Ask` → the user.
 3. On `finished`, FileOps publishes `stagingOutput` into the Inbox and trashes a lossless original (D11).
 4. The cover: `processArtwork(bytes)` → `tags.setFrontCover(result.toPicture(Provenance::Release))`.
+5. `transcode()` applies the tag policy itself: `policy.transcoding` follows the format (false for KeepAudio), and an
+   MP3's ENCODING is LAME's settings string unless core sets one; core sets `policy.encodedBy` ("Selecta x.y", D-10).
+6. A crash mid-conversion can leave `<name>.<random>.selecta-part` next to an output; nothing else ever has that
+   suffix, so core may delete such files in its staging folder at start-up.
 
 ## Decisions (autonomous, for review)
 
@@ -113,13 +185,21 @@ behaviours Selecta relies on or compensates for, each covered by `tests/convert/
 | v2.4-only frames written as `TXXX:<key>` in v2.3 | TagLib 2.3.2 drops them on a v2.3 save; TXXX keeps the value and reads back under the same key. |
 | `GROUPING` follows TagLib's mapping (GRP1; `WORK` is TIT1) | Round-trips exactly and matches iTunes ≥ 12.5; whether rekordbox shows TIT1 or GRP1 is open (conversion §10, E-1). |
 | Aliases fill only missing fields | A file's canonical field is more deliberate than a legacy spelling of it. |
+| ALAC added as an output format (`OutputFormat::Alac`, `.m4a`) | The contract lists FFmpeg FLAC and ALAC; it shares the FLAC/AIFF code path. |
+| Surround sources downmixed to stereo for every output | DJ players and rekordbox are stereo; WAVE_FORMAT_PCM is mono or stereo. |
+| A damaged source is refused for conversion (Corrupt), not converted with silence in the holes | A conversion that "passes" with dropouts would be filed as good; keeping the file as it is stays possible. |
+| Tag verification is exact, against `tagsAsWritten()` computed with TagLib in memory | Catches anything lost or stale on disk without failing on format conversions TagLib makes by design. |
+| MP4: BPM rounded, non-numeric track/disc numbers left out | TagLib would truncate "127.98" to 127 and store "A1" as 0. |
+| Encoder fields, length and iTunes data kept when the audio is kept | They describe the kept audio (iTunSMPB is AAC's gapless data); the reference's deny-list is "on transcode". |
+| MD5 for the PCM digest | Not adversarial (both sides are computed by Selecta); fast enough next to LAME. |
 
 ## Progress
 
 - **Done:** public headers (C1–C3); C1: `MetadataModel`, `readTags` (aliases, totals, bounds), `applyTagPolicy`,
   `writeTags` for MP3 (v2.3/v2.4), AIFF, WAV, FLAC and M4A, each checked by reading back through Selecta's reader and
-  independently through TagLib's format classes (16 tests, ASan and TSan clean).
-- **Next:** C2 (encode settings, LAME/FLAC/AIFF/WAV encoders, `transcode`, `TranscodeJob`, `verifyOutput`), then C3
-  (advisor, artwork).
+  independently through TagLib's format classes. C2: `resolveOutput`/`checkSettings`, the LAME, FFmpeg (FLAC, ALAC,
+  AIFF) and WAV encoders, `transcode()` with KeepAudio, `TranscodeJob`, `verifyOutput()`/`pcmDigest()`,
+  `tagsAsWritten()`, the conversion benchmark. 53 tests; dev, ASan and TSan clean.
+- **Next:** C3 (quality advisor, artwork processor and finder), A3 (quality checks), the `media-convert` CLI command.
 - **Open questions:** which ID3 frame rekordbox shows as grouping (TIT1 or GRP1, conversion E-1); the M4A key atom
   (E-7). Both need the maintainer's rekordbox import.

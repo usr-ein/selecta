@@ -90,11 +90,18 @@ Q_SIGNALS:
     void finished(const selecta::convert::TranscodeReport &report);
     void failed(const selecta::audio::Error &error);
 
+private Q_SLOTS:
+    void drainMailbox();
+
 private:
     struct Shared;
+    struct Message;
+    static void post(const std::shared_ptr<Shared> &shared, Message message);
+
     TranscodeRequest m_request;
     std::shared_ptr<Shared> m_shared;
     bool m_started = false;
+    bool m_running = false;
 };
 
 } // namespace selecta::convert

@@ -350,3 +350,64 @@ TEST(TagReading, Failures)
     ASSERT_TRUE(empty.ok());
     EXPECT_TRUE(empty.value().isEmpty());
 }
+
+TEST_F(TagWriting, PredictionMatchesWhatEveryFormatReadsBack)
+{
+    MetadataModel edgy = richModel();
+    edgy.set(keys::Genre, QStringList{u"17"_s, u"Techno"_s}, Provenance::Release); // a numeric ID3v1 genre
+    edgy.set(keys::TrackNumber, u"A1"_s, Provenance::Release);                     // a vinyl side
+    edgy.set(u"TRACKTOTAL"_s, u"12"_s, Provenance::Release);
+    edgy.set(u"YEAR"_s, u"1999"_s, Provenance::Release); // an alias next to its canonical DATE
+    edgy.set(u"1STARTSWITHDIGIT"_s, u"x"_s, Provenance::Release);
+    edgy.set(u"COMPILATION"_s, u"1"_s, Provenance::Release);
+    edgy.set(u"PRODUCER"_s, QStringList{u"P One"_s, u"P Two"_s}, Provenance::Release);
+    edgy.set(u"COMMENT:SPECIAL"_s, u"described comment"_s, Provenance::Release);
+    MetadataModel numericGenre = richModel();
+    numericGenre.set(keys::Genre, u"17"_s, Provenance::Release);
+
+    struct Case
+    {
+        QString name;
+        QByteArray bytes;
+        selecta::audio::Container container = selecta::audio::Container::Unknown;
+        Id3Version version = Id3Version::V23;
+    };
+    using selecta::audio::Container;
+    const QList<Case> cases = {
+        {u"a.mp3"_s, makeMp3(pcm, {}), Container::MpegAudio, Id3Version::V23},
+        {u"b.mp3"_s, makeMp3(pcm, {}), Container::MpegAudio, Id3Version::V24},
+        {u"c.aiff"_s, makeAiff(quantised(pcm, 16)), Container::Aiff, Id3Version::V23},
+        {u"d.wav"_s, makeWav(quantised(pcm, 16)), Container::Wav, Id3Version::V24},
+        {u"e.flac"_s, makeFlac(quantised(pcm, 16)), Container::Flac, Id3Version::V23},
+        {u"f.m4a"_s, makeM4a(pcm, {}), Container::Mp4, Id3Version::V23},
+        {u"g.m4a"_s, makeM4a(pcm, {.alac = true}), Container::Mp4, Id3Version::V23},
+    };
+    for (const MetadataModel &model : {edgy, numericGenre}) {
+        for (const Case &c : cases) {
+            SCOPED_TRACE(c.name.toStdString());
+            const QString path = file(c.name, c.bytes);
+            TagWriteOptions options;
+            options.id3Version = c.version;
+            ASSERT_TRUE(writeTags(path, model, options).ok());
+            const Result<MetadataModel> read = readTags(path);
+            ASSERT_TRUE(read.ok());
+            const MetadataModel predicted = tagsAsWritten(model, c.container, options);
+            const QStringList predictedKeys = predicted.keys();
+            EXPECT_EQ(read.value().keys(), predictedKeys);
+            for (const QString &key : predictedKeys) {
+                EXPECT_EQ(read.value().values(key), predicted.values(key)) << key.toStdString();
+            }
+        }
+    }
+    // The conversions spelled out.
+    const MetadataModel mp4 = tagsAsWritten(edgy, Container::Mp4);
+    EXPECT_FALSE(mp4.contains(keys::TrackNumber)); // "A1" doesn't fit MP4's integer pair
+    EXPECT_EQ(mp4.value(keys::Bpm), u"128"_s);     // rounded, where TagLib alone would truncate to 127
+    EXPECT_FALSE(mp4.contains(u"1STARTSWITHDIGIT"_s));
+    EXPECT_EQ(mp4.value(keys::InitialKey), u"8A"_s); // through the KEY atom
+    EXPECT_EQ(tagsAsWritten(numericGenre, Container::MpegAudio).value(keys::Genre), u"Rock"_s);
+    EXPECT_EQ(tagsAsWritten(edgy, Container::MpegAudio).value(keys::Genre), u"17; Techno"_s); // v2.3: joined
+    EXPECT_EQ(tagsAsWritten(edgy, Container::Flac).value(keys::TrackNumber), u"A1/12"_s);
+    EXPECT_FALSE(tagsAsWritten(edgy, Container::Flac).contains(u"YEAR"_s)); // DATE wins, as when reading
+    EXPECT_TRUE(tagsAsWritten(edgy, Container::Flac).pictures().isEmpty());
+}

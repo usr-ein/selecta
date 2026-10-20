@@ -7,6 +7,7 @@
 #include <QFileInfo>
 
 #include <array>
+#include <initializer_list>
 #include <taglib/fileref.h>
 #include <taglib/tfilestream.h>
 #include <taglib/tpicturetype.h>
@@ -20,6 +21,7 @@ namespace selecta::convert {
 namespace {
 
 constexpr int kMaxFields = 512;
+constexpr qint64 kMaxPictureDescriptionChars = 1024;
 
 struct Alias
 {
@@ -77,6 +79,42 @@ QString canonicalTagKey(QStringView rawKey)
     return key;
 }
 
+namespace detail {
+
+MetadataModel modelFromProperties(const TagLib::PropertyMap &properties, const TagReadOptions &options,
+                                  Provenance provenance, const QString &origin)
+{
+    MetadataModel model;
+    int fields = 0;
+    // Canonical keys first; an alias only fills a field the file doesn't have under its canonical name (a file with
+    // both DATE and YEAR keeps DATE).
+    for (const bool aliasPass : {false, true}) {
+        for (const auto &[rawKey, rawValues] : properties) {
+            const QString raw = fromTagLib(rawKey).trimmed().toUpper();
+            const QString key = canonicalTagKey(raw);
+            const bool alias = key != raw;
+            if (alias != aliasPass || (alias && model.contains(key))) {
+                continue;
+            }
+            if (++fields > kMaxFields) {
+                qCDebug(lcConvert) << "ignoring tags beyond" << kMaxFields << "fields in" << origin;
+                break;
+            }
+            const qint64 limit = key == keys::Lyrics ? options.maxLyricsChars : options.maxValueChars;
+            QStringList values;
+            for (const TagLib::String &value : rawValues) {
+                values.append(bounded(fromTagLib(value), limit));
+            }
+            model.set(key, values, provenance);
+        }
+    }
+    foldTotal(model, keys::TrackNumber, {u"TRACKTOTAL", u"TOTALTRACKS"});
+    foldTotal(model, keys::DiscNumber, {u"DISCTOTAL", u"TOTALDISCS"});
+    return model;
+}
+
+} // namespace detail
+
 Result<MetadataModel> readTags(const QString &path, const TagReadOptions &options)
 {
     if (!QFileInfo(path).isFile()) {
@@ -92,33 +130,7 @@ Result<MetadataModel> readTags(const QString &path, const TagReadOptions &option
         return makeError(ErrorCode::Unsupported, u"no tags TagLib can read in %1"_s.arg(path));
     }
 
-    MetadataModel model;
-    const TagLib::PropertyMap properties = file.properties();
-    int fields = 0;
-    // Canonical keys first; an alias only fills a field the file doesn't have under its canonical name (a file with
-    // both DATE and YEAR keeps DATE).
-    for (const bool aliasPass : {false, true}) {
-        for (const auto &[rawKey, rawValues] : properties) {
-            const QString raw = detail::fromTagLib(rawKey).trimmed().toUpper();
-            const QString key = canonicalTagKey(raw);
-            const bool alias = key != raw;
-            if (alias != aliasPass || (alias && model.contains(key))) {
-                continue;
-            }
-            if (++fields > kMaxFields) {
-                qCDebug(lcConvert) << "ignoring tags beyond" << kMaxFields << "fields in" << path;
-                break;
-            }
-            const qint64 limit = key == keys::Lyrics ? options.maxLyricsChars : options.maxValueChars;
-            QStringList values;
-            for (const TagLib::String &value : rawValues) {
-                values.append(bounded(detail::fromTagLib(value), limit));
-            }
-            model.set(key, values, Provenance::Embedded);
-        }
-    }
-    foldTotal(model, keys::TrackNumber, {u"TRACKTOTAL", u"TOTALTRACKS"});
-    foldTotal(model, keys::DiscNumber, {u"DISCTOTAL", u"TOTALDISCS"});
+    MetadataModel model = detail::modelFromProperties(file.properties(), options, Provenance::Embedded, path);
 
     QList<Picture> pictures;
     const TagLib::List<TagLib::VariantMap> complex = file.complexProperties("PICTURE");
@@ -135,8 +147,12 @@ Result<MetadataModel> readTags(const QString &path, const TagReadOptions &option
         Picture picture;
         picture.data = detail::fromTagLib(data);
         picture.mimeType = detail::fromTagLib(entry.value("mimeType").toString());
-        picture.description = bounded(detail::fromTagLib(entry.value("description").toString()), 1024);
-        picture.type = TagLib::Utils::pictureTypeFromString(entry.value("pictureType").toString());
+        picture.description =
+            bounded(detail::fromTagLib(entry.value("description").toString()), kMaxPictureDescriptionChars);
+        // MP4 `covr` images carry no type; players take them as the front cover.
+        picture.type = entry.contains("pictureType")
+                           ? TagLib::Utils::pictureTypeFromString(entry.value("pictureType").toString())
+                           : Picture::kTypeFrontCover;
         picture.provenance = Provenance::Embedded;
         pictures.append(picture);
     }

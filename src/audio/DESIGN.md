@@ -208,5 +208,9 @@ The CLI gives a quick check on any file: `selecta-cli media-analyze <file>`.
 
 - **Done:** A1 (decoder, merged into main), A2 (band analyzer, chunked parallel and progressive analysis,
   `WaveformJob`, two-tier cache, benchmark, `media-analyze`). 96 audio tests; dev, asan, tsan and lint clean.
-- **Next:** C1–C3 in `convert/`, then A3 (quality checks).
+- **Changed for C2:** `StreamInfo::bitsPerSample` for ALAC comes from the opened decoder (the depth is in the magic
+  cookie, not in the container's sample entry); `DecoderStats::truncated` is also set when a complete FLAC holds fewer
+  samples than STREAMINFO announced, or a LAME-tagged MP3 fewer frames than the tag counts (an interrupted download
+  cut between frames).
+- **Next:** C3 in `convert/`, then A3 (quality checks).
 - **Open questions:** none.
