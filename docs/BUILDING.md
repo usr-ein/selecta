@@ -41,6 +41,44 @@ ctest --preset asan                        # after building the asan preset; lik
 tests/fuzz/slsk/fuzz.sh [seconds] [target…] # libFuzzer on the protocol decoders (needs `brew install llvm`)
 ```
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on pushes to `main` and to `ci/**` branches, on pull requests, every night at 03:17 UTC
+and on request (`gh workflow run CI --ref <branch>`). A push that only touches `docs/`, `references/`, `mock/` or
+Markdown files doesn't start it. A newer push to the same branch cancels the run in progress, except on `main`.
+
+| Job | Runner | What it checks |
+|---|---|---|
+| macOS · build, tests, static linking | `macos-26` | The `dev` preset with warnings as errors, the whole suite, and that the app and `selecta-cli` load only system libraries |
+| macOS · lint | `macos-26` | `tools/lint.sh` over `src`, `tests` and `tools`. It needs the generated sources only, not a build |
+| macOS · asan, macOS · tsan | `macos-26` | The whole suite under AddressSanitizer + UBSan, and under ThreadSanitizer. Not on pull requests. A tsan failure doesn't fail the run yet: the prebuilt Qt isn't instrumented, so data passed through Qt's event queue or thread pool shows as a race |
+| Linux · build, tests | `ubuntu-26.04` | The `linux` preset with GCC and warnings as errors, then the suite in a network namespace that has only loopback |
+| Windows · build, tests (experimental) | `windows-2025` | The `windows` preset with MSVC, without the media libraries, warnings not fatal. Its failure doesn't fail the run |
+
+Each job runs the same presets as a local build, so `cmake --workflow --preset dev`, `tools/lint.sh` and the `asan` and
+`tsan` presets reproduce it. GCC leaves `-Wshadow` and `-Wmissing-field-initializers` to Clang
+(`cmake/SelectaWarnings.cmake`), and every other warning is an error on Linux too.
+
+**Network safety.** No job talks to the Soulseek network or to the metadata services. Every job builds with the
+live-server switch off and checks it after configuring. The tests use loopback fakes, and on Linux they can't reach
+anything else. CI has no secrets.
+
+**Caches.** Each job restores vcpkg's binary archives for its triplet and its own ccache folder, both kept in
+`build/cache` (actions/cache refuses paths with `..`). The archive key is a hash of `vcpkg.json`, `cmake/vcpkg-triplets`
+and `cmake/vcpkg-ports`. A change to any of them, or a new compiler on the runner image, rebuilds the dependencies once:
+about 30 minutes, mostly Qt. The macOS, Linux and Windows build jobs save the new archives. Lint and the sanitizer jobs
+only restore them.
+
+**Reading a failure.** Builds keep going after an error (`ninja -k 0`), so one run lists every compile error.
+
+```sh
+gh run list --branch <branch> --limit 5
+gh run view <run-id>                       # jobs and steps
+gh run view <run-id> --log-failed          # logs of the failed steps, once the whole run has finished
+gh run download <run-id> -n macos-test-log # LastTest.log of a failed test step: also linux-, asan-, tsan-test-log
+gh run download <run-id> -n lint-logs      # clang-tidy.log and clazy.log
+```
+
 ## Inspecting a running Selecta
 
 Debug builds have a local debug socket. These commands never touch your real library:
