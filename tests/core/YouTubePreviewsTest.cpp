@@ -67,9 +67,10 @@ protected:
         const QString wrapper =
             u"#!/bin/sh\n"
             u"FAKE_YTDLP_MODE=\"$(cat '%1/mode' 2>/dev/null || echo ok)\"\n"
-            u"FAKE_YTDLP_SEARCH='%2'\n"
+            u"FAKE_YTDLP_SEARCH=\"$(cat '%1/search' 2>/dev/null || echo '%2')\"\n"
+            u"FAKE_YTDLP_TOPIC_SEARCH=\"$(cat '%1/topic-search' 2>/dev/null)\"\n"
             u"FAKE_YTDLP_LOG='%1/runs.log'\n"
-            u"export FAKE_YTDLP_MODE FAKE_YTDLP_SEARCH FAKE_YTDLP_LOG\n"
+            u"export FAKE_YTDLP_MODE FAKE_YTDLP_SEARCH FAKE_YTDLP_TOPIC_SEARCH FAKE_YTDLP_LOG\n"
             u"exec /bin/sh '%3' \"$@\"\n"_s.arg(dir.path(), fixtures() + u"/youtube/search_glass_harbour.json"_s,
                                                 fixtures() + u"/fake-yt-dlp"_s);
         ASSERT_TRUE(writeExecutable(dir.filePath(u"bin/yt-dlp"_s), wrapper.toUtf8()));
@@ -110,11 +111,19 @@ protected:
         return id;
     }
 
-    void setMode(const QString &mode)
+    void setMode(const QString &mode) { write(u"mode"_s, mode); }
+    // The search results the fake prints: for any search, and for a search of the artist's Topic channel.
+    void setSearches(const QString &search, const QString &topicSearch)
     {
-        QFile file(dir.filePath(u"mode"_s));
+        write(u"search"_s, fixtures() + u"/youtube/"_s + search);
+        write(u"topic-search"_s, fixtures() + u"/youtube/"_s + topicSearch);
+    }
+
+    void write(const QString &name, const QString &content)
+    {
+        QFile file(dir.filePath(name));
         ASSERT_TRUE(file.open(QIODevice::WriteOnly));
-        file.write(mode.toUtf8());
+        file.write(content.toUtf8());
     }
 
     // Runs the event loop, moving the clock on (yt-dlp runs are paced ≥ 2 s apart), until `done`.
@@ -160,10 +169,37 @@ TEST_F(YouTubePreviewsTest, FindsTheTrackAndPlaysItWhileItArrives)
     EXPECT_EQ(source->totalSize(), 40'960);
     EXPECT_EQ(started.at(0).at(3).toString(), u"youtube|KmTopic00Ex"_s); // the official Topic channel's upload
     EXPECT_TRUE(started.at(0).at(6).toString().contains(u"YouTube"_s));
+    EXPECT_EQ(runs(u"search"_s), 1); // official already: no second search
     ASSERT_TRUE(eventually([&] {
         return !changes.isEmpty() && changes.constLast().at(0).value<Preview>().state == Preview::State::Complete;
     }));
     EXPECT_TRUE(source->snapshot().isComplete());
+}
+
+TEST_F(YouTubePreviewsTest, FanUploadsOnlyLeadToASearchOfTheArtistsTopicChannel)
+{
+    // Seen live (2026-10-20): the first page held fan uploads only, and one of them was played.
+    setSearches(u"search_fan_uploads.json"_s, u"search_topic_glass_harbour.json"_s);
+    selecta::meta::YtDlpRunner runner(config, pacer, clock);
+    YouTubePreviews previews(runner, cache.get());
+    QSignalSpy started(&previews, &YouTubePreviews::started);
+    previews.start(u"line:7"_s, glassHarbour());
+    ASSERT_TRUE(eventually([&] { return !started.isEmpty(); }));
+    EXPECT_EQ(started.at(0).at(3).toString(), u"youtube|KmTopic00Ex"_s);
+    EXPECT_TRUE(started.at(0).at(6).toString().contains(u"Kestrel Moon - Topic"_s));
+    EXPECT_EQ(runs(u"search"_s), 2);
+}
+
+TEST_F(YouTubePreviewsTest, WhenTheTopicSearchFindsNothingOfficialTheFirstPickStands)
+{
+    setSearches(u"search_fan_uploads.json"_s, u"search_fan_uploads.json"_s);
+    selecta::meta::YtDlpRunner runner(config, pacer, clock);
+    YouTubePreviews previews(runner, cache.get());
+    QSignalSpy started(&previews, &YouTubePreviews::started);
+    previews.start(u"line:7"_s, glassHarbour());
+    ASSERT_TRUE(eventually([&] { return !started.isEmpty(); }));
+    EXPECT_EQ(started.at(0).at(3).toString(), u"youtube|FanUpload01"_s); // within ±3 s, most viewed
+    EXPECT_EQ(runs(u"search"_s), 2);
 }
 
 TEST_F(YouTubePreviewsTest, SaysWhyWhenItCantBeHeard)

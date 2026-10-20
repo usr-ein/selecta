@@ -64,6 +64,7 @@ public:
 
 private:
     static QList<Item> defaultItems();
+    QString accessibleText(const Item &entry) const;
     // Adds or updates a closable item under "Digging", the newest first.
     void setDiggingItem(const QString &id, const QString &title, const QIcon &icon, int count, bool busy);
     void removeItem(const QString &id);

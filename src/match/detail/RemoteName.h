@@ -18,7 +18,7 @@ namespace selecta::match::detail {
 struct CleanName
 {
     QString text;         // the name with kept bracket groups
-    QString plain;        // the name without any bracket group (zone F)
+    QString plain;        // the name without bracket groups (zone F), but for one opening a title, unbracketed
     QStringList brackets; // kept groups and leading groups, without brackets (zone B)
     int year = 0;
     int disc = 0;

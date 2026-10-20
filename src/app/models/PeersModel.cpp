@@ -123,6 +123,11 @@ QVariant PeersModel::data(const QModelIndex &index, int role) const
                    : QVariant();
     case MeterDelegate::LevelRole:
         return level(peer);
+    case Qt::AccessibleTextRole:
+        if (index.column() == LimitColumn) { // a meter, in words
+            return tr("%1 of %2 files today").arg(peer.todayFiles).arg(limits::kPeerDailyStopFiles);
+        }
+        return display(peer, index.column());
     case Qt::ToolTipRole:
         if (index.column() == LimitColumn || index.column() == TodayColumn) {
             return tr("%1 files from %2 today, previews included. Selecta warns at %3 files (or %4) a day from one "

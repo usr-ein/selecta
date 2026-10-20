@@ -5,6 +5,7 @@
 #   FAKE_YTDLP_MODE     ok (default), or one of the failure modes below
 #   FAKE_YTDLP_VERSION  what --version prints (default 2026.08.19)
 #   FAKE_YTDLP_SEARCH   the JSON file a search prints
+#   FAKE_YTDLP_TOPIC_SEARCH  the JSON file a search for "<artist> - Topic …" prints, when set
 #   FAKE_YTDLP_ARGS     a file that receives this run's arguments, one per line
 #   FAKE_YTDLP_LOG      a file that receives "start <kind>" and "end <kind>" lines (one process at a time)
 #   FAKE_YTDLP_PIDFILE  a file that receives the pid of a background child (hang modes: the group kill must reach it)
@@ -53,6 +54,7 @@ for argument in "$@"; do
 done
 
 kind=other
+query=""
 directory=""
 url=""
 previous=""
@@ -62,7 +64,7 @@ for argument in "$@"; do
     fi
     case "$argument" in
         --version) kind=version ;;
-        ytsearch*) kind=search ;;
+        ytsearch*) kind=search; query="$argument" ;;
         https://www.youtube.com/watch*) url="$argument" ;;
     esac
     previous="$argument"
@@ -158,6 +160,14 @@ if [ "$kind" = search ]; then
     if [ "$mode" = slow ]; then
         sleep 0.3
     fi
+    case "$query" in
+        *" - Topic "*)
+            if [ -n "${FAKE_YTDLP_TOPIC_SEARCH:-}" ]; then
+                cat "$FAKE_YTDLP_TOPIC_SEARCH"
+                exit 0
+            fi
+            ;;
+    esac
     cat "${FAKE_YTDLP_SEARCH:?}"
     exit 0
 fi

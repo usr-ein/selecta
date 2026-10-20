@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/WishlistView.h"
 
+#include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/Presets.h"
 #include "core/EngineHost.h"
@@ -47,7 +48,8 @@ WishlistView::WishlistView(core::EngineHost &engine, Presets &presets, QWidget *
     setObjectName(u"view.wishlist"_s);
     m_field->setObjectName(u"wishlist.field"_s);
     m_field->setPlaceholderText(tr("Artist and title, or any words to watch for"));
-    m_field->setClearButtonEnabled(true);
+    m_field->setAccessibleName(tr("Search to add to the Wishlist"));
+    a11y::addClearButton(m_field);
     m_add->setObjectName(u"wishlist.add"_s);
     connect(m_field, &QLineEdit::returnPressed, this, &WishlistView::addTyped);
     connect(m_add, &QPushButton::clicked, this, &WishlistView::addTyped);
@@ -75,6 +77,8 @@ WishlistView::WishlistView(core::EngineHost &engine, Presets &presets, QWidget *
     m_table->setColumnWidth(LastRunColumn, 140);
     m_table->setColumnWidth(FoundColumn, 120);
     m_table->installEventFilter(this);
+    m_table->setAccessibleName(tr("Wishlist"));
+    a11y::addMenuKey(m_table); // the Quality menu lives there
     connect(m_table, &QTreeView::doubleClicked, this, &WishlistView::showSelected);
     connect(m_table, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
         const QList<qint64> ids = selectedIds();
@@ -164,7 +168,7 @@ void WishlistView::rebuild(const QList<core::WishlistItem> &items)
             QFont bold = found->font();
             bold.setBold(true);
             found->setFont(bold);
-            found->setToolTip(tr("Double-click to see them"));
+            found->setToolTip(tr("Double-click, or press Return, to see them"));
         }
         m_model->appendRow({search, quality, lastRun, found});
         if (selected.contains(item.id)) {

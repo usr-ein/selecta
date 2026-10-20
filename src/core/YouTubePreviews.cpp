@@ -87,7 +87,7 @@ qint64 YouTubePreviews::start(const QString &key, const meta::Release &release, 
             Qt::QueuedConnection);
         return id;
     }
-    m_runner.search(meta::YtDlpRunner::searchText(release), 10)
+    m_runner.search(meta::YtDlpRunner::searchText(release), kSearchResults)
         .then(this, [this, id, release](const meta::Result<QList<meta::YouTubeCandidate>> &result) {
             if (id != m_current) {
                 return; // replaced or stopped meanwhile
@@ -97,14 +97,47 @@ qint64 YouTubePreviews::start(const QString &key, const meta::Release &release, 
                 return;
             }
             const std::optional<meta::YouTubePick> pick = meta::YtDlpRunner::pick(result.value(), release);
-            if (!pick) {
-                fail(id, release.durationMs ? tr("No video on YouTube matches this track's length.")
-                                            : tr("Without the track's length, Selecta can't tell which video is it."));
+            if (pick && pick->channel != meta::YouTubePick::Channel::Other) {
+                playOrFetch(id, release, pick->candidate.id, pick->candidate.channel);
                 return;
             }
-            playOrFetch(id, release, pick->candidate.id, pick->candidate.channel);
+            searchTopic(id, release, result.value());
         });
     return id;
+}
+
+void YouTubePreviews::searchTopic(qint64 id, const meta::Release &release, const QList<meta::YouTubeCandidate> &first)
+{
+    const auto pickFrom = [this, id, release](const QList<meta::YouTubeCandidate> &candidates) {
+        const std::optional<meta::YouTubePick> pick = meta::YtDlpRunner::pick(candidates, release);
+        if (!pick) {
+            fail(id, release.durationMs ? tr("No video on YouTube matches this track's length.")
+                                        : tr("Without the track's length, Selecta can't tell which video is it."));
+            return;
+        }
+        playOrFetch(id, release, pick->candidate.id, pick->candidate.channel);
+    };
+    const QString text = meta::YtDlpRunner::topicSearchText(release);
+    if (text.isEmpty() || !release.durationMs) {
+        pickFrom(first);
+        return;
+    }
+    // Nothing from the artist or YouTube Music yet: one more search, aimed at the artist's Topic channel.
+    m_runner.search(text, kSearchResults)
+        .then(this, [this, id, first, pickFrom](const meta::Result<QList<meta::YouTubeCandidate>> &result) {
+            if (id != m_current) {
+                return;
+            }
+            QList<meta::YouTubeCandidate> all = first;
+            if (result.ok()) {
+                for (const meta::YouTubeCandidate &candidate : result.value()) {
+                    if (std::ranges::none_of(all, [&](const auto &seen) { return seen.id == candidate.id; })) {
+                        all.append(candidate);
+                    }
+                }
+            }
+            pickFrom(all); // a failed second search leaves the first's pick
+        });
 }
 
 void YouTubePreviews::stop()

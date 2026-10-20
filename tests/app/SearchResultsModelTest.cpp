@@ -170,4 +170,37 @@ TEST(SearchResultsModelTest, QualitySaysWhatsEstimatedOrSuspicious)
     const QList<SearchResult> analysed = selecta::core::analyzeHits({silent, liar}, 0, {}, {});
     EXPECT_TRUE(SearchResultsModel::qualityText(analysed.at(0)).contains(u"≈"_s));
     EXPECT_TRUE(SearchResultsModel::qualityText(analysed.at(1)).startsWith(u"⚠"_s));
+
+    // VoiceOver hears the ≈ and the ⚠ in words.
+    SearchResultsModel model;
+    model.reset(analysed);
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    QStringList spoken;
+    for (int row = 0; row < model.rowCount(); ++row) {
+        spoken.append(model.index(row, SearchResultsModel::QualityColumn).data(Qt::AccessibleTextRole).toString());
+    }
+    EXPECT_TRUE(spoken.filter(u"kbps"_s).size() == 1 && spoken.filter(u"about"_s).size() == 1)
+        << spoken.join(u'|').toStdString();
+    EXPECT_EQ(spoken.filter(u", doubtful"_s).size(), 1) << spoken.join(u'|').toStdString();
+    EXPECT_TRUE(spoken.filter(u"≈"_s).isEmpty() && spoken.filter(u"⚠"_s).isEmpty());
+}
+
+TEST(SearchResultsModelTest, VoiceOverReadsTheSymbolsInWords)
+{
+    SearchResultsModel model;
+    model.reset(results(neonRain()));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    model.setReleaseChosen(true, 372'000);
+    const auto spoken = [&model](int row, int column) {
+        return model.index(row, column).data(Qt::AccessibleTextRole).toString();
+    };
+    EXPECT_EQ(spoken(0, SearchResultsModel::LengthColumn), u"6:13, same length as the release"_s);
+    EXPECT_EQ(spoken(2, SearchResultsModel::LengthColumn), u"7:35, +83 s against the release"_s);
+    EXPECT_EQ(spoken(0, SearchResultsModel::PeerColumn), u"vinyl_ghost"_s);
+    // Columns without symbols read as they show.
+    EXPECT_EQ(spoken(0, SearchResultsModel::TitleColumn),
+              model.index(0, SearchResultsModel::TitleColumn).data().toString());
+    // A cell's tooltip is its description.
+    EXPECT_EQ(model.index(0, SearchResultsModel::TitleColumn).data(Qt::AccessibleDescriptionRole),
+              model.index(0, SearchResultsModel::TitleColumn).data(Qt::ToolTipRole));
 }
