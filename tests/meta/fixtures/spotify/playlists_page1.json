@@ -1,0 +1,31 @@
+{
+  "href": "https://api.spotify.com/v1/me/playlists?offset=0&limit=50",
+  "items": [
+    {
+      "collaborative": false,
+      "description": "",
+      "external_urls": { "spotify": "https://open.spotify.com/playlist/OzdmenCkhvMdgaKjIg8xNb" },
+      "id": "OzdmenCkhvMdgaKjIg8xNb",
+      "images": [],
+      "name": "Warm-up",
+      "owner": { "display_name": "Test Listener", "id": "testlistener", "type": "user" },
+      "public": false,
+      "items": { "href": "https://api.spotify.com/v1/playlists/OzdmenCkhvMdgaKjIg8xNb/items", "total": 4 },
+      "type": "playlist"
+    },
+    {
+      "collaborative": true,
+      "external_urls": { "spotify": "https://open.spotify.com/playlist/edcm4pMbXDuCL1mHoOsFaQ" },
+      "id": "edcm4pMbXDuCL1mHoOsFaQ",
+      "name": "Shared Peak Time",
+      "owner": { "id": "anotherlistener", "type": "user" },
+      "tracks": { "href": "https://api.spotify.com/v1/playlists/edcm4pMbXDuCL1mHoOsFaQ/tracks", "total": 120 },
+      "type": "playlist"
+    }
+  ],
+  "limit": 50,
+  "next": "https://api.spotify.com/v1/me/playlists?offset=2&limit=50",
+  "offset": 0,
+  "previous": null,
+  "total": 3
+}

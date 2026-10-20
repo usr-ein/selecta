@@ -21,7 +21,8 @@ struct Harness
     {}
 
     // Queues a ticket whose `ready` records it and, if `start`, starts it at once.
-    ServiceGate::Ticket add(bool start = true, bool front = false)
+    ServiceGate::Ticket add(bool start = true, bool front = false,
+                            selecta::meta::Priority priority = selecta::meta::Priority::Interactive)
     {
         return gate.enqueue(
             [this, start](ServiceGate::Ticket ticket) {
@@ -30,7 +31,7 @@ struct Harness
                     gate.markStarted(ticket);
                 }
             },
-            front);
+            priority, front);
     }
 
     // Lets queued zero-delay work run.
@@ -162,6 +163,46 @@ TEST(ServiceGate, FrontGoesFirst)
     h.gate.poll();
     ASSERT_EQ(h.released.size(), 2);
     EXPECT_EQ(h.released.at(1), urgent);
+}
+
+TEST(ServiceGate, InteractiveJumpsAheadOfABackgroundBatch)
+{
+    using selecta::meta::Priority;
+    Harness h({1000ms, 100, 1s, 10});
+    h.add();
+    h.settle(); // one is out; the rest must wait for the spacing
+    QList<ServiceGate::Ticket> batch;
+    for (int i = 0; i < 50; ++i) {
+        batch.append(h.add(true, false, Priority::Background));
+    }
+    const auto preview = h.add(true, false, Priority::Interactive);
+    const auto retry = h.add(true, true, Priority::Background); // front of its own lane only
+    h.settle();
+    h.clock.advance(1000ms);
+    h.gate.poll();
+    ASSERT_EQ(h.released.size(), 2);
+    EXPECT_EQ(h.released.at(1), preview);
+    h.clock.advance(1000ms);
+    h.gate.poll();
+    ASSERT_EQ(h.released.size(), 3);
+    EXPECT_EQ(h.released.at(2), retry);
+    h.clock.advance(1000ms);
+    h.gate.poll();
+    EXPECT_EQ(h.released.at(3), batch.first());
+    EXPECT_EQ(h.gate.queued(), 49);
+}
+
+TEST(ServiceGate, AbandonFindsTicketsInEitherLane)
+{
+    using selecta::meta::Priority;
+    Harness h({1000ms, 100, 1s, 10});
+    h.add();
+    h.settle();
+    const auto background = h.add(true, false, Priority::Background);
+    const auto interactive = h.add(true, false, Priority::Interactive);
+    h.gate.abandon(background);
+    h.gate.abandon(interactive);
+    EXPECT_EQ(h.gate.queued(), 0);
 }
 
 TEST(ServiceGate, BlockHoldsEverythingUntilItEnds)

@@ -1,0 +1,119 @@
+{
+  "tracks": {
+    "href": "https://api.spotify.com/v1/search?offset=0&limit=10&query=track%3A%22Glass%20Harbour%22%20artist%3A%22Kestrel%20Moon%22&type=track",
+    "limit": 10,
+    "next": null,
+    "offset": 0,
+    "previous": null,
+    "total": 3,
+    "items": [
+      {
+        "album": {
+          "album_type": "single",
+          "artists": [
+            {
+              "external_urls": { "spotify": "https://open.spotify.com/artist/fKtHF4vUCsMehGAkWvj7FA" },
+              "href": "https://api.spotify.com/v1/artists/fKtHF4vUCsMehGAkWvj7FA",
+              "id": "fKtHF4vUCsMehGAkWvj7FA",
+              "name": "Kestrel Moon",
+              "type": "artist",
+              "uri": "spotify:artist:fKtHF4vUCsMehGAkWvj7FA"
+            }
+          ],
+          "external_urls": { "spotify": "https://open.spotify.com/album/KdNnFRIBXuDL7DxtpYlSXp" },
+          "href": "https://api.spotify.com/v1/albums/KdNnFRIBXuDL7DxtpYlSXp",
+          "id": "KdNnFRIBXuDL7DxtpYlSXp",
+          "images": [
+            { "height": 300, "url": "https://i.scdn.co/image/test-glass-harbour-300", "width": 300 },
+            { "height": 640, "url": "https://i.scdn.co/image/test-glass-harbour-640", "width": 640 },
+            { "height": 64, "url": "https://i.scdn.co/image/test-glass-harbour-64", "width": 64 }
+          ],
+          "is_playable": true,
+          "name": "Glass Harbour",
+          "release_date": "2026-03-13",
+          "release_date_precision": "day",
+          "total_tracks": 3,
+          "type": "album",
+          "uri": "spotify:album:KdNnFRIBXuDL7DxtpYlSXp"
+        },
+        "artists": [
+          {
+            "external_urls": { "spotify": "https://open.spotify.com/artist/fKtHF4vUCsMehGAkWvj7FA" },
+            "id": "fKtHF4vUCsMehGAkWvj7FA",
+            "name": "Kestrel Moon",
+            "type": "artist",
+            "uri": "spotify:artist:fKtHF4vUCsMehGAkWvj7FA"
+          }
+        ],
+        "disc_number": 1,
+        "duration_ms": 391000,
+        "explicit": false,
+        "external_ids": { "isrc": "GBXYZ2600101" },
+        "external_urls": { "spotify": "https://open.spotify.com/track/u8jzPde0IgxLd6GncfBAep" },
+        "href": "https://api.spotify.com/v1/tracks/u8jzPde0IgxLd6GncfBAep",
+        "id": "u8jzPde0IgxLd6GncfBAep",
+        "is_local": false,
+        "is_playable": true,
+        "name": "Glass Harbour - Extended Mix",
+        "preview_url": null,
+        "track_number": 2,
+        "type": "track",
+        "uri": "spotify:track:u8jzPde0IgxLd6GncfBAep"
+      },
+      {
+        "album": {
+          "album_type": "single",
+          "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" }],
+          "external_urls": { "spotify": "https://open.spotify.com/album/KdNnFRIBXuDL7DxtpYlSXp" },
+          "id": "KdNnFRIBXuDL7DxtpYlSXp",
+          "images": [{ "height": 640, "url": "https://i.scdn.co/image/test-glass-harbour-640", "width": 640 }],
+          "name": "Glass Harbour",
+          "release_date": "2026-03-13",
+          "release_date_precision": "day",
+          "total_tracks": 3,
+          "type": "album"
+        },
+        "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" }],
+        "disc_number": 1,
+        "duration_ms": 201500,
+        "explicit": false,
+        "external_ids": { "isrc": "GBXYZ2600102" },
+        "external_urls": { "spotify": "https://open.spotify.com/track/fJBd0Kh8oOOL8dKLzdocJ2" },
+        "id": "fJBd0Kh8oOOL8dKLzdocJ2",
+        "is_local": false,
+        "name": "Glass Harbour - Radio Edit",
+        "preview_url": null,
+        "track_number": 1,
+        "type": "track"
+      },
+      {
+        "album": {
+          "album_type": "single",
+          "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" }],
+          "id": "KdNnFRIBXuDL7DxtpYlSXp",
+          "images": [{ "height": 640, "url": "https://i.scdn.co/image/test-glass-harbour-640", "width": 640 }],
+          "name": "Glass Harbour",
+          "release_date": "2026-03-13",
+          "release_date_precision": "day",
+          "total_tracks": 3,
+          "type": "album"
+        },
+        "artists": [
+          { "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" },
+          { "id": "c9QeWJKY40uvSwMFLZDe1f", "name": "Night Tram", "type": "artist" }
+        ],
+        "disc_number": 1,
+        "duration_ms": 412000,
+        "explicit": false,
+        "external_ids": { "isrc": "GBXYZ2600103" },
+        "external_urls": { "spotify": "https://open.spotify.com/track/isAjIhKtJ0RlgLKOmxgJTe" },
+        "id": "isAjIhKtJ0RlgLKOmxgJTe",
+        "is_local": false,
+        "name": "Glass Harbour - Night Tram Remix",
+        "preview_url": null,
+        "track_number": 3,
+        "type": "track"
+      }
+    ]
+  }
+}

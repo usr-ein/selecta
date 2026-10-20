@@ -1,0 +1,57 @@
+{
+  "album": {
+    "album_type": "single",
+    "artists": [
+      {
+        "external_urls": { "spotify": "https://open.spotify.com/artist/fKtHF4vUCsMehGAkWvj7FA" },
+        "id": "fKtHF4vUCsMehGAkWvj7FA",
+        "name": "Kestrel Moon",
+        "type": "artist",
+        "uri": "spotify:artist:fKtHF4vUCsMehGAkWvj7FA"
+      }
+    ],
+    "external_urls": { "spotify": "https://open.spotify.com/album/KdNnFRIBXuDL7DxtpYlSXp" },
+    "href": "https://api.spotify.com/v1/albums/KdNnFRIBXuDL7DxtpYlSXp",
+    "id": "KdNnFRIBXuDL7DxtpYlSXp",
+    "images": [
+      { "height": 64, "url": "https://i.scdn.co/image/test-glass-harbour-64", "width": 64 },
+      { "height": 640, "url": "https://i.scdn.co/image/test-glass-harbour-640", "width": 640 },
+      { "height": 300, "url": "https://i.scdn.co/image/test-glass-harbour-300", "width": 300 },
+      { "height": 999, "url": "http://insecure.example/test.jpg", "width": 999 }
+    ],
+    "name": "Glass Harbour",
+    "release_date": "2026-03-13",
+    "release_date_precision": "day",
+    "total_tracks": 3,
+    "type": "album",
+    "uri": "spotify:album:KdNnFRIBXuDL7DxtpYlSXp"
+  },
+  "artists": [
+    {
+      "external_urls": { "spotify": "https://open.spotify.com/artist/fKtHF4vUCsMehGAkWvj7FA" },
+      "id": "fKtHF4vUCsMehGAkWvj7FA",
+      "name": "Kestrel Moon",
+      "type": "artist",
+      "uri": "spotify:artist:fKtHF4vUCsMehGAkWvj7FA"
+    },
+    {
+      "id": "c9QeWJKY40uvSwMFLZDe1f",
+      "name": "Night Tram",
+      "type": "artist",
+      "uri": "spotify:artist:c9QeWJKY40uvSwMFLZDe1f"
+    }
+  ],
+  "disc_number": 1,
+  "duration_ms": 391000,
+  "explicit": false,
+  "external_ids": { "isrc": "gbxyz2600101" },
+  "external_urls": { "spotify": "https://open.spotify.com/track/u8jzPde0IgxLd6GncfBAep" },
+  "href": "https://api.spotify.com/v1/tracks/u8jzPde0IgxLd6GncfBAep",
+  "id": "u8jzPde0IgxLd6GncfBAep",
+  "is_local": false,
+  "name": "Glass Harbour - Extended Mix",
+  "preview_url": null,
+  "track_number": 2,
+  "type": "track",
+  "uri": "spotify:track:u8jzPde0IgxLd6GncfBAep"
+}

@@ -1,0 +1,34 @@
+{
+  "href": "https://api.spotify.com/v1/albums/8rESQedUStPKR0CsTy4Qwb/tracks?offset=2&limit=50",
+  "items": [
+    {
+      "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" }],
+      "disc_number": 2,
+      "duration_ms": 401000,
+      "explicit": false,
+      "external_urls": { "spotify": "https://open.spotify.com/track/oQoaF1LlqsajAIxNKu8iS2" },
+      "id": "oQoaF1LlqsajAIxNKu8iS2",
+      "is_local": false,
+      "name": "Low Water - Extended Mix",
+      "track_number": 1,
+      "type": "track"
+    },
+    {
+      "artists": [{ "id": "fKtHF4vUCsMehGAkWvj7FA", "name": "Kestrel Moon", "type": "artist" }],
+      "disc_number": 2,
+      "duration_ms": 355000,
+      "explicit": false,
+      "external_urls": { "spotify": "https://open.spotify.com/track/G8NPRVdD53X83RZJzzzzgE" },
+      "id": "G8NPRVdD53X83RZJzzzzgE",
+      "is_local": false,
+      "name": "Undertow - Dub",
+      "track_number": 2,
+      "type": "track"
+    }
+  ],
+  "limit": 50,
+  "next": null,
+  "offset": 2,
+  "previous": "https://api.spotify.com/v1/albums/8rESQedUStPKR0CsTy4Qwb/tracks?offset=0&limit=50",
+  "total": 4
+}

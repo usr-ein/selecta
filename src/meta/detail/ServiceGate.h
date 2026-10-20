@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "meta/Priority.h"
 
 #include <QObject>
 #include <QSet>
@@ -21,6 +22,9 @@ namespace selecta::meta::detail {
 // in flight (markStarted(): the request went out) → done (markFinished()). Only one ticket is reserved at a time, and
 // spacing is measured between actual starts, so a permit that arrives late can't squeeze two starts together.
 // abandon() drops a queued or reserved ticket.
+//
+// Two lanes: an Interactive ticket starts before every queued Background one (meta/Priority.h); first come first served
+// within a lane.
 //
 // `ready` callbacks always run from the event loop (an internal timer), never inside a call to this class. Times come
 // from the injected clock; poll() re-checks now (the timer calls it; tests call it after moving a ManualClock).
@@ -49,8 +53,8 @@ public:
     ServiceGate(ServiceGate &&) = delete;
     ServiceGate &operator=(ServiceGate &&) = delete;
 
-    // Queues a start; `front` puts it ahead of the others (a retry keeps its place).
-    Ticket enqueue(Ready ready, bool front = false);
+    // Queues a start in `priority`'s lane; `front` puts it ahead of the others in that lane (a retry keeps its place).
+    Ticket enqueue(Ready ready, Priority priority = Priority::Interactive, bool front = false);
     void markStarted(Ticket ticket);
     void markFinished(Ticket ticket);
     void abandon(Ticket ticket);
@@ -61,7 +65,7 @@ public:
     // How long until the back-off ends; zero when not blocked.
     base::Clock::Duration blockRemaining() const;
 
-    int queued() const { return static_cast<int>(m_queue.size()); }
+    int queued() const { return static_cast<int>(m_interactive.size() + m_background.size()); }
     int inFlight() const { return static_cast<int>(m_inFlight.size()); }
     bool hasReservation() const { return m_reserved.has_value(); }
 
@@ -85,7 +89,8 @@ private:
     Limits m_limits;
     const base::Clock &m_clock;
     QTimer m_timer;
-    std::deque<Waiting> m_queue;
+    std::deque<Waiting> m_interactive;
+    std::deque<Waiting> m_background;
     std::optional<Ticket> m_reserved;
     QSet<Ticket> m_inFlight;
     std::deque<base::Clock::TimePoint> m_starts; // recent starts, oldest first (the sliding window)
