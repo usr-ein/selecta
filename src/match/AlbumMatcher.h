@@ -70,7 +70,7 @@ class AlbumMatcher final
 public:
     explicit AlbumMatcher(std::shared_ptr<const MatchIndex> index);
 
-    AlbumMatchResult match(const QList<RemoteAlbumFile> &files, const MatchOptions &options = {}) const;
+    AlbumMatchResult match(const QList<RemoteAlbumFile> &files, MatchOptions options = {}) const;
 
 private:
     std::shared_ptr<const MatchIndex> m_index;

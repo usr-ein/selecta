@@ -123,12 +123,11 @@ public:
 
     // `parsed` is RemotePathParser's result for file.path (parsed with the folder's siblings and
     // ParseContext{&index()->artists()}).
-    MatchResult match(const ParsedRemote &parsed, const RemoteFile &file, const MatchOptions &options = {}) const;
+    MatchResult match(const ParsedRemote &parsed, const RemoteFile &file, MatchOptions options = {}) const;
 
     // Collection and Inbox records for a local track, best first: tier ≥ likely, or relation OtherVersion; at most
     // `limit`. Lengths are exact on both sides.
-    QList<RecordMatch> matchLocal(const LocalTrackQuery &query, qsizetype limit = 8,
-                                  const MatchOptions &options = {}) const;
+    QList<RecordMatch> matchLocal(const LocalTrackQuery &query, qsizetype limit = 8, MatchOptions options = {}) const;
 
 private:
     std::shared_ptr<const MatchIndex> m_index;

@@ -5,6 +5,8 @@ find_package(rapidfuzz CONFIG REQUIRED)
 
 qt_add_library(selecta_match STATIC
     Types.h Types.cpp
+    Duration.h Duration.cpp
+    Quality.h Quality.cpp
     Lexicon.h Lexicon.cpp
     Normalizer.h Normalizer.cpp
     VersionClassifier.h VersionClassifier.cpp
@@ -12,8 +14,14 @@ qt_add_library(selecta_match STATIC
     TokenIndex.h TokenIndex.cpp
     ArtistDictionary.h ArtistDictionary.cpp
     RemotePathParser.h RemotePathParser.cpp
+    MatchIndex.h MatchIndex.cpp
+    Matcher.h Matcher.cpp
+    ReleaseScorer.h ReleaseScorer.cpp
+    QueryPlanner.h QueryPlanner.cpp
     Tracklist.h Tracklist.cpp
     detail/Alignment.h detail/Alignment.cpp
+    detail/IndexData.h
+    detail/Scoring.h detail/Scoring.cpp
     detail/RemoteName.h detail/RemoteName.cpp
     detail/Text.h detail/Text.cpp)
 add_library(Selecta::Match ALIAS selecta_match)
