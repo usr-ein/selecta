@@ -10,12 +10,16 @@ qt_add_library(selecta_meta STATIC
     Result.h Result.cpp
     ServicePolicy.h ServicePolicy.cpp
     SpotifyAuth.h SpotifyAuth.cpp
+    SpotifyClient.h SpotifyClient.cpp
+    SpotifyLinks.h SpotifyLinks.cpp
     TokenStore.h TokenStore.cpp
     detail/Async.h
     detail/HttpChannel.h detail/HttpChannel.cpp
+    detail/Identifiers.h detail/Identifiers.cpp
     detail/Json.h detail/Json.cpp
     detail/LoopbackReceiver.h detail/LoopbackReceiver.cpp
-    detail/ServiceGate.h detail/ServiceGate.cpp)
+    detail/ServiceGate.h detail/ServiceGate.cpp
+    detail/SpotifyJson.h detail/SpotifyJson.cpp)
 add_library(Selecta::Meta ALIAS selecta_meta)
 target_link_libraries(selecta_meta PUBLIC selecta_base selecta_governor Qt6::Core Qt6::Network)
 if(APPLE)

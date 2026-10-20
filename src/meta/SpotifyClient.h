@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "meta/Priority.h"
 #include "meta/Release.h"
 #include "meta/Result.h"
 #include "meta/SpotifyLinks.h"
@@ -27,11 +28,12 @@ class SpotifyAuth;
 // Spotify field filters: track:"…" artist:"…" album:"…", with `version` words as free terms.
 struct TrackQuery
 {
-    QString artist;  // main artist
-    QString title;   // the title without its version
-    QString version; // "Extended Mix", "Bicep Remix"…; optional
-    QString album;   // optional
-    int limit = 10;  // 1…10: development mode's maximum (§3.3)
+    QString artist;                            // main artist
+    QString title;                             // the title without its version
+    QString version;                           // "Extended Mix", "Bicep Remix"…; optional
+    QString album;                             // optional
+    int limit = 10;                            // 1…10: development mode's maximum (§3.3)
+    Priority priority = Priority::Interactive; // Background for Get tracks batches
 };
 
 // An album with every track, album-level fields copied into each track's Release (track and disc totals included).
@@ -104,11 +106,11 @@ public:
     QFuture<Result<QList<Release>>> searchTracks(const TrackQuery &query);
     // Tracks carrying this ISRC (q=isrc:…). Fails with InvalidArgument for a malformed ISRC; an empty list when
     // Spotify has none.
-    QFuture<Result<QList<Release>>> searchIsrc(const QString &isrc);
+    QFuture<Result<QList<Release>>> searchIsrc(const QString &isrc, Priority priority = Priority::Interactive);
     // One track. NotFound when Spotify has no such ID; InvalidArgument for a malformed one.
-    QFuture<Result<Release>> track(const QString &trackId);
+    QFuture<Result<Release>> track(const QString &trackId, Priority priority = Priority::Interactive);
     // One album with all its tracks (paged), disc total computed from the tracks.
-    QFuture<Result<Album>> album(const QString &albumId);
+    QFuture<Result<Album>> album(const QString &albumId, Priority priority = Priority::Interactive);
 
     // The signed-in user's playlists (own and followed; only own or collaborative ones can be imported).
     QFuture<Result<QList<PlaylistSummary>>> myPlaylists();
@@ -118,8 +120,9 @@ public:
     // The user's Liked Songs, most recently liked first.
     QFuture<Result<TrackList>> likedSongs();
     // Resolves pasted links: one lookup per track link (no batch endpoint in development mode), album and playlist
-    // links through album() and playlistTracks(). A failing link lands in LinkImport::failed; the call itself fails
-    // only when nothing can be looked up at all (not signed in, quota, rate limit).
+    // links through album() and playlistTracks(), all in the Background lane. A failing link lands in
+    // LinkImport::failed; the call itself fails only when nothing can be looked up at all (not signed in, quota, rate
+    // limit).
     QFuture<Result<LinkImport>> importLinks(const spotify::PastedLinks &links);
 
     // The q parameter for a TrackQuery (exposed for tests).
@@ -127,6 +130,7 @@ public:
 
 private:
     struct Private;
+    class LinkImporter;
     std::unique_ptr<Private> d;
 };
 

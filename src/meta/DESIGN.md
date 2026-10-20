@@ -90,21 +90,50 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
 ## Integration points for `core/`
 
 1. **Construct on the meta thread:** one `QNetworkAccessManager`, a `RequestPacer` over the Governor, a `MetaCache`
-   (memory, or a persistent one), a `KeychainTokenStore(u"app.selecta.Selecta"_s)`, then `SpotifyAuth`,
+   (memory, or a persistent one), a `KeychainTokenStore(u"io.github.usr-ein.Selecta"_s)` (the bundle id; accounts
+   are `spotify/<clientId>`), then `SpotifyAuth`,
    `SpotifyClient`, `DeezerClient`, `MusicBrainzClient`, `CoverFetcher`, `ReleaseResolver`, `ClipSource`,
    `YtDlpRunner`.
 2. **Spotify settings:** `SpotifyAuth::setClientId()` from Settings → Integrations, then `restore()` at start-up;
    `signIn()` from the "Connect" button (`Config::openUrl` = `QDesktopServices::openUrl`); `signIn(playlistScopes())`
    before the first playlist import. Show `signInExpiresAt()` two weeks ahead. On `signedOut()` drop any Spotify
    data core keeps.
-3. **Get tracks / search:** `ReleaseResolver::resolve()` per line; the chosen candidate's `durationMs` drives the
-   ±3 s Soulseek ranking (D23).
+3. **Get tracks / search:** `ReleaseResolver::resolve()` per line — `Priority::Background` for a pasted batch,
+   `Priority::Interactive` for a search typed by hand; the chosen candidate's `durationMs` drives the ±3 s Soulseek
+   ranking (D23). Pasted Spotify links: `spotify::parsePastedLinks()` → `SpotifyClient::importLinks()` (background).
 4. **Arrival pipeline (D30):** `SpotifyClient::album()` for disc totals when tagging, `MusicBrainzClient::enrich()` +
    `applied()` for label/genre, `CoverFetcher::fetch()` for cover bytes → convert library.
 5. **Player:** `ClipSource::clipFor()` → stream the URL from memory; `YtDlpRunner::probe()` / `search()` / `pick()` /
    `fetch()` → open `YtDlpFetch::started(path)` with the growing-file reader.
 6. **Activity log (SAFE-4, META-7):** `RequestPacer::report()` receives one scrubbed `RequestRecord` per request.
 7. **Matching:** pass an adapter over `match/` as the `TextMatcher` once that library lands.
+
+## Priority lanes
+
+Every gate has two lanes (`meta/Priority.h`): an `Interactive` request starts before any queued `Background` one, so a
+100-line Get tracks batch (≈ 100–200 Spotify searches at 1/s, Deezer for the misses at 2/s, a few minutes in all)
+never starves a preview, a typed search or the inspector. Defaults: resolver and catalogue calls `Interactive` unless
+the caller says otherwise; `importLinks()` always `Background`; MusicBrainz enrichment (arrival pipeline) `Background`;
+`ClipSource` and `CoverFetcher` `Interactive`. A lane changes the order, never the service's limits.
+
+## Spotify endpoints
+
+Only these Web API paths are called, all among the endpoints development mode still serves (February 2026 list; the
+note §3.3 and §4.2). `detail::spotify::isDevelopmentModeEndpoint()` holds the list; a debug assertion guards every
+request and a test checks every path the client requests.
+
+| Path | Use | Cache |
+|---|---|---|
+| `GET /search?q=…&type=track&limit≤10` | track search with field filters; `q=isrc:…` | 24 h |
+| `GET /tracks/{id}` | one track (pasted links one by one: no batch endpoint any more) | 30 days |
+| `GET /albums/{id}`, `GET /albums/{id}/tracks` | album with all tracks, disc totals | 30 days |
+| `GET /me/playlists` | the user's playlists | never |
+| `GET /playlists/{id}?fields=name`, `GET /playlists/{id}/items` | own or collaborative playlists | never |
+| `GET /me/tracks` | Liked Songs | never |
+
+Errors: 401 → one refresh and one retry, then `SignInRequired`; 403 → `Forbidden` (playlists: a hint to paste the
+tracks instead); 429 → Retry-After when short, else `RateLimited`; 429 with `reason: QUOTA_EXCEEDED` → `QuotaExceeded`
+and no Spotify request until Retry-After (1 h when absent).
 
 ## Decisions taken here
 
@@ -120,17 +149,24 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
 | A wrong `state` ends the sign-in attempt | Safer than waiting on; the page tells the user to try again |
 | Client-credentials mode kept in `SpotifyAuth` (development only) | PRD META-1 allows it; lets the smoke tool reach Spotify without a browser |
 | Duration score: 1 within ±3 s, then `exp(−0.1·(Δ−3))` | spotDL's exponential, shifted so D23's ±3 s counts as "same" |
+| Two priority lanes per gate | The head implementer's requirement: batches must not starve previews |
+| Pasted links resolved one at a time by a self-owned importer | Pacing does the waiting; a fatal error (quota, sign-in) stops early and keeps what was found; destroying the client cancels it cleanly |
+| Paging by offset and `total`, not by following `next` URLs | The client decides what it requests; a hostile `next` can't redirect it |
+| Local files in playlists kept as text-only releases; episodes skipped and counted | They still make useful Get tracks lines (the note §14.6) |
 
 ## Progress
 
 - **Done:**
   - Public headers (`1c7f454`).
-  - M1: `Result`/`MetaError`, `ServicePolicy`, `MemoryMetaCache`, `InMemoryTokenStore`, `KeychainTokenStore`
-    (verified once against the real login Keychain with a throwaway service name, `SELECTA_TEST_KEYCHAIN=1`), PKCE,
-    `detail::ServiceGate`, `detail::HttpChannel`, `detail::Json`, `detail::LoopbackReceiver`, `SpotifyAuth`
-    (PKCE + loopback, refresh, rotation, 6-month expiry, client credentials). 126 tests (+2 opt-in Keychain).
-- **Next:** M2 — `SpotifyClient` and `SpotifyLinks`, recorded JSON fixtures.
-- **Open questions:** none blocking. `ReleaseResolver`'s text matching uses the local adapter until `match/` lands.
+  - M1 (merged as `07df505`): `Result`/`MetaError`, `ServicePolicy`, `MemoryMetaCache`, `InMemoryTokenStore`,
+    `KeychainTokenStore` (verified once against the real login Keychain with a throwaway service name,
+    `SELECTA_TEST_KEYCHAIN=1`), PKCE, `detail::ServiceGate`, `detail::HttpChannel`, `detail::Json`,
+    `detail::LoopbackReceiver`, `SpotifyAuth` (PKCE + loopback, refresh, rotation, 6-month expiry, client credentials).
+  - M2: priority lanes, `SpotifyLinks`, `detail::Identifiers`, `detail::SpotifyJson`, `SpotifyClient` (search, ISRC,
+    track, album paging, playlists, Liked Songs, pasted links). 174 tests (+2 opt-in Keychain).
+- **Next:** M3 — `MusicBrainzClient` (ISRC → recordings → releases → genres, `enrich()`), `CoverFetcher` with
+  `detail::ImageHeader` (bounded JPEG/PNG parser, fuzz-style test), disk cache on a worker thread.
+- **Open questions:** none blocking. Merge main before M4 to adapt `match/`'s `Normalizer` / `VersionClassifier`.
 
 ### Notes for whoever resumes
 

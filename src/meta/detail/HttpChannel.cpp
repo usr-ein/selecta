@@ -305,7 +305,7 @@ void HttpChannel::enqueueAttempt(const std::shared_ptr<Op> &op, bool front)
 {
     op->stage = Op::Stage::Queued;
     const RequestId id = op->id;
-    op->ticket = m_gate->enqueue([this, id](quint64 ticket) { onGateReady(id, ticket); }, front);
+    op->ticket = m_gate->enqueue([this, id](quint64 ticket) { onGateReady(id, ticket); }, op->request.priority, front);
 }
 
 void HttpChannel::onGateReady(RequestId id, quint64 ticket)

@@ -6,6 +6,7 @@ selecta_add_test_suite(selecta_meta_tests
         support/Await.h
         support/FakeNetwork.h support/FakeNetwork.cpp
         support/FakePacer.h
+        support/Fixtures.h
         HttpChannelTest.cpp
         JsonTest.cpp
         LoopbackReceiverTest.cpp
@@ -14,6 +15,9 @@ selecta_add_test_suite(selecta_meta_tests
         ResultTest.cpp
         ServiceGateTest.cpp
         SpotifyAuthTest.cpp
+        SpotifyClientTest.cpp
+        SpotifyJsonTest.cpp
+        SpotifyLinksTest.cpp
         TokenStoreTest.cpp
     LIBRARIES selecta_meta Qt6::Network)
 target_compile_definitions(selecta_meta_tests PRIVATE

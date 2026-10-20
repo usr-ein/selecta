@@ -1,0 +1,20 @@
+{
+  "album": {
+    "album_type": "compilation",
+    "artists": [],
+    "id": "C3J27XDCG2LmlZGEONYlgC",
+    "images": [],
+    "name": "Untitled Compilation",
+    "release_date": "0000",
+    "release_date_precision": "year",
+    "type": "album"
+  },
+  "artists": [{ "name": "Unknown Pressing" }, { "id": "x" }],
+  "duration_ms": 0,
+  "external_ids": { "isrc": "not-an-isrc" },
+  "id": "tjfIZ4SOcMz9CPVNPkNa1H",
+  "is_local": false,
+  "name": "Side B",
+  "track_number": 0,
+  "type": "track"
+}

@@ -46,13 +46,14 @@ void ServiceGate::pollAll()
     }
 }
 
-ServiceGate::Ticket ServiceGate::enqueue(Ready ready, bool front)
+ServiceGate::Ticket ServiceGate::enqueue(Ready ready, Priority priority, bool front)
 {
     const Ticket ticket = m_next++;
+    std::deque<Waiting> &lane = priority == Priority::Interactive ? m_interactive : m_background;
     if (front) {
-        m_queue.push_front({ticket, std::move(ready)});
+        lane.push_front({ticket, std::move(ready)});
     } else {
-        m_queue.push_back({ticket, std::move(ready)});
+        lane.push_back({ticket, std::move(ready)});
     }
     schedule();
     return ticket;
@@ -86,9 +87,12 @@ void ServiceGate::abandon(Ticket ticket)
         schedule();
         return;
     }
-    const auto it = std::ranges::find(m_queue, ticket, &Waiting::ticket);
-    if (it != m_queue.end()) {
-        m_queue.erase(it);
+    for (std::deque<Waiting> *lane : {&m_interactive, &m_background}) {
+        const auto it = std::ranges::find(*lane, ticket, &Waiting::ticket);
+        if (it != lane->end()) {
+            lane->erase(it);
+            return;
+        }
     }
 }
 
@@ -126,7 +130,8 @@ base::Clock::TimePoint ServiceGate::earliestStart(base::Clock::TimePoint now)
 
 void ServiceGate::poll()
 {
-    if (m_reserved.has_value() || m_queue.empty() || static_cast<int>(m_inFlight.size()) >= m_limits.maxInFlight) {
+    if (m_reserved.has_value() || (m_interactive.empty() && m_background.empty()) ||
+        static_cast<int>(m_inFlight.size()) >= m_limits.maxInFlight) {
         return; // markStarted / abandon / markFinished / enqueue schedule the next look
     }
     const base::Clock::TimePoint now = m_clock.now();
@@ -136,8 +141,9 @@ void ServiceGate::poll()
         m_timer.start(std::max<std::chrono::milliseconds>(wait, std::chrono::milliseconds(1)));
         return;
     }
-    Waiting next = std::move(m_queue.front());
-    m_queue.pop_front();
+    std::deque<Waiting> &lane = m_interactive.empty() ? m_background : m_interactive;
+    Waiting next = std::move(lane.front());
+    lane.pop_front();
     m_reserved = next.ticket;
     next.ready(next.ticket);
 }

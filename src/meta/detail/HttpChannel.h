@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "meta/Priority.h"
 #include "meta/Result.h"
 #include "meta/ServicePolicy.h"
 
@@ -47,6 +48,7 @@ struct HttpRequest
     std::chrono::seconds cacheTtl{0};                 // lifetime of a stored 200 answer
     std::chrono::seconds notFoundTtl{0};              // > 0: a 404 is remembered this long too
     QString logTarget;                                // what the activity record shows; default: the scrubbed URL
+    Priority priority = Priority::Interactive;        // the gate lane every attempt of this request waits in
 };
 
 struct HttpResponse
