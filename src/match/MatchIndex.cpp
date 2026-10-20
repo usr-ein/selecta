@@ -109,9 +109,11 @@ public:
         record.albumSquashed = m_squashed.add(squashedTerm(u'l', keys.album.squashed), index);
         if (keys.title.field.leet != keys.title.field.squashed) {
             m_data.titleLeet.insert(index, keys.title.field.leet);
+            record.titleLeet = true;
         }
         if (keys.artist.field.leet != keys.artist.field.squashed) {
             m_data.artistLeet.insert(index, keys.artist.field.leet);
+            record.artistLeet = true;
         }
         record.meta = internMeta(keys);
         if (!artist.isEmpty()) {
@@ -151,6 +153,8 @@ public:
         m_data.words = m_words.build();
         m_data.albumWords = m_albumWords.build();
         m_data.squashed = m_squashed.build();
+        m_data.wordFacts = factsOf(m_data.words);
+        m_data.albumWordFacts = factsOf(m_data.albumWords);
         QList<ArtistDictionary::Entry> entries;
         entries.reserve(m_artistCounts.size());
         for (auto it = m_artistCounts.cbegin(); it != m_artistCounts.cend(); ++it) {
@@ -162,6 +166,16 @@ public:
     }
 
 private:
+    static std::vector<detail::TokenFacts> factsOf(const TokenIndex &vocabulary)
+    {
+        std::vector<detail::TokenFacts> facts;
+        facts.reserve(static_cast<std::size_t>(vocabulary.termCount()));
+        for (qsizetype term = 0; term < vocabulary.termCount(); ++term) {
+            facts.push_back(detail::tokenFacts(vocabulary.term(static_cast<quint32>(term))));
+        }
+        return facts;
+    }
+
     // Squashed keys of the three roles share one exact index, apart by a one-letter role prefix.
     static QString squashedTerm(QChar role, const QString &squashed)
     {
@@ -314,6 +328,7 @@ std::size_t MatchIndex::memoryUsage() const
                         d.squashed.memoryUsage() + d.artists.memoryUsage();
     bytes += d.records.capacity() * sizeof(detail::TrackRecord);
     bytes += d.tokenPool.capacity() * sizeof(quint32);
+    bytes += (d.wordFacts.capacity() + d.albumWordFacts.capacity()) * sizeof(detail::TokenFacts);
     bytes += d.metas.capacity() * (sizeof(detail::RecordMeta) + (2 * kStringBytes));
     bytes += static_cast<std::size_t>(d.titleLeet.size() + d.artistLeet.size()) * (kHashEntry + kStringBytes);
     for (const detail::AlbumRecord &album : d.albums) {

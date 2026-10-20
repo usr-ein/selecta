@@ -72,6 +72,10 @@ qsizetype matchingOpenBracket(QStringView text, qsizetype close)
 qsizetype featMarkerLength(QStringView text, bool inBrackets)
 {
     static constexpr std::array<QStringView, 5> kMarkers{u"featuring", u"feat.", u"feat", u"ft.", u"ft"};
+    const char16_t first = text.isEmpty() ? u'\0' : text.front().toLower().unicode();
+    if (first != u'f' && (first != u'w' || !inBrackets)) {
+        return 0; // every marker starts with "f", and "with" (in brackets only) with "w"
+    }
     QStringView found;
     for (const QStringView marker : kMarkers) {
         if (text.startsWith(marker, Qt::CaseInsensitive)) {

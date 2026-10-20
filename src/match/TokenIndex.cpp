@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "match/TokenIndex.h"
 
+#include "match/Lexicon.h"
+
 #include <QString>
+#include <QVarLengthArray>
 
 #include <algorithm>
-#include <string>
-#include <string_view>
-#include <unordered_map>
+#include <array>
+#include <bit>
+#include <cstdlib>
 #include <utility>
 #include <vector>
 
@@ -16,16 +19,26 @@ namespace detail {
 
 struct TokenIndexData
 {
-    std::unordered_map<std::u16string, quint32> ids;  // term → id; node-based, so keys never move
-    std::vector<std::u16string_view> terms;           // id → text (views into `ids`)
+    // (hash, term) pairs sorted by hash, with a directory on the hash's top bits: a lookup searches one small
+    // bucket. Hashes keep 32 bits: a collision only adds a candidate, and every candidate is verified.
+    struct HashedTerms
+    {
+        std::vector<quint32> hashes;    // sorted
+        std::vector<quint32> terms;     // terms[i] belongs to hashes[i]
+        std::vector<quint8> lengths;    // the UTF-16 length of terms[i], at most 255: filters before any lookup
+        std::vector<quint32> directory; // bucket b holds entries [directory[b], directory[b + 1])
+        int shift = 31;                 // bucket of a hash: hash >> shift
+    };
+
+    std::vector<char16_t> pool;          // term texts back to back
+    std::vector<quint32> termOffsets{0}; // term t is pool[termOffsets[t], termOffsets[t + 1])
+    std::vector<quint32> buckets;        // open addressing on the text hash: term ids (kNoTerm = free), load ≤ 1/2
     std::vector<std::pair<quint32, quint32>> pending; // (term, document) while building
 
     std::vector<quint32> offsets; // postings of term t: documents[offsets[t], offsets[t + 1])
     std::vector<quint32> documents;
-    std::vector<quint64> deleteHashes; // sorted; deleteTerms[i] is the term of deleteHashes[i]
-    std::vector<quint32> deleteTerms;
-    std::vector<quint64> leetHashes; // leet-folded forms of terms that mix letters and digits
-    std::vector<quint32> leetTerms;
+    HashedTerms deletes; // symmetric deletes of the first kDeletePrefix characters (§17.6)
+    HashedTerms leet;    // leet-folded forms of terms that mix letters and digits
     bool fuzzy = true;
 };
 
@@ -33,75 +46,193 @@ struct TokenIndexData
 
 namespace {
 
-std::u16string_view toView(QStringView text)
-{
-    return {text.utf16(), static_cast<std::size_t>(text.size())};
-}
+using detail::TokenIndexData;
+using HashedTerms = TokenIndexData::HashedTerms;
 
-QStringView toQt(std::u16string_view text)
-{
-    return {text.data(), static_cast<qsizetype>(text.size())};
-}
+constexpr quint64 kFnvOffset = 0xCBF29CE484222325ULL;
+constexpr quint64 kFnvPrime = 0x100000001B3ULL;
+constexpr qsizetype kMaxDeletes = 29; // 1 + 7 + 21: two deletes from a 7-character prefix
+constexpr int kMaxDirectoryBits = 20;
+constexpr std::size_t kEntriesPerBucket = 16;
 
-// FNV-1a over UTF-16 code units. Collisions only add candidates: every candidate is verified.
-quint64 hashOf(std::u16string_view text)
+// FNV-1a over UTF-16 code units.
+quint64 hashOf(QStringView text)
 {
-    quint64 hash = 0xCBF29CE484222325ULL;
-    for (const char16_t unit : text) {
-        hash ^= static_cast<quint64>(unit);
-        hash *= 0x100000001B3ULL;
+    quint64 hash = kFnvOffset;
+    for (const QChar c : text) {
+        hash ^= static_cast<quint64>(c.unicode());
+        hash *= kFnvPrime;
     }
     return hash;
 }
 
-// Every distinct string made by deleting up to `budget` code units from `text` (text itself included).
-std::vector<std::u16string> deletes(std::u16string_view text, int budget)
+// The 32 bits kept by HashedTerms: FNV-1a's high half mixes best.
+quint32 shortHash(quint64 hash)
 {
-    std::vector<std::u16string> all{std::u16string(text)};
-    std::size_t levelBegin = 0;
-    for (int level = 0; level < budget; ++level) {
-        const std::size_t levelEnd = all.size();
-        for (std::size_t k = levelBegin; k < levelEnd; ++k) {
-            const std::u16string source = all[k];
-            for (std::size_t i = 0; i < source.size(); ++i) {
-                std::u16string shorter = source;
-                shorter.erase(i, 1);
-                if (std::ranges::find(all, shorter) == all.end()) {
-                    all.push_back(std::move(shorter));
-                }
+    return static_cast<quint32>(hash >> 32U);
+}
+
+// Slot of a text hash in the vocabulary table (a finaliser, so the low bits mix well).
+std::size_t slotOf(quint64 hash, std::size_t mask)
+{
+    hash ^= hash >> 32U;
+    hash *= 0xD6E8FEB86659FD93ULL;
+    hash ^= hash >> 32U;
+    return static_cast<std::size_t>(hash) & mask;
+}
+
+QStringView textOf(const TokenIndexData &data, quint32 term)
+{
+    const quint32 begin = data.termOffsets[term];
+    return {data.pool.data() + begin, static_cast<qsizetype>(data.termOffsets[term + 1] - begin)};
+}
+
+// The slot holding `text`, or the free slot where it belongs. The table is never full (load ≤ 1/2).
+std::size_t probe(const TokenIndexData &data, QStringView text, quint64 hash)
+{
+    const std::size_t mask = data.buckets.size() - 1;
+    for (std::size_t slot = slotOf(hash, mask);; slot = (slot + 1) & mask) {
+        const quint32 term = data.buckets[slot];
+        if (term == TokenIndex::kNoTerm || textOf(data, term) == text) {
+            return slot;
+        }
+    }
+}
+
+void grow(TokenIndexData &data)
+{
+    data.buckets.assign(std::max<std::size_t>(16, data.buckets.size() * 2), TokenIndex::kNoTerm);
+    const auto count = static_cast<quint32>(data.termOffsets.size() - 1);
+    for (quint32 term = 0; term < count; ++term) {
+        const QStringView text = textOf(data, term);
+        data.buckets[probe(data, text, hashOf(text))] = term;
+    }
+}
+
+bool hasDigit(QStringView text)
+{
+    return std::ranges::any_of(text, [](QChar c) { return c.isDigit(); });
+}
+
+bool hasLetter(QStringView text)
+{
+    return std::ranges::any_of(text, [](QChar c) { return c.isLetter(); });
+}
+
+// hashOf(TokenRules::leetFold(text)), without building the folded string; `changed` tells whether folding changes it.
+quint64 leetHash(QStringView text, bool &changed)
+{
+    const bool fold = hasDigit(text) && hasLetter(text);
+    changed = false;
+    quint64 hash = kFnvOffset;
+    for (const QChar c : text) {
+        char16_t unit = c.unicode();
+        if (fold && c.isDigit()) {
+            if (const char16_t replacement = detail::lexicon::leetFold(unit); replacement != 0) {
+                unit = replacement;
+                changed = true;
             }
         }
-        levelBegin = levelEnd;
+        hash ^= static_cast<quint64>(unit);
+        hash *= kFnvPrime;
     }
-    return all;
+    return hash;
 }
 
-std::u16string_view deletePrefix(std::u16string_view term)
+// The hashes of every string made by deleting up to `budget` (≤ 2) code units from the first kDeletePrefix units of
+// `text`, the prefix itself included; sorted, without duplicates. No string is built.
+struct DeleteHashes
 {
-    return term.substr(0, std::min<std::size_t>(term.size(), TokenIndex::kDeletePrefix));
+    std::array<quint32, kMaxDeletes> values{};
+    qsizetype count = 0;
+};
+
+DeleteHashes deleteHashes(QStringView text, int budget)
+{
+    const QStringView prefix = text.first(std::min(text.size(), TokenIndex::kDeletePrefix));
+    const qsizetype n = prefix.size();
+    const auto skipping = [prefix, n](qsizetype skipA, qsizetype skipB) {
+        quint64 hash = kFnvOffset;
+        for (qsizetype k = 0; k < n; ++k) {
+            if (k != skipA && k != skipB) {
+                hash ^= static_cast<quint64>(prefix[k].unicode());
+                hash *= kFnvPrime;
+            }
+        }
+        return shortHash(hash);
+    };
+    DeleteHashes out;
+    out.values[out.count++] = skipping(-1, -1);
+    for (qsizetype i = 0; budget >= 1 && i < n; ++i) {
+        out.values[out.count++] = skipping(i, -1);
+        for (qsizetype j = i + 1; budget >= 2 && j < n; ++j) {
+            out.values[out.count++] = skipping(i, j);
+        }
+    }
+    const auto values = std::span(out.values).first(static_cast<std::size_t>(out.count));
+    std::ranges::sort(values);
+    out.count = std::ranges::unique(values).begin() - values.begin();
+    return out;
 }
 
-void sortPairs(std::vector<std::pair<quint64, quint32>> &pairs, std::vector<quint64> &hashes,
-               std::vector<quint32> &terms)
+constexpr quint8 kLongTerm = 255;
+
+quint8 storedLength(qsizetype length)
+{
+    return static_cast<quint8>(std::min<qsizetype>(length, kLongTerm));
+}
+
+HashedTerms hashedTerms(std::vector<std::pair<quint32, quint32>> pairs, const TokenIndexData &data)
 {
     std::ranges::sort(pairs);
     const auto [first, last] = std::ranges::unique(pairs);
     pairs.erase(first, last);
-    hashes.reserve(pairs.size());
-    terms.reserve(pairs.size());
+    HashedTerms table;
+    table.hashes.reserve(pairs.size());
+    table.terms.reserve(pairs.size());
+    table.lengths.reserve(pairs.size());
     for (const auto &[hash, term] : pairs) {
-        hashes.push_back(hash);
-        terms.push_back(term);
+        table.hashes.push_back(hash);
+        table.terms.push_back(term);
+        table.lengths.push_back(storedLength(textOf(data, term).size()));
+    }
+    const int bits = std::clamp(std::bit_width(pairs.size() / kEntriesPerBucket), 1, kMaxDirectoryBits);
+    table.shift = 32 - bits;
+    table.directory.assign((std::size_t{1} << static_cast<unsigned>(bits)) + 1, 0);
+    for (const quint32 hash : table.hashes) {
+        ++table.directory[(hash >> static_cast<unsigned>(table.shift)) + 1];
+    }
+    for (std::size_t b = 1; b < table.directory.size(); ++b) {
+        table.directory[b] += table.directory[b - 1];
+    }
+    return table;
+}
+
+// The terms of `hash` whose length allows a match with a token of `length` units: every match of the token rules is
+// within 2 units (a fuzzy or doubled-letter match within its budget of at most 2, a leet match at equal length).
+template <typename Out>
+void collect(const HashedTerms &table, quint32 hash, qsizetype length, Out &out)
+{
+    if (table.hashes.empty()) {
+        return;
+    }
+    const int wanted = storedLength(length);
+    const std::size_t bucket = hash >> static_cast<unsigned>(table.shift);
+    const auto begin = table.hashes.begin() + table.directory[bucket];
+    const auto end = table.hashes.begin() + table.directory[bucket + 1];
+    for (auto it = std::lower_bound(begin, end, hash); it != end && *it == hash; ++it) {
+        const auto i = static_cast<std::size_t>(it - table.hashes.begin());
+        const int stored = table.lengths[i];
+        if (std::abs(stored - wanted) <= 2 || (stored == kLongTerm && wanted >= kLongTerm - 2)) {
+            out.push_back(table.terms[i]);
+        }
     }
 }
 
-void collect(const std::vector<quint64> &hashes, const std::vector<quint32> &terms, quint64 hash,
-             std::vector<quint32> &out)
+std::size_t hashedBytes(const HashedTerms &table)
 {
-    const auto range = std::ranges::equal_range(hashes, hash);
-    for (auto it = range.begin(); it != range.end(); ++it) {
-        out.push_back(terms[static_cast<std::size_t>(it - hashes.begin())]);
-    }
+    return ((table.hashes.capacity() + table.terms.capacity() + table.directory.capacity()) * sizeof(quint32)) +
+           table.lengths.capacity();
 }
 
 } // namespace
@@ -121,13 +252,21 @@ quint32 TokenIndex::Builder::add(QStringView term, quint32 document)
     if (term.isEmpty() || !m_data) {
         return kNoTerm;
     }
-    const auto [it, inserted] =
-        m_data->ids.try_emplace(std::u16string(toView(term)), static_cast<quint32>(m_data->terms.size()));
-    if (inserted) {
-        m_data->terms.push_back(it->first);
+    TokenIndexData &data = *m_data;
+    const auto count = static_cast<quint32>(data.termOffsets.size() - 1);
+    if (2 * (static_cast<std::size_t>(count) + 1) > data.buckets.size()) {
+        grow(data);
     }
-    m_data->pending.emplace_back(it->second, document);
-    return it->second;
+    const std::size_t slot = probe(data, term, hashOf(term));
+    quint32 id = data.buckets[slot];
+    if (id == kNoTerm) {
+        id = count;
+        data.buckets[slot] = id;
+        data.pool.insert(data.pool.end(), term.utf16(), term.utf16() + term.size());
+        data.termOffsets.push_back(static_cast<quint32>(data.pool.size()));
+    }
+    data.pending.emplace_back(id, document);
+    return id;
 }
 
 TokenIndex TokenIndex::Builder::build()
@@ -140,7 +279,7 @@ TokenIndex TokenIndex::Builder::build()
     const auto [first, last] = std::ranges::unique(pending);
     pending.erase(first, last);
 
-    const std::size_t termCount = data->terms.size();
+    const std::size_t termCount = data->termOffsets.size() - 1;
     data->offsets.assign(termCount + 1, 0);
     for (const auto &[term, document] : pending) {
         ++data->offsets[term + 1];
@@ -154,24 +293,30 @@ TokenIndex TokenIndex::Builder::build()
     }
     pending.clear();
     pending.shrink_to_fit();
+    data->pool.shrink_to_fit();
+    data->termOffsets.shrink_to_fit();
 
-    std::vector<std::pair<quint64, quint32>> deletePairs;
-    std::vector<std::pair<quint64, quint32>> leetPairs;
-    for (std::size_t t = 0; t < termCount; ++t) {
-        const std::u16string_view term = data->terms[t];
-        const QStringView qtTerm = toQt(term);
-        if (const int budget = TokenRules::editBudget(qtTerm); budget > 0 && data->fuzzy) {
-            for (const std::u16string &variant : deletes(deletePrefix(term), budget)) {
-                deletePairs.emplace_back(hashOf(variant), static_cast<quint32>(t));
+    if (data->fuzzy) {
+        std::vector<std::pair<quint32, quint32>> deletePairs;
+        std::vector<std::pair<quint32, quint32>> leetPairs;
+        for (std::size_t t = 0; t < termCount; ++t) {
+            const auto term = static_cast<quint32>(t);
+            const QStringView text = textOf(*data, term);
+            if (const int budget = TokenRules::editBudget(text); budget > 0) {
+                const DeleteHashes hashes = deleteHashes(text, budget);
+                for (qsizetype k = 0; k < hashes.count; ++k) {
+                    deletePairs.emplace_back(hashes.values[static_cast<std::size_t>(k)], term);
+                }
+            }
+            bool changed = false;
+            const quint64 folded = leetHash(text, changed);
+            if (changed) {
+                leetPairs.emplace_back(shortHash(folded), term);
             }
         }
-        const QString folded = TokenRules::leetFold(qtTerm);
-        if (data->fuzzy && folded != qtTerm) {
-            leetPairs.emplace_back(hashOf(toView(folded)), static_cast<quint32>(t));
-        }
+        data->deletes = hashedTerms(std::move(deletePairs), *data);
+        data->leet = hashedTerms(std::move(leetPairs), *data);
     }
-    sortPairs(deletePairs, data->deleteHashes, data->deleteTerms);
-    sortPairs(leetPairs, data->leetHashes, data->leetTerms);
     return TokenIndex(std::move(data));
 }
 
@@ -191,17 +336,15 @@ TokenIndex &TokenIndex::operator=(TokenIndex &&) noexcept = default;
 
 quint32 TokenIndex::find(QStringView term) const
 {
-    if (!m_data || term.isEmpty()) {
+    if (!m_data || term.isEmpty() || m_data->buckets.empty()) {
         return kNoTerm;
     }
-    // std::unordered_map has no heterogeneous lookup for std::u16string here; the copy is short-lived.
-    const auto it = m_data->ids.find(std::u16string(toView(term)));
-    return it == m_data->ids.end() ? kNoTerm : it->second;
+    return m_data->buckets[probe(*m_data, term, hashOf(term))];
 }
 
 std::span<const quint32> TokenIndex::postings(quint32 term) const
 {
-    if (!m_data || term == kNoTerm || term >= m_data->terms.size()) {
+    if (!m_data || term == kNoTerm || term >= m_data->termOffsets.size() - 1) {
         return {};
     }
     const quint32 begin = m_data->offsets[term];
@@ -211,15 +354,15 @@ std::span<const quint32> TokenIndex::postings(quint32 term) const
 
 QStringView TokenIndex::term(quint32 term) const
 {
-    if (!m_data || term == kNoTerm || term >= m_data->terms.size()) {
+    if (!m_data || term == kNoTerm || term >= m_data->termOffsets.size() - 1) {
         return {};
     }
-    return toQt(m_data->terms[term]);
+    return textOf(*m_data, term);
 }
 
 qsizetype TokenIndex::termCount() const
 {
-    return m_data ? static_cast<qsizetype>(m_data->terms.size()) : 0;
+    return m_data ? static_cast<qsizetype>(m_data->termOffsets.size() - 1) : 0;
 }
 
 QList<TokenIndex::FuzzyHit> TokenIndex::fuzzyLookup(QStringView token, qsizetype maxHits) const
@@ -228,28 +371,28 @@ QList<TokenIndex::FuzzyHit> TokenIndex::fuzzyLookup(QStringView token, qsizetype
     if (!m_data || token.isEmpty() || maxHits <= 0) {
         return hits;
     }
-    std::vector<quint32> candidates;
+    QVarLengthArray<quint32, 64> candidates;
     // Leet forms: "deadmaus" finds "deadmau5" and the other way round.
-    const QString folded = TokenRules::leetFold(token);
-    collect(m_data->leetHashes, m_data->leetTerms, hashOf(toView(folded)), candidates);
-    if (folded != token) {
-        if (const quint32 plain = find(folded); plain != kNoTerm) {
+    bool changed = false;
+    collect(m_data->leet, shortHash(leetHash(token, changed)), token.size(), candidates);
+    if (changed) {
+        if (const quint32 plain = find(TokenRules::leetFold(token)); plain != kNoTerm) {
             candidates.push_back(plain);
         }
     }
     // Symmetric deletes of the first 7 characters within the token's budget (§17.6).
     if (const int budget = TokenRules::editBudget(token); budget > 0) {
-        for (const std::u16string &variant : deletes(deletePrefix(toView(token)), budget)) {
-            collect(m_data->deleteHashes, m_data->deleteTerms, hashOf(variant), candidates);
+        const DeleteHashes hashes = deleteHashes(token, budget);
+        for (qsizetype k = 0; k < hashes.count; ++k) {
+            collect(m_data->deletes, hashes.values[static_cast<std::size_t>(k)], token.size(), candidates);
         }
     }
     std::ranges::sort(candidates);
-    const auto [first, last] = std::ranges::unique(candidates);
-    candidates.erase(first, last);
-    for (const quint32 candidate : candidates) {
-        const TokenComparison comparison = TokenRules::compare(token, term(candidate));
+    const auto *const end = std::ranges::unique(candidates).begin();
+    for (const auto *it = candidates.cbegin(); it != end; ++it) {
+        const TokenComparison comparison = TokenRules::compare(token, term(*it));
         if (comparison.matched() && comparison.kind != TokenMatchKind::Exact) {
-            hits.append({candidate, comparison});
+            hits.append({*it, comparison});
         }
     }
     std::ranges::sort(hits, [](FuzzyHit x, FuzzyHit y) {
@@ -266,16 +409,12 @@ std::size_t TokenIndex::memoryUsage() const
     if (!m_data) {
         return 0;
     }
-    std::size_t bytes = sizeof(detail::TokenIndexData);
-    for (const auto &[text, id] : m_data->ids) {
-        // node, key object and its heap buffer beyond the small-string capacity, and the bucket
-        bytes += 48 + (text.size() > 10 ? (text.size() + 1) * sizeof(char16_t) : 0);
-    }
-    bytes += m_data->terms.capacity() * sizeof(std::u16string_view);
-    bytes += m_data->offsets.capacity() * sizeof(quint32);
-    bytes += m_data->documents.capacity() * sizeof(quint32);
-    bytes += (m_data->deleteHashes.capacity() * sizeof(quint64)) + (m_data->deleteTerms.capacity() * sizeof(quint32));
-    bytes += (m_data->leetHashes.capacity() * sizeof(quint64)) + (m_data->leetTerms.capacity() * sizeof(quint32));
+    const TokenIndexData &data = *m_data;
+    std::size_t bytes = sizeof(TokenIndexData);
+    bytes += data.pool.capacity() * sizeof(char16_t);
+    bytes += (data.termOffsets.capacity() + data.buckets.capacity()) * sizeof(quint32);
+    bytes += (data.offsets.capacity() + data.documents.capacity()) * sizeof(quint32);
+    bytes += hashedBytes(data.deletes) + hashedBytes(data.leet);
     return bytes;
 }
 
