@@ -55,9 +55,18 @@ public:
     static QString searchItemId(qint64 searchId);
     // The search behind an item id, or 0.
     static qint64 searchOfItem(const QString &id);
+    // Peers' shares being browsed (PRD BRWS-1), with the searches: added or updated, and removed.
+    void setBrowse(const QString &peer, int count, bool busy);
+    void removeBrowse(const QString &peer);
+    static QString browseItemId(const QString &peer);
+    // The peer behind an item id, or an empty string.
+    static QString browseOfItem(const QString &id);
 
 private:
     static QList<Item> defaultItems();
+    // Adds or updates a closable item under "Digging", the newest first.
+    void setDiggingItem(const QString &id, const QString &title, const QIcon &icon, int count, bool busy);
+    void removeItem(const QString &id);
 
     QList<Item> m_items;
     QHash<QString, int> m_counts;

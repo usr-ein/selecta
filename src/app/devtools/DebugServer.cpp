@@ -254,6 +254,15 @@ QJsonObject DebugServer::handle(const QJsonObject &request)
         result = select(args, &error);
     } else if (command == u"drop") {
         result = drop(args, &error);
+    } else if (command == u"browse") {
+        // browse peer=<name>: opens that peer's shares, as "Browse <peer>'s Files" does.
+        const QString peer = args.value("peer"_L1).toString();
+        if (peer.isEmpty()) {
+            error = u"missing \"peer\""_s;
+        } else {
+            m_window.browsePeer(peer);
+            result = peer;
+        }
     } else if (command == u"play-pause") {
         m_window.playOrPause();
         result = true;

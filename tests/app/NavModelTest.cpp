@@ -92,3 +92,26 @@ TEST(NavModel, SearchesSitUnderDiggingNewestFirst)
     EXPECT_EQ(NavModel::searchOfItem(u"search:x"_s), 0);
     EXPECT_EQ(NavModel::searchOfItem(u"inbox"_s), 0);
 }
+
+TEST(NavModel, BrowsedPeersSitWithTheSearches)
+{
+    selecta::app::NavModel model;
+    model.setSearch(1, u"Okuma Drift"_s, 12, false);
+    model.setBrowse(u"vinyl_ghost"_s, 0, true);
+    const QString id = selecta::app::NavModel::browseItemId(u"vinyl_ghost"_s);
+    EXPECT_EQ(id, u"browse:vinyl_ghost"_s);
+    EXPECT_EQ(selecta::app::NavModel::browseOfItem(id), u"vinyl_ghost"_s);
+    EXPECT_TRUE(selecta::app::NavModel::browseOfItem(u"search:1"_s).isEmpty());
+    const int row = model.rowOf(id);
+    ASSERT_GE(row, 0);
+    EXPECT_LT(row, model.rowOf(u"wishlist"_s)); // under Digging, before the Wishlist
+    EXPECT_EQ(model.titleOf(id), u"vinyl_ghost"_s);
+    EXPECT_TRUE(model.index(row).data(selecta::app::NavModel::ClosableRole).toBool());
+    EXPECT_TRUE(model.index(row).data(selecta::app::NavModel::BusyRole).toBool());
+    model.setBrowse(u"vinyl_ghost"_s, 340, false);
+    EXPECT_EQ(model.index(model.rowOf(id)).data(selecta::app::NavModel::CountRole).toInt(), 340);
+    EXPECT_FALSE(model.index(model.rowOf(id)).data(selecta::app::NavModel::BusyRole).toBool());
+    model.removeBrowse(u"vinyl_ghost"_s);
+    EXPECT_EQ(model.rowOf(id), -1);
+    EXPECT_GE(model.rowOf(u"search:1"_s), 0);
+}

@@ -256,6 +256,14 @@ constexpr std::array kMigrations{
             seen        BLOB                        -- the files found so far (a compressed list of hashes)
         ) STRICT;
     )sql"},
+    // Browsed share lists (PRD BRWS-2, CACHE-1): kept a day, so looking again costs the peer nothing.
+    Migration{12, R"sql(
+        CREATE TABLE browse_cache (
+            peer       TEXT PRIMARY KEY,
+            fetched_ms INTEGER NOT NULL, -- Unix time, ms
+            list       BLOB NOT NULL     -- the share list, compressed
+        ) STRICT;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

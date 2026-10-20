@@ -163,7 +163,36 @@ qint64 NavModel::searchOfItem(const QString &id)
 
 void NavModel::setSearch(qint64 searchId, const QString &title, int count, bool busy)
 {
-    const QString id = searchItemId(searchId);
+    setDiggingItem(searchItemId(searchId), title, icons::symbol(u"magnifyingglass"_s, u"edit-find"_s), count, busy);
+}
+
+void NavModel::removeSearch(qint64 searchId)
+{
+    removeItem(searchItemId(searchId));
+}
+
+void NavModel::setBrowse(const QString &peer, int count, bool busy)
+{
+    setDiggingItem(browseItemId(peer), peer, icons::symbol(u"folder"_s, u"folder"_s), count, busy);
+}
+
+void NavModel::removeBrowse(const QString &peer)
+{
+    removeItem(browseItemId(peer));
+}
+
+QString NavModel::browseItemId(const QString &peer)
+{
+    return u"browse:"_s + peer;
+}
+
+QString NavModel::browseOfItem(const QString &id)
+{
+    return id.startsWith(u"browse:"_s) ? id.mid(7) : QString();
+}
+
+void NavModel::setDiggingItem(const QString &id, const QString &title, const QIcon &icon, int count, bool busy)
+{
     int row = rowOf(id);
     if (row < 0) {
         // Newest first, right under the "Digging" header.
@@ -173,11 +202,7 @@ void NavModel::setSearch(qint64 searchId, const QString &title, int count, bool 
             --at;
         }
         beginInsertRows({}, at, at);
-        m_items.insert(at, Item{.id = id,
-                                .title = title,
-                                .icon = icons::symbol(u"magnifyingglass"_s, u"edit-find"_s),
-                                .isHeader = false,
-                                .closable = true});
+        m_items.insert(at, Item{.id = id, .title = title, .icon = icon, .isHeader = false, .closable = true});
         endInsertRows();
         row = at;
     }
@@ -197,9 +222,8 @@ void NavModel::setSearch(qint64 searchId, const QString &title, int count, bool 
     Q_EMIT dataChanged(changed, changed);
 }
 
-void NavModel::removeSearch(qint64 searchId)
+void NavModel::removeItem(const QString &id)
 {
-    const QString id = searchItemId(searchId);
     const int row = rowOf(id);
     if (row < 0) {
         return;

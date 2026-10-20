@@ -128,7 +128,8 @@ void AlbumService::setState(AlbumDownload &album, AlbumDownload::State state, co
 }
 
 std::optional<qint64> AlbumService::download(const QString &peer, const QByteArray &folder,
-                                             const QList<SearchHit> &known, const std::optional<meta::Release> &release)
+                                             const QList<SearchHit> &known, const std::optional<meta::Release> &release,
+                                             bool complete)
 {
     if (peer.isEmpty() || folder.isEmpty() || m_inbox.config().inboxRoot.isEmpty()) {
         return std::nullopt;
@@ -149,7 +150,11 @@ std::optional<qint64> AlbumService::download(const QString &peer, const QByteArr
     album.id = *id;
     m_activity.record(u"album"_s, peer, u"wanted"_s, album.folderName());
     Q_EMIT albumChanged(album);
-    requestListing(album, known);
+    if (complete) {
+        listed(album.id, entriesOf(known), true); // a browse listed the whole folder already
+    } else {
+        requestListing(album, known);
+    }
     return album.id;
 }
 

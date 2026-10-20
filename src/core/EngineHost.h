@@ -113,6 +113,17 @@ public:
     QList<PeerStats> peerStats() const { return m_peerStats; }
     void refreshPeerStats();
 
+    // --- browsing peers' shares (BRWS-1, BRWS-2) ---
+    // Opens (or shows again) a peer's shares: browseChanged() follows.
+    void browse(const QString &peer, bool refresh = false);
+    void closeBrowse(const QString &peer);
+    void downloadBrowsed(const QString &peer, const QList<int> &indexes);
+    void downloadBrowsedFolder(const QString &peer, int index);
+    void previewBrowsed(const QString &peer, int index, PreviewSource source = PreviewSource::Automatic);
+    QList<Browse> browses() const { return m_browses.values(); }
+    std::optional<Browse> browseOf(const QString &peer) const;
+    QList<SearchResult> browseResults(const QString &peer) const { return m_browseResults.value(peer); }
+
     // --- the wishlist (SRCH-14) ---
     void addToWishlist(const QString &text);
     void removeFromWishlist(qint64 id);
@@ -214,6 +225,9 @@ Q_SIGNALS:
     void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
     void cachesChanged(const selecta::core::CacheStatus &status);
     void wishlistChanged(const QList<selecta::core::WishlistItem> &items);
+    void browseChanged(const selecta::core::Browse &browse);
+    void browseClosed(const QString &peer);
+    void browseResultsReset(const QString &peer, const QList<selecta::core::SearchResult> &results);
     void wishlistFound(const selecta::core::WishlistItem &item, int newFiles);
     void conversionsFinished(int done, int failed);
     void albumReported(const selecta::core::AlbumReport &report);
@@ -239,7 +253,9 @@ private:
     QList<SupersedeFlag> m_supersedeFlags;
     CacheStatus m_cacheStatus;
     QList<WishlistItem> m_wishlist;
-    QList<ManualSearch> m_searches; // in opening order
+    QMap<QString, Browse> m_browses;                     // by peer
+    QHash<QString, QList<SearchResult>> m_browseResults; // by peer
+    QList<ManualSearch> m_searches;                      // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;
 };

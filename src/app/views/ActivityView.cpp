@@ -237,6 +237,22 @@ QWidget *ActivityView::createPeersPage()
                              .arg(governor::limits::kPeerDailyStopFiles));
     m_peersTable->setModel(m_peers);
     m_peersTable->setRootIsDecorated(false);
+    m_peersTable->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_peersTable, &QTreeView::customContextMenuRequested, this, [this](QPoint position) {
+        const QModelIndex index = m_peersTable->indexAt(position);
+        if (!index.isValid()) {
+            return;
+        }
+        const QString peer = m_peers->peerAt(index.row()).peer;
+        QMenu menu(this);
+        menu.addAction(tr("Browse %1's Files").arg(peer), this, [this, peer] { Q_EMIT browseRequested(peer); });
+        menu.exec(m_peersTable->viewport()->mapToGlobal(position));
+    });
+    connect(m_peersTable, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
+        if (index.isValid()) {
+            Q_EMIT browseRequested(m_peers->peerAt(index.row()).peer);
+        }
+    });
     m_peersTable->setSelectionMode(QAbstractItemView::SingleSelection);
     m_peersTable->setItemDelegateForColumn(PeersModel::LimitColumn, new MeterDelegate(m_peersTable));
     QHeaderView *header = m_peersTable->header();
@@ -380,6 +396,10 @@ void ActivityView::transfersMenu(QPoint position)
                                     [this, failed] { m_engine.retryDownloads(failed); });
     retry->setEnabled(!failed.isEmpty());
     menu.addSeparator();
+    if (const std::optional<core::Download> first = m_engine.download(ids.constFirst())) {
+        menu.addAction(tr("Browse %1's Files").arg(first->peer), this,
+                       [this, peer = first->peer] { Q_EMIT browseRequested(peer); });
+    }
     menu.addAction(tr("Copy Path"), this, [paths] { QApplication::clipboard()->setText(paths.join(u'\n')); });
     menu.exec(m_transfersTable->viewport()->mapToGlobal(position));
 }

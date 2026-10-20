@@ -250,6 +250,9 @@ bool Engine::start()
             [this](const std::shared_ptr<const match::MatchIndex> &index) {
                 m_getTracks->setLibraryIndex(index);
                 m_manualSearch->setLibraryIndex(index);
+                if (m_browse) {
+                    m_browse->setLibraryIndex(index);
+                }
                 m_shares->collectionChanged();
             });
     connect(m_arrival.get(), &ArrivalService::finished, m_shares.get(), &ShareService::refreshTotals);
@@ -284,6 +287,33 @@ bool Engine::start()
     m_peerStatsTimer->setInterval(1s);
     connect(m_peerStatsTimer, &QTimer::timeout, this, &Engine::refreshPeerStats);
     connect(m_transfers.get(), &TransferService::changed, m_peerStatsTimer, qOverload<>(&QTimer::start));
+    // Browsing peers' shares (BRWS-1, BRWS-2).
+    m_browse = std::make_unique<BrowseService>(*m_db, *m_governor, *m_network, m_options.wallClock);
+    m_browse->setResolver([resolver = &m_meta->resolver()](const meta::ResolveQuery &query) {
+        return resolver->resolve(query, meta::Priority::Interactive);
+    });
+    m_browse->setAnnotate([this](QList<SearchResult> &results) { annotate(results); });
+    m_browse->setDownloads(
+        [transfers = m_transfers.get()](const DownloadSpec &spec) { return transfers->enqueue(spec).has_value(); },
+        [albums = m_albums.get()](const QString &peer, const QByteArray &folder, const QList<SearchHit> &files,
+                                  const std::optional<meta::Release> &release) {
+            return albums->download(peer, folder, files, release, true).has_value();
+        });
+    connect(&m_network->peers(), &slsk::PeerNetwork::sharedFileListReceived, m_browse.get(),
+            &BrowseService::listReceived);
+    connect(&m_network->peers(), &slsk::PeerNetwork::sharedFileListProgress, m_browse.get(),
+            &BrowseService::listProgress);
+    connect(&m_network->peers(), &slsk::PeerNetwork::requestFailed, m_browse.get(),
+            [browse = m_browse.get()](const QString &peer, slsk::PeerRequest request, quint32 /*token*/,
+                                      slsk::PeerError error) {
+                if (request == slsk::PeerRequest::SharedFileList) {
+                    browse->requestFailed(peer, describePeerError(peer, error));
+                }
+            });
+    connect(m_browse.get(), &BrowseService::browseChanged, this, &Engine::browseChanged);
+    connect(m_browse.get(), &BrowseService::browseClosed, this, &Engine::browseClosed);
+    connect(m_browse.get(), &BrowseService::resultsReset, this, &Engine::browseResultsReset);
+
     // The wishlist (SRCH-14): saved searches run again at the server's interval.
     m_wishlist = std::make_unique<WishlistService>(*m_db, *m_search, m_options.wallClock);
     connect(m_wishlist.get(), &WishlistService::itemsChanged, this, &Engine::wishlistChanged);
@@ -351,6 +381,7 @@ void Engine::stop()
     m_annotateTimer = nullptr;
     delete m_peerStatsTimer;
     m_peerStatsTimer = nullptr;
+    m_browse.reset();       // waits for an analysis in flight
     m_wishlist.reset();     // cancels its search in flight
     m_manualSearch.reset(); // before the search and transfer services it uses
     m_getTracks.reset();
@@ -562,6 +593,49 @@ void Engine::previewLine(qint64 lineId, PreviewSource source)
     startPreview(std::move(plan), source);
 }
 
+void Engine::previewBrowsed(const QString &peer, int index, PreviewSource source)
+{
+    if (!m_started) {
+        return;
+    }
+    const QList<SearchResult> results = m_browse->results(peer);
+    if (index < 0 || index >= results.size() || !results.at(index).isAudio()) {
+        Q_EMIT previewRefused(previewKeyForBrowsed(peer, index), tr("Only audio files can be previewed."));
+        return;
+    }
+    startPreview(planFor(results.at(index), previewKeyForBrowsed(peer, index), nullptr), source);
+}
+
+Engine::PreviewPlan Engine::planFor(const SearchResult &result, const QString &key, const meta::Release *chosen)
+{
+    PreviewPlan plan;
+    plan.key = key;
+    DownloadSpec spec;
+    spec.peer = result.hit.peer;
+    spec.remotePath = result.hit.path;
+    spec.size = static_cast<qint64>(result.hit.size);
+    spec.file = fileChoiceOf(result);
+    if (chosen && result.fitsRelease()) {
+        spec.release = *chosen;
+        plan.release = *chosen;
+    } else if (!result.parsed.title.value.isEmpty()) {
+        // The file's own track, as its name says.
+        meta::Release own;
+        own.title = result.parsed.title.value;
+        if (!result.parsed.artist.value.isEmpty()) {
+            own.artists = {result.parsed.artist.value};
+        }
+        if (result.durationSec() > 0) {
+            own.durationMs = qint64{result.durationSec()} * 1000;
+        }
+        plan.release = own;
+    }
+    plan.peer = spec;
+    plan.title = plan.release ? plan.release->title : result.name;
+    plan.artist = plan.release ? plan.release->artist() : QString();
+    return plan;
+}
+
 void Engine::previewResult(qint64 searchId, int index, PreviewSource source)
 {
     if (!m_started) {
@@ -574,32 +648,7 @@ void Engine::previewResult(qint64 searchId, int index, PreviewSource source)
     }
     const std::optional<ManualSearch> search = m_manualSearch->search(searchId);
     const meta::Release *chosen = search ? search->chosenRelease() : nullptr;
-    PreviewPlan plan;
-    plan.key = previewKeyForResult(searchId, index);
-    DownloadSpec spec;
-    spec.peer = result->hit.peer;
-    spec.remotePath = result->hit.path;
-    spec.size = static_cast<qint64>(result->hit.size);
-    spec.file = fileChoiceOf(*result);
-    if (chosen && result->fitsRelease()) {
-        spec.release = *chosen;
-        plan.release = *chosen;
-    } else if (!result->parsed.title.value.isEmpty()) {
-        // The file's own track, as its name says.
-        meta::Release own;
-        own.title = result->parsed.title.value;
-        if (!result->parsed.artist.value.isEmpty()) {
-            own.artists = {result->parsed.artist.value};
-        }
-        if (result->durationSec() > 0) {
-            own.durationMs = qint64{result->durationSec()} * 1000;
-        }
-        plan.release = own;
-    }
-    plan.peer = spec;
-    plan.title = plan.release ? plan.release->title : result->name;
-    plan.artist = plan.release ? plan.release->artist() : QString();
-    startPreview(std::move(plan), source);
+    startPreview(planFor(*result, previewKeyForResult(searchId, index), chosen), source);
 }
 
 void Engine::startPreview(PreviewPlan plan, PreviewSource source)

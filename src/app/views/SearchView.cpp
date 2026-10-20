@@ -226,6 +226,10 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
         if (folderAnchor()) {
             menu.addAction(tr("Download Folder as Album…"), this, &SearchView::downloadFolder);
         }
+        if (const core::SearchResult *first = m_model->result(selected.constFirst())) {
+            menu.addAction(tr("Browse %1's Files").arg(first->hit.peer), this,
+                           [this, peer = first->hit.peer] { Q_EMIT browseRequested(peer); });
+        }
         menu.addSeparator();
         menu.addAction(tr("Copy Path"), this, [this, selected] {
             QStringList paths;

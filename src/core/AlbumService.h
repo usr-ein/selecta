@@ -92,9 +92,10 @@ public:
     void setMeta(MetaServices *meta) { m_meta = meta; }
 
     // Downloads `folder` of `peer` whole, into an Inbox album. `known`: files of it from a search, used when the peer
-    // doesn't list the folder; `release`: a track of the album, to tag from. Returns the album's id.
+    // doesn't list the folder; `complete`: they are the whole folder already (a browse), so it isn't asked again;
+    // `release`: a track of the album, to tag from. Returns the album's id.
     std::optional<qint64> download(const QString &peer, const QByteArray &folder, const QList<SearchHit> &known,
-                                   const std::optional<meta::Release> &release);
+                                   const std::optional<meta::Release> &release, bool complete = false);
     void cancel(qint64 albumId);
     // Albums that weren't done when Selecta quit go on (their files are the transfers' to resume).
     void restore();

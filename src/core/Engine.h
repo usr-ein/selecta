@@ -4,6 +4,7 @@
 #include "core/ActivityLog.h"
 #include "core/AlbumService.h"
 #include "core/ArrivalService.h"
+#include "core/BrowseService.h"
 #include "core/ClipPreviews.h"
 #include "core/CollectionService.h"
 #include "core/ConverterService.h"
@@ -91,6 +92,11 @@ inline QString previewKeyForResult(qint64 searchId, int index)
 {
     return QStringLiteral("search:%1:%2").arg(searchId).arg(index);
 }
+// The key of a browsed file's preview: "browse:<peer>:<index>".
+inline QString previewKeyForBrowsed(const QString &peer, int index)
+{
+    return QStringLiteral("browse:%1:%2").arg(peer).arg(index);
+}
 
 // The services on the engine thread (PLAN §2.3, the network thread): the governor and its saved state and the
 // activity log, then the Soulseek client, metadata services, searches, transfers and the arrival pipeline as they land.
@@ -128,6 +134,8 @@ public:
     void previewLine(qint64 lineId, PreviewSource source = PreviewSource::Automatic);
     // Previews a search result likewise: its release (or the track its name says), or its very file from the peer.
     void previewResult(qint64 searchId, int index, PreviewSource source = PreviewSource::Automatic);
+    // Previews a file of a browse (BRWS-1), from the source asked for.
+    void previewBrowsed(const QString &peer, int index, PreviewSource source = PreviewSource::Automatic);
     void stopPreview();
 
     // Searches typed by hand (SRCH-1): opens one, or finds the open search for the same text; searchOpened() answers
@@ -189,6 +197,7 @@ public:
     ShareService &shares() { return *m_shares; }
     ConverterService &converter() { return *m_converter; }
     WishlistService &wishlist() { return *m_wishlist; }
+    BrowseService &browse() { return *m_browse; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -235,6 +244,10 @@ Q_SIGNALS:
     void peerStatsChanged(const QList<selecta::core::PeerStats> &peers);
     void supersedeFlagsChanged(const QList<selecta::core::SupersedeFlag> &flags);
     void cachesChanged(const selecta::core::CacheStatus &status);
+    // Browsing (BrowseService's signals, forwarded).
+    void browseChanged(const selecta::core::Browse &browse);
+    void browseClosed(const QString &peer);
+    void browseResultsReset(const QString &peer, const QList<selecta::core::SearchResult> &results);
     // The wishlist (WishlistService's signals, forwarded).
     void wishlistChanged(const QList<selecta::core::WishlistItem> &items);
     void wishlistFound(const selecta::core::WishlistItem &item, int newFiles);
@@ -256,6 +269,8 @@ private:
         QString artist;
     };
     void startPreview(PreviewPlan plan, PreviewSource source);
+    // What a search result's preview plays: the release it fits (`chosen`), else its own track, and its peer's file.
+    static PreviewPlan planFor(const SearchResult &result, const QString &key, const meta::Release *chosen);
     void tryPreview(const std::shared_ptr<const PreviewPlan> &plan, const QList<PreviewSource> &attempts,
                     qsizetype next, quint64 generation, QString lastError);
     bool fail(const QString &error);
@@ -287,6 +302,7 @@ private:
     std::unique_ptr<ShareService> m_shares;
     std::unique_ptr<ConverterService> m_converter;
     std::unique_ptr<WishlistService> m_wishlist;
+    std::unique_ptr<BrowseService> m_browse;
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;             // the preview playing

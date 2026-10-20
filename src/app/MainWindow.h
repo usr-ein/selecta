@@ -30,6 +30,7 @@ class SessionLog;
 namespace selecta::app {
 
 class ActivityView;
+class BrowseView;
 class AppSettings;
 class ConverterView;
 class GetTracksView;
@@ -93,6 +94,8 @@ public:
     // K: keeps the preview playing (PREV-5): a peer's file goes to the Inbox without downloading it again.
     void keepPreview();
     PreviewController &preview() { return m_services.preview; }
+    // Browses a peer's shares (BRWS-1): a sidebar item under Digging, and the Browse view.
+    void browsePeer(const QString &peer);
 
 Q_SIGNALS:
     void viewChanged(const QString &id);
@@ -133,6 +136,8 @@ private:
     static QString askingMessage(core::PreviewSource source, const QString &peer);
     // Keeps the sidebar's search items in step with the engine's open searches.
     void showSearchInSidebar(const core::ManualSearch &search);
+    void createBrowseView();
+    void previewBrowsedFile(bool toggleIfLoaded, core::PreviewSource source);
 
     AppServices m_services;
     Appearance m_appearance;
@@ -156,6 +161,7 @@ private:
     InboxView *m_inboxView = nullptr;
     GetTracksView *m_getTracksView = nullptr;
     SearchView *m_searchView = nullptr;
+    BrowseView *m_browseView = nullptr;
     ConverterView *m_converterView = nullptr;
     quint64 m_searchRequest = 0; // the search the user asked for last, to show it when it opens
     QActionGroup *m_appearanceGroup = nullptr;

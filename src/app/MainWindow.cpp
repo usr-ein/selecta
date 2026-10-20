@@ -10,6 +10,7 @@
 #include "app/Sidebar.h"
 #include "app/Toasts.h"
 #include "app/views/ActivityView.h"
+#include "app/views/BrowseView.h"
 #include "app/views/CollectionView.h"
 #include "app/views/ConverterInspector.h"
 #include "app/views/ConverterView.h"
@@ -179,6 +180,13 @@ void MainWindow::createCentralArea()
         if (const qint64 searchId = NavModel::searchOfItem(id); searchId > 0) {
             m_services.engine.closeSearch(searchId);
         }
+        if (const QString peer = NavModel::browseOfItem(id); !peer.isEmpty()) {
+            m_navModel->removeBrowse(peer);
+            m_services.engine.closeBrowse(peer);
+            if (m_currentId == id) {
+                navigateTo(u"get"_s);
+            }
+        }
     });
 }
 
@@ -307,6 +315,7 @@ void MainWindow::createViews()
     const auto fixed = [](const QString &text) { return [text] { return text; }; };
 
     createSearchView();
+    createBrowseView();
 
     m_getTracksView = new GetTracksView(m_services.engine, m_stack);
     addView(u"get"_s, m_getTracksView, [this] { return m_getTracksView->summary(); });
@@ -402,6 +411,7 @@ void MainWindow::createViews()
     addView(u"history"_s, history, fixed(tr("Session %1 started at %2").arg(m_services.build.session).arg(started)));
 
     m_activityView = new ActivityView(m_services.engine, m_services.database, m_stack);
+    connect(m_activityView, &ActivityView::browseRequested, this, &MainWindow::browsePeer);
     addView(u"activity"_s, m_activityView, [this] { return m_activityView->summary(); });
     connect(m_activityView, &ActivityView::summaryChanged, this, [this] {
         if (m_currentId == u"activity"_s) {
@@ -459,6 +469,7 @@ void MainWindow::createSearchView()
     connect(m_searchView, &SearchView::previewRequested, this,
             [this] { previewSearchResult(false, m_services.settings.previewSource()); });
     connect(m_searchView, &SearchView::selectionMoved, this, &MainWindow::selectionMoved);
+    connect(m_searchView, &SearchView::browseRequested, this, &MainWindow::browsePeer);
     connect(&m_services.engine, &core::EngineHost::searchOpened, this, [this](quint64 request, qint64 searchId) {
         if (request == m_searchRequest && searchId > 0) {
             if (const std::optional<core::ManualSearch> search = m_services.engine.search(searchId)) {
@@ -477,6 +488,60 @@ void MainWindow::createSearchView()
             navigateTo(searches.isEmpty() ? kDefaultView : NavModel::searchItemId(searches.constLast().id));
         }
     });
+}
+
+void MainWindow::createBrowseView()
+{
+    m_browseView = new BrowseView(m_services.engine, m_services.settings, m_stack);
+    addView(u"browse"_s, m_browseView, [this] { return m_browseView->summary(); });
+    connect(m_browseView, &BrowseView::summaryChanged, this, [this] {
+        if (!NavModel::browseOfItem(m_currentId).isEmpty()) {
+            refreshTitle();
+        }
+    });
+    connect(m_browseView, &BrowseView::previewRequested, this,
+            [this] { previewBrowsedFile(false, m_services.settings.previewSource()); });
+    connect(m_browseView, &BrowseView::selectionMoved, this, &MainWindow::selectionMoved);
+    connect(&m_services.engine, &core::EngineHost::browseChanged, this, [this](const core::Browse &browse) {
+        const bool busy =
+            browse.state == core::Browse::State::Requesting || browse.state == core::Browse::State::Receiving;
+        m_navModel->setBrowse(browse.peer, browse.files, busy);
+    });
+    connect(&m_services.engine, &core::EngineHost::browseClosed, this, [this](const QString &peer) {
+        m_navModel->removeBrowse(peer);
+        if (NavModel::browseOfItem(m_currentId) == peer) {
+            navigateTo(u"get"_s);
+        }
+    });
+}
+
+void MainWindow::browsePeer(const QString &peer)
+{
+    if (peer.isEmpty()) {
+        return;
+    }
+    m_navModel->setBrowse(peer, 0, true);
+    m_services.engine.browse(peer);
+    navigateTo(NavModel::browseItemId(peer));
+}
+
+void MainWindow::previewBrowsedFile(bool toggleIfLoaded, core::PreviewSource source)
+{
+    const std::optional<int> index = m_browseView->previewTarget();
+    if (!index) {
+        return;
+    }
+    PreviewController &preview = m_services.preview;
+    const playback::Player::State state = preview.player().state();
+    const bool loaded = preview.player().isActive() || state == playback::Player::State::Ended;
+    const QString key = core::previewKeyForBrowsed(m_browseView->peer(), *index);
+    if (toggleIfLoaded && loaded && key == m_playingKey) {
+        preview.toggle();
+        return;
+    }
+    m_askedPreviewKey = key;
+    m_player->showMessage(askingMessage(source, m_browseView->peer()));
+    m_services.engine.previewBrowsed(m_browseView->peer(), *index, source);
 }
 
 void MainWindow::createSettingsView()
@@ -894,6 +959,10 @@ void MainWindow::previewSelection(bool toggleIfLoaded, core::PreviewSource sourc
         previewSearchResult(toggleIfLoaded, source);
         return;
     }
+    if (!NavModel::browseOfItem(m_currentId).isEmpty() && m_browseView->previewTarget()) {
+        previewBrowsedFile(toggleIfLoaded, source);
+        return;
+    }
     if (toggleIfLoaded) {
         m_services.preview.toggle();
     }
@@ -1023,6 +1092,19 @@ void MainWindow::showSearchInSidebar(const core::ManualSearch &search)
 
 bool MainWindow::navigateTo(const QString &id)
 {
+    if (const QString peer = NavModel::browseOfItem(id); !peer.isEmpty()) {
+        if (m_navModel->rowOf(id) < 0) {
+            return false; // closed
+        }
+        m_browseView->showPeer(peer);
+        m_stack->setCurrentWidget(m_browseView);
+        m_inspector->showPanelFor(u"browse"_s);
+        m_currentId = id;
+        m_sidebar->select(id);
+        refreshTitle();
+        Q_EMIT viewChanged(id);
+        return true;
+    }
     if (const qint64 searchId = NavModel::searchOfItem(id); searchId > 0) {
         if (!m_services.engine.search(searchId)) {
             return false; // closed, or from an earlier run
@@ -1077,6 +1159,11 @@ void MainWindow::refreshTitle()
     if ((m_currentId == u"search"_s || NavModel::searchOfItem(m_currentId) > 0) && m_title) {
         m_title->setText(m_searchView->title());
         m_subtitle->setText(m_searchView->summary());
+        return;
+    }
+    if ((m_currentId == u"browse"_s || !NavModel::browseOfItem(m_currentId).isEmpty()) && m_title) {
+        m_title->setText(m_browseView->title());
+        m_subtitle->setText(m_browseView->summary());
         return;
     }
     const auto found = m_viewIndex.constFind(m_currentId);

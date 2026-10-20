@@ -45,6 +45,7 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<SupersedeFlag>();
     qRegisterMetaType<CacheStatus>();
     qRegisterMetaType<WishlistItem>();
+    qRegisterMetaType<Browse>();
     qRegisterMetaType<QList<WishlistItem>>();
     qRegisterMetaType<QList<SupersedeFlag>>();
     qRegisterMetaType<QList<ConverterItem>>();
@@ -172,6 +173,19 @@ void EngineHost::start()
         Q_EMIT wishlistChanged(items);
     });
     connect(engine, &Engine::wishlistFound, this, &EngineHost::wishlistFound);
+    connect(engine, &Engine::browseChanged, this, [this](const Browse &browse) {
+        m_browses.insert(browse.peer, browse);
+        Q_EMIT browseChanged(browse);
+    });
+    connect(engine, &Engine::browseClosed, this, [this](const QString &peer) {
+        m_browses.remove(peer);
+        m_browseResults.remove(peer);
+        Q_EMIT browseClosed(peer);
+    });
+    connect(engine, &Engine::browseResultsReset, this, [this](const QString &peer, const QList<SearchResult> &results) {
+        m_browseResults.insert(peer, results);
+        Q_EMIT browseResultsReset(peer, results);
+    });
     connect(engine, &Engine::cachesChanged, this, [this](const CacheStatus &status) {
         m_cacheStatus = status;
         Q_EMIT cachesChanged(status);
@@ -486,6 +500,57 @@ void EngineHost::refreshPeerStats()
             engine.refreshPeerStats();
         }
     });
+}
+
+void EngineHost::browse(const QString &peer, bool refresh)
+{
+    post([peer, refresh](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.browse().browse(peer, refresh);
+        }
+    });
+}
+
+void EngineHost::closeBrowse(const QString &peer)
+{
+    post([peer](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.browse().close(peer);
+        }
+    });
+}
+
+void EngineHost::downloadBrowsed(const QString &peer, const QList<int> &indexes)
+{
+    post([peer, indexes](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.browse().download(peer, indexes);
+        }
+    });
+}
+
+void EngineHost::downloadBrowsedFolder(const QString &peer, int index)
+{
+    post([peer, index](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.browse().downloadFolder(peer, index);
+        }
+    });
+}
+
+void EngineHost::previewBrowsed(const QString &peer, int index, PreviewSource source)
+{
+    post([peer, index, source](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.previewBrowsed(peer, index, source);
+        }
+    });
+}
+
+std::optional<Browse> EngineHost::browseOf(const QString &peer) const
+{
+    const auto found = m_browses.constFind(peer);
+    return found == m_browses.cend() ? std::nullopt : std::optional(found.value());
 }
 
 void EngineHost::addToWishlist(const QString &text)

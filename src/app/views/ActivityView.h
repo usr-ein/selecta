@@ -45,6 +45,8 @@ public:
 
 Q_SIGNALS:
     void summaryChanged();
+    // "Browse <peer>'s Files" (BRWS-1).
+    void browseRequested(const QString &peer);
 
 private:
     QWidget *createTransfersPage();

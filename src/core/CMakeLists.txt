@@ -4,6 +4,7 @@ qt_add_library(selecta_core STATIC
     ActivityLog.h ActivityLog.cpp
     AlbumArrival.h AlbumArrival.cpp
     AlbumService.h AlbumService.cpp
+    BrowseService.h BrowseService.cpp
     Albums.h Albums.cpp
     ArrivalService.h ArrivalService.cpp
     ClipPreviews.h ClipPreviews.cpp
@@ -24,6 +25,7 @@ qt_add_library(selecta_core STATIC
     ManualSearchService.h ManualSearchService.cpp
     MetaServices.h MetaServices.cpp
     NetworkService.h NetworkService.cpp
+    OwnRelease.h OwnRelease.cpp
     PeerStats.h PeerStats.cpp
     ReleaseJson.h ReleaseJson.cpp
     ResultAnnotator.h ResultAnnotator.cpp

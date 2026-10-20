@@ -251,6 +251,14 @@ std::optional<bool> columnBefore(int column, const core::SearchResult &x, const 
         }
         return x.ownership < y.ownership;
     case SearchResultsModel::TitleColumn:
+        // Files of one folder in track order, as the album plays; anything else by name.
+        if (x.folder == y.folder && x.hit.peer == y.hit.peer && x.parsed.track.isSet() && y.parsed.track.isSet()) {
+            const int xDisc = x.parsed.disc.isSet() ? x.parsed.disc.value : 0;
+            const int yDisc = y.parsed.disc.isSet() ? y.parsed.disc.value : 0;
+            if (xDisc != yDisc || x.parsed.track.value != y.parsed.track.value) {
+                return xDisc != yDisc ? xDisc < yDisc : x.parsed.track.value < y.parsed.track.value;
+            }
+        }
         if (const int order =
                 QString::localeAwareCompare(SearchResultsModel::titleText(x), SearchResultsModel::titleText(y));
             order != 0) {

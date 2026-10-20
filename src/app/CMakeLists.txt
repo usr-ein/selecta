@@ -25,6 +25,7 @@ qt_add_library(selecta_app STATIC
     models/TransfersModel.h models/TransfersModel.cpp
     views/ActivityView.h views/ActivityView.cpp
     views/AddTracksDialog.h views/AddTracksDialog.cpp
+    views/BrowseView.h views/BrowseView.cpp
     views/CollectionView.h views/CollectionView.cpp
     views/ConverterInspector.h views/ConverterInspector.cpp
     views/ConverterView.h views/ConverterView.cpp

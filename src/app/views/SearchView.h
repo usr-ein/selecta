@@ -75,6 +75,8 @@ Q_SIGNALS:
     void selectionMoved();
     void summaryChanged();
     void previewRequested();
+    // "Browse <peer>'s Files" (BRWS-1).
+    void browseRequested(const QString &peer);
 
 private:
     QWidget *createFilterBar();
