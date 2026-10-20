@@ -16,11 +16,6 @@ constexpr int kMaxRate = 384000;
 constexpr int kMinCeiling = 44100;
 constexpr int kLameDefaultQuality = 3; // lame.c's LAME_DEFAULT_QUALITY, what plain `lame -b 320` uses
 
-bool isMpeg1Rate(int rate)
-{
-    return rate == 32000 || rate == 44100 || rate == 48000;
-}
-
 bool isLosslessOutput(OutputFormat format)
 {
     return format == OutputFormat::Aiff || format == OutputFormat::Flac || format == OutputFormat::Wav ||
@@ -47,11 +42,6 @@ int familyRateBelow(int rate, int ceiling)
     return std::min(best, ceiling);
 }
 
-QString describeRate(int rate)
-{
-    return rate % 1000 == 0 ? u"%1 kHz"_s.arg(rate / 1000) : u"%1 kHz"_s.arg(rate / 1000.0, 0, 'f', 1);
-}
-
 } // namespace
 
 audio::Result<void> checkSettings(const EncodeSettings &settings)
@@ -68,7 +58,7 @@ audio::Result<void> checkSettings(const EncodeSettings &settings)
         if (mp3.algorithmQuality < 0 || mp3.algorithmQuality > 9) {
             return invalid(u"LAME quality -q %1 isn't between 0 and 9"_s.arg(mp3.algorithmQuality));
         }
-        if (settings.sampleRate != 0 && !isMpeg1Rate(settings.sampleRate)) {
+        if (settings.sampleRate != 0 && !isMp3SampleRate(settings.sampleRate)) {
             return invalid(u"MP3 output needs 32, 44.1 or 48 kHz, not %1 Hz"_s.arg(settings.sampleRate));
         }
     } else if (settings.sampleRate != 0 && (settings.sampleRate < kMinRate || settings.sampleRate > kMaxRate)) {
@@ -98,7 +88,7 @@ ResolvedOutput resolveOutput(const audio::StreamInfo &source, const EncodeSettin
         if (settings.sampleRate != 0) {
             out.sampleRate = settings.sampleRate;
         } else {
-            out.sampleRate = isMpeg1Rate(sourceRate) ? sourceRate : 44100; // D-4
+            out.sampleRate = isMp3SampleRate(sourceRate) ? sourceRate : 44100; // D-4
         }
         break;
     case OutputFormat::Aiff:
@@ -133,6 +123,11 @@ ResolvedOutput resolveOutput(const audio::StreamInfo &source, const EncodeSettin
     return out;
 }
 
+bool isMp3SampleRate(int sampleRate)
+{
+    return sampleRate == 32000 || sampleRate == 44100 || sampleRate == 48000;
+}
+
 QString describeSettings(const EncodeSettings &settings)
 {
     QString text;
@@ -163,6 +158,19 @@ QString describeSettings(const EncodeSettings &settings)
         text += u", "_s + describeRate(settings.sampleRate);
     }
     return text;
+}
+
+QString describeRate(int sampleRate)
+{
+    // Rates are whole hertz, so three decimals are exact; trailing zeros go.
+    QString number = QString::number(sampleRate / 1000.0, 'f', 3);
+    while (number.endsWith(u'0')) {
+        number.chop(1);
+    }
+    if (number.endsWith(u'.')) {
+        number.chop(1);
+    }
+    return number + u" kHz"_s;
 }
 
 QString fileExtension(OutputFormat format)

@@ -2,6 +2,7 @@
 #include "app/MainWindow.h"
 
 #include "app/AppSettings.h"
+#include "app/Notifications.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/Toasts.h"
@@ -14,10 +15,12 @@
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
+#include "support/FakeNotificationSink.h"
 
 #include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCompleter>
 #include <QDateTime>
@@ -72,7 +75,7 @@ protected:
         build.version = u"0.0.0-test"_s;
         build.session = session;
         auto window = std::make_unique<MainWindow>(
-            selecta::app::AppServices{db, sessions, *settings, *engine, *preview, build, 1'000});
+            selecta::app::AppServices{db, sessions, *settings, *engine, *preview, build, 1'000, &notifications});
         window->setAttribute(Qt::WA_DontShowOnScreen);
         window->show();
         return window;
@@ -85,6 +88,7 @@ protected:
     std::unique_ptr<AppSettings> settings;
     std::unique_ptr<selecta::core::EngineHost> engine;
     std::unique_ptr<selecta::app::PreviewController> preview;
+    selecta::testing::FakeNotificationSink notifications; // never the system's notification centre
 };
 
 } // namespace
@@ -919,6 +923,174 @@ TEST_F(MainWindowTest, RoomsShowWhatYoureInWhatIsUnreadAndWhoNamesYou)
     ASSERT_NE(confirm, nullptr);
     EXPECT_EQ(confirm->text(), u"Create the room “deep house”?"_s);
     confirm->reject();
+}
+
+TEST_F(MainWindowTest, NewsWhileAwayReachesTheSystemAndAClickOpensIt)
+{
+    auto window = makeWindow();
+    selecta::app::Notifier *notifier = window->notifier();
+    ASSERT_NE(notifier, nullptr);
+    EXPECT_EQ(notifier->sink(), &notifications);
+    ASSERT_TRUE(notifier->isAway()); // the window isn't active in the tests
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+
+    // A message: the window's notification, and the system's.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const selecta::core::ChatMessage message{
+        .id = 7, .peer = u"vinyl_ghost"_s, .atMs = now, .outgoing = false, .text = u"Got the B-side?"_s, .read = false};
+    Q_EMIT engine->messageAdded(message);
+    EXPECT_EQ(toasts->count(), 1);
+    ASSERT_EQ(notifications.posted.size(), 1);
+    EXPECT_EQ(notifications.posted.constFirst().title, u"Message from vinyl_ghost"_s);
+    EXPECT_EQ(notifications.posted.constFirst().body, u"Got the B-side?"_s);
+
+    // The Dock badge: unread messages, and what arrived while away.
+    Q_EMIT engine->conversationsChanged({selecta::core::Conversation{
+        .peer = u"vinyl_ghost"_s, .lastText = message.text, .lastAtMs = now, .lastOutgoing = false, .unread = 1}});
+    EXPECT_EQ(notifier->badge(), 1);
+    selecta::core::AlbumReport report;
+    report.albumId = 4;
+    report.album = u"Night Signals"_s;
+    report.arrival = true;
+    report.complete = true;
+    report.tracks = 9;
+    report.where = u"Albums/Okuma_Drift_-_Night_Signals_(2024)"_s;
+    Q_EMIT engine->albumReported(report);
+    EXPECT_EQ(notifier->badge(), 2);
+    ASSERT_EQ(notifications.posted.size(), 2);
+    EXPECT_EQ(notifications.posted.constLast().title, u"“Night Signals” is in your Inbox"_s);
+
+    // Named in a room: a click brings the room up.
+    Q_EMIT engine->roomChanged(selecta::core::Room{.name = u"dnb"_s,
+                                                   .state = selecta::core::Room::State::Joined,
+                                                   .members = {u"lossless_lena"_s, u"selecta_test"_s},
+                                                   .unread = 0,
+                                                   .mentions = 0,
+                                                   .message = {}});
+    Q_EMIT engine->roomLineAdded(u"dnb"_s, selecta::core::RoomLine{.atMs = now,
+                                                                   .user = u"lossless_lena"_s,
+                                                                   .text = u"selecta_test: got the B-side?"_s,
+                                                                   .own = false,
+                                                                   .mention = true});
+    ASSERT_EQ(notifications.posted.size(), 3);
+    EXPECT_EQ(notifications.posted.constLast().target, (selecta::app::NotificationTarget{u"rooms"_s, u"dnb"_s}));
+    notifications.click(notifications.posted.constLast().target);
+    EXPECT_EQ(window->currentViewId(), u"rooms"_s);
+    EXPECT_EQ(window->findChild<QLabel *>(u"rooms.name"_s)->text(), u"dnb"_s);
+
+    // A click on the message opens the conversation; on the album, the Inbox.
+    notifications.click(notifications.posted.constFirst().target);
+    EXPECT_EQ(window->currentViewId(), u"messages"_s);
+    EXPECT_EQ(window->findChild<QLabel *>(u"messages.peer"_s)->text(), u"vinyl_ghost"_s);
+    notifications.click(notifications.posted.at(1).target);
+    EXPECT_EQ(window->currentViewId(), u"inbox"_s);
+    // Something that isn't a view changes nothing.
+    notifications.click({u"no-such-view"_s, {}});
+    EXPECT_EQ(window->currentViewId(), u"inbox"_s);
+}
+
+TEST_F(MainWindowTest, AFinishedGetTracksBatchSaysSoInTheWindowAndToTheSystem)
+{
+    auto window = makeWindow();
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    selecta::core::GetLine line;
+    line.id = 3;
+    line.artist = u"Okuma Drift"_s;
+    line.title = u"Neon Rain"_s;
+    line.raw = u"Okuma Drift - Neon Rain"_s;
+    line.downloadState = selecta::core::GetLine::DownloadState::Queued;
+    Q_EMIT engine->getLinesReset({line});
+    line.downloadState = selecta::core::GetLine::DownloadState::Converting;
+    Q_EMIT engine->getLineChanged(line);
+    EXPECT_EQ(toasts->count(), 0);
+    EXPECT_TRUE(notifications.posted.isEmpty());
+
+    line.downloadState = selecta::core::GetLine::DownloadState::Arrived;
+    Q_EMIT engine->getLineChanged(line);
+    ASSERT_EQ(toasts->count(), 1);
+    EXPECT_EQ(toasts->texts().constFirst(), u"Get tracks finished\n“Okuma Drift – Neon Rain” is in your Inbox."_s);
+    ASSERT_EQ(notifications.posted.size(), 1);
+    EXPECT_EQ(notifications.posted.constFirst().target, (selecta::app::NotificationTarget{u"inbox"_s, {}}));
+    EXPECT_EQ(window->notifier()->badge(), 1);
+    auto *show = toasts->findChild<QPushButton *>(u"toast.1.action.0"_s);
+    ASSERT_NE(show, nullptr);
+    EXPECT_EQ(show->text(), u"Show"_s);
+    show->click();
+    EXPECT_EQ(window->currentViewId(), u"inbox"_s);
+}
+
+TEST_F(MainWindowTest, ShowNotificationsCanBeTurnedOffInSettings)
+{
+    {
+        auto window = makeWindow();
+        EXPECT_TRUE(window->notifier()->isEnabled()); // on by default
+        ASSERT_TRUE(window->navigateTo(u"settings"_s));
+        auto *box = window->findChild<QCheckBox *>(u"settings.showNotifications"_s);
+        ASSERT_NE(box, nullptr);
+        EXPECT_TRUE(box->isChecked());
+        box->click();
+        EXPECT_FALSE(window->notifier()->isEnabled());
+        EXPECT_FALSE(settings->showNotifications());
+
+        Q_EMIT engine->messageAdded(selecta::core::ChatMessage{
+            .id = 1, .peer = u"vinyl_ghost"_s, .atMs = 0, .outgoing = false, .text = u"hi"_s, .read = false});
+        EXPECT_TRUE(notifications.posted.isEmpty());
+        auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+        ASSERT_NE(toasts, nullptr);
+        EXPECT_EQ(toasts->count(), 1); // the window still says it
+        window->saveState();
+    }
+    auto window = makeWindow();
+    EXPECT_FALSE(window->notifier()->isEnabled());
+    auto *box = window->findChild<QCheckBox *>(u"settings.showNotifications"_s);
+    ASSERT_NE(box, nullptr);
+    EXPECT_FALSE(box->isChecked());
+}
+
+TEST_F(MainWindowTest, AClickBringsTheWindowForwardUnlessItIsKeptOffTheScreen)
+{
+    auto window = makeWindow();
+    // The test platform makes each new window the active one: this one takes over, as if the user were elsewhere.
+    QWidget elsewhere;
+    elsewhere.setAttribute(Qt::WA_DontShowOnScreen);
+    elsewhere.show();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return elsewhere.isActiveWindow(); }, 5000));
+    ASSERT_TRUE(window->notifier()->isAway());
+    selecta::core::AlbumReport report;
+    report.albumId = 4;
+    report.album = u"Night Signals"_s;
+    report.arrival = true;
+    report.complete = true;
+    report.tracks = 9;
+    report.where = u"Albums/Okuma_Drift_-_Night_Signals_(2024)"_s;
+    Q_EMIT engine->albumReported(report);
+    ASSERT_EQ(notifications.posted.size(), 1);
+    ASSERT_EQ(window->notifier()->arrivalsWhileAway(), 1);
+
+    // Kept off the screen (headless runs): the click shows what it was about and takes no focus, which would leave
+    // the keyboard with a window nobody can see.
+    notifications.click(notifications.posted.constFirst().target);
+    EXPECT_EQ(window->currentViewId(), u"inbox"_s);
+    EXPECT_FALSE(QTest::qWaitFor([&] { return window->isActiveWindow(); }, 200));
+    EXPECT_EQ(window->notifier()->arrivalsWhileAway(), 1);
+
+    // On the screen, the window comes forward: the user is back, and what arrived while away has been seen.
+    window->hide();
+    window->setAttribute(Qt::WA_DontShowOnScreen, false);
+    window->show();
+    QCoreApplication::processEvents(); // whatever showing it again asked for
+    elsewhere.activateWindow();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return elsewhere.isActiveWindow(); }, 5000));
+    ASSERT_TRUE(window->notifier()->isAway());
+    ASSERT_TRUE(window->navigateTo(u"get"_s));
+    notifications.click(notifications.posted.constFirst().target);
+    EXPECT_EQ(window->currentViewId(), u"inbox"_s);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->isActiveWindow(); }, 5000));
+    EXPECT_FALSE(window->notifier()->isAway());
+    EXPECT_EQ(window->notifier()->arrivalsWhileAway(), 0);
+    EXPECT_EQ(window->notifier()->badge(), 0);
 }
 
 TEST_F(MainWindowTest, PresetsAreSharedBySearchGetTracksAndTheWishlist)

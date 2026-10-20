@@ -5,6 +5,7 @@
 #include "app/Icons.h"
 #include "app/Inspector.h"
 #include "app/NavModel.h"
+#include "app/Notifications.h"
 #include "app/PlayerBar.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
@@ -99,6 +100,14 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     setWindowTitle(u"Selecta"_s);
     setMinimumSize(kMinimumWidth, kMinimumHeight);
     setUnifiedTitleAndToolBarOnMac(true);
+
+    // System notifications and the Dock badge (UI-6). The user is away while this window isn't the active one: Selecta
+    // is in the background or its window in the Dock. (With one of Selecta's dialogs in front, macOS keeps a
+    // notification quiet anyway, Selecta being the active app.)
+    m_notifier = new Notifier(m_services.notifications, [this] { return !isActiveWindow(); }, this);
+    m_notifier->setEnabled(m_services.settings.showNotifications());
+    connect(m_notifier, &Notifier::badgeChanged, this, [](int count) { qGuiApp->setBadgeNumber(count); });
+    connect(m_notifier, &Notifier::activated, this, &MainWindow::showNotificationTarget);
 
     createCentralArea();
     createViews();
@@ -210,6 +219,23 @@ void MainWindow::createNotifications()
             });
     connect(&m_services.engine, &core::EngineHost::albumChanged, this, &MainWindow::albumChanged);
     connect(&m_services.engine, &core::EngineHost::albumReported, this, &MainWindow::albumReported);
+
+    // What also reaches the system while the user is away (UI-6, NET-7); the Notifier decides.
+    const core::EngineHost &engine = m_services.engine;
+    connect(&engine, &core::EngineHost::messageAdded, m_notifier, &Notifier::messageAdded);
+    connect(&engine, &core::EngineHost::roomLineAdded, m_notifier, &Notifier::roomLineAdded);
+    connect(&engine, &core::EngineHost::albumReported, m_notifier, &Notifier::albumReported);
+    connect(&engine, &core::EngineHost::albumChanged, m_notifier, &Notifier::albumChanged);
+    connect(&engine, &core::EngineHost::wishlistFound, m_notifier, &Notifier::wishlistFound);
+    connect(&engine, &core::EngineHost::getLinesReset, m_notifier, &Notifier::getLinesReset);
+    connect(&engine, &core::EngineHost::getLineChanged, m_notifier, &Notifier::getLineChanged);
+    m_notifier->getLinesReset(engine.getLines()); // downloads that resume join the first batch
+    // A Get tracks batch that finished: what arrived, and what didn't.
+    connect(m_notifier, &Notifier::getTracksFinished, this, [this](const FinishedBatch &batch) {
+        const SystemNotification words = Notifier::batchNotification(batch);
+        m_toasts->show(words.title, words.body, batch.failed > 0 ? Toasts::Kind::Warning : Toasts::Kind::Good,
+                       {{tr("Show"), [this, view = words.target.view] { navigateTo(view); }}});
+    });
 
     // Items the user moves to the Trash go in one notification per gesture, with Undo.
     m_trashedTimer = new QTimer(this);
@@ -581,7 +607,27 @@ void MainWindow::refreshUnread()
 {
     const int unread = m_messagesView->unread();
     m_navModel->setCount(u"messages"_s, unread);
-    qGuiApp->setBadgeNumber(unread); // the Dock icon (UI-6)
+    m_notifier->setUnreadMessages(unread); // the Dock icon counts them, with what arrived while away (UI-6)
+}
+
+void MainWindow::showNotificationTarget(const NotificationTarget &target)
+{
+    // Selecta came forward (the sink made it the active app); its window follows, even from the Dock. A window kept off
+    // the screen (headless runs) stays where it is: coming forward would take the keyboard from whatever the user is
+    // doing, for a window nobody can see.
+    if (!testAttribute(Qt::WA_DontShowOnScreen)) {
+        setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+        raise();
+        activateWindow();
+    }
+    if (target.view == u"messages"_s && !target.argument.isEmpty()) {
+        messagePeer(target.argument);
+    } else if (target.view == u"rooms"_s && !target.argument.isEmpty()) {
+        navigateTo(u"rooms"_s);
+        m_roomsView->openRoom(target.argument);
+    } else if (!navigateTo(target.view)) {
+        qCWarning(lcUi) << "a notification asked for an unknown view" << target.view;
+    }
 }
 
 void MainWindow::messagePeer(const QString &peer)
@@ -677,6 +723,11 @@ void MainWindow::createSettingsView()
     connect(m_settingsView, &SettingsView::networkPasswordSubmitted, &m_services.engine,
             &core::EngineHost::setNetworkPassword);
     connect(m_settingsView, &SettingsView::connectRequested, &m_services.engine, &core::EngineHost::connectNetwork);
+    m_settingsView->setShowNotifications(m_services.settings.showNotifications());
+    connect(m_settingsView, &SettingsView::showNotificationsChanged, this, [this](bool show) {
+        m_services.settings.setShowNotifications(show);
+        m_notifier->setEnabled(show);
+    });
     m_settingsView->setPreviewSettings(m_services.settings.previewSource(), m_services.settings.ytDlpPath());
     connect(m_settingsView, &SettingsView::previewSourceChanged, this,
             [this](core::PreviewSource source) { m_services.settings.setPreviewSource(source); });
@@ -1157,6 +1208,14 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     saveState();
     event->accept();
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    QMainWindow::changeEvent(event);
+    if (event->type() == QEvent::ActivationChange && isActiveWindow()) {
+        m_notifier->userReturned(); // what arrived while the user was away has been seen
+    }
 }
 
 void MainWindow::showSearchInSidebar(const core::ManualSearch &search)

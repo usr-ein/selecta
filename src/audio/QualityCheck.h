@@ -3,18 +3,26 @@
 
 #include "audio/ByteSource.h"
 #include "audio/Error.h"
+#include "audio/Spectrogram.h"
 #include "audio/StreamInfo.h"
 
 #include <QList>
+#include <QMetaType>
 #include <QString>
 
 #include <memory>
 #include <optional>
 
+class QThreadPool;
+
 // Quality checks (PREV-9, references/audio-preview-and-waveform.md §9): is a file what it claims to be? Spectral
 // verdicts are heuristics and are always worded "likely …", never "fake": old recordings, lo-fi productions and some
 // masters are genuinely band-limited. The bit-depth check is exact.
 namespace selecta::audio {
+
+// Version of the checks and the spectrogram (FFT, windows, thresholds, level mapping). Cached reports from another
+// version are recomputed (AnalysisCache::loadQuality()).
+inline constexpr int kQualityVersion = 1;
 
 enum class QualityFinding {
     LikelyFromLossy,      // a lossless file whose spectrum stops at or below about 19 kHz (192 kbps MP3 and below)
@@ -49,7 +57,13 @@ struct QualityReport
 
     QList<QualityFinding> findings;
 
+    // The spectrogram, when QualityOptions::spectrogram asked for one (also for files whose cut-off can't be measured:
+    // short, quiet or low-rate ones). Computed in the same decoding pass; it doesn't change any other field.
+    std::optional<Spectrogram> spectrogram;
+
     bool hasFinding(QualityFinding finding) const { return findings.contains(finding); }
+
+    friend bool operator==(const QualityReport &, const QualityReport &) = default;
 };
 
 // UI copy for a finding, always phrased as "likely": e.g. "Likely from a lossy source (≈ 192 kbps MP3)". Uses the
@@ -58,12 +72,32 @@ QString describeFinding(QualityFinding finding, const QualityReport &report);
 
 struct QualityOptions
 {
-    int spectrumFrames = 200; // FFT frames (4 096 points, Hann) spread evenly over the file
+    int spectrumFrames = 200; // FFT frames (4 096 points, Hann) spread evenly over the file, 1…10 000
+    // Also compute QualityReport::spectrogram, with these dimensions, in the same decoding pass.
+    bool spectrogram = false;
+    SpectrogramOptions spectrogramOptions;
+    // Parallel decoding of a complete file in chunks, as in AnalysisOptions: 0 uses QThread::idealThreadCount(), 1
+    // decodes sequentially. Chunks are used when the decoder seeks exactly (MP3, FLAC, WAV, AIFF, M4A and most
+    // FFmpeg formats) and each gets at least `minChunkSeconds` of audio. The chunks never depend on the spectrogram
+    // options, so the checks' results are the same with and without a spectrogram.
+    int maxThreads = 0;
+    // Pool for the chunk tasks; nullptr uses QThreadPool::globalInstance(). The calling thread always takes part, so
+    // calling from a task of the same pool can't deadlock.
+    QThreadPool *pool = nullptr;
+    int minChunkSeconds = 20;
 };
 
-// Decodes `source` (complete) at its own rate and channel count and runs every check. Blocks: call from a worker.
-// Failure codes: those of Decoder::open()/read(), InvalidArgument for an incomplete source, Cancelled.
-Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, QualityOptions options = {},
+// Decodes `source` (complete) once, at its own rate and channel count, runs every check and, when asked, builds the
+// spectrogram on the way. Memory stays bounded whatever the file's length: the audio streams through (a few FFT
+// windows of history per chunk), never held whole. Blocks until done: call it from a worker, never from the UI or
+// engine thread. Reentrant: concurrent calls on different sources (or the same one) are independent.
+//
+// Failure codes: those of Decoder::open()/read(); InvalidArgument for a missing or incomplete source or options out
+// of range (spectrumFrames, the spectrogram's dimensions); Cancelled when `cancel` is set (checked between buffers of
+// at most 8 192 frames in every chunk).
+Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, const QualityOptions &options = {},
                                      const CancellationFlag *cancel = nullptr);
 
 } // namespace selecta::audio
+
+Q_DECLARE_METATYPE(selecta::audio::QualityReport)
