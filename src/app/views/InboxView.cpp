@@ -181,6 +181,21 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
         }
         QMenu menu(this);
         menu.addAction(tr("Reveal in Finder"), this, &InboxView::revealSelected);
+        // DL-8, LIB-6: a single flagged as also on an album that isn't the album's track. Remembered.
+        QList<qint64> flags;
+        const QList<qint64> ids = selectedIds();
+        for (const core::InboxEntry &entry : std::as_const(m_entries)) {
+            if (ids.contains(entry.item.id)) {
+                flags.append(entry.flags);
+            }
+        }
+        if (!flags.isEmpty()) {
+            menu.addAction(tr("Not the Same Track"), this, [this, flags] {
+                for (const qint64 flag : flags) {
+                    m_engine.notTheSameTrack(flag);
+                }
+            });
+        }
         menu.addAction(tr("Convert…"), this, [this] {
             QStringList paths;
             const QList<qint64> ids = selectedIds();

@@ -40,6 +40,11 @@ public:
 
     void annotate(SearchResult &result);
 
+    // LIB-6: remembers the user's verdict on a result and the owned track it shows as matched (ownedId, ownedSource):
+    // "Not What I Have" (Different) or "Same as What I Have" (Same). False when the result owns nothing, either track
+    // can't be told apart (an unparseable name, a record gone), or the database fails.
+    static bool recordCorrection(storage::Database &db, const SearchResult &result, Verdict verdict, qint64 atMs);
+
 private:
     void correct(SearchResult &result);
     TrackIdentity identityOf(const OwnedCandidate &candidate);

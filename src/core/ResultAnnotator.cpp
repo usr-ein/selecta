@@ -34,6 +34,16 @@ void ResultAnnotator::annotate(SearchResult &result)
     describe(result);
 }
 
+bool ResultAnnotator::recordCorrection(storage::Database &db, const SearchResult &result, Verdict verdict, qint64 atMs)
+{
+    if (result.ownedId == 0) {
+        return false; // nothing owned to say anything about
+    }
+    return MatchCorrectionStore(db).record(CorrectionKind::SearchResult,
+                                           remoteIdentity(result.parsed, result.durationSec()),
+                                           libraryIdentity(db, result.ownedId, result.ownedSource), verdict, atMs);
+}
+
 void ResultAnnotator::correct(SearchResult &result)
 {
     // Without a verdict anywhere, the matcher's ownership stands. With one, ownership is worked out again from what

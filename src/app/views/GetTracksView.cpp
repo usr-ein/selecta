@@ -451,12 +451,16 @@ void GetTracksView::contextMenu(QPoint position)
     QMenu menu(this);
     bool canGet = false;
     bool downloading = false;
+    QList<qint64> owned; // "You have it", "In your Inbox" (BATCH-3)
     for (const qint64 id : ids) {
         const int row = m_model->rowOf(id);
         if (row < 0) {
             continue;
         }
         const core::GetLine &line = m_model->lines().at(row);
+        if (line.findState == core::GetLine::FindState::Owned || line.findState == core::GetLine::FindState::InInbox) {
+            owned.append(id);
+        }
         using DownloadState = core::GetLine::DownloadState;
         canGet = canGet || (line.best &&
                             (line.downloadState == DownloadState::None || line.downloadState == DownloadState::Failed));
@@ -470,7 +474,11 @@ void GetTracksView::contextMenu(QPoint position)
     if (downloading) {
         menu.addAction(tr("Cancel Download"), this, [this, ids] { m_engine.cancelTrackDownloads(ids); });
     }
-    if (canGet || downloading) {
+    if (!owned.isEmpty()) {
+        // LIB-6: the copy found isn't this track; remembered, and the line is found like any other.
+        menu.addAction(tr("Not What I Have, Find It"), this, [this, owned] { m_engine.notOwnedFindTracks(owned); });
+    }
+    if (canGet || downloading || !owned.isEmpty()) {
         menu.addSeparator();
     }
     menu.addAction(tr("Look Up Again"), this, [this, ids] { m_engine.retryTracks(ids); });

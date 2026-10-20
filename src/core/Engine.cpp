@@ -515,13 +515,11 @@ void Engine::correctSearchMatch(qint64 searchId, int index, bool same)
         return;
     }
     const std::optional<SearchResult> result = m_manualSearch->result(searchId, index);
-    if (!result || result->ownedId == 0) {
-        return; // nothing owned to say anything about
+    if (!result) {
+        return;
     }
-    const TrackIdentity remote = remoteIdentity(result->parsed, result->durationSec());
-    const TrackIdentity owned = libraryIdentity(*m_db, result->ownedId, result->ownedSource);
-    if (!MatchCorrectionStore(*m_db).record(CorrectionKind::SearchResult, remote, owned,
-                                            same ? Verdict::Same : Verdict::Different, m_options.wallClock())) {
+    if (!ResultAnnotator::recordCorrection(*m_db, *result, same ? Verdict::Same : Verdict::Different,
+                                           m_options.wallClock())) {
         qCWarning(lcEngine) << "couldn't remember the correction of" << result->path << ':' << m_db->lastError();
         return;
     }

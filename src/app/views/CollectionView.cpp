@@ -126,6 +126,8 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
         QMenu menu(this);
         menu.addAction(tr("Show in Finder"), this,
                        [path] { QProcess::startDetached(u"/usr/bin/open"_s, {u"-R"_s, path}); });
+        // LIB-6: remembered, so the pair is never flagged again; Dismiss only hides this flag.
+        menu.addAction(tr("Not the Same Track"), this, [this, id] { m_engine.notTheSameTrack(id); });
         menu.addAction(tr("Dismiss"), this, [this, id] { m_engine.dismissSupersedeFlag(id); });
         menu.exec(m_flags->viewport()->mapToGlobal(position));
     });

@@ -298,13 +298,10 @@ protected:
         return results;
     }
 
-    // What Engine::correctSearchMatch() records.
+    // What Engine::correctSearchMatch() does.
     void correct(const SearchResult &result, Verdict verdict)
     {
-        ASSERT_NE(result.ownedId, 0U);
-        ASSERT_TRUE(MatchCorrectionStore(*db).record(
-            CorrectionKind::SearchResult, selecta::core::remoteIdentity(result.parsed, result.durationSec()),
-            selecta::core::libraryIdentity(*db, result.ownedId, result.ownedSource), verdict, 1000));
+        ASSERT_TRUE(selecta::core::ResultAnnotator::recordCorrection(*db, result, verdict, 1000));
     }
 
     QTemporaryDir dir;
@@ -325,6 +322,8 @@ TEST_F(LibraryCorrectionsTest, NotWhatIHaveSurvivesARestartAndARescan)
     QList<SearchResult> results = search({{kNeonRain, 4}, {kTidewater, 4}});
     ASSERT_EQ(results.size(), 2);
     ASSERT_EQ(results.at(0).ownership, Ownership::InCollection);
+    // A result that owns nothing has nothing to correct.
+    EXPECT_FALSE(selecta::core::ResultAnnotator::recordCorrection(*db, SearchResult{}, Verdict::Different, 1000));
     correct(results.at(0), Verdict::Different);
 
     const auto check = [this] {

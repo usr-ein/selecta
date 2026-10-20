@@ -14,6 +14,7 @@ class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QPushButton;
 class QStackedWidget;
 class QTimeEdit;
@@ -82,6 +83,8 @@ Q_SIGNALS:
     void messageRequested(const QString &peer);
 
 private:
+    // "Not What I Have" and "Same as What I Have" for the selected results matched with an owned track (LIB-6).
+    void addCorrections(QMenu &menu, const QList<int> &selected);
     QWidget *createFilterBar();
     QWidget *createFiltersPanel();
     void applyFilter(const core::SearchFilter &filter, bool customised);

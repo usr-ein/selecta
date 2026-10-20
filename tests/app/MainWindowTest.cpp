@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/MainWindow.h"
 
+#include "SyntheticAudio.h"
 #include "app/AppSettings.h"
 #include "app/Notifications.h"
 #include "app/Presets.h"
@@ -11,7 +12,9 @@
 #include "app/views/ConverterView.h"
 #include "audio/AnalysisCache.h"
 #include "convert/TagWriter.h"
+#include "core/Albums.h"
 #include "core/EngineHost.h"
+#include "core/MatchCorrections.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
 #include "storage/Database.h"
@@ -32,6 +35,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -39,6 +43,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTextBrowser>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
 #include <QtEndian>
@@ -1362,4 +1367,257 @@ TEST_F(MainWindowTest, SettingsShowTheAnalysisCacheBudget)
     EXPECT_EQ(cache->budgetBytes(), qint64{384} * 1024 * 1024);
     QTRY_COMPARE_WITH_TIMEOUT(line->text(), u"0 B, at most 402.7 MB"_s, 5000);
     engine->stop();
+}
+
+namespace {
+
+// Opens a view's context menu as a right-click at `position` does, and returns its actions' texts; triggers the one
+// called `choose`, if any, as the menu closes.
+QStringList contextMenu(QWidget *view, QPoint position, const QString &choose = {})
+{
+    QStringList texts;
+    QTimer::singleShot(0, view, [&texts, &choose] {
+        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+        if (menu == nullptr) {
+            return;
+        }
+        QAction *chosen = nullptr;
+        const QList<QAction *> actions = menu->actions();
+        for (QAction *action : actions) {
+            if (!action->isSeparator()) {
+                texts.append(action->text());
+            }
+            if (!choose.isEmpty() && action->text() == choose) {
+                chosen = action;
+            }
+        }
+        menu->close();
+        if (chosen != nullptr) {
+            chosen->trigger();
+        }
+    });
+    Q_EMIT view->customContextMenuRequested(position);
+    return texts;
+}
+
+// The row of an item view whose first column reads `text` (searched depth first).
+QModelIndex rowWithText(const QAbstractItemModel &model, const QString &text, const QModelIndex &parent = {})
+{
+    for (int row = 0; row < model.rowCount(parent); ++row) {
+        const QModelIndex index = model.index(row, 0, parent);
+        if (index.data().toString().contains(text)) {
+            return index;
+        }
+        if (const QModelIndex child = rowWithText(model, text, index); child.isValid()) {
+            return child;
+        }
+    }
+    return {};
+}
+
+// Selects `row` and opens the context menu over it.
+QStringList contextMenuOn(QTreeView *view, const QModelIndex &row, const QString &choose = {})
+{
+    view->setCurrentIndex(row);
+    view->selectionModel()->select(row, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    return contextMenu(view, view->visualRect(row).center(), choose);
+}
+
+} // namespace
+
+// LIB-6: a result matched with an owned track can be set apart from it, and a match Selecta isn't sure of confirmed.
+TEST_F(MainWindowTest, OwnedSearchResultsOfferCorrections)
+{
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    auto *field = window->findChild<QLineEdit *>(u"sidebar.search"_s);
+    ASSERT_NE(field, nullptr);
+    field->setText(u"Okuma Drift"_s);
+    QTest::keyClick(field, Qt::Key_Return);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->currentViewId().startsWith(u"search:"_s); }, 5000));
+    const qint64 searchId = window->currentViewId().mid(7).toLongLong();
+
+    using selecta::core::Ownership;
+    const auto result = [](int index, const QString &name, Ownership ownership, quint64 ownedId,
+                           selecta::match::Tier tier) {
+        selecta::core::SearchResult r;
+        r.index = index;
+        r.hit.peer = u"vinyl_ghost"_s;
+        r.hit.path = (u"@@vinyl\\Music\\"_s + name).toUtf8();
+        r.hit.extension = u"flac"_s;
+        r.hit.size = 40'000'000;
+        r.hit.attributes.duration = 372;
+        r.path = selecta::core::decodeRemotePath(r.hit.path);
+        r.folder = selecta::core::remoteFolderOf(r.path);
+        r.name = selecta::core::remoteNameOf(r.path);
+        r.parsed = selecta::match::RemotePathParser::parse(r.path);
+        r.ownership = ownership;
+        r.ownedId = ownedId;
+        if (ownedId != 0) {
+            r.candidates = {{ownedId, selecta::match::Source::Collection, tier, selecta::match::Relation::Same}};
+        }
+        return r;
+    };
+    Q_EMIT engine->searchResultsReset(
+        searchId,
+        {result(0, u"Okuma Drift - Neon Rain.flac"_s, Ownership::InCollection, 5, selecta::match::Tier::Exact),
+         result(1, u"Okuma Drift - Low Tide.flac"_s, Ownership::LikelyInCollection, 6, selecta::match::Tier::Likely),
+         result(2, u"Okuma Drift - Night Signals.flac"_s, Ownership::None, 0, selecta::match::Tier::None)});
+    auto *table = window->findChild<QTreeView *>(u"search.results"_s);
+    ASSERT_NE(table, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(rowWithText(*table->model(), u"Night Signals"_s).isValid(), 5000);
+
+    const QStringList sure = contextMenuOn(table, rowWithText(*table->model(), u"Neon Rain"_s));
+    EXPECT_TRUE(sure.contains(u"Not What I Have"_s)) << sure.join(u", "_s).toStdString();
+    EXPECT_FALSE(sure.contains(u"Same as What I Have"_s));
+    const QStringList likely = contextMenuOn(table, rowWithText(*table->model(), u"Low Tide"_s));
+    EXPECT_TRUE(likely.contains(u"Not What I Have"_s));
+    EXPECT_TRUE(likely.contains(u"Same as What I Have"_s));
+    const QStringList none = contextMenuOn(table, rowWithText(*table->model(), u"Night Signals"_s));
+    EXPECT_FALSE(none.isEmpty());
+    EXPECT_FALSE(none.contains(u"Not What I Have"_s));
+    EXPECT_FALSE(none.contains(u"Same as What I Have"_s));
+    engine->stop();
+}
+
+// LIB-6: "Not What I Have, Find It" on a line found in the collection is remembered, and the line is looked for.
+TEST_F(MainWindowTest, NotWhatIHaveFindsAGetTracksLine)
+{
+    selecta::core::LibraryConfig library;
+    library.inboxRoot = dir.filePath(u"Inbox"_s);
+    library.collectionRoots = {dir.filePath(u"Music"_s)};
+    const QString owned = dir.filePath(u"Music/Singles/Okuma Drift - Neon Rain.mp3"_s);
+    ASSERT_TRUE(QDir().mkpath(QFileInfo(owned).absolutePath()) && QDir().mkpath(library.inboxRoot));
+    {
+        QFile file(owned);
+        const QByteArray mp3 = selecta::testing::makeMp3(selecta::testing::sine(440.0, 4.0));
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly) && file.write(mp3) == mp3.size());
+    }
+    selecta::convert::MetadataModel tags;
+    tags.set(selecta::convert::keys::Artist, u"Okuma Drift"_s, selecta::convert::Provenance::Embedded);
+    tags.set(selecta::convert::keys::Title, u"Neon Rain"_s, selecta::convert::Provenance::Embedded);
+    ASSERT_TRUE(selecta::convert::writeTags(owned, tags).ok());
+    settings->setLibraryConfig(library);
+    const QString engineDb = dir.filePath(u"engine.sqlite3"_s);
+    selecta::core::EngineOptions options;
+    options.databasePath = engineDb;
+    options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    engine->addTracks(u"Okuma Drift - Neon Rain"_s);
+    using FindState = selecta::core::GetLine::FindState;
+    const auto lineState = [this] {
+        const QList<selecta::core::GetLine> lines = engine->getLines();
+        return lines.isEmpty() ? FindState::Idle : lines.constFirst().findState;
+    };
+    QTRY_COMPARE_WITH_TIMEOUT(lineState(), FindState::Owned, 10000); // after the collection scan
+    auto *table = window->findChild<QTreeView *>(u"get.lines"_s);
+    ASSERT_NE(table, nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+
+    const QStringList texts = contextMenuOn(table, table->model()->index(0, 1), u"Not What I Have, Find It"_s);
+    EXPECT_TRUE(texts.contains(u"Not What I Have, Find It"_s)) << texts.join(u", "_s).toStdString();
+    QTRY_VERIFY_WITH_TIMEOUT(lineState() != FindState::Owned, 5000);
+    engine->stop();
+
+    selecta::storage::Database check;
+    ASSERT_TRUE(check.open(engineDb));
+    const QList<selecta::core::MatchCorrection> corrections = selecta::core::MatchCorrectionStore(check).all();
+    ASSERT_EQ(corrections.size(), 1);
+    EXPECT_EQ(corrections.constFirst().kind, selecta::core::CorrectionKind::GetLine);
+    EXPECT_EQ(corrections.constFirst().verdict, selecta::core::Verdict::Different);
+}
+
+// LIB-6: "Not the Same Track" on a supersede flag, from the Collection view and from the Inbox: the flag goes, and the
+// pair is remembered.
+TEST_F(MainWindowTest, NotTheSameTrackDropsAFlagForGood)
+{
+    selecta::core::LibraryConfig library;
+    library.inboxRoot = dir.filePath(u"Inbox"_s);
+    ASSERT_TRUE(QDir().mkpath(library.inboxRoot + u"/Singles"_s));
+    {
+        QFile single(library.inboxRoot + u"/Singles/Okuma_Drift_-_Low_Tide.mp3"_s);
+        ASSERT_TRUE(single.open(QIODevice::WriteOnly) && single.write("single") == 6);
+    }
+    settings->setLibraryConfig(library);
+    const QString engineDb = dir.filePath(u"engine.sqlite3"_s);
+    {
+        selecta::storage::Database setup;
+        ASSERT_TRUE(setup.open(engineDb));
+        ASSERT_TRUE(selecta::storage::migrate(setup, selecta::storage::selectaMigrations()).ok());
+        selecta::library::InboxItem item;
+        item.relativePath = u"Singles/Okuma_Drift_-_Low_Tide.mp3"_s;
+        item.state = selecta::library::InboxItem::State::Ready;
+        item.artist = u"Okuma Drift"_s;
+        item.title = u"Low Tide"_s;
+        item.createdAt = 1000;
+        const std::optional<qint64> single = selecta::library::InboxStore(setup).add(item);
+        ASSERT_TRUE(single.has_value());
+        selecta::core::SupersedeFlagStore flags(setup);
+        selecta::core::SupersedeFlag inInbox;
+        inInbox.album = u"Night Signals"_s;
+        inInbox.singleItem = single;
+        inInbox.single = u"Okuma Drift – Low Tide"_s;
+        inInbox.createdAt = 1000;
+        inInbox.singleTrack = selecta::core::trackIdentity(u"Okuma Drift"_s, u"Low Tide"_s, 4000);
+        inInbox.albumTrack = selecta::core::trackIdentity(u"Okuma Drift"_s, u"Low Tide (Album Edit)"_s, 4000);
+        ASSERT_TRUE(flags.add(inInbox).has_value());
+        selecta::core::SupersedeFlag filed;
+        filed.album = u"Night Signals"_s;
+        filed.singlePath = u"/Music/Singles/Okuma Drift - Neon Rain.mp3"_s;
+        filed.single = u"Okuma Drift – Neon Rain"_s;
+        filed.createdAt = 2000;
+        filed.singleTrack = selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 3000);
+        filed.albumTrack = selecta::core::trackIdentity(u"Okuma Drift"_s, u"Neon Rain"_s, 3000);
+        ASSERT_TRUE(flags.add(filed).has_value());
+    }
+    selecta::core::EngineOptions options;
+    options.databasePath = engineDb;
+    options.library = library;
+    options.metaEndpoints = selecta::core::MetaEndpoints::unreachable();
+    engine = std::make_unique<selecta::core::EngineHost>(options);
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+
+    // The filed single, in the Collection view.
+    ASSERT_TRUE(window->navigateTo(u"collection"_s));
+    auto *flagList = window->findChild<QListView *>(u"collection.flags"_s);
+    ASSERT_NE(flagList, nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(flagList->model()->rowCount(), 1, 5000);
+    const QStringList texts =
+        contextMenu(flagList, flagList->visualRect(flagList->model()->index(0, 0)).center(), u"Not the Same Track"_s);
+    EXPECT_TRUE(texts.contains(u"Not the Same Track"_s)) << texts.join(u", "_s).toStdString();
+    EXPECT_TRUE(texts.contains(u"Dismiss"_s));
+    QTRY_COMPARE_WITH_TIMEOUT(flagList->model()->rowCount(), 0, 5000);
+
+    // The Inbox single: its status said "also on"; the action is in its menu.
+    ASSERT_TRUE(window->navigateTo(u"inbox"_s));
+    auto *items = window->findChild<QTreeView *>(u"inbox.items"_s);
+    ASSERT_NE(items, nullptr);
+    QTRY_VERIFY_WITH_TIMEOUT(rowWithText(*items->model(), u"Low Tide"_s).isValid(), 5000);
+    const QModelIndex single = rowWithText(*items->model(), u"Low Tide"_s);
+    EXPECT_EQ(single.siblingAtColumn(4).data().toString(), u"⚑ Also on “Night Signals”"_s);
+    const QStringList inboxTexts = contextMenuOn(items, single, u"Not the Same Track"_s);
+    EXPECT_TRUE(inboxTexts.contains(u"Not the Same Track"_s)) << inboxTexts.join(u", "_s).toStdString();
+    QTRY_COMPARE_WITH_TIMEOUT(rowWithText(*items->model(), u"Low Tide"_s).siblingAtColumn(4).data().toString(),
+                              u"Ready"_s, 5000);
+    engine->stop();
+
+    selecta::storage::Database check;
+    ASSERT_TRUE(check.open(engineDb));
+    const QList<selecta::core::MatchCorrection> corrections = selecta::core::MatchCorrectionStore(check).all();
+    ASSERT_EQ(corrections.size(), 2);
+    for (const selecta::core::MatchCorrection &correction : corrections) {
+        EXPECT_EQ(correction.kind, selecta::core::CorrectionKind::Supersede);
+        EXPECT_EQ(correction.verdict, selecta::core::Verdict::Different);
+    }
+    EXPECT_TRUE(selecta::core::SupersedeFlagStore(check).all().isEmpty());
 }
