@@ -235,7 +235,7 @@ TEST_F(YouTubePreviewsTest, ATrackHeardBeforePlaysFromTheCacheWithoutYtDlp)
     reopenCache(); // a restart
     YouTubePreviews previews(runner, cache.get());
     QSignalSpy started(&previews, &YouTubePreviews::started);
-    QSignalSpy changes(&previews, &YouTubePreviews::changed);
+    const QSignalSpy changes(&previews, &YouTubePreviews::changed);
     const qint64 id = previews.start(u"line:8"_s, glassHarbour());
     EXPECT_TRUE(started.isEmpty()); // the caller gets the id first
     ASSERT_TRUE(eventually([&] { return !started.isEmpty(); }));
