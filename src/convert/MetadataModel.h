@@ -69,7 +69,7 @@ inline constexpr QStringView Encoding = u"ENCODING";   // ID3 TSSE: encoder sett
 inline constexpr QStringView Copyright = u"COPYRIGHT";
 inline constexpr QStringView TaggingDate = u"TAGGINGDATE";       // ID3v2.4 TDTG
 inline constexpr QStringView ProducedNotice = u"PRODUCEDNOTICE"; // ID3v2.4 TPRO
-inline constexpr QStringView SourceUrl = u"URL";                 // the source link (D30): ID3 WOAS/WXXX, Vorbis URL
+inline constexpr QStringView SourceUrl = u"AUDIOSOURCEWEBPAGE";  // the source link (D30): ID3 WOAS
 } // namespace keys
 
 // An embedded picture. Pictures are bounded when read (TagReadOptions).

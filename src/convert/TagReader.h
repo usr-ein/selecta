@@ -12,8 +12,8 @@ struct TagReadOptions
 {
     qint64 maxPictureBytes = qint64{20} * 1024 * 1024; // larger pictures are skipped (logged), not loaded
     int maxPictures = 8;                               // further pictures are skipped
-    qint64 maxValueChars = 64 * 1024;                  // longer values (lyrics aside) are truncated
-    qint64 maxLyricsChars = 256 * 1024;
+    qint64 maxValueChars = qint64{64} * 1024;          // longer values (lyrics aside) are truncated
+    qint64 maxLyricsChars = qint64{256} * 1024;
 };
 
 // Reads every tag of an audio file into a MetadataModel (conversion §9.1, TagReader). Opens the file read-only (TagLib
