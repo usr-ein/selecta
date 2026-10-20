@@ -9,6 +9,7 @@ qt_add_library(selecta_app STATIC
     MainWindow.h MainWindow.cpp
     NavDelegate.h NavDelegate.cpp
     NavModel.h NavModel.cpp
+    Notifications.h Notifications.cpp
     PeerMenu.h PeerMenu.cpp
     PlayerBar.h PlayerBar.cpp
     Preview.h Preview.cpp
@@ -46,6 +47,13 @@ qt_add_library(selecta_app STATIC
     views/SharesView.h views/SharesView.cpp
     views/WishlistView.h views/WishlistView.cpp)
 add_library(Selecta::App ALIAS selecta_app)
+if(APPLE)
+    # System notifications (UI-6): UNUserNotificationCenter, in Objective-C++ with ARC. System frameworks only.
+    target_sources(selecta_app PRIVATE MacNotifications.mm)
+    set_source_files_properties(MacNotifications.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(selecta_app PRIVATE "-framework UserNotifications" "-framework AppKit"
+        "-framework Foundation")
+endif()
 if(SELECTA_DEVTOOLS)
     target_sources(selecta_app PRIVATE devtools/DebugServer.h devtools/DebugServer.cpp)
     target_compile_definitions(selecta_app PUBLIC SELECTA_DEVTOOLS=1)

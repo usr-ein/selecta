@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/AppSettings.h"
 #include "app/MainWindow.h"
+#include "app/Notifications.h"
 #include "app/Preview.h"
 #include "audio/AnalysisCache.h"
 #include "base/DebugProtocol.h"
@@ -263,7 +264,14 @@ int runSelecta(int argc, char **argv)
                                                              : selecta::playback::AudioOutput::createDefault(),
                                             std::make_shared<selecta::audio::AnalysisCache>(analysisDir));
 
-    selecta::app::MainWindow window({database, sessions, settings, engine, preview, build, startedAt});
+    // System notifications (UI-6): macOS's Notification Center from the app bundle. Headless runs (automated
+    // inspection) keep them for the debug socket instead: nothing reaches the screen, and nobody is asked for permission.
+    const std::unique_ptr<selecta::app::NotificationSink> notifications =
+        options.headless ? std::make_unique<selecta::app::RecordingNotificationSink>()
+                         : selecta::app::createSystemNotificationSink();
+
+    selecta::app::MainWindow window(
+        {database, sessions, settings, engine, preview, build, startedAt, notifications.get()});
     if (options.headless) {
         window.setAttribute(Qt::WA_DontShowOnScreen);
     }

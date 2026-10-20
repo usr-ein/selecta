@@ -22,6 +22,7 @@ const QString kPreviewVolume = u"player/volume"_s;
 const QString kPreviewSource = u"player/source"_s;
 const QString kPreviewFollows = u"player/followSelection"_s;
 const QString kYtDlpPath = u"player/ytDlp"_s;
+const QString kShowNotifications = u"notifications/show"_s;
 const QString kRecentSearchesKey = u"search/recent"_s;
 const QString kConverterTarget = u"converter/target"_s;
 const QString kConverterId3v24 = u"converter/id3v24"_s;
@@ -207,6 +208,16 @@ bool AppSettings::previewFollowsSelection() const
 void AppSettings::setPreviewFollowsSelection(bool follows)
 {
     m_settings.setValue(kPreviewFollows, follows);
+}
+
+bool AppSettings::showNotifications() const
+{
+    return m_settings.value(kShowNotifications, true).toBool();
+}
+
+void AppSettings::setShowNotifications(bool show)
+{
+    m_settings.setValue(kShowNotifications, show);
 }
 
 QString AppSettings::ytDlpPath() const

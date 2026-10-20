@@ -58,6 +58,8 @@ public:
     core::NetworkConfig networkConfig() const { return m_network; }
     // Caches (CACHE-2): what each holds.
     void setCacheSizes(const core::CacheStatus &engine, qint64 waveformBytes);
+    // "Show notifications" (UI-6), reflected without emitting showNotificationsChanged.
+    void setShowNotifications(bool show);
 
 Q_SIGNALS:
     void appearanceRequested(selecta::app::Appearance appearance);
@@ -77,6 +79,7 @@ Q_SIGNALS:
     void clearSearchCacheRequested();
     void clearPreviewCacheRequested();
     void clearWaveformCacheRequested();
+    void showNotificationsChanged(bool show);
 
 private:
     QWidget *createLibraryBox(QWidget *parent);
@@ -85,6 +88,7 @@ private:
     QWidget *createNetworkBox(QWidget *parent);
     QWidget *createPreviewBox(QWidget *parent);
     QWidget *createCacheBox(QWidget *parent);
+    QWidget *createNotificationBox(QWidget *parent);
     void submitNetwork();
     void submitSpotify();
     void showLibrary();
@@ -131,6 +135,7 @@ private:
     QLabel *m_searchCache = nullptr;
     QLabel *m_previewCache = nullptr;
     QLabel *m_waveformCache = nullptr;
+    QCheckBox *m_showNotifications = nullptr;
 };
 
 } // namespace selecta::app

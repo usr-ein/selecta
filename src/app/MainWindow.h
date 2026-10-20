@@ -39,6 +39,9 @@ class MessagesView;
 class RoomsView;
 class Inspector;
 class NavModel;
+class NotificationSink;
+class Notifier;
+struct NotificationTarget;
 class PlayerBar;
 class PreviewController;
 class SearchView;
@@ -60,6 +63,9 @@ struct AppServices
     PreviewController &preview;
     BuildInfo build;
     qint64 sessionStartedAtMs = 0;
+    // Where system notifications go (UI-6): macOS's Notification Center, a list in headless runs, a fake in tests;
+    // null when there are none. Outlives the window like the rest.
+    NotificationSink *notifications = nullptr;
 };
 
 // The single main window (PRD 8.2): toolbar, sidebar, content views, inspector and player. Main thread only.
@@ -100,12 +106,15 @@ public:
     void browsePeer(const QString &peer);
     // Opens the conversation with a peer (NET-7) in the Messages view.
     void messagePeer(const QString &peer);
+    // System notifications and the Dock badge (UI-6).
+    Notifier *notifier() const { return m_notifier; }
 
 Q_SIGNALS:
     void viewChanged(const QString &id);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void changeEvent(QEvent *event) override;
 
 private:
     struct View
@@ -146,6 +155,8 @@ private:
     void createRoomsView();
     // The unread count in the sidebar and on the Dock icon (UI-6).
     void refreshUnread();
+    // A click on a system notification: the window comes forward and shows what it was about.
+    void showNotificationTarget(const NotificationTarget &target);
 
     AppServices m_services;
     Appearance m_appearance;
@@ -188,6 +199,7 @@ private:
     QHash<QString, qsizetype> m_viewIndex;
     QString m_currentId;
     Toasts *m_toasts = nullptr;
+    Notifier *m_notifier = nullptr;
     QList<core::TrashedItem> m_trashedBatch; // items the user just trashed, for one notification
     QTimer *m_trashedTimer = nullptr;
 };

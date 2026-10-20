@@ -54,6 +54,10 @@ public:
     QString ytDlpPath() const;
     void setYtDlpPath(const QString &path);
 
+    // Settings → "Show notifications" (UI-6): system notifications while Selecta is in the background. On by default.
+    bool showNotifications() const;
+    void setShowNotifications(bool show);
+
     // SRCH-15: the searches typed lately, newest first, at most kRecentSearches.
     static constexpr int kRecentSearches = 30;
     QStringList recentSearches() const;

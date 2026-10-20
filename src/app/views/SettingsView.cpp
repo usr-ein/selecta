@@ -122,6 +122,7 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     columnLayout->setContentsMargins(24, 20, 24, 24);
     columnLayout->setSpacing(16);
     columnLayout->addWidget(appearanceBox);
+    columnLayout->addWidget(createNotificationBox(column));
     columnLayout->addWidget(createLibraryBox(column));
     columnLayout->addWidget(createFilingBox(column));
     columnLayout->addWidget(createNetworkBox(column));
@@ -425,6 +426,31 @@ QWidget *SettingsView::createPreviewBox(QWidget *parent)
         Q_EMIT ytDlpCheckRequested();
     });
     return box;
+}
+
+QWidget *SettingsView::createNotificationBox(QWidget *parent)
+{
+    auto *box = new QGroupBox(tr("Notifications"), parent);
+    auto *form = new QFormLayout(box);
+    m_showNotifications = new QCheckBox(tr("Show notifications"), box);
+    m_showNotifications->setObjectName(u"settings.showNotifications"_s);
+    m_showNotifications->setChecked(true);
+    connect(m_showNotifications, &QCheckBox::toggled, this, &SettingsView::showNotificationsChanged);
+    form->addRow(m_showNotifications);
+    auto *note = new QLabel(tr("In Notification Center while Selecta is in the background: messages, mentions in "
+                               "rooms, downloads that finished and Wishlist finds. macOS asks the first time; System "
+                               "Settings → Notifications can change that later."),
+                            box);
+    note->setWordWrap(true);
+    note->setForegroundRole(QPalette::PlaceholderText);
+    form->addRow(note);
+    return box;
+}
+
+void SettingsView::setShowNotifications(bool show)
+{
+    const QSignalBlocker blocker(m_showNotifications);
+    m_showNotifications->setChecked(show);
 }
 
 void SettingsView::setPreviewSettings(core::PreviewSource source, const QString &ytDlpPath)

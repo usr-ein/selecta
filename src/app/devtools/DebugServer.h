@@ -51,6 +51,7 @@ private:
     QJsonValue select(const QJsonObject &args, QString *error);
     QJsonValue drop(const QJsonObject &args, QString *error);
     QJsonValue player(const QJsonObject &args, QString *error);
+    QJsonValue notifications(const QJsonObject &args, QString *error);
 
     MainWindow &m_window;
     QString m_logDir;
