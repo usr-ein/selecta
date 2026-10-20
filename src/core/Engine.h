@@ -19,6 +19,7 @@
 #include "governor/Governor.h"
 
 #include <QObject>
+#include <QSet>
 #include <QString>
 
 #include <functional>
@@ -133,6 +134,10 @@ public:
     void editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared);
     void findInboxReleases(qint64 itemId);
     void applyInboxRelease(qint64 itemId, const meta::Release &release);
+    // Moves Inbox items to the Trash for the user: each one that goes is reported (inboxItemTrashed()) for Undo.
+    void trashInboxItems(const QList<qint64> &ids);
+    // Puts back items inboxItemTrashed() reported.
+    void restoreInboxItems(const QList<selecta::core::TrashedItem> &items);
 
     // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
     void setLibraryConfig(const LibraryConfig &config);
@@ -193,9 +198,11 @@ Q_SIGNALS:
     void ytDlpChecked(bool ok, const QString &description);
     // Release candidates for an Inbox item (findInboxReleases()), or why there are none.
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
+    // An Inbox item the user moved to the Trash (trashInboxItems()), with what it takes to put it back.
+    void inboxItemTrashed(const selecta::core::TrashedItem &item);
     // Album downloads (AlbumService's signals, forwarded).
     void albumChanged(const selecta::core::AlbumDownload &album);
-    void superseded(const selecta::core::SupersedeReport &report);
+    void albumReported(const selecta::core::AlbumReport &report);
 
 private:
     // What a preview can play from: the release (YouTube, the clip) and the peer's file.
@@ -241,6 +248,7 @@ private:
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;          // the preview playing
     quint64 m_previewGeneration = 0; // bumps when a preview is stopped or replaced
+    QSet<qint64> m_userTrashed;      // Inbox items the user asked to trash, until they've gone
     QTimer *m_pruneTimer = nullptr;
     QTimer *m_budgetTimer = nullptr;
     QTimer *m_annotateTimer = nullptr; // coalesces transfer changes before search results are annotated again

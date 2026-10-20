@@ -24,6 +24,8 @@
 #include <QCommandLineParser>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDir>
+#include <QFileInfo>
 #include <QImageReader>
 #include <QLockFile>
 #include <QLoggingCategory>
@@ -214,6 +216,26 @@ int runSelecta(int argc, char **argv)
     } else if (!options.metadataNetwork) {
         engineOptions.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // nothing leaves the machine
     } // isolated runs keep secrets in memory only
+    if (options.isolated) {
+        // Isolated runs keep everything in their folder, the Trash included.
+        const QString trashDir = dataDir + u"/Trash"_s;
+        engineOptions.trash = [trashDir](const QString &path, QString *trashedPath) {
+            const QFileInfo source(path);
+            const QString suffix = source.isDir() || source.suffix().isEmpty() ? QString() : u'.' + source.suffix();
+            const QString base = suffix.isEmpty() ? source.fileName() : source.completeBaseName();
+            QString target = QDir(trashDir).filePath(source.fileName());
+            for (int n = 2; QFileInfo::exists(target); ++n) { // "name 2.flac", as the Finder does
+                target = QDir(trashDir).filePath(u"%1 %2%3"_s.arg(base).arg(n).arg(suffix));
+            }
+            if (!QDir().mkpath(trashDir) || !QDir().rename(path, target)) {
+                return false;
+            }
+            if (trashedPath) {
+                *trashedPath = target;
+            }
+            return true;
+        };
+    }
     engineOptions.openUrl = [](const QUrl &url) {
         // Called on the engine thread; the browser is opened from the UI thread.
         QMetaObject::invokeMethod(qApp, [url] { QDesktopServices::openUrl(url); }, Qt::QueuedConnection);

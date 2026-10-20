@@ -29,6 +29,7 @@ public:
 Q_SIGNALS:
     void previewRequested();
     void downloadRequested();
+    void downloadFolderRequested();
 
 private:
     QStackedWidget *m_pages;
@@ -36,6 +37,7 @@ private:
     QLabel *m_subtitle;
     QPushButton *m_preview;
     QPushButton *m_download;
+    QPushButton *m_downloadFolder;
     QLabel *m_ownership;
     QLabel *m_checks;
     QLabel *m_quality;

@@ -38,14 +38,20 @@ class MetaServices;
 class NetworkService;
 class TransferService;
 
-// What an album download did to the singles it supersedes (DL-7, DL-8), for a notification with Undo.
-struct SupersedeReport
+// An album that arrived and what it did to the singles it supersedes (DL-3, DL-7, DL-8), for one notification with
+// Undo; or, later, the singles the user agreed to move to the Trash.
+struct AlbumReport
 {
     qint64 albumId = 0;
-    QString album;                  // the album's title
-    QStringList trashed;            // Inbox singles moved to the Trash, as "Artist – Title"
-    QStringList flagged;            // pairs only flagged: filed singles, uncertain matches
-    bool confirmationAsked = false; // the circuit breaker held back the trash: every pair is flagged
+    QString album;         // the album's title
+    bool arrival = false;  // the album has just arrived (else: held singles went to the Trash on the user's word)
+    bool complete = false; // arrival: every audio file of the folder made it
+    int tracks = 0;        // arrival: how many tracks it has
+    QString where;         // arrival: its folder, relative to the Inbox
+    QString warning;       // arrival: what's missing or went wrong, if anything
+    QStringList trashed;   // Inbox singles moved to the Trash, as "Artist – Title"
+    QStringList held;      // Inbox singles to move once the user says so: so many that Selecta asks first (T42)
+    QStringList flagged;   // pairs only flagged: filed singles, uncertain matches
 };
 
 // Album downloads (PRD DL-1, DL-3, DL-7, DL-8, DL-12) on the engine thread. A remote folder is listed by its peer
@@ -94,6 +100,9 @@ public:
     void restore();
     // Puts back the singles an album's supersede moved to the Trash.
     void undoSupersede(qint64 albumId);
+    // Moves to the Trash the singles an album's supersede held back to ask first (AlbumReport::held). reported()
+    // says so, with them as trashed.
+    void confirmSupersede(qint64 albumId);
 
     // --- fed by the transfers and the Inbox ---
     // An album file has arrived whole (TransferService::completed): the album is made once every file is in.
@@ -112,8 +121,8 @@ public:
 
 Q_SIGNALS:
     void albumChanged(const selecta::core::AlbumDownload &album);
-    // Supersede (DL-7, DL-8) decided for an album that arrived.
-    void superseded(const selecta::core::SupersedeReport &report);
+    // An album arrived (after its albumChanged()), with its supersede (DL-7, DL-8); or held singles went.
+    void reported(const selecta::core::AlbumReport &report);
 
 private Q_SLOTS:
     void drain();
@@ -137,6 +146,14 @@ private:
         QList<qint64> downloads;
         AlbumArrivalResult result;
     };
+    // Singles a supersede held back until the user confirms.
+    struct Held
+    {
+        QString album;
+        QString peer;
+        QList<qint64> singles;
+        QStringList names;
+    };
 
     void requestListing(const AlbumDownload &album, const QList<SearchHit> &known);
     void listed(qint64 albumId, const QList<slsk::FileEntry> &files, bool fromPeer);
@@ -144,7 +161,8 @@ private:
     void startArrival(AlbumDownload album);
     void runArrival(const std::shared_ptr<PendingArrival> &pending);
     void recordArrival(const Outcome &outcome);
-    void supersede(const AlbumDownload &album, const library::InboxItem &item, const AlbumArrivalResult &result);
+    // Checks the album's tracks against the singles (DL-7, DL-8) and moves or holds the ones it replaces.
+    void supersede(const AlbumDownload &album, const AlbumArrivalResult &result, AlbumReport &report);
     void setState(AlbumDownload &album, AlbumDownload::State state, const QString &message);
 
     storage::Database &m_db;
@@ -163,6 +181,7 @@ private:
     QHash<qint64, std::shared_ptr<audio::CancellationFlag>> m_arriving; // albums being made → their cancel flag
     QHash<qint64, qint64> m_supersedeTrash;                             // Inbox single sent to the Trash → its album
     QHash<qint64, QList<TrashedItem>> m_undo;                           // album → the singles its supersede trashed
+    QHash<qint64, Held> m_held;                                         // album → singles waiting for a yes
     QThreadPool m_pool;
     std::mutex m_mutex;
     QList<Outcome> m_outcomes; // guarded by m_mutex
@@ -170,4 +189,4 @@ private:
 
 } // namespace selecta::core
 
-Q_DECLARE_METATYPE(selecta::core::SupersedeReport)
+Q_DECLARE_METATYPE(selecta::core::AlbumReport)

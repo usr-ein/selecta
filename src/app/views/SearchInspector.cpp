@@ -78,6 +78,7 @@ SearchInspector::SearchInspector(QWidget *parent)
     , m_subtitle(new QLabel(this))
     , m_preview(new QPushButton(tr("Preview"), this))
     , m_download(new QPushButton(tr("Download"), this))
+    , m_downloadFolder(new QPushButton(tr("Download Folder as Album…"), this))
     , m_ownership(body(u"inspector.search.ownership"_s, this))
     , m_checks(body(u"inspector.search.checks"_s, this))
     , m_quality(body(u"inspector.search.quality"_s, this))
@@ -118,14 +119,22 @@ SearchInspector::SearchInspector(QWidget *parent)
     m_preview->setToolTip(tr("Streams this file from the peer into the preview cache (Space)"));
     m_download->setObjectName(u"inspector.search.download"_s);
     m_download->setToolTip(tr("Download it to the Inbox, converted and tagged (Return)"));
+    m_downloadFolder->setObjectName(u"inspector.search.downloadFolder"_s);
+    m_downloadFolder->setToolTip(tr("Download the whole folder from this peer as one album in the Inbox"));
     connect(m_preview, &QPushButton::clicked, this, &SearchInspector::previewRequested);
     connect(m_download, &QPushButton::clicked, this, &SearchInspector::downloadRequested);
+    connect(m_downloadFolder, &QPushButton::clicked, this, &SearchInspector::downloadFolderRequested);
     auto *actions = new QHBoxLayout;
     actions->setContentsMargins(0, 0, 0, 0);
     actions->addWidget(m_preview);
     actions->addWidget(m_download);
     actions->addStretch(1);
     layout->addLayout(actions);
+    auto *folderActions = new QHBoxLayout; // a line of its own: the panel is narrow
+    folderActions->setContentsMargins(0, 0, 0, 0);
+    folderActions->addWidget(m_downloadFolder);
+    folderActions->addStretch(1);
+    layout->addLayout(folderActions);
 
     layout->addWidget(m_ownership);
     layout->addWidget(m_checks);
@@ -177,6 +186,7 @@ void SearchInspector::showResult(const std::optional<core::SearchResult> &result
     m_subtitle->setText(facts.join(u" · "_s));
     m_preview->setEnabled(result->isAudio());
     m_download->setEnabled(result->isAudio());
+    m_downloadFolder->setEnabled(result->isAudio() && !result->folder.isEmpty());
 
     m_ownership->setText(ownershipNote(*result));
     m_ownership->setToolTip(result->ownershipDetail);

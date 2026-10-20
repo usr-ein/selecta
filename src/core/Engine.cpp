@@ -142,6 +142,16 @@ bool Engine::start()
     m_inbox = std::make_unique<InboxService>(*m_db, m_options.library, m_options.trash);
     connect(m_inbox.get(), &InboxService::changed, this, &Engine::inboxChanged);
     connect(m_inbox.get(), &InboxService::finished, this, &Engine::inboxOperationFinished);
+    connect(m_inbox.get(), &InboxService::finished, this, [this](qint64 id, bool ok) {
+        if (!ok) {
+            m_userTrashed.remove(id);
+        }
+    });
+    connect(m_inbox.get(), &InboxService::trashed, this, [this](const TrashedItem &item) {
+        if (m_userTrashed.remove(item.item.id)) {
+            Q_EMIT inboxItemTrashed(item);
+        }
+    });
 
     // Downloads, then the arrival pipeline that turns each complete file into an Inbox item (D27, D29).
     TransferService::Options transferOptions;
@@ -174,7 +184,7 @@ bool Engine::start()
     connect(m_transfers.get(), &TransferService::changed, m_albums.get(), &AlbumService::downloadChanged);
     connect(m_inbox.get(), &InboxService::trashed, m_albums.get(), &AlbumService::inboxItemTrashed);
     connect(m_albums.get(), &AlbumService::albumChanged, this, &Engine::albumChanged);
-    connect(m_albums.get(), &AlbumService::superseded, this, &Engine::superseded);
+    connect(m_albums.get(), &AlbumService::reported, this, &Engine::albumReported);
     connect(m_transfers.get(), &TransferService::changed, m_arrival.get(),
             [arrival = m_arrival.get()](const Download &d) {
                 if (d.state == Download::State::Cancelled) {
@@ -328,6 +338,27 @@ void Engine::stop()
     if (m_started) {
         m_started = false;
         qCInfo(lcEngine) << "engine stopped";
+    }
+}
+
+void Engine::trashInboxItems(const QList<qint64> &ids)
+{
+    if (!m_inbox) {
+        return;
+    }
+    for (const qint64 id : ids) {
+        m_userTrashed.insert(id);
+    }
+    m_inbox->trash(ids);
+}
+
+void Engine::restoreInboxItems(const QList<TrashedItem> &items)
+{
+    if (!m_inbox) {
+        return;
+    }
+    for (const TrashedItem &item : items) {
+        m_inbox->restore(item);
     }
 }
 

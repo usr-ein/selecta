@@ -5,6 +5,7 @@
 #include "app/models/SearchResultsModel.h"
 #include "app/views/SearchInspector.h"
 #include "core/EngineHost.h"
+#include "governor/Limits.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -41,6 +42,7 @@ namespace {
 
 constexpr auto kRefreshPace = 250ms;
 constexpr int kReasonsShown = 4;
+constexpr int kAlbumOffer = 3; // this many tracks of one folder selected: offer the folder as an album (DL-12)
 const std::array kBitrates{128, 160, 192, 224, 256, 320};
 const std::array kSampleRates{44'100, 48'000, 88'200, 96'000, 176'400, 192'000};
 const std::array kQueues{0, 5, 10, 20, 50};
@@ -220,6 +222,9 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
         menu.addAction(tr("Preview"), this, [this] { Q_EMIT previewRequested(); });
         menu.addAction(selected.size() == 1 ? tr("Download") : tr("Download %1 Files").arg(selected.size()), this,
                        &SearchView::downloadSelected);
+        if (folderAnchor()) {
+            menu.addAction(tr("Download Folder as Album…"), this, &SearchView::downloadFolder);
+        }
         menu.addSeparator();
         menu.addAction(tr("Copy Path"), this, [this, selected] {
             QStringList paths;
@@ -240,6 +245,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, QWidget 
 
     connect(m_inspector, &SearchInspector::previewRequested, this, &SearchView::previewRequested);
     connect(m_inspector, &SearchInspector::downloadRequested, this, &SearchView::downloadSelected);
+    connect(m_inspector, &SearchInspector::downloadFolderRequested, this, &SearchView::downloadFolder);
 
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -789,10 +795,150 @@ QList<int> SearchView::selectedResults() const
 
 void SearchView::downloadSelected()
 {
-    QList<int> selected = selectedResults();
+    const QList<int> selected = selectedResults();
     if (selected.isEmpty() || m_searchId == 0) {
         return;
     }
+    // DL-12: several tracks of one folder may as well be the album.
+    const core::SearchResult *first = m_model->result(selected.constFirst());
+    const bool oneFolder = first && !first->folder.isEmpty() && std::ranges::all_of(selected, [this, first](int index) {
+                               const core::SearchResult *result = m_model->result(index);
+                               return result && result->hit.peer == first->hit.peer && result->folder == first->folder;
+                           });
+    if (selected.size() < kAlbumOffer || !oneFolder) {
+        downloadFiles(selected);
+        return;
+    }
+    auto *box = new QMessageBox(this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setObjectName(u"search.albumOffer"_s);
+    box->setIcon(QMessageBox::Question);
+    box->setText(tr("Download the whole folder as an album?"));
+    box->setInformativeText(
+        tr("These %1 tracks are all in “%2” from %3. As an album, the folder arrives in one piece "
+           "in Inbox/Albums/, with its cover, and singles of it already in your Inbox are replaced.")
+            .arg(selected.size())
+            .arg(core::remoteNameOf(first->folder), first->hit.peer));
+    QPushButton *album = box->addButton(tr("Download Folder"), QMessageBox::AcceptRole);
+    album->setObjectName(u"search.albumOffer.folder"_s);
+    QPushButton *files = box->addButton(tr("Just These %1").arg(selected.size()), QMessageBox::ActionRole);
+    files->setObjectName(u"search.albumOffer.files"_s);
+    box->addButton(QMessageBox::Cancel);
+    box->setDefaultButton(album);
+    box->setWindowModality(Qt::WindowModal); // a sheet on macOS
+    connect(box, &QMessageBox::finished, this, [this, box, album, files, selected, searchId = m_searchId] {
+        if (searchId != m_searchId) {
+            return;
+        }
+        if (box->clickedButton() == album) {
+            m_engine.downloadFolder(searchId, selected.constFirst());
+        } else if (box->clickedButton() == files) {
+            downloadFiles(selected);
+        }
+    });
+    box->open();
+}
+
+std::optional<int> SearchView::folderAnchor() const
+{
+    const QModelIndex current = m_table->currentIndex();
+    if (!current.isValid()) {
+        return std::nullopt;
+    }
+    const core::SearchResult *result = m_model->resultAt(current);
+    if (!result) {
+        const QList<int> under = m_model->resultsUnder(current.siblingAtColumn(0));
+        for (const int index : under) {
+            if (const core::SearchResult *member = m_model->result(index); member && member->isAudio()) {
+                result = member;
+                break;
+            }
+        }
+    }
+    if (!result || !result->isAudio() || result->folder.isEmpty()) {
+        return std::nullopt;
+    }
+    return result->index;
+}
+
+QList<const core::SearchResult *> SearchView::folderFiles(const core::SearchResult &anchor) const
+{
+    QList<const core::SearchResult *> files;
+    for (int i = 0; i < m_model->resultCount(); ++i) {
+        const core::SearchResult *result = m_model->result(i);
+        if (result && result->isAudio() && result->hit.peer == anchor.hit.peer && result->folder == anchor.folder) {
+            files.append(result);
+        }
+    }
+    return files;
+}
+
+void SearchView::downloadFolder()
+{
+    const std::optional<int> anchor = folderAnchor();
+    const core::SearchResult *first = anchor ? m_model->result(*anchor) : nullptr;
+    if (!first || m_searchId == 0) {
+        return;
+    }
+    const QList<const core::SearchResult *> files = folderFiles(*first);
+    qint64 size = 0;
+    QSet<QString> qualities;
+    QStringList inInbox;
+    QStringList inCollection;
+    for (const core::SearchResult *file : files) {
+        size += static_cast<qint64>(file->hit.size);
+        qualities.insert(SearchResultsModel::qualityText(*file));
+        if (file->ownership == core::Ownership::InInbox) {
+            inInbox.append(SearchResultsModel::titleText(*file));
+        } else if (file->ownership == core::Ownership::InCollection || file->ownership == core::Ownership::Upgrade ||
+                   file->ownership == core::Ownership::LikelyInCollection) {
+            inCollection.append(SearchResultsModel::titleText(*file));
+        }
+    }
+    const auto count = static_cast<int>(files.size());
+    QStringList lines;
+    lines.append(tr("%1 · %2 · %3 from %4, found by this search. Selecta asks %4 for the whole folder; it arrives "
+                    "in Inbox/Albums/ with its cover.")
+                     .arg(count == 1 ? tr("1 track") : tr("%1 tracks").arg(count),
+                          qualities.size() == 1 ? *qualities.cbegin() : tr("mixed quality"), format::size(size),
+                          first->hit.peer));
+    if (!inInbox.isEmpty()) {
+        lines.append(tr("“%1” is in your Inbox as a single: once the album is in, that single goes to the Trash "
+                        "(you can undo).")
+                         .arg(inInbox.constFirst()));
+    }
+    if (!inCollection.isEmpty()) {
+        lines.append(tr("“%1” is already in your collection: Selecta flags the pair and never touches your file.")
+                         .arg(inCollection.constFirst()));
+    }
+    if (first->peerFilesToday + count >= governor::limits::kPeerDailyWarnFiles) {
+        lines.append(tr("This takes you to %1 files from %2 today (Selecta warns at %3 and stops at %4).")
+                         .arg(first->peerFilesToday + count)
+                         .arg(first->hit.peer)
+                         .arg(governor::limits::kPeerDailyWarnFiles)
+                         .arg(governor::limits::kPeerDailyStopFiles));
+    }
+    auto *box = new QMessageBox(this);
+    box->setAttribute(Qt::WA_DeleteOnClose);
+    box->setObjectName(u"search.albumConfirm"_s);
+    box->setIcon(QMessageBox::Question);
+    box->setText(tr("Download “%1” as an album?").arg(core::remoteNameOf(first->folder)));
+    box->setInformativeText(lines.join(u"\n\n"_s));
+    QPushButton *download = box->addButton(tr("Download Album"), QMessageBox::AcceptRole);
+    download->setObjectName(u"search.albumConfirm.download"_s);
+    box->addButton(QMessageBox::Cancel);
+    box->setDefaultButton(download);
+    box->setWindowModality(Qt::WindowModal); // a sheet on macOS
+    connect(box, &QMessageBox::finished, this, [this, box, download, index = *anchor, searchId = m_searchId] {
+        if (box->clickedButton() == download && searchId == m_searchId) {
+            m_engine.downloadFolder(searchId, index);
+        }
+    });
+    box->open();
+}
+
+void SearchView::downloadFiles(const QList<int> &selected)
+{
     QList<int> fresh;
     for (const int index : std::as_const(selected)) {
         const core::SearchResult *result = m_model->result(index);
@@ -845,7 +991,13 @@ bool SearchView::eventFilter(QObject *watched, QEvent *event)
         const auto *key = dynamic_cast<const QKeyEvent *>(event);
         if (key && (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
             key->modifiers() == Qt::NoModifier) {
-            downloadSelected(); // PREV-4: Return downloads
+            // PREV-4: Return downloads; on a folder row, the folder as an album.
+            const QModelIndex current = m_table->currentIndex();
+            if (current.isValid() && current.data(SearchResultsModel::IsFolderRole).toBool()) {
+                downloadFolder();
+            } else {
+                downloadSelected();
+            }
             return true;
         }
     }

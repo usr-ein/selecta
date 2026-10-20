@@ -60,8 +60,13 @@ public:
     std::optional<PreviewTarget> previewTarget() const;
     // The selected results (a folder row stands for its files).
     QList<int> selectedResults() const;
-    // Downloads the selected results; asks first about the ones the user already has (DL-11).
+    // Downloads the selected results; asks first about the ones the user already has (DL-11). Several tracks of one
+    // folder: offers the whole folder as an album instead (DL-12).
     void downloadSelected();
+    // Downloads the folder of the current result (or folder row) whole, as one Inbox album, once confirmed (DL-1).
+    void downloadFolder();
+    // The result that stands for the current row's folder: the current result, or a folder row's first track.
+    std::optional<int> folderAnchor() const;
 
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -81,6 +86,10 @@ private:
     void refreshSummary();
     void refreshInspector();
     void keepSelection(const std::function<void()> &change);
+    // The rest of downloadSelected(): the duplicate guard, then the download.
+    void downloadFiles(const QList<int> &selected);
+    // The audio results of `anchor`'s folder (same peer, same folder) the search found.
+    QList<const core::SearchResult *> folderFiles(const core::SearchResult &anchor) const;
 
     core::EngineHost &m_engine;
     AppSettings &m_settings;

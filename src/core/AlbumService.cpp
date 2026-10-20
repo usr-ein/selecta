@@ -101,7 +101,7 @@ AlbumService::AlbumService(storage::Database &db, governor::Governor &governor, 
     , m_downloads(db)
 {
     qRegisterMetaType<AlbumDownload>();
-    qRegisterMetaType<SupersedeReport>();
+    qRegisterMetaType<AlbumReport>();
     m_pool.setMaxThreadCount(1); // one album at a time: each one already converts a dozen files
     m_pool.setObjectName(u"selecta-albums"_s);
     connect(&m_network.peers(), &slsk::PeerNetwork::folderContentsReceived, this,
@@ -487,11 +487,19 @@ void AlbumService::recordArrival(const Outcome &outcome)
     m_activity.record(u"album"_s, album->peer, u"arrived"_s,
                       result.warning.isEmpty() ? item.relativePath
                                                : item.relativePath + u" ("_s + result.warning + u')');
-    supersede(*album, item, result);
+    AlbumReport report;
+    report.albumId = album->id;
+    report.album = item.album.isEmpty() ? item.title : item.album;
+    report.arrival = true;
+    report.complete = result.complete;
+    report.tracks = item.trackCount.value_or(0);
+    report.where = item.relativePath;
+    report.warning = result.warning;
+    supersede(*album, result, report);
+    Q_EMIT reported(report);
 }
 
-void AlbumService::supersede(const AlbumDownload &album, const library::InboxItem &item,
-                             const AlbumArrivalResult &result)
+void AlbumService::supersede(const AlbumDownload &album, const AlbumArrivalResult &result, AlbumReport &report)
 {
     QList<match::SupersedeAlbumTrack> tracks;
     for (const AlbumArrivalResult::Track &track : result.tracks) {
@@ -553,28 +561,55 @@ void AlbumService::supersede(const AlbumDownload &album, const library::InboxIte
     const match::AlbumDownloadState state =
         result.complete ? match::AlbumDownloadState::CompleteVerified : match::AlbumDownloadState::Partial;
     const match::SupersedeDecision decision = match::SupersedeDecider::decide(state, tracks, singles, inboxSingles);
-    SupersedeReport report;
-    report.albumId = album.id;
-    report.album = item.album.isEmpty() ? item.title : item.album;
-    report.confirmationAsked = decision.needsConfirmation;
+    Held held{.album = report.album, .peer = album.peer, .singles = {}, .names = {}};
     QList<qint64> trash;
     for (const match::SupersedePair &pair : decision.pairs) {
         m_activity.record(u"supersede"_s, album.peer, u"decided"_s, pair.summary);
-        const bool trashIt = pair.action == match::SupersedeAction::Trash && !decision.needsConfirmation;
-        if (trashIt) {
-            trash.append(static_cast<qint64>(pair.singleId));
-            m_supersedeTrash.insert(static_cast<qint64>(pair.singleId), album.id);
+        const auto single = static_cast<qint64>(pair.singleId);
+        if (pair.action == match::SupersedeAction::Trash && decision.needsConfirmation) {
+            held.singles.append(single); // the circuit breaker: so many at once that the user says first (T42)
+            held.names.append(names.value(pair.singleId));
+        } else if (pair.action == match::SupersedeAction::Trash) {
+            trash.append(single);
+            m_supersedeTrash.insert(single, album.id);
             report.trashed.append(names.value(pair.singleId));
-        } else if (pair.action == match::SupersedeAction::Flag || pair.action == match::SupersedeAction::Trash) {
+        } else if (pair.action == match::SupersedeAction::Flag) {
             report.flagged.append(names.value(pair.singleId));
         }
     }
     if (!trash.isEmpty()) {
         m_inbox.trash(trash);
     }
-    if (!report.trashed.isEmpty() || !report.flagged.isEmpty()) {
-        Q_EMIT superseded(report);
+    if (!held.singles.isEmpty()) {
+        m_activity.record(u"supersede"_s, album.peer, u"asked"_s, decision.confirmationReason);
+        report.held = held.names;
+        m_held.insert(album.id, std::move(held));
     }
+}
+
+void AlbumService::confirmSupersede(qint64 albumId)
+{
+    const Held held = m_held.take(albumId);
+    AlbumReport report;
+    report.albumId = albumId;
+    report.album = held.album;
+    QList<qint64> trash;
+    for (qsizetype i = 0; i < held.singles.size(); ++i) {
+        const qint64 single = held.singles.at(i);
+        if (m_inbox.item(single)) { // still in the Inbox
+            trash.append(single);
+            m_supersedeTrash.insert(single, albumId);
+            report.trashed.append(held.names.value(i));
+        }
+    }
+    if (trash.isEmpty()) {
+        return;
+    }
+    m_activity.record(u"supersede"_s, held.peer, u"confirmed"_s,
+                      trash.size() == 1 ? tr("1 single to the Trash")
+                                        : tr("%1 singles to the Trash").arg(trash.size()));
+    m_inbox.trash(trash);
+    Q_EMIT reported(report);
 }
 
 void AlbumService::inboxItemTrashed(const TrashedItem &trashed)

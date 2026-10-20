@@ -3,6 +3,7 @@
 
 #include "app/AppSettings.h"
 #include "app/Preview.h"
+#include "app/Toasts.h"
 #include "convert/TagWriter.h"
 #include "core/EngineHost.h"
 #include "library/HistoryStore.h"
@@ -540,4 +541,118 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
         !tagList->text().contains(u"Nightfall Records"_s) && tagList->text().contains(u"Neon Rain (Dub)"_s), 5000);
     EXPECT_TRUE(provenance->text().contains(u"edited by you"_s));
     engine->stop();
+}
+
+TEST_F(MainWindowTest, AnAlbumThatReplacedASingleSaysSoWithUndo)
+{
+    auto window = makeWindow();
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    selecta::core::AlbumDownload album;
+    album.id = 4;
+    album.folder = "Music\\Okuma Drift - Night Signals (2024)";
+    album.state = selecta::core::AlbumDownload::State::Arrived;
+    Q_EMIT engine->albumChanged(album);
+    EXPECT_EQ(toasts->count(), 0); // its report tells it
+    selecta::core::AlbumReport report;
+    report.albumId = 4;
+    report.album = u"Night Signals"_s;
+    report.arrival = true;
+    report.complete = true;
+    report.tracks = 9;
+    report.where = u"Albums/Okuma_Drift_-_Night_Signals_(2024)"_s;
+    report.trashed = {u"Okuma Drift – Neon Rain"_s};
+    Q_EMIT engine->albumReported(report);
+
+    // One notification for both, with Undo.
+    ASSERT_EQ(toasts->count(), 1);
+    const QString text = toasts->texts().constFirst();
+    EXPECT_TRUE(text.startsWith(
+        u"“Night Signals” is in your Inbox\n9 tracks in Inbox/Albums/Okuma_Drift_-_Night_Signals_(2024)/\n"_s))
+        << text.toStdString();
+    EXPECT_TRUE(text.contains(u"“Okuma Drift – Neon Rain” was in your Inbox as a single"_s)) << text.toStdString();
+    auto *undo = toasts->findChild<QPushButton *>(u"toast.1.action.0"_s);
+    ASSERT_NE(undo, nullptr);
+    EXPECT_EQ(undo->text(), u"Undo"_s);
+    undo->click(); // the engine isn't running here: only the notification goes
+    EXPECT_EQ(toasts->count(), 0);
+}
+
+TEST_F(MainWindowTest, ManySinglesOnAnAlbumAreAskedAbout)
+{
+    auto window = makeWindow();
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    selecta::core::AlbumReport report;
+    report.albumId = 8;
+    report.album = u"Orchard Orchard"_s;
+    report.arrival = true;
+    report.complete = true;
+    report.held = {u"A – One"_s, u"A – Two"_s, u"A – Three"_s, u"A – Four"_s};
+    Q_EMIT engine->albumReported(report);
+    ASSERT_EQ(toasts->count(), 1);
+    EXPECT_TRUE(toasts->texts().constFirst().contains(u"4 singles in your Inbox are on it"_s));
+    auto *move = toasts->findChild<QPushButton *>(u"toast.1.action.0"_s);
+    ASSERT_NE(move, nullptr);
+    EXPECT_EQ(move->text(), u"Move to Trash"_s);
+
+    // Once moved, the news comes with Undo.
+    report.arrival = false;
+    report.trashed = report.held;
+    report.held.clear();
+    Q_EMIT engine->albumReported(report);
+    ASSERT_EQ(toasts->count(), 2);
+    EXPECT_TRUE(
+        toasts->texts().constFirst().startsWith(u"Moved 4 singles to the Trash\nThey're on “Orchard Orchard”"_s))
+        << toasts->texts().constFirst().toStdString();
+}
+
+TEST_F(MainWindowTest, AnAlbumArrivesFailsOrComesIncomplete)
+{
+    auto window = makeWindow();
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    selecta::core::AlbumReport report;
+    report.albumId = 5;
+    report.album = u"Harbour Lights"_s;
+    report.arrival = true;
+    report.tracks = 7;
+    report.where = u"Albums/Kassia_Moreau_-_Harbour_Lights"_s;
+    report.warning = u"1 file of the album couldn't be downloaded or converted."_s;
+    Q_EMIT engine->albumReported(report);
+    ASSERT_EQ(toasts->count(), 1);
+    EXPECT_EQ(toasts->texts().constFirst(),
+              u"“Harbour Lights” arrived incomplete\n7 tracks in Inbox/Albums/Kassia_Moreau_-_Harbour_Lights/\n"_s +
+                  report.warning);
+
+    selecta::core::AlbumDownload album;
+    album.id = 6;
+    album.folder = "Music\\Kassia Moreau - Harbour Lights";
+    album.state = selecta::core::AlbumDownload::State::Failed;
+    album.message = u"The folder holds no audio file."_s;
+    Q_EMIT engine->albumChanged(album);
+    ASSERT_EQ(toasts->count(), 2);
+    EXPECT_EQ(toasts->texts().constFirst(), u"Couldn't download “Kassia Moreau - Harbour Lights”\n"_s + album.message);
+
+    // Downloading isn't news.
+    album.id = 7;
+    album.state = selecta::core::AlbumDownload::State::Downloading;
+    Q_EMIT engine->albumChanged(album);
+    EXPECT_EQ(toasts->count(), 2);
+}
+
+TEST_F(MainWindowTest, ItemsMovedToTheTrashTogetherAreOneNotificationWithUndo)
+{
+    auto window = makeWindow();
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    for (const QString &name : {u"Singles/One.mp3"_s, u"Singles/Two.mp3"_s}) {
+        selecta::core::TrashedItem item;
+        item.item.relativePath = name;
+        item.trashedPath = dir.filePath(u"Trash/"_s + QFileInfo(name).fileName());
+        Q_EMIT engine->inboxItemTrashed(item);
+    }
+    ASSERT_TRUE(QTest::qWaitFor([&] { return toasts->count() == 1; }, 2000));
+    EXPECT_EQ(toasts->texts().constFirst(), u"Moved 2 items to the Trash"_s);
+    EXPECT_NE(toasts->findChild<QPushButton *>(u"toast.1.action.0"_s), nullptr);
 }

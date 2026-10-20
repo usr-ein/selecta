@@ -39,6 +39,7 @@ class PlayerBar;
 class PreviewController;
 class SearchView;
 class Sidebar;
+class Toasts;
 
 // What the main window needs from the rest of the app. The referenced objects outlive the window.
 struct AppServices
@@ -113,6 +114,10 @@ private:
     void createViews();
     void createSearchView();
     void createSettingsView();
+    // Notifications: albums that arrived, singles they replaced, items moved to the Trash (each with Undo).
+    void createNotifications();
+    void albumChanged(const core::AlbumDownload &album);
+    void albumReported(const core::AlbumReport &report);
     void addView(const QString &id, QWidget *widget, std::function<QString()> subtitle);
     void restoreSavedState();
     void refreshTitle();
@@ -164,6 +169,9 @@ private:
     QList<View> m_views;
     QHash<QString, qsizetype> m_viewIndex;
     QString m_currentId;
+    Toasts *m_toasts = nullptr;
+    QList<core::TrashedItem> m_trashedBatch; // items the user just trashed, for one notification
+    QTimer *m_trashedTimer = nullptr;
 };
 
 } // namespace selecta::app

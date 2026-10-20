@@ -38,7 +38,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<SearchResult>();
     qRegisterMetaType<QList<SearchResult>>();
     qRegisterMetaType<AlbumDownload>();
-    qRegisterMetaType<SupersedeReport>();
+    qRegisterMetaType<TrashedItem>();
+    qRegisterMetaType<AlbumReport>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -78,6 +79,7 @@ void EngineHost::start()
         Q_EMIT inboxChanged(entries);
     });
     connect(engine, &Engine::inboxOperationFinished, this, &EngineHost::inboxOperationFinished);
+    connect(engine, &Engine::inboxItemTrashed, this, &EngineHost::inboxItemTrashed);
     connect(engine, &Engine::tracksAdded, this, &EngineHost::tracksAdded);
     connect(engine, &Engine::searchQueueChanged, this, &EngineHost::searchQueueChanged);
     connect(engine, &Engine::previewStarted, this, &EngineHost::previewStarted);
@@ -133,7 +135,7 @@ void EngineHost::start()
         m_albums.insert(album.id, album);
         Q_EMIT albumChanged(album);
     });
-    connect(engine, &Engine::superseded, this, &EngineHost::superseded);
+    connect(engine, &Engine::albumReported, this, &EngineHost::albumReported);
     connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
         m_networkStatus = status;
         Q_EMIT networkStatusChanged(status);
@@ -210,7 +212,16 @@ void EngineHost::trashInboxItems(const QList<qint64> &ids)
 {
     post([ids](Engine &engine) {
         if (engine.isStarted()) {
-            engine.inbox().trash(ids);
+            engine.trashInboxItems(ids);
+        }
+    });
+}
+
+void EngineHost::restoreInboxItems(const QList<TrashedItem> &items)
+{
+    post([items](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.restoreInboxItems(items);
         }
     });
 }
@@ -394,6 +405,15 @@ void EngineHost::cancelAlbum(qint64 albumId)
     post([albumId](Engine &engine) {
         if (engine.isStarted()) {
             engine.albums().cancel(albumId);
+        }
+    });
+}
+
+void EngineHost::confirmSupersede(qint64 albumId)
+{
+    post([albumId](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.albums().confirmSupersede(albumId);
         }
     });
 }

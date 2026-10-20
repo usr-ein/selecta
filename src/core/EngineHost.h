@@ -46,7 +46,9 @@ public:
     void setLibraryConfig(const LibraryConfig &config);
     void refreshInbox();
     void fileInboxItems(const QList<qint64> &ids);
+    // Moves Inbox items to the Trash; each one that goes is reported (inboxItemTrashed()) for Undo.
     void trashInboxItems(const QList<qint64> &ids);
+    void restoreInboxItems(const QList<selecta::core::TrashedItem> &items);
     QList<InboxEntry> inboxEntries() const { return m_inboxEntries; }
 
     // --- Spotify (Settings → Spotify) ---
@@ -105,6 +107,8 @@ public:
     void cancelAlbum(qint64 albumId);
     // Puts back the Inbox singles an album sent to the Trash.
     void undoSupersede(qint64 albumId);
+    // Moves to the Trash the singles an album held back to ask first (AlbumReport::held).
+    void confirmSupersede(qint64 albumId);
     // Album downloads of this run, and unfinished ones, as last reported.
     QList<AlbumDownload> albums() const { return m_albums.values(); }
 
@@ -139,6 +143,7 @@ Q_SIGNALS:
     void activityRecorded(const selecta::core::ActivityEntry &entry);
     void inboxChanged(const QList<selecta::core::InboxEntry> &entries);
     void inboxOperationFinished(qint64 id, bool ok, const QString &message);
+    void inboxItemTrashed(const selecta::core::TrashedItem &item);
     void spotifyStatusChanged(const selecta::core::SpotifyStatus &status);
     void getLinesReset(const QList<selecta::core::GetLine> &lines);
     void getLineChanged(const selecta::core::GetLine &line);
@@ -163,7 +168,7 @@ Q_SIGNALS:
     void searchResultsReset(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsChanged(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void albumChanged(const selecta::core::AlbumDownload &album);
-    void superseded(const selecta::core::SupersedeReport &report);
+    void albumReported(const selecta::core::AlbumReport &report);
 
 private:
     EngineOptions m_options;

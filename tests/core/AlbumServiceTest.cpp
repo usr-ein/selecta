@@ -25,6 +25,7 @@
 #include <QImage>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QTest>
 
 #include <gtest/gtest.h>
 #include <memory>
@@ -32,11 +33,11 @@
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
 using selecta::core::AlbumDownload;
+using selecta::core::AlbumReport;
 using selecta::core::AlbumService;
 using selecta::core::Download;
 using selecta::core::InboxEntry;
 using selecta::core::SearchHit;
-using selecta::core::SupersedeReport;
 using selecta::library::InboxItem;
 using selecta::slsk::testing::FakePeer;
 using selecta::slsk::testing::FakeServer;
@@ -307,6 +308,25 @@ TEST_F(AlbumServiceTest, DownloadsTheListedFolderIntoOneInboxAlbum)
     EXPECT_TRUE(albums->unfinished().isEmpty());
 }
 
+TEST_F(AlbumServiceTest, AnArrivalIsReportedOnce)
+{
+    auto peer = ghost();
+    const QSignalSpy reported(albums.get(), &AlbumService::reported);
+    const std::optional<qint64> id = albums->download(peer->username(), albumFolder(), {}, neonRain());
+    ASSERT_TRUE(id.has_value());
+    ASSERT_TRUE(finishes(*id));
+    ASSERT_EQ(reported.size(), 1);
+    const auto report = reported.at(0).at(0).value<AlbumReport>();
+    EXPECT_EQ(report.albumId, *id);
+    EXPECT_EQ(report.album, u"Night Signals"_s);
+    EXPECT_TRUE(report.arrival);
+    EXPECT_TRUE(report.complete);
+    EXPECT_EQ(report.tracks, 2);
+    EXPECT_TRUE(report.where.startsWith(u"Albums/"_s)) << report.where.toStdString();
+    EXPECT_TRUE(report.warning.isEmpty());
+    EXPECT_TRUE(report.trashed.isEmpty() && report.held.isEmpty() && report.flagged.isEmpty());
+}
+
 TEST_F(AlbumServiceTest, AFolderThePeerDoesntListComesFromTheSearchResults)
 {
     auto peer = ghost();
@@ -339,18 +359,18 @@ TEST_F(AlbumServiceTest, ASingleInTheInboxGoesToTheTrashAndUndoPutsItBack)
     const qint64 other = inboxSingle(u"Another Track"_s, 5000);
     ASSERT_GT(single, 0);
     auto peer = ghost();
-    QSignalSpy superseded(albums.get(), &AlbumService::superseded);
+    QSignalSpy reported(albums.get(), &AlbumService::reported);
     const std::optional<qint64> id = albums->download(peer->username(), albumFolder(), {}, neonRain());
     ASSERT_TRUE(id.has_value());
     ASSERT_TRUE(finishes(*id));
-    ASSERT_TRUE(waitFor([&] { return !superseded.isEmpty(); }));
+    ASSERT_TRUE(waitFor([&] { return !reported.isEmpty(); }));
 
-    const auto report = superseded.at(0).at(0).value<SupersedeReport>();
+    const auto report = reported.at(0).at(0).value<AlbumReport>();
     EXPECT_EQ(report.albumId, *id);
     EXPECT_EQ(report.album, u"Night Signals"_s);
     EXPECT_EQ(report.trashed, QStringList{u"Okuma Drift – Neon Rain"_s});
     EXPECT_TRUE(report.flagged.isEmpty());
-    EXPECT_FALSE(report.confirmationAsked);
+    EXPECT_TRUE(report.held.isEmpty());
 
     // The single went; the unrelated one stayed.
     ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).size() == 1; }));
@@ -364,6 +384,47 @@ TEST_F(AlbumServiceTest, ASingleInTheInboxGoesToTheTrashAndUndoPutsItBack)
     albums->undoSupersede(*id);
     ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).size() == 2; }));
     EXPECT_TRUE(QFileInfo::exists(singlePath));
+}
+
+TEST_F(AlbumServiceTest, ManySinglesAtOnceWaitForAYes)
+{
+    // Every single in the Inbox is on the album, twice over: the circuit breaker asks first (T42).
+    for (const QString &title : {u"Neon Rain"_s, u"Low Tide"_s}) {
+        const qint64 durationMs = title == u"Neon Rain"_s ? 3000 : 4000;
+        const qint64 single = inboxSingle(title, durationMs);
+        ASSERT_GT(single, 0);
+        InboxItem copy = *inbox->item(single);
+        copy.id = 0;
+        copy.relativePath.replace(u".mp3"_s, u" (2).mp3"_s);
+        ASSERT_TRUE(writeFile(dir.filePath(u"Inbox/"_s + copy.relativePath), "single"));
+        ASSERT_TRUE(inbox->add(copy).has_value());
+    }
+    ASSERT_EQ(inboxItems(InboxItem::Kind::Single).size(), 4);
+    auto peer = ghost();
+    QSignalSpy reported(albums.get(), &AlbumService::reported);
+    const std::optional<qint64> id = albums->download(peer->username(), albumFolder(), {}, neonRain());
+    ASSERT_TRUE(id.has_value());
+    ASSERT_TRUE(finishes(*id));
+    ASSERT_TRUE(waitFor([&] { return !reported.isEmpty(); }));
+    const auto asked = reported.at(0).at(0).value<AlbumReport>();
+    EXPECT_TRUE(asked.trashed.isEmpty());
+    EXPECT_EQ(asked.held.size(), 4);
+    QTest::qWait(100);
+    EXPECT_EQ(inboxItems(InboxItem::Kind::Single).size(), 4); // nothing moved yet
+
+    // Yes: they go, and the report says so (with Undo in the app).
+    albums->confirmSupersede(*id);
+    ASSERT_EQ(reported.size(), 2);
+    const auto confirmed = reported.at(1).at(0).value<AlbumReport>();
+    EXPECT_EQ(confirmed.trashed.size(), 4);
+    EXPECT_TRUE(confirmed.held.isEmpty());
+    ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).isEmpty(); }));
+    albums->undoSupersede(*id);
+    ASSERT_TRUE(waitFor([&] { return inboxItems(InboxItem::Kind::Single).size() == 4; }));
+
+    // Asked once: a second yes does nothing.
+    albums->confirmSupersede(*id);
+    EXPECT_EQ(reported.size(), 2);
 }
 
 TEST_F(AlbumServiceTest, ASingleFiledInTheCollectionIsOnlyFlagged)
@@ -382,12 +443,12 @@ TEST_F(AlbumServiceTest, ASingleFiledInTheCollectionIsOnlyFlagged)
     ASSERT_TRUE(selecta::core::CollectionStore(db).apply({file}, {}, {}));
 
     auto peer = ghost();
-    QSignalSpy superseded(albums.get(), &AlbumService::superseded);
+    QSignalSpy reported(albums.get(), &AlbumService::reported);
     const std::optional<qint64> id = albums->download(peer->username(), albumFolder(), {}, neonRain());
     ASSERT_TRUE(id.has_value());
     ASSERT_TRUE(finishes(*id));
-    ASSERT_TRUE(waitFor([&] { return !superseded.isEmpty(); }));
-    const auto report = superseded.at(0).at(0).value<SupersedeReport>();
+    ASSERT_TRUE(waitFor([&] { return !reported.isEmpty(); }));
+    const auto report = reported.at(0).at(0).value<AlbumReport>();
     EXPECT_TRUE(report.trashed.isEmpty());
     EXPECT_EQ(report.flagged, QStringList{u"Okuma Drift – Neon Rain"_s});
     EXPECT_TRUE(QFileInfo::exists(filed)); // never touched

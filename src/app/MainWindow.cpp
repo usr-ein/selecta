@@ -8,6 +8,7 @@
 #include "app/PlayerBar.h"
 #include "app/Preview.h"
 #include "app/Sidebar.h"
+#include "app/Toasts.h"
 #include "app/views/ActivityView.h"
 #include "app/views/CollectionView.h"
 #include "app/views/EmptyStateView.h"
@@ -28,6 +29,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QFileInfo>
 #include <QFrame>
 #include <QKeySequence>
 #include <QLabel>
@@ -46,6 +48,7 @@
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
+using namespace std::chrono_literals;
 
 namespace {
 Q_LOGGING_CATEGORY(lcUi, "selecta.app.ui")
@@ -93,6 +96,7 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
 
     createCentralArea();
     createViews();
+    createNotifications();
     createActions();
     createMenus();
     createToolBar();
@@ -149,6 +153,8 @@ void MainWindow::createCentralArea()
     mainLayout->addWidget(separator);
     mainLayout->addWidget(m_player);
 
+    m_toasts = new Toasts(main);
+
     m_mainSplitter = new QSplitter(Qt::Horizontal, this);
     m_mainSplitter->setObjectName(u"mainSplitter"_s);
     m_mainSplitter->addWidget(m_sidebar);
@@ -167,6 +173,94 @@ void MainWindow::createCentralArea()
             m_services.engine.closeSearch(searchId);
         }
     });
+}
+
+void MainWindow::createNotifications()
+{
+    connect(&m_services.engine, &core::EngineHost::albumChanged, this, &MainWindow::albumChanged);
+    connect(&m_services.engine, &core::EngineHost::albumReported, this, &MainWindow::albumReported);
+
+    // Items the user moves to the Trash go in one notification per gesture, with Undo.
+    m_trashedTimer = new QTimer(this);
+    m_trashedTimer->setSingleShot(true);
+    m_trashedTimer->setInterval(250ms);
+    connect(&m_services.engine, &core::EngineHost::inboxItemTrashed, this, [this](const core::TrashedItem &item) {
+        m_trashedBatch.append(item);
+        m_trashedTimer->start();
+    });
+    connect(m_trashedTimer, &QTimer::timeout, this, [this] {
+        const QList<core::TrashedItem> items = std::exchange(m_trashedBatch, {});
+        if (items.isEmpty()) {
+            return;
+        }
+        const QString title =
+            items.size() == 1
+                ? tr("Moved “%1” to the Trash").arg(QFileInfo(items.constFirst().item.relativePath).fileName())
+                : tr("Moved %1 items to the Trash").arg(items.size());
+        m_toasts->show(title, {}, Toasts::Kind::Info,
+                       {{tr("Undo"), [this, items] { m_services.engine.restoreInboxItems(items); }}}, 9s);
+    });
+}
+
+void MainWindow::albumChanged(const core::AlbumDownload &album)
+{
+    // An arrival is told with its report (albumReported()), which comes next; a failure has none.
+    if (album.state == core::AlbumDownload::State::Failed) {
+        const QString name =
+            album.release && !album.release->album.isEmpty() ? album.release->album : album.folderName();
+        m_toasts->show(tr("Couldn't download “%1”").arg(name), album.message, Toasts::Kind::Warning);
+    }
+}
+
+void MainWindow::albumReported(const core::AlbumReport &report)
+{
+    QStringList lines;
+    if (report.arrival) {
+        lines.append(report.tracks == 1 ? tr("1 track in Inbox/%1/").arg(report.where)
+                                        : tr("%1 tracks in Inbox/%2/").arg(report.tracks).arg(report.where));
+        if (!report.warning.isEmpty()) {
+            lines.append(report.warning);
+        }
+    }
+    if (!report.trashed.isEmpty() && report.arrival) {
+        lines.append(
+            report.trashed.size() == 1
+                ? tr("“%1” was in your Inbox as a single, so it went to the Trash.").arg(report.trashed.first())
+                : tr("%1 singles in your Inbox are on it, so they went to the Trash: %2.")
+                      .arg(report.trashed.size())
+                      .arg(report.trashed.join(u", "_s)));
+    } else if (!report.trashed.isEmpty()) {
+        lines.append(tr("They're on “%1”: %2.").arg(report.album, report.trashed.join(u", "_s)));
+    }
+    if (!report.held.isEmpty()) {
+        lines.append(tr("%1 singles in your Inbox are on it: %2. Move them to the Trash?")
+                         .arg(report.held.size())
+                         .arg(report.held.join(u", "_s)));
+    }
+    if (!report.flagged.isEmpty()) {
+        lines.append(tr("Also on it: %1. Those files stay where they are.").arg(report.flagged.join(u", "_s)));
+    }
+    QString title;
+    if (!report.arrival) {
+        title = report.trashed.size() == 1 ? tr("Moved 1 single to the Trash")
+                                           : tr("Moved %1 singles to the Trash").arg(report.trashed.size());
+    } else {
+        title = report.complete ? tr("“%1” is in your Inbox").arg(report.album)
+                                : tr("“%1” arrived incomplete").arg(report.album);
+    }
+    QList<Toasts::Action> actions;
+    if (!report.held.isEmpty()) {
+        actions.append({tr("Move to Trash"), [this, id = report.albumId] { m_services.engine.confirmSupersede(id); }});
+    }
+    if (!report.trashed.isEmpty()) {
+        actions.append({tr("Undo"), [this, id = report.albumId] { m_services.engine.undoSupersede(id); }});
+    }
+    const Toasts::Kind kind = report.arrival && !report.complete ? Toasts::Kind::Warning : Toasts::Kind::Good;
+    // A question waits longer than news, and news with Undo longer than plain news.
+    const std::chrono::milliseconds timeout = !report.held.isEmpty()      ? 60s
+                                              : !report.trashed.isEmpty() ? 14s
+                                                                          : Toasts::kTimeout;
+    m_toasts->show(title, lines.join(u'\n'), kind, actions, timeout);
 }
 
 void MainWindow::addView(const QString &id, QWidget *widget, std::function<QString()> subtitle)
