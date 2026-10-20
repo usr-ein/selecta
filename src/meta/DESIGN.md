@@ -131,8 +131,12 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
    `SpotifyAuth::Config::accountsUrl`, `SpotifyClient`'s and `DeezerClient`'s `apiUrl`, `MusicBrainzClient`'s `apiUrl`,
    `CoverFetcher::Config::coverArtArchiveUrl` — and `ClipSource` only uses the `DeezerClient` it is given. Cover image
    URLs come from the answers and are limited to the services' CDN hosts. A non-HTTPS base (`http://127.0.0.1:1`) fails
-   every request at once without opening a socket. For yt-dlp, an empty `Config::executable` means auto-discovery; an
-   isolated run sets **both** `executable` and `searchDirectories` empty, so nothing is found and nothing runs.
+   every request at once without opening a socket. For yt-dlp, an empty `Config::executable` means auto-discovery
+   (the production default); an isolated run passes `YtDlpRunner::Config::disabled()`, which never finds or runs
+   anything (every call fails with `NotConfigured`, whatever `setExecutable()` says later).
+8a. **Shutdown:** destroying `YtDlpRunner` with a search, fetch or version check in flight kills the child's process
+   group and reaps it before returning (a few milliseconds), deletes the partial file, cancels pending futures and
+   finishes jobs with `Cancelled`.
 
 ## Priority lanes
 
