@@ -46,6 +46,7 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     , m_preview(preview)
     , m_title(new QLabel(this))
     , m_subtitle(new QLabel(this))
+    , m_quality(new QLabel(this))
     , m_back(transportButton(u"player.back"_s, u"gobackward.5"_s, u"media-seek-backward"_s, tr("Back 5 seconds"), 18,
                              this))
     , m_play(transportButton(u"player.play"_s, u"play.fill"_s, u"media-playback-start"_s, tr("Play (Space)"), 22, this))
@@ -72,6 +73,9 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     for (QLabel *label : {m_title, m_subtitle}) {
         label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // long names elide, never widen the bar
     }
+    m_quality->setObjectName(u"player.quality"_s);
+    m_quality->setTextFormat(Qt::PlainText);
+    m_quality->hide();
 
     m_time->setObjectName(u"player.time"_s);
     QFont timeFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
@@ -97,6 +101,8 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     auto *row = new QHBoxLayout;
     row->setSpacing(6);
     row->addLayout(texts, 1);
+    row->addWidget(m_quality);
+    row->addSpacing(8);
     row->addWidget(m_back);
     row->addWidget(m_play);
     row->addWidget(m_forward);
@@ -142,6 +148,7 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     });
     connect(&m_preview, &PreviewController::waveformChanged, this,
             [this] { m_waveform->setWaveform(m_preview.waveform()); });
+    connect(&m_preview, &PreviewController::qualityChanged, this, &PlayerBar::refreshQuality);
     m_ticker->setInterval(kTickMs);
     m_ticker->setTimerType(Qt::PreciseTimer);
     connect(m_ticker, &QTimer::timeout, this, &PlayerBar::tick);
@@ -249,6 +256,26 @@ void PlayerBar::refresh()
         m_ticker->stop();
     }
     tick();
+}
+
+void PlayerBar::refreshQuality()
+{
+    // A symbol and words (UI-4), worded "likely" (PREV-9); the details in the tooltip.
+    const std::optional<audio::QualityReport> &report = m_preview.quality();
+    if (!report || report->findings.isEmpty()) {
+        m_quality->hide();
+        m_quality->clear();
+        m_quality->setToolTip({});
+        return;
+    }
+    m_quality->setText(tr("⚠ %1").arg(audio::findingBadge(report->findings.constFirst(), report->likelySourceKbps)));
+    QStringList details;
+    for (const audio::QualityFinding finding : report->findings) {
+        details.append(audio::describeFinding(finding, *report) + u'.');
+    }
+    m_quality->setToolTip(details.join(u'\n'));
+    m_quality->setAccessibleName(m_quality->text());
+    m_quality->show();
 }
 
 void PlayerBar::tick()

@@ -7,7 +7,10 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QFuture>
 #include <QLoggingCategory>
+#include <QPromise>
+#include <QThreadPool>
 
 #include <algorithm>
 
@@ -39,6 +42,32 @@ QString firstTrackIn(const QString &folder)
     collator.setNumericMode(true);
     std::ranges::sort(names, collator);
     return QDir(folder).filePath(names.constFirst());
+}
+
+// The spectrum check of a complete preview, from the cache when it ran before. Blocking: a worker's.
+std::optional<audio::QualityReport> checkQuality(const std::shared_ptr<audio::ByteSource> &source,
+                                                 audio::AnalysisCache *cache, const QString &identity,
+                                                 const audio::CancellationFlag *cancel)
+{
+    const audio::CacheKey key = audio::CacheKey::forName(identity);
+    if (cache != nullptr) {
+        if (std::optional<audio::QualityReport> cached = cache->loadQuality(key)) {
+            return cached;
+        }
+    }
+    audio::Result<audio::QualityReport> report = audio::analyzeQuality(source, {}, cancel);
+    if (!report) {
+        if (report.error().code != audio::ErrorCode::Cancelled) {
+            qCInfo(lcPreview).noquote() << "no spectrum check:" << report.error().message;
+        }
+        return std::nullopt;
+    }
+    if (cache != nullptr) {
+        if (const audio::Result<void> kept = cache->storeQuality(key, report.value()); !kept) {
+            qCInfo(lcPreview).noquote() << "spectrum check not cached:" << kept.error().message;
+        }
+    }
+    return report.takeValue();
 }
 
 } // namespace
@@ -90,9 +119,14 @@ void PreviewController::preview(const PreviewRequest &request)
     }
     cancelAnalysis();
     m_identity = request.identity;
+    m_source = request.source;
     m_columns.clear();
     m_waveform = {};
     Q_EMIT waveformChanged();
+    if (m_quality) {
+        m_quality.reset();
+        Q_EMIT qualityChanged();
+    }
     m_player.play(request.source, request.track);
     startAnalysis(request);
 }
@@ -107,9 +141,14 @@ void PreviewController::stop()
     cancelAnalysis();
     m_player.stop();
     m_identity.clear();
+    m_source.reset();
     m_columns.clear();
     m_waveform = {};
     Q_EMIT waveformChanged();
+    if (m_quality) {
+        m_quality.reset();
+        Q_EMIT qualityChanged();
+    }
 }
 
 void PreviewController::startAnalysis(const PreviewRequest &request)
@@ -135,6 +174,10 @@ void PreviewController::startAnalysis(const PreviewRequest &request)
         m_waveform = waveform;
         m_columns.clear();
         Q_EMIT waveformChanged();
+        // The whole file is there now: a peer's gets the spectrum check (PREV-9).
+        if (m_identity.startsWith(u"peer|"_s)) {
+            startQualityCheck();
+        }
     });
     connect(m_job, &audio::WaveformJob::failed, this, [](const audio::Error &error) {
         qCInfo(lcPreview).noquote() << "no waveform:" << error.message; // the preview still plays
@@ -149,6 +192,35 @@ void PreviewController::cancelAnalysis()
         m_job->deleteLater();
         m_job = nullptr;
     }
+    ++m_generation; // a check in flight is for the previous preview: its result is dropped
+    if (m_qualityCancel) {
+        m_qualityCancel->cancel();
+        m_qualityCancel.reset();
+    }
+}
+
+void PreviewController::startQualityCheck()
+{
+    if (!m_source) {
+        return;
+    }
+    auto cancel = std::make_shared<audio::CancellationFlag>();
+    m_qualityCancel = cancel;
+    const auto promise = std::make_shared<QPromise<std::optional<audio::QualityReport>>>();
+    QFuture<std::optional<audio::QualityReport>> future = promise->future();
+    promise->start();
+    QThreadPool::globalInstance()->start([promise, source = m_source, cache = m_cache, identity = m_identity, cancel] {
+        promise->addResult(checkQuality(source, cache.get(), identity, cancel.get()));
+        promise->finish();
+    });
+    future.then(this, [this, generation = m_generation](const std::optional<audio::QualityReport> &report) {
+        if (generation != m_generation || !report) {
+            return;
+        }
+        m_quality = report;
+        m_qualityCancel.reset();
+        Q_EMIT qualityChanged();
+    });
 }
 
 } // namespace selecta::app
