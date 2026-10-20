@@ -275,6 +275,21 @@ TEST_F(ArrivalServiceTest, LossyAudioBelowTheFormatIsKeptAsIt)
     EXPECT_EQ(selecta::library::InboxStore(db).find(result.inboxItem)->bitrate, 192);
 }
 
+TEST_F(ArrivalServiceTest, AnMp3At320IsOnlyTaggedWithoutAWarning)
+{
+    const Download download =
+        downloaded(4, u"track.mp3"_s, synth::makeMp3(synth::sine(440.0, 5.0), {.bitrateKbps = 320}));
+    const ArrivalResult result = arrive(download);
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    EXPECT_TRUE(result.warning.isEmpty()) << result.warning.toStdString(); // already what the Inbox promises (CONV-2)
+    EXPECT_TRUE(selecta::library::InboxStore(db).find(result.inboxItem)->warning.isEmpty());
+    const auto quality = selecta::convert::probeSourceQuality(inboxPath(result.message), false);
+    ASSERT_TRUE(quality.ok());
+    EXPECT_EQ(quality.value().bitrateKbps, 320); // never re-encoded
+    EXPECT_EQ(selecta::convert::readTags(inboxPath(result.message)).value().value(keys::Title),
+              u"Neon Rain - Extended Mix"_s); // but tagged
+}
+
 TEST_F(ArrivalServiceTest, WithoutAReleaseTheFilesOwnTagsAreUsed)
 {
     const Download download =

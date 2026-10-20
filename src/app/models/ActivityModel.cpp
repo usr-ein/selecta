@@ -12,10 +12,16 @@ using namespace Qt::StringLiterals;
 namespace selecta::app {
 namespace {
 
-// Outcomes that mean "this went ahead"; everything else (refusals, failures, pauses) is worth a second look.
+// Outcomes that mean "this went ahead", or the user's own choice; everything else (refusals, failures, pauses) is
+// worth a second look.
 bool isFine(const QString &outcome)
 {
-    static const QStringList fine{u"allowed"_s, u"ok"_s, u"resumed"_s, u"connected"_s, u"cached"_s};
+    static const QStringList fine{
+        u"allowed"_s,      u"ok"_s,        u"cached"_s,    u"connected"_s,    u"ended"_s,        u"notice"_s,
+        u"resumed"_s,      u"wanted"_s,    u"requested"_s, u"queued"_s,       u"connecting"_s,   u"started"_s,
+        u"transferring"_s, u"completed"_s, u"arrived"_s,   u"from-preview"_s, u"kept-preview"_s, u"asked"_s,
+        u"decided"_s,      u"confirmed"_s, u"undone"_s,    u"sent"_s,         u"joining"_s,      u"joined"_s,
+        u"left"_s,         u"browsed"_s,   u"buddy"_s,     u"ignored"_s,      u"banned"_s,       u"unlisted"_s};
     return fine.contains(outcome);
 }
 

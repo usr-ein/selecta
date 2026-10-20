@@ -32,6 +32,8 @@ InboxFormat inboxFormatFor(const convert::SourceQuality &quality, const QString 
     if (advice.action != convert::Action::Convert) {
         format.settings.format = convert::OutputFormat::KeepAudio;
         format.kept = true;
+        // An MP3 320 (or V0-class) file is only tagged: it already is what the Inbox promises.
+        format.belowFormat = advice.action != convert::Action::KeepAsIs || advice.badge != convert::Badge::None;
         format.extension = sourceSuffix.toLower();
         format.format = audio::codecName(quality.codec) == u"PCM"_s ? audio::containerName(quality.container)
                                                                     : audio::codecName(quality.codec);

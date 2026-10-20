@@ -72,6 +72,7 @@ private:
     core::EngineHost &m_engine;
     QString m_room;    // the open room
     QString m_viewing; // what the engine was told is on screen
+    QString m_opening; // a room the user just joined: opened as soon as the engine has it
     QMap<QString, core::Room> m_rooms;
     QList<core::RoomListing> m_listings;
     QStandardItemModel *m_joinedModel;
