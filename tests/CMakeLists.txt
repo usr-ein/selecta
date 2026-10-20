@@ -60,7 +60,7 @@ selecta_add_test_suite(selecta_unit_tests
 # Library test suites: tests/<library>/CMakeLists.txt, owned together with src/<library>/ (PLAN §9).
 set(_selecta_library_tests slsk meta match)
 if(SELECTA_WITH_MEDIA)
-    list(APPEND _selecta_library_tests audio convert)
+    list(APPEND _selecta_library_tests audio convert collection)
 endif()
 foreach(_module IN LISTS _selecta_library_tests)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_module}/CMakeLists.txt")

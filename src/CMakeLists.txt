@@ -10,7 +10,7 @@ add_subdirectory(storage)
 # A library's directory joins the build as soon as it has a CMakeLists.txt.
 set(_selecta_libraries slsk meta match)
 if(SELECTA_WITH_MEDIA)
-    list(APPEND _selecta_libraries audio convert)
+    list(APPEND _selecta_libraries audio convert collection)
 endif()
 foreach(_module IN LISTS _selecta_libraries)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${_module}/CMakeLists.txt")
