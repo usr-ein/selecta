@@ -50,13 +50,10 @@ public:
     class VirtualUser
     {
     public:
-        VirtualUser() = default;
-        VirtualUser(const VirtualUser &) = delete;
-        VirtualUser &operator=(const VirtualUser &) = delete;
-        virtual ~VirtualUser();
+        virtual ~VirtualUser() = default;
         virtual void connectToPeerRequested(const fromserver::ConnectToPeerRequest &request) = 0;
-        virtual void searchRequested(const fromserver::SearchRequest &request);
-        virtual void cantConnectToPeer(quint32 token);
+        virtual void searchRequested(const fromserver::SearchRequest &request) = 0;
+        virtual void cantConnectToPeer(quint32 token) = 0;
     };
 
     // What the server sends right after a successful login (official order, protocol §4.3).

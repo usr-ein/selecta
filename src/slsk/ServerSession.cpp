@@ -2,6 +2,7 @@
 #include "slsk/ServerSession.h"
 
 #include "slsk/Logging.h"
+#include "slsk/MetaTypes.h"
 
 #include <QMetaEnum>
 #include <QTcpSocket>
@@ -85,6 +86,7 @@ ServerSession::ServerSession(QObject *parent)
     , m_pingTimer(new QTimer(this))
     , m_reader(CodeWidth::Word, protocol::kServerFrameMax)
 {
+    registerMetaTypes();
     m_connectTimer->setSingleShot(true);
     m_loginTimer->setSingleShot(true);
     connect(m_connectTimer, &QTimer::timeout, this,
