@@ -5,6 +5,7 @@
 #include "storage/Migrations.h"
 
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace Qt::StringLiterals;
 using selecta::core::Download;
@@ -136,4 +137,142 @@ TEST_F(DownloadsTest, StateNamesMatchTheSchema)
         ASSERT_TRUE(id.has_value()) << selecta::core::downloadStateName(state).toStdString();
         EXPECT_EQ(store.find(*id)->state, state);
     }
+}
+
+namespace {
+
+using selecta::core::judgeQueue;
+using selecta::core::QueueHistory;
+using Kind = selecta::core::QueueVerdict::Kind;
+
+constexpr qint64 kQueued = 1'800'000'000'000; // when the peer queued it (Unix ms)
+constexpr qint64 kSecond = 1000;
+constexpr qint64 kMinute = 60 * kSecond;
+
+QueueHistory queuedAt(qint64 at)
+{
+    QueueHistory history;
+    history.progressAtMs = at;
+    return history;
+}
+
+} // namespace
+
+TEST(StuckQueue, TheThresholdsAreTheAnswersConstants)
+{
+    using namespace std::chrono_literals;
+    static_assert(selecta::core::kStuckNoProgress == 2min);
+    static_assert(selecta::core::kStuckStartWithin == 10min);
+}
+
+TEST(StuckQueue, NoProgressForTwoMinutesIsStuck)
+{
+    // A peer that never says where we are: nothing has moved since it queued the file.
+    const QueueHistory history = queuedAt(kQueued);
+    EXPECT_EQ(judgeQueue(history, kQueued).kind, Kind::Waiting);
+    EXPECT_EQ(judgeQueue(history, kQueued + (2 * kMinute) - 1).kind, Kind::Waiting);
+    const auto stuck = judgeQueue(history, kQueued + (2 * kMinute));
+    EXPECT_EQ(stuck.kind, Kind::NoProgress);
+    EXPECT_TRUE(stuck.isStuck());
+    EXPECT_EQ(stuck.sinceMs, kQueued);
+    EXPECT_EQ(stuck.startsAtMs, 0);
+    EXPECT_EQ(judgeQueue(history, kQueued + (90 * kMinute)).kind, Kind::NoProgress);
+}
+
+TEST(StuckQueue, AnAnswerThatIsntBetterIsNoProgress)
+{
+    QueueHistory history = queuedAt(kQueued);
+    history.sighted(kQueued + (5 * kSecond), 12);
+    EXPECT_EQ(judgeQueue(history, kQueued + kMinute).kind, Kind::Waiting);
+    EXPECT_EQ(judgeQueue(history, kQueued + (2 * kMinute)).kind, Kind::NoProgress); // no better place seen
+    history.sighted(kQueued + (10 * kMinute), 12);                                  // the same place, 10 min on
+    const auto stuck = judgeQueue(history, kQueued + (10 * kMinute));
+    EXPECT_EQ(stuck.kind, Kind::NoProgress);
+    EXPECT_EQ(stuck.sinceMs, kQueued);
+    // Worse: privileged users went ahead.
+    history.sighted(kQueued + (20 * kMinute), 15);
+    EXPECT_EQ(judgeQueue(history, kQueued + (20 * kMinute)).kind, Kind::NoProgress);
+}
+
+TEST(StuckQueue, MovingFastEnoughIsntStuck)
+{
+    // Place 12, then 4 ten minutes later: 0.8 places a minute, so place 4 is 5 minutes from the front.
+    QueueHistory history = queuedAt(kQueued);
+    history.sighted(kQueued, 12);
+    history.sighted(kQueued + (10 * kMinute), 4);
+    EXPECT_EQ(history.progressAtMs, kQueued + (10 * kMinute));
+    const auto moving = judgeQueue(history, kQueued + (10 * kMinute));
+    EXPECT_EQ(moving.kind, Kind::Moving);
+    EXPECT_FALSE(moving.isStuck());
+    EXPECT_EQ(moving.startsAtMs, kQueued + (15 * kMinute));
+    // No answer comes before the next one is due: still moving at that pace.
+    EXPECT_EQ(judgeQueue(history, kQueued + (14 * kMinute)).kind, Kind::Moving);
+    EXPECT_EQ(judgeQueue(history, kQueued + (17 * kMinute)).kind, Kind::Moving);
+}
+
+TEST(StuckQueue, MovingTooSlowlyIsStuck)
+{
+    // Place 30, then 28 ten minutes later: 0.2 places a minute, 140 minutes to go.
+    QueueHistory history = queuedAt(kQueued);
+    history.sighted(kQueued, 30);
+    history.sighted(kQueued + (10 * kMinute), 28);
+    const auto slow = judgeQueue(history, kQueued + (10 * kMinute));
+    EXPECT_EQ(slow.kind, Kind::TooSlow);
+    EXPECT_TRUE(slow.isStuck());
+    EXPECT_EQ(slow.startsAtMs, kQueued + (150 * kMinute));
+    // Exactly ten minutes from the front isn't too slow; a little more is.
+    QueueHistory edge = queuedAt(kQueued);
+    edge.sighted(kQueued, 20);
+    edge.sighted(kQueued + (10 * kMinute), 10); // one place a minute: starts at +20 min
+    EXPECT_EQ(judgeQueue(edge, kQueued + (10 * kMinute)).kind, Kind::Moving);
+    EXPECT_EQ(judgeQueue(edge, kQueued + (10 * kMinute) - 1).kind, Kind::TooSlow);
+}
+
+TEST(StuckQueue, LateForItsPaceIsStuck)
+{
+    // At its pace it was due at +15 min; two minutes past that and still not started.
+    QueueHistory history = queuedAt(kQueued);
+    history.sighted(kQueued, 12);
+    history.sighted(kQueued + (10 * kMinute), 4);
+    EXPECT_EQ(judgeQueue(history, kQueued + (17 * kMinute)).kind, Kind::Moving);
+    const auto late = judgeQueue(history, kQueued + (17 * kMinute) + 1);
+    EXPECT_EQ(late.kind, Kind::NoProgress);
+    EXPECT_EQ(late.startsAtMs, kQueued + (15 * kMinute));
+    EXPECT_EQ(late.sinceMs, kQueued + (10 * kMinute));
+}
+
+TEST(StuckQueue, TheQueueMovingOnRestartsTheClock)
+{
+    // One of our own files from this peer started: the others moved up. The answers before that tell no pace.
+    QueueHistory history = queuedAt(kQueued);
+    history.sighted(kQueued, 30);
+    history.sighted(kQueued + (10 * kMinute), 28);
+    history.progressAtMs = kQueued + (12 * kMinute);
+    EXPECT_EQ(judgeQueue(history, kQueued + (13 * kMinute)).kind, Kind::Waiting);
+    EXPECT_EQ(judgeQueue(history, kQueued + (14 * kMinute)).kind, Kind::NoProgress);
+}
+
+TEST(StuckQueue, OddAnswersStayBounded)
+{
+    // Two answers at the same moment tell no pace; a huge place from a peer, or a place of 0, can't overflow.
+    QueueHistory same = queuedAt(kQueued);
+    same.sighted(kQueued + kSecond, 9);
+    same.sighted(kQueued + kSecond, 3);
+    EXPECT_EQ(judgeQueue(same, kQueued + kMinute).kind, Kind::Waiting);
+
+    QueueHistory huge = queuedAt(kQueued);
+    huge.sighted(kQueued, std::numeric_limits<int>::max());
+    huge.sighted(kQueued + (10 * kMinute), std::numeric_limits<int>::max() - 1);
+    const auto slow = judgeQueue(huge, kQueued + (10 * kMinute));
+    EXPECT_EQ(slow.kind, Kind::TooSlow);
+    EXPECT_GT(slow.startsAtMs, kQueued);
+
+    QueueHistory next = queuedAt(kQueued);
+    next.sighted(kQueued, 1);
+    next.sighted(kQueued + (10 * kMinute), 0);
+    EXPECT_EQ(judgeQueue(next, kQueued + (10 * kMinute)).kind, Kind::Moving);
+    EXPECT_EQ(judgeQueue(next, kQueued + (13 * kMinute)).kind, Kind::NoProgress);
+
+    // A clock that went backwards reads as "too soon to tell".
+    EXPECT_EQ(judgeQueue(queuedAt(kQueued), kQueued - kMinute).kind, Kind::Waiting);
 }

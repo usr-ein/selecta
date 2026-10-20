@@ -84,6 +84,9 @@ QString statusText(const core::InboxEntry &entry)
         if (const QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
             return InboxView::tr("⚠ %1").arg(badge);
         }
+        if (!entry.item.belowWanted.isEmpty()) {
+            return InboxView::tr("Below your quality"); // got anyway (Get tracks)
+        }
         if (!entry.alsoOn.isEmpty()) {
             return InboxView::tr("⚑ Also on “%1”").arg(entry.alsoOn.constFirst());
         }
@@ -100,6 +103,9 @@ QString accessibleStatus(const core::InboxEntry &entry)
     }
     if (QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
         return InboxView::tr("Warning: %1").arg(badge.replace(u"≈ "_s, InboxView::tr("roughly ")));
+    }
+    if (!entry.item.belowWanted.isEmpty()) {
+        return InboxView::tr("Ready, below your quality");
     }
     if (!entry.alsoOn.isEmpty()) {
         return InboxView::tr("Ready, also on “%1”").arg(entry.alsoOn.constFirst());
@@ -120,6 +126,9 @@ QString statusToolTip(const core::InboxEntry &entry)
                                                 .arg(badge)
                                                 .arg(*item.qualityCutoffHz / 1000.0, 0, 'f', 1)
                                           : badge + u'.');
+    }
+    if (!item.belowWanted.isEmpty()) {
+        lines.append(InboxView::tr("Below the quality you wanted (%1): you got it anyway.").arg(item.belowWanted));
     }
     if (!entry.alsoOn.isEmpty()) {
         lines.append(InboxView::tr("Also on “%1”.").arg(entry.alsoOn.join(u"”, “"_s)));

@@ -41,3 +41,22 @@ TEST(GetTracksModel, ALineWaitingToSearchIsNeverDrawnAsAFailure)
     EXPECT_EQ(GetTracksModel::statusKind(line(GetLine::ReleaseState::Resolved, GetLine::FindState::NotFound)),
               Kind::Bad);
 }
+
+TEST(GetTracksModel, AStuckQueueIsShownPlainly)
+{
+    GetLine queued = line(GetLine::ReleaseState::Resolved, GetLine::FindState::Ready);
+    queued.downloadState = GetLine::DownloadState::Queued;
+    EXPECT_EQ(GetTracksModel::statusText(queued), u"Queued at the peer"_s);
+    EXPECT_EQ(GetTracksModel::statusKind(queued), Kind::Working);
+
+    GetLine stuck = queued;
+    stuck.stuck = true;
+    stuck.message = u"No progress in BIRDMANBRR's queue since 21:03"_s;
+    EXPECT_EQ(GetTracksModel::statusText(stuck), u"Stuck at the peer"_s);
+    EXPECT_EQ(GetTracksModel::statusKind(stuck), Kind::Check);
+    // Still on its way: counted with the downloads.
+    GetTracksModel model;
+    model.reset({stuck});
+    EXPECT_EQ(model.counts().downloading, 1);
+    EXPECT_EQ(model.data(model.index(0, GetTracksModel::StatusColumn), Qt::ToolTipRole).toString(), stuck.message);
+}

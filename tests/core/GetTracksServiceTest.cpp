@@ -438,3 +438,97 @@ TEST(SpreadChoice, ABatchSpreadsOverPeersWithTheSameFile)
     unsure.fitsRelease = false;
     EXPECT_EQ(selecta::core::spreadChoice(best, {unsure}, {{u"lena"_s, 3}}), -1);
 }
+
+TEST(FileChoiceText, TheShortfallRoundTripsAndOldRowsReadWithout)
+{
+    selecta::core::FileChoice choice;
+    choice.peer = u"low_bitrate"_s;
+    choice.remotePath = "@@l\\Okuma Drift - Neon Rain.mp3";
+    choice.size = 8'928'000;
+    choice.extension = u"mp3"_s;
+    choice.bitrate = 192;
+    choice.fitsRelease = true;
+    choice.shortfall = u"under 320 kbps"_s;
+    const auto back = selecta::core::fileChoiceFromText(selecta::core::fileChoiceToText(choice));
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(*back, choice);
+
+    choice.shortfall.clear();
+    const QByteArray text = selecta::core::fileChoiceToText(choice);
+    EXPECT_FALSE(text.contains("shortfall")); // rows of files that passed stay as they were
+    EXPECT_EQ(selecta::core::fileChoiceFromText(text)->shortfall, QString());
+}
+
+TEST(SpreadChoice, AFileGotAnywayStaysAndNearMissesAreNeverSpreadTo)
+{
+    selecta::core::FileChoice best;
+    best.peer = u"lena"_s;
+    best.fit = 0.95;
+    best.fitsRelease = true;
+    best.freeSlot = true;
+    best.shortfall = u"under 320 kbps"_s;
+    selecta::core::FileChoice other = best;
+    other.peer = u"vera"_s;
+    EXPECT_EQ(selecta::core::spreadChoice(best, {other}, {{u"lena"_s, 3}}), -1);
+    best.shortfall.clear(); // a file that passed: a near miss as good is still never taken instead
+    EXPECT_EQ(selecta::core::spreadChoice(best, {other}, {{u"lena"_s, 3}}), -1);
+}
+
+TEST_F(GetTracksServiceTest, ALineNotFoundKeepsItsNearMissesForThisSession)
+{
+    const selecta::base::ManualClock clock;
+    selecta::governor::Governor governor(clock);
+    FindNetwork network;
+    selecta::core::SearchService search(
+        governor, network, clock, {.idle = std::chrono::milliseconds(40), .total = std::chrono::milliseconds(1000)});
+    service->setSearch(&search, [] { return QStringList(); });
+    service->addReleases({release(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000)});
+    service->find();
+    ASSERT_TRUE(QTest::qWaitFor([&network] { return network.sent.size() == 1; }, 3000));
+    search.received(1, u"vinyl_ghost"_s, fileResponse(1, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, 192, 372));
+    search.received(1, u"bassbin"_s, fileResponse(1, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, 128, 372));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    GetLine line = service->lines().constFirst();
+    EXPECT_EQ(line.findState, GetLine::FindState::NotFound);
+    EXPECT_FALSE(line.best.has_value());
+    EXPECT_FALSE(line.ticked);
+    EXPECT_TRUE(line.foundThisSession);
+    ASSERT_EQ(line.nearMisses.size(), 2);
+    EXPECT_EQ(line.nearMisses[0].peer, u"vinyl_ghost"_s);
+    EXPECT_EQ(line.nearMisses[0].shortfall, u"under 320 kbps"_s);
+    EXPECT_EQ(line.message, u"2 files of this track found, below the quality wanted."_s);
+
+    // Without a transfer service, nothing can be got: Get anyway and Try another peer do nothing.
+    service->getAnyway(line.id, line.nearMisses[0].peer, line.nearMisses[0].remotePath);
+    service->switchPeer(line.id);
+    EXPECT_EQ(service->lines().constFirst().nearMisses.size(), 2);
+    EXPECT_FALSE(service->lines().constFirst().best.has_value());
+
+    // Like the alternatives, they aren't saved: after a restart the line says what was found, and finding it again
+    // (the search cache answers) brings them back.
+    service.reset();
+    GetTracksService restarted(db);
+    line = restarted.lines().constFirst();
+    EXPECT_TRUE(line.nearMisses.isEmpty());
+    EXPECT_FALSE(line.foundThisSession);
+    EXPECT_EQ(line.message, u"2 files of this track found, below the quality wanted."_s);
+}
+
+TEST_F(GetTracksServiceTest, FilesOfAnotherTrackAreNoNearMisses)
+{
+    const selecta::base::ManualClock clock;
+    selecta::governor::Governor governor(clock);
+    FindNetwork network;
+    selecta::core::SearchService search(
+        governor, network, clock, {.idle = std::chrono::milliseconds(40), .total = std::chrono::milliseconds(1000)});
+    service->setSearch(&search, [] { return QStringList(); });
+    service->addReleases({release(u"Okuma Drift"_s, u"Neon Rain"_s, 372'000)});
+    service->find();
+    ASSERT_TRUE(QTest::qWaitFor([&network] { return network.sent.size() == 1; }, 3000));
+    search.received(1, u"vinyl_ghost"_s, fileResponse(1, u"@@a\\Okuma Drift - Neon Rain (Live).mp3"_s, 192, 512));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    const GetLine line = service->lines().constFirst();
+    EXPECT_EQ(line.findState, GetLine::FindState::NotFound);
+    EXPECT_TRUE(line.nearMisses.isEmpty());
+    EXPECT_EQ(line.message, u"1 file found, but not of this track."_s);
+}

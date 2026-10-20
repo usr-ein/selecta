@@ -9,6 +9,7 @@
 #include <QMetaType>
 #include <QString>
 
+#include <chrono>
 #include <optional>
 
 namespace selecta::storage {
@@ -16,6 +17,57 @@ class Database;
 }
 
 namespace selecta::core {
+
+// --- The stuck-queue rule (P-004) ---------------------------------------------------------------------------------
+// A download waiting in a peer's queue is stuck when either holds:
+//  - no progress for kStuckNoProgress: its place hasn't improved (as far as Selecta has seen: the peer answers at most
+//    every governor::limits::kPlaceInQueuePoll, or never) and it hasn't started; or, its place improving, the pace
+//    said it would start that long ago;
+//  - its place improves, but at that pace it won't start within kStuckStartWithin.
+// Selecta never switches by itself: the user decides ("Try another peer").
+inline constexpr std::chrono::minutes kStuckNoProgress{2};
+inline constexpr std::chrono::minutes kStuckStartWithin{10};
+
+// A peer's answer about a queued download: its place (1 = next) at a time.
+struct QueueSighting
+{
+    qint64 atMs = 0; // Unix time, ms
+    int place = 0;
+
+    friend bool operator==(const QueueSighting &, const QueueSighting &) = default;
+};
+
+// What Selecta has seen of one download waiting in a peer's queue.
+struct QueueHistory
+{
+    qint64 progressAtMs = 0;               // the last progress: queued, a better place, or the peer's queue moving on
+    std::optional<QueueSighting> previous; // the peer's two latest answers, when it answers
+    std::optional<QueueSighting> latest;
+
+    // Records the peer's answer; a better place than its previous answer is progress.
+    void sighted(qint64 atMs, int place);
+};
+
+// The rule's verdict on a queued download.
+struct QueueVerdict
+{
+    enum class Kind {
+        Waiting,    // too soon to tell
+        Moving,     // its place improves fast enough to start within kStuckStartWithin (startsAtMs)
+        NoProgress, // stuck: nothing moved since sinceMs, or it was due to start at startsAtMs
+        TooSlow,    // stuck: at the pace its place improves, it starts at startsAtMs, past kStuckStartWithin
+    };
+
+    Kind kind = Kind::Waiting;
+    qint64 sinceMs = 0;    // NoProgress: the last progress seen
+    qint64 startsAtMs = 0; // when it starts at the pace seen (Moving, TooSlow), or was due to (NoProgress); 0: no pace
+
+    bool isStuck() const { return kind == Kind::NoProgress || kind == Kind::TooSlow; }
+    friend bool operator==(const QueueVerdict &, const QueueVerdict &) = default;
+};
+
+// The stuck-queue rule at `nowMs` (Unix time, ms). Pure.
+QueueVerdict judgeQueue(const QueueHistory &history, qint64 nowMs);
 
 // One file Selecta wants from a peer (PRD DL-1, DL-2), from the moment it is asked for until it has arrived in the
 // Inbox, failed for good or been cancelled. Kept in the database, so the queue survives a restart.
@@ -48,6 +100,10 @@ struct Download
     std::optional<qint64> inboxItem;
     qint64 createdAt = 0; // Unix time, ms
     qint64 updatedAt = 0;
+    // While it waits in the peer's queue (Queued; not saved: a restart queues it again): its place when the peer says,
+    // and the stuck-queue rule's verdict.
+    std::optional<int> placeInQueue;
+    QueueVerdict queue;
 
     bool isFinished() const { return state == State::Arrived || state == State::Failed || state == State::Cancelled; }
     // The file name at the end of the remote path ("C:\Music\Artist - Title.flac" → "Artist - Title.flac").

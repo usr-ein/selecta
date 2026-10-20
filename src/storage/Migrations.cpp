@@ -327,6 +327,11 @@ constexpr std::array kMigrations{
         ALTER TABLE supersede_flags ADD COLUMN track_key TEXT NOT NULL DEFAULT '';
         ALTER TABLE supersede_flags ADD COLUMN track_ms INTEGER NOT NULL DEFAULT 0;
     )sql"},
+    // An Inbox item the user got anyway, below the quality wanted (Get tracks' near misses): why it fell short of the
+    // list's preset, in words ("under 320 kbps"); '' when it met it. An upgrade can be offered for it later.
+    Migration{18, R"sql(
+        ALTER TABLE inbox_items ADD COLUMN below_wanted TEXT NOT NULL DEFAULT '';
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

@@ -45,6 +45,9 @@ struct InboxItem
     std::optional<int> session;
     qint64 createdAt = 0; // Unix time, ms
     QString warning;      // what the arrival noticed: kept below the Inbox format, not the length expected (DL-10)
+    // Got anyway, below the quality the list wanted: why it fell short, in words ("under 320 kbps"); empty when it met
+    // it. A better copy can replace it later.
+    QString belowWanted;
     // The spectrum check of the file as downloaded (PRD PREV-9), when it ran: what it found (audio::findingName()
     // names, worded "likely …" in the UI), the spectral cut-off and the bitrate it suggests, and the analysis-cache
     // key (64 hex digits) of the full report with its spectrogram, empty when it wasn't cached.

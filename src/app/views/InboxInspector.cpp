@@ -240,6 +240,7 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     actions->addWidget(m_edit);
     actions->addStretch(1);
     layout->addLayout(actions);
+    m_alsoOn->setTextFormat(Qt::PlainText); // album names from files' tags, and what the arrival noticed
     m_alsoOn->hide();
     layout->addWidget(m_alsoOn);
     layout->addWidget(m_release, 0, Qt::AlignLeft);
@@ -422,6 +423,9 @@ void InboxInspector::setAlsoOn(const QStringList &albums)
     QStringList lines;
     if (const QString badge = m_item ? core::spectrumBadge(*m_item) : QString(); !badge.isEmpty()) {
         lines.append(tr("⚠ %1.").arg(badge));
+    }
+    if (m_item && !m_item->belowWanted.isEmpty()) {
+        lines.append(tr("Below the quality you wanted (%1): you got it anyway.").arg(m_item->belowWanted));
     }
     if (m_item && !m_item->warning.isEmpty()) {
         lines.append(tr("⚠ %1").arg(m_item->warning));

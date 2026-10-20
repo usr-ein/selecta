@@ -4,10 +4,14 @@
 #include "app/Format.h"
 #include "app/models/GetTracksModel.h"
 
+#include <QButtonGroup>
 #include <QDesktopServices>
+#include <QEvent>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QVBoxLayout>
@@ -31,6 +35,16 @@ QString sourceText(const meta::Release &release)
     return meta::sourceName(release.source);
 }
 
+QLabel *quietNote(const QString &objectName, QWidget *parent)
+{
+    auto *note = new QLabel(parent);
+    note->setObjectName(objectName);
+    note->setTextFormat(Qt::PlainText); // it may name a peer
+    note->setWordWrap(true);
+    note->setForegroundRole(QPalette::PlaceholderText);
+    return note;
+}
+
 } // namespace
 
 GetTracksInspector::GetTracksInspector(QWidget *parent)
@@ -38,6 +52,10 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     , m_pages(new QStackedWidget(this))
     , m_title(new QLabel(this))
     , m_status(new QLabel(this))
+    , m_wayOut(new QWidget(this))
+    , m_wayOutNote(new QLabel(this))
+    , m_tryAnotherPeer(new QPushButton(tr("Try Another Peer"), this))
+    , m_findAgain(new QPushButton(tr("Find Again"), this))
     , m_releaseBox(new QWidget(this))
     , m_openRelease(new QPushButton(this))
     , m_noRelease(new QLabel(this))
@@ -57,7 +75,10 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     layout->setContentsMargins(16, 16, 16, 16);
     layout->setSpacing(10);
 
+    // Labels that show what came from the list, a release lookup or the network (a peer's name, a file's path) show
+    // it as it is: a name that looks like HTML isn't rendered as rich text.
     m_title->setObjectName(u"inspector.get.title"_s);
+    m_title->setTextFormat(Qt::PlainText);
     m_title->setWordWrap(true);
     m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
     QFont titleFont = m_title->font();
@@ -65,10 +86,55 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     titleFont.setPointSizeF(titleFont.pointSizeF() + 1);
     m_title->setFont(titleFont);
     m_status->setObjectName(u"inspector.get.status"_s);
+    m_status->setTextFormat(Qt::PlainText);
     m_status->setWordWrap(true);
     m_status->setForegroundRole(QPalette::PlaceholderText);
     layout->addWidget(m_title);
     layout->addWidget(m_status);
+
+    // The way out of a stuck queue (one button), or back to what a search found before a restart.
+    m_wayOut->setObjectName(u"inspector.get.wayOut"_s);
+    auto *wayOut = new QVBoxLayout(m_wayOut);
+    wayOut->setContentsMargins(0, 0, 0, 0);
+    wayOut->setSpacing(6);
+    m_tryAnotherPeer->setObjectName(u"inspector.get.tryAnotherPeer"_s);
+    m_tryAnotherPeer->setToolTip(tr("Leave this peer's queue and get the file from another peer that has it"));
+    connect(m_tryAnotherPeer, &QPushButton::clicked, this, [this] {
+        if (!m_line) {
+            return;
+        }
+        // The file picked below, else the engine's best other peer (found again when none is known).
+        const std::optional<core::FileChoice> file = picked(m_otherFiles);
+        Q_EMIT switchRequested(m_line->id, file ? file->peer : QString(), file ? file->remotePath : QByteArray());
+    });
+    m_findAgain->setObjectName(u"inspector.get.findAgain"_s);
+    connect(m_findAgain, &QPushButton::clicked, this, [this] {
+        if (m_line) {
+            Q_EMIT findAgainRequested(m_line->id);
+        }
+    });
+    wayOut->addWidget(m_tryAnotherPeer, 0, Qt::AlignLeft);
+    wayOut->addWidget(m_findAgain, 0, Qt::AlignLeft);
+    m_wayOutNote->setObjectName(u"inspector.get.wayOut.note"_s);
+    m_wayOutNote->setTextFormat(Qt::PlainText);
+    m_wayOutNote->setWordWrap(true);
+    m_wayOutNote->setForegroundRole(QPalette::PlaceholderText);
+    wayOut->addWidget(m_wayOutNote);
+    layout->addWidget(m_wayOut);
+
+    // Not found: the track's files below the quality wanted.
+    m_nearMisses = makeChoices(u"inspector.get.nearMisses"_s, details);
+    m_nearMisses.heading->setText(tr("Files below the quality wanted"));
+    m_nearMisses.note->setText(tr("A lossy file is kept as it is, with its tags and cover. Your Inbox marks it below "
+                                  "your quality."));
+    m_nearMisses.button->setText(tr("Get Anyway"));
+    m_nearMisses.button->setToolTip(tr("Get the file picked, below the quality wanted"));
+    connect(m_nearMisses.button, &QPushButton::clicked, this, [this] {
+        if (const std::optional<core::FileChoice> file = picked(m_nearMisses); m_line && file) {
+            Q_EMIT getAnywayRequested(m_line->id, file->peer, file->remotePath);
+        }
+    });
+    layout->addWidget(m_nearMisses.box);
 
     m_releaseHeading = heading(tr("Tags it will get"), details);
     layout->addWidget(m_releaseHeading);
@@ -104,9 +170,22 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     m_fileHeading = heading(tr("File on Soulseek"), details);
     layout->addWidget(m_fileHeading);
     m_file->setObjectName(u"inspector.get.file"_s);
+    m_file->setTextFormat(Qt::PlainText);
     m_file->setWordWrap(true);
     m_file->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(m_file);
+
+    // Waiting in a peer's queue: the other peers' files.
+    m_otherFiles = makeChoices(u"inspector.get.otherFiles"_s, details);
+    m_otherFiles.heading->setText(tr("Other files on Soulseek"));
+    m_otherFiles.button->setText(tr("Switch to This Peer"));
+    m_otherFiles.button->setToolTip(tr("Leave the queue the track waits in and get the file picked instead"));
+    connect(m_otherFiles.button, &QPushButton::clicked, this, [this] {
+        if (const std::optional<core::FileChoice> file = picked(m_otherFiles); m_line && file) {
+            Q_EMIT switchRequested(m_line->id, file->peer, file->remotePath);
+        }
+    });
+    layout->addWidget(m_otherFiles.box);
     layout->addStretch(1);
 
     auto *scroll = new QScrollArea(this);
@@ -125,11 +204,127 @@ void GetTracksInspector::addRow(QFormLayout *form, const QString &label, QLabel 
 {
     value = new QLabel(m_releaseBox);
     value->setObjectName(objectName);
+    value->setTextFormat(Qt::PlainText); // a release's words, from a lookup
     value->setWordWrap(true);
     value->setTextInteractionFlags(Qt::TextSelectableByMouse);
     auto *name = new QLabel(label, m_releaseBox);
     name->setForegroundRole(QPalette::PlaceholderText);
     form->addRow(name, value);
+}
+
+GetTracksInspector::Choices GetTracksInspector::makeChoices(const QString &name, QWidget *parent)
+{
+    Choices choices;
+    choices.box = new QWidget(parent);
+    choices.box->setObjectName(name);
+    auto *layout = new QVBoxLayout(choices.box);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(6);
+    choices.heading = heading({}, choices.box);
+    layout->addWidget(choices.heading);
+    choices.rows = new QVBoxLayout;
+    choices.rows->setContentsMargins(0, 0, 0, 0);
+    choices.rows->setSpacing(6);
+    layout->addLayout(choices.rows);
+    choices.group = new QButtonGroup(choices.box);
+    choices.group->setExclusive(true);
+    choices.note = quietNote(name + u".note"_s, choices.box);
+    layout->addWidget(choices.note);
+    choices.button = new QPushButton(choices.box);
+    choices.button->setObjectName(name + u".button"_s);
+    layout->addWidget(choices.button, 0, Qt::AlignLeft);
+    choices.box->setVisible(false);
+    return choices;
+}
+
+void GetTracksInspector::setChoices(Choices &choices, const QList<core::FileChoice> &files, const QString &name)
+{
+    if (files == choices.files && choices.group->buttons().size() == files.size()) {
+        return; // the same files: the one picked stays picked
+    }
+    const std::optional<core::FileChoice> before = picked(choices);
+    while (const QLayoutItem *item = choices.rows->takeAt(0)) {
+        delete item->widget(); // its radio button leaves the group with it
+        delete item;
+    }
+    choices.files = files;
+    qsizetype keep = 0;
+    for (qsizetype i = 0; i < files.size(); ++i) {
+        const core::FileChoice &file = files.at(i);
+        const QString text = choiceText(file);
+        auto *row = new QWidget(choices.box);
+        auto *rowLayout = new QHBoxLayout(row);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(6);
+        auto *radio = new QRadioButton(row);
+        radio->setObjectName(u"%1.%2"_s.arg(name, QString::number(i)));
+        radio->setAccessibleName(QString(text).replace(u'\n', u", "_s));
+        // The words wrap, which a radio button's own text can't: a click on them picks the file too. No buddy: an "&"
+        // in a peer's name would become a shortcut and vanish.
+        auto *label = new QLabel(text, row);
+        label->setTextFormat(Qt::PlainText);
+        label->setWordWrap(true);
+        label->installEventFilter(this);
+        rowLayout->addWidget(radio, 0, Qt::AlignTop);
+        rowLayout->addWidget(label, 1);
+        choices.group->addButton(radio, static_cast<int>(i));
+        choices.rows->addWidget(row);
+        if (before && file.peer == before->peer && file.remotePath == before->remotePath) {
+            keep = i;
+        }
+    }
+    if (QAbstractButton *radio = choices.group->button(static_cast<int>(keep))) {
+        radio->setChecked(true);
+    }
+}
+
+std::optional<core::FileChoice> GetTracksInspector::picked(const Choices &choices) const
+{
+    const int id = choices.group != nullptr ? choices.group->checkedId() : -1;
+    if (id < 0 || id >= choices.files.size()) {
+        return std::nullopt;
+    }
+    return choices.files.at(id);
+}
+
+QString GetTracksInspector::choiceText(const core::FileChoice &file, std::optional<int> place) const
+{
+    QString text = format::quality(file);
+    if (file.durationSec) {
+        text += u" · "_s + format::length(qint64{*file.durationSec} * 1000);
+        if (m_line && m_line->release && m_line->release->durationMs) {
+            const qint64 delta = *file.durationSec - ((*m_line->release->durationMs + 500) / 1000);
+            text += file.fitsRelease ? tr(" · same length") : u" · "_s + format::lengthDelta(delta);
+        }
+    }
+    // Once the peer has said our place, the queue length its search result gave is old news.
+    QString availability;
+    if (place) {
+        availability = tr("your place %1").arg(*place);
+    } else {
+        availability = file.freeSlot ? tr("free slot") : tr("queue %1").arg(file.queueLength);
+    }
+    QString from = tr("From %1 · %2").arg(file.peer, availability);
+    if (!file.shortfall.isEmpty()) {
+        from += u" · "_s + file.shortfall;
+    }
+    return text + u'\n' + from;
+}
+
+bool GetTracksInspector::eventFilter(QObject *watched, QEvent *event)
+{
+    if (event->type() == QEvent::MouseButtonRelease) {
+        // A file's words: the radio button beside them, the only one in their row.
+        const auto *label = qobject_cast<QLabel *>(watched);
+        const QWidget *row = label != nullptr ? label->parentWidget() : nullptr;
+        if (auto *radio =
+                row != nullptr ? row->findChild<QRadioButton *>(QString(), Qt::FindDirectChildrenOnly) : nullptr) {
+            radio->setChecked(true);
+            radio->setFocus(Qt::MouseFocusReason);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 std::optional<qint64> GetTracksInspector::lineId() const
@@ -139,7 +334,13 @@ std::optional<qint64> GetTracksInspector::lineId() const
 
 void GetTracksInspector::showLine(const std::optional<core::GetLine> &line)
 {
+    const bool sameLine = line && m_line && line->id == m_line->id;
     m_line = line;
+    if (!sameLine) {
+        // Another line: nothing picked yet.
+        setChoices(m_nearMisses, {}, {});
+        setChoices(m_otherFiles, {}, {});
+    }
     if (!line) {
         m_pages->setCurrentIndex(0);
         return;
@@ -151,8 +352,52 @@ void GetTracksInspector::showLine(const std::optional<core::GetLine> &line)
         status += u" · "_s + line->message;
     }
     m_status->setText(status);
+    showWayOut(*line);
     showRelease(*line);
     showFile(*line);
+}
+
+void GetTracksInspector::showWayOut(const core::GetLine &line)
+{
+    using DownloadState = core::GetLine::DownloadState;
+    const bool notFound =
+        line.findState == core::GetLine::FindState::NotFound && line.downloadState == DownloadState::None;
+    const bool waiting = line.downloadState == DownloadState::Queued;
+
+    // Not found, but the track was there below the quality wanted: pick one, and get it anyway.
+    const bool nearMisses = notFound && !line.nearMisses.isEmpty();
+    setChoices(m_nearMisses, nearMisses ? line.nearMisses : QList<core::FileChoice>(), u"inspector.get.nearMiss"_s);
+    m_nearMisses.box->setVisible(nearMisses);
+
+    // Waiting in a peer's queue: the other peers' files, to switch to. Stuck, the button under the status takes the
+    // file picked here.
+    const bool others = waiting && !line.alternatives.isEmpty();
+    setChoices(m_otherFiles, others ? line.alternatives : QList<core::FileChoice>(), u"inspector.get.other"_s);
+    m_otherFiles.box->setVisible(others);
+    m_otherFiles.button->setVisible(!line.stuck);
+    m_otherFiles.button->setEnabled(!line.lookingForPeers);
+    m_otherFiles.note->setText(line.stuck ? QString() : line.peersNote);
+    m_otherFiles.note->setVisible(!m_otherFiles.note->text().isEmpty());
+
+    const bool stuck = waiting && line.stuck;
+    const bool foundBefore = notFound && line.nearMisses.isEmpty() && !line.foundThisSession;
+    m_tryAnotherPeer->setVisible(stuck);
+    m_tryAnotherPeer->setEnabled(!line.lookingForPeers);
+    m_findAgain->setVisible(foundBefore && !stuck);
+    QString note;
+    if (stuck && line.lookingForPeers) {
+        note = tr("Looking for another peer that has it…");
+    } else if (stuck && !line.peersNote.isEmpty()) {
+        note = line.peersNote;
+    } else if (stuck) {
+        note = others ? tr("Selecta asks for the file picked below, then gives this queue place back.")
+                      : tr("Selecta looks for other peers that have it, then asks the best one.");
+    } else if (foundBefore) {
+        note = tr("Searched before Selecta last started: find it again to see what was found.");
+    }
+    m_wayOutNote->setText(note);
+    m_wayOutNote->setVisible(!note.isEmpty());
+    m_wayOut->setVisible(stuck || foundBefore);
 }
 
 void GetTracksInspector::showRelease(const core::GetLine &line)
@@ -207,18 +452,11 @@ void GetTracksInspector::showFile(const core::GetLine &line)
         return;
     }
     const core::FileChoice &file = *line.best;
-    QString text = format::quality(file);
-    if (file.durationSec) {
-        text += u" · "_s + format::length(qint64{*file.durationSec} * 1000);
-        if (line.release && line.release->durationMs) {
-            const qint64 delta = *file.durationSec - ((*line.release->durationMs + 500) / 1000);
-            text += file.fitsRelease ? tr(" · same length") : u" · "_s + format::lengthDelta(delta);
-        }
-    }
-    text += u"\n"_s +
-            tr("From %1 · %2").arg(file.peer, file.freeSlot ? tr("free slot") : tr("queue %1").arg(file.queueLength));
+    const bool queued = line.downloadState == core::GetLine::DownloadState::Queued;
+    QString text = choiceText(file, queued ? line.placeInQueue : std::nullopt);
     text += u"\n"_s + QString::fromUtf8(file.remotePath);
-    if (!line.alternatives.isEmpty()) {
+    // Waiting in a queue, the other files are offered below to switch to; otherwise they are listed here.
+    if (!line.alternatives.isEmpty() && line.downloadState != core::GetLine::DownloadState::Queued) {
         text += u"\n\n"_s + tr("Other files:");
         for (const core::FileChoice &other : line.alternatives) {
             QString alternative = format::quality(other);

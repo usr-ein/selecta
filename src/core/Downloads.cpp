@@ -4,6 +4,7 @@
 #include "core/ReleaseJson.h"
 #include "storage/Database.h"
 
+#include <algorithm>
 #include <array>
 
 using namespace Qt::StringLiterals;
@@ -92,6 +93,50 @@ Download readDownload(const Statement &row)
 }
 
 } // namespace
+
+void QueueHistory::sighted(qint64 atMs, int place)
+{
+    previous = latest;
+    latest = QueueSighting{.atMs = atMs, .place = place};
+    if (previous && place < previous->place) {
+        progressAtMs = std::max(progressAtMs, atMs);
+    }
+}
+
+QueueVerdict judgeQueue(const QueueHistory &history, qint64 nowMs)
+{
+    using std::chrono::milliseconds;
+    const qint64 noProgressMs = std::chrono::duration_cast<milliseconds>(kStuckNoProgress).count();
+    const qint64 startWithinMs = std::chrono::duration_cast<milliseconds>(kStuckStartWithin).count();
+    QueueVerdict verdict;
+    const std::optional<QueueSighting> &previous = history.previous;
+    const std::optional<QueueSighting> &latest = history.latest;
+    // A pace: the latest answer is a better place than the one before it, and nothing moved since (one of our own
+    // downloads from the peer starting moves the queue on: the answers before it don't tell the pace any more).
+    if (previous && latest && latest->atMs > previous->atMs && latest->place < previous->place &&
+        history.progressAtMs <= latest->atMs) {
+        const double placesPerMs =
+            static_cast<double>(previous->place - latest->place) / static_cast<double>(latest->atMs - previous->atMs);
+        constexpr double kYearMs = 365.0 * 24 * 60 * 60 * 1000; // a bound, so the arithmetic below can't overflow
+        const double toStartMs = std::min(static_cast<double>(std::max(0, latest->place)) / placesPerMs, kYearMs);
+        verdict.startsAtMs = latest->atMs + static_cast<qint64>(toStartMs);
+        if (verdict.startsAtMs - nowMs > startWithinMs) {
+            verdict.kind = QueueVerdict::Kind::TooSlow;
+        } else if (nowMs - verdict.startsAtMs > noProgressMs) {
+            verdict.kind = QueueVerdict::Kind::NoProgress; // due a while ago, and still waiting
+            verdict.sinceMs = history.progressAtMs;
+        } else {
+            verdict.kind = QueueVerdict::Kind::Moving;
+        }
+        return verdict;
+    }
+    // No pace: stuck once nothing has moved for kStuckNoProgress.
+    if (nowMs - history.progressAtMs >= noProgressMs) {
+        verdict.kind = QueueVerdict::Kind::NoProgress;
+        verdict.sinceMs = history.progressAtMs;
+    }
+    return verdict;
+}
 
 QString Download::remoteFileName() const
 {

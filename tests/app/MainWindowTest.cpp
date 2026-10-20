@@ -618,6 +618,7 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
         item.tagSource = u"spotify"_s;
         item.peer = u"vinyl_ghost"_s;
         item.sourceFormat = u"FLAC 16/44.1"_s;
+        item.belowWanted = u"under <b>320</b> kbps"_s; // got anyway (P-004); shown as it is
         item.createdAt = 1000;
         id = selecta::library::InboxStore(setup).add(item).value_or(0);
         ASSERT_GT(id, 0);
@@ -650,6 +651,11 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
     EXPECT_TRUE(provenance->text().contains(u"Spotify"_s));
     EXPECT_TRUE(source->text().contains(u"vinyl_ghost"_s));
     EXPECT_TRUE(source->text().contains(u"FLAC 16/44.1"_s));
+    const auto *alsoOn = window->findChild<QLabel *>(u"inspector.inbox.alsoOn"_s);
+    ASSERT_NE(alsoOn, nullptr);
+    EXPECT_TRUE(alsoOn->text().contains(u"Below the quality you wanted (under <b>320</b> kbps)"_s))
+        << alsoOn->text().toStdString();
+    EXPECT_EQ(alsoOn->textFormat(), Qt::PlainText);
 
     // An edit is written into the file; the list and the inspector follow.
     selecta::convert::MetadataModel edit;
