@@ -4,15 +4,19 @@
 #include "audio/Decoder.h"
 #include "playback/RingBuffer.h"
 
-#include <QMutexLocker>
 #include <QTimer>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
 #include <optional>
+#include <thread>
+#include <utility>
 #include <vector>
 
-using namespace Qt::StringLiterals;
+using namespace std::chrono_literals;
 
 namespace selecta::playback {
 namespace {
@@ -22,7 +26,8 @@ constexpr int kFallbackRate = 48'000;
 constexpr double kRingSeconds = 0.75;       // decoded audio kept ahead of the speakers (rounded up to a power of two)
 constexpr double kStartHoldSeconds = 0.1;   // after a jump: short, so seeking feels instant
 constexpr double kRebufferSeconds = 0.5;    // after running dry: long enough not to stutter on a slow download
-constexpr int kFillIntervalMs = 20;         // the decoder tops the ring up this often
+constexpr auto kRingFullWait = 50ms;        // the callback frees ring space without telling anyone: look again then
+constexpr auto kDataWait = 250ms;           // sources announce new bytes; this only bounds a missed announcement
 constexpr int kChunkFrames = 2048;          // frames decoded per read
 constexpr int kPollIntervalMs = 33;         // state and playhead updates on the main thread
 constexpr int kBufferingAfterMs = 150;      // shorter holds (every seek has one) don't show as Buffering
@@ -51,63 +56,154 @@ void applyGain(float *samples, std::size_t frames, float &gain, float target, fl
 
 } // namespace
 
-// Owns the Decoder on the player's thread and keeps the ring topped up. Every request carries the generation the main
-// thread gave it; work for an older generation is dropped, since a newer request is already queued behind it.
-// A QObject only for its thread affinity and timer: no signals, slots or properties.
-class DecodeWorker : public QObject // clazy:exclude=missing-qobject-macro
+// The decoder thread: owns the Decoder and keeps the ring topped up. The main thread queues commands; each carries the
+// generation the main thread gave it, and work for an older generation is dropped, since a newer command is already
+// queued behind it.
+class DecodeWorker
 {
 public:
     DecodeWorker(Player &player, RingBuffer &ring)
         : m_player(player)
         , m_ring(ring)
-        , m_timer(new QTimer(this))
         , m_buffer(static_cast<std::size_t>(kChunkFrames) * kChannels)
+        , m_thread([this] { run(); })
+    {}
+
+    ~DecodeWorker()
     {
-        m_timer->setInterval(kFillIntervalMs);
-        connect(m_timer, &QTimer::timeout, this, &DecodeWorker::fill);
+        {
+            const std::scoped_lock lock(m_mutex);
+            m_quit = true;
+        }
+        m_wake.notify_one();
+        m_thread.join();
     }
 
-    void open(const std::shared_ptr<audio::ByteSource> &source, int sampleRate, qint64 playId, qint64 generation)
+    DecodeWorker(const DecodeWorker &) = delete;
+    DecodeWorker &operator=(const DecodeWorker &) = delete;
+    DecodeWorker(DecodeWorker &&) = delete;
+    DecodeWorker &operator=(DecodeWorker &&) = delete;
+
+    // Main thread.
+    void open(std::shared_ptr<audio::ByteSource> source, int sampleRate, qint64 playId, qint64 generation)
     {
+        queue({Command::Open, std::move(source), sampleRate, playId, generation, 0});
+    }
+    void seek(qint64 frame, qint64 generation) { queue({Command::Seek, {}, 0, 0, generation, frame}); }
+    void close() { queue({Command::Close, {}, 0, 0, 0, 0}); }
+
+private:
+    struct Command
+    {
+        enum Kind { Open, Seek, Close } kind = Close;
+        std::shared_ptr<audio::ByteSource> source;
+        int sampleRate = 0;
+        qint64 playId = 0;
+        qint64 generation = 0;
+        qint64 frame = 0;
+    };
+
+    // What the decoder thread waits for after a fill.
+    enum class Next {
+        Continue,    // more to do at once
+        RingFull,    // the callback has to make room
+        WaitForData, // the download has to deliver more bytes
+        Idle,        // nothing to do until the next command
+    };
+
+    void queue(Command command)
+    {
+        {
+            const std::scoped_lock lock(m_mutex);
+            m_commands.push_back(std::move(command));
+        }
+        m_wake.notify_one();
+    }
+
+    void sourceChanged()
+    {
+        {
+            const std::scoped_lock lock(m_mutex);
+            m_sourceChanged = true;
+        }
+        m_wake.notify_one();
+    }
+
+    void run()
+    {
+        std::unique_lock lock(m_mutex);
+        while (!m_quit) {
+            if (!m_commands.empty()) {
+                Command command = std::move(m_commands.front());
+                m_commands.pop_front();
+                lock.unlock(); // never hold the lock while touching the source: its listener takes it
+                handle(command);
+                lock.lock();
+                continue;
+            }
+            m_sourceChanged = false;
+            lock.unlock();
+            const Next next = fill();
+            lock.lock();
+            const auto woken = [this] { return m_quit || !m_commands.empty(); };
+            switch (next) {
+            case Next::Continue:
+                break;
+            case Next::RingFull:
+                m_wake.wait_for(lock, kRingFullWait, woken);
+                break;
+            case Next::WaitForData:
+                m_wake.wait_for(lock, kDataWait, [this, &woken] { return woken() || m_sourceChanged; });
+                break;
+            case Next::Idle:
+                m_wake.wait(lock, woken);
+                break;
+            }
+        }
+        lock.unlock();
+        unload();
+    }
+
+    void handle(Command &command)
+    {
+        switch (command.kind) {
+        case Command::Open:
+            unload();
+            m_source = std::move(command.source);
+            m_sampleRate = command.sampleRate;
+            m_playId = command.playId;
+            m_subscription = m_source->subscribe([this] { sourceChanged(); });
+            // Reset before the segment is published: once the main thread sees this play's segment, these are its own.
+            m_player.m_lengthFrames.store(0, std::memory_order_relaxed);
+            m_player.m_decodable.store(0, std::memory_order_relaxed);
+            beginSegment(command.generation, 0);
+            break;
+        case Command::Seek:
+            if (!m_source || m_failed || command.generation != m_player.m_generation.load(std::memory_order_acquire)) {
+                break; // a newer jump is queued behind this one
+            }
+            m_atEnd = false;
+            m_pendingSeek = command.frame;
+            beginSegment(command.generation, command.frame);
+            break;
+        case Command::Close:
+            unload();
+            break;
+        }
+    }
+
+    void unload()
+    {
+        m_subscription.reset(); // waits for a listener running on the download's thread
         m_decoder.close();
-        m_source = source;
-        m_sampleRate = sampleRate;
-        m_playId = playId;
+        m_source.reset();
         m_opened = false;
         m_failed = false;
         m_atEnd = false;
         m_waitForComplete = false;
         m_pendingSeek.reset();
-        // Reset before the segment is published: once the main thread sees this play's segment, these are its own.
-        m_player.m_lengthFrames.store(0, std::memory_order_relaxed);
-        m_player.m_decodable.store(0, std::memory_order_relaxed);
-        beginSegment(generation, 0);
-        m_timer->start();
-        fill();
     }
 
-    void seek(qint64 frame, qint64 generation)
-    {
-        if (!m_source || m_failed || generation != m_player.m_generation.load(std::memory_order_acquire)) {
-            return; // a newer jump is queued behind this one
-        }
-        m_atEnd = false;
-        m_pendingSeek = frame;
-        beginSegment(generation, frame);
-        m_timer->start();
-        fill();
-    }
-
-    void close()
-    {
-        m_timer->stop();
-        m_decoder.close();
-        m_source.reset();
-        m_opened = false;
-        m_pendingSeek.reset();
-    }
-
-private:
     // Starts a new stretch at the ring's write position. The end mark is cleared before the discard mark moves, so the
     // callback never pairs the new discard mark with the previous stretch's end.
     void beginSegment(qint64 generation, qint64 firstFrame)
@@ -121,19 +217,22 @@ private:
 
     bool isCurrent() const { return m_generation == m_player.m_generation.load(std::memory_order_acquire); }
 
-    void fill()
+    Next fill()
     {
         if (!m_source || m_failed || m_atEnd || !isCurrent()) {
-            return;
+            return Next::Idle; // nothing loaded, finished, or a newer command is on its way
         }
         if (!m_opened && !openDecoder()) {
-            return;
+            return m_failed ? Next::Idle : Next::WaitForData;
         }
         if (m_pendingSeek && !applySeek(*m_pendingSeek)) {
-            return;
+            return m_failed ? Next::Idle : Next::WaitForData;
         }
         m_player.m_decodable.store(m_decoder.decodableFrames(), std::memory_order_relaxed);
-        while (m_ring.freeSpace() >= m_buffer.size() && isCurrent()) {
+        while (isCurrent()) {
+            if (m_ring.freeSpace() < m_buffer.size()) {
+                return Next::RingFull;
+            }
             const audio::ReadResult result = m_decoder.read(m_buffer.data(), kChunkFrames);
             if (result.frames > 0) {
                 m_ring.write(m_buffer.data(), static_cast<std::size_t>(result.frames) * kChannels);
@@ -142,15 +241,16 @@ private:
             case audio::DecodeStatus::Ok:
                 break;
             case audio::DecodeStatus::NeedMoreData:
-                return; // the download hasn't caught up: try again on the next tick
+                return Next::WaitForData;
             case audio::DecodeStatus::EndOfStream:
                 reachedEnd();
-                return;
+                return Next::Idle;
             case audio::DecodeStatus::Error:
                 fail(m_decoder.error().message);
-                return;
+                return Next::Idle;
             }
         }
+        return Next::Continue; // a newer command arrived mid-fill
     }
 
     bool openDecoder()
@@ -171,7 +271,7 @@ private:
         case audio::Decoder::OpenStatus::NeedsCompleteFile:
             if (!m_waitForComplete) {
                 m_waitForComplete = true;
-                tellPlayer(&Player::decoderWaiting, Player::tr("This file plays once it has downloaded."));
+                m_player.postNote({m_playId, false, Player::tr("This file plays once it has downloaded.")});
             }
             return false;
         case audio::Decoder::OpenStatus::Failed:
@@ -206,7 +306,6 @@ private:
     void reachedEnd()
     {
         m_atEnd = true;
-        m_timer->stop();
         m_segment.end = m_ring.writePosition();
         m_player.publishSegment(m_segment);
         m_player.m_endPosition.store(m_segment.end, std::memory_order_release);
@@ -219,25 +318,25 @@ private:
     void fail(const QString &message)
     {
         m_failed = true;
-        m_timer->stop();
         m_decoder.close();
         m_opened = false;
-        tellPlayer(&Player::decoderFailed, message.isEmpty() ? Player::tr("This file can't be played.") : message);
-    }
-
-    // Runs `method` on the player's thread, tagged with this play's id so news about a replaced track is dropped.
-    void tellPlayer(void (Player::*method)(qint64, const QString &), const QString &message)
-    {
-        QMetaObject::invokeMethod(
-            &m_player, [player = &m_player, method, playId = m_playId, message] { (player->*method)(playId, message); },
-            Qt::QueuedConnection);
+        m_player.postNote({m_playId, true, message.isEmpty() ? Player::tr("This file can't be played.") : message});
     }
 
     Player &m_player;
     RingBuffer &m_ring;
-    QTimer *m_timer;
+
+    // Shared with the main thread and the source's listener, under m_mutex.
+    std::mutex m_mutex;
+    std::condition_variable m_wake;
+    std::deque<Command> m_commands;
+    bool m_sourceChanged = false;
+    bool m_quit = false;
+
+    // Decoder thread only.
     audio::Decoder m_decoder;
     std::shared_ptr<audio::ByteSource> m_source;
+    audio::Subscription m_subscription;
     std::vector<float> m_buffer;
     std::optional<qint64> m_pendingSeek;
     Player::Segment m_segment;
@@ -248,6 +347,8 @@ private:
     bool m_failed = false;
     bool m_atEnd = false;
     bool m_waitForComplete = false;
+
+    std::thread m_thread; // last: starts once everything above exists
 };
 
 Player::Player(std::unique_ptr<AudioOutput> output, QObject *parent)
@@ -257,16 +358,11 @@ Player::Player(std::unique_ptr<AudioOutput> output, QObject *parent)
     , m_ring(std::make_unique<RingBuffer>(floatsFor(kRingSeconds, m_sampleRate)))
     , m_startHold(std::min(floatsFor(kStartHoldSeconds, m_sampleRate), m_ring->capacity() / 2))
     , m_rebufferHold(std::min(floatsFor(kRebufferSeconds, m_sampleRate), m_ring->capacity() / 2))
-    , m_worker(new DecodeWorker(*this, *m_ring))
     , m_poll(new QTimer(this))
     , m_idleOutput(new QTimer(this))
+    , m_worker(std::make_unique<DecodeWorker>(*this, *m_ring))
 {
     qRegisterMetaType<PlayerTrack>();
-    m_thread.setObjectName(u"selecta-decoder"_s);
-    m_worker->moveToThread(&m_thread);
-    connect(&m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
-    m_thread.start();
-
     m_poll->setInterval(kPollIntervalMs);
     connect(m_poll, &QTimer::timeout, this, &Player::poll);
     m_idleOutput->setSingleShot(true);
@@ -280,9 +376,7 @@ Player::Player(std::unique_ptr<AudioOutput> output, QObject *parent)
 Player::~Player()
 {
     m_output->stop(); // the callback reads members: stop it first
-    QMetaObject::invokeMethod(m_worker, &DecodeWorker::close, Qt::BlockingQueuedConnection);
-    m_thread.quit();
-    m_thread.wait(); // deletes the worker (QThread::finished → deleteLater)
+    m_worker.reset(); // joins the decoder thread
 }
 
 qint64 Player::beginRequest(qint64 frame)
@@ -335,12 +429,7 @@ void Player::play(std::shared_ptr<audio::ByteSource> source, const PlayerTrack &
     if (!ensureOutput()) {
         return;
     }
-    QMetaObject::invokeMethod(
-        m_worker,
-        [worker = m_worker, source = m_source, rate = m_sampleRate, playId, generation] {
-            worker->open(source, rate, playId, generation);
-        },
-        Qt::QueuedConnection);
+    m_worker->open(m_source, m_sampleRate, playId, generation);
     m_poll->start();
 }
 
@@ -391,7 +480,7 @@ void Player::stop()
 {
     beginRequest(0);
     ++m_playId;
-    QMetaObject::invokeMethod(m_worker, &DecodeWorker::close, Qt::QueuedConnection);
+    m_worker->close();
     m_output->stop();
     m_poll->stop();
     m_source.reset();
@@ -416,8 +505,7 @@ void Player::seek(double seconds)
         frame = std::min(frame, length);
     }
     const qint64 generation = beginRequest(frame);
-    QMetaObject::invokeMethod(
-        m_worker, [worker = m_worker, frame, generation] { worker->seek(frame, generation); }, Qt::QueuedConnection);
+    m_worker->seek(frame, generation);
     if (m_state == State::Ended) {
         m_paused.store(false, std::memory_order_relaxed);
         if (!ensureOutput()) {
@@ -518,6 +606,10 @@ void Player::render(float *destination, int frames)
 
 void Player::poll()
 {
+    takeDecoderNotes();
+    if (!isActive()) {
+        return; // a note just failed the track
+    }
     const Segment current = segment();
     const bool ownSegment = current.playId == m_playId;
     if (ownSegment) {
@@ -586,34 +678,44 @@ void Player::setDetail(const QString &detail)
     }
 }
 
-void Player::decoderFailed(qint64 playId, const QString &message)
+void Player::takeDecoderNotes()
 {
-    if (playId != m_playId || !isActive()) {
-        return; // about a track that has since been replaced
+    std::vector<DecoderNote> notes;
+    {
+        const std::scoped_lock lock(m_notesMutex);
+        notes.swap(m_notes);
     }
-    m_error = message;
-    m_output->stop();
-    setDetail({});
-    setState(State::Failed);
-}
-
-void Player::decoderWaiting(qint64 playId, const QString &message)
-{
-    if (playId == m_playId && !m_started) {
-        setDetail(message);
+    for (const DecoderNote &note : notes) {
+        if (note.playId != m_playId || !isActive()) {
+            continue; // about a track that has since been replaced
+        }
+        if (note.failed) {
+            m_error = note.message;
+            m_output->stop();
+            setDetail({});
+            setState(State::Failed);
+        } else if (!m_started) {
+            setDetail(note.message);
+        }
     }
 }
 
 Player::Segment Player::segment() const
 {
-    const QMutexLocker lock(&m_segmentMutex);
+    const std::scoped_lock lock(m_segmentMutex);
     return m_segment;
 }
 
 void Player::publishSegment(const Segment &segment)
 {
-    const QMutexLocker lock(&m_segmentMutex);
+    const std::scoped_lock lock(m_segmentMutex);
     m_segment = segment;
+}
+
+void Player::postNote(DecoderNote note)
+{
+    const std::scoped_lock lock(m_notesMutex);
+    m_notes.push_back(std::move(note));
 }
 
 } // namespace selecta::playback

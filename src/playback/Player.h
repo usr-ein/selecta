@@ -6,15 +6,15 @@
 
 #include <QElapsedTimer>
 #include <QMetaType>
-#include <QMutex>
 #include <QObject>
 #include <QString>
-#include <QThread>
 
 #include <atomic>
 #include <cstddef>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <vector>
 
 class QTimer;
 
@@ -41,8 +41,8 @@ struct PlayerTrack
 // mark. Ring positions only grow, so a mark names one sample for good.
 //
 // Threading: the API is for the main thread. Decoding runs on the player's own thread, the audio callback on the
-// system's audio thread. They share the ring, atomics, and the current stretch's bookkeeping under a mutex the audio
-// thread never takes.
+// system's audio thread. They share the ring, atomics, and a few mutex-guarded hand-offs the audio thread never
+// touches. Only standard primitives cross threads (no queued Qt events), so ThreadSanitizer sees every edge.
 class Player : public QObject
 {
     Q_OBJECT
@@ -115,24 +115,30 @@ private:
         std::size_t end = kOpenEnd; // ring position after its last sample, once the decoder reached the end
     };
 
+    // News from the decoder thread, picked up by poll().
+    struct DecoderNote
+    {
+        qint64 playId = 0;
+        bool failed = false; // otherwise: why nothing plays yet
+        QString message;
+    };
+
     qint64 beginRequest(qint64 frame);
     bool ensureOutput();
     void render(float *destination, int frames); // audio thread
     void poll();                                 // main thread, while active
     void setState(State state);
     void setDetail(const QString &detail);
-    void decoderFailed(qint64 playId, const QString &message);
-    void decoderWaiting(qint64 playId, const QString &message);
+    void takeDecoderNotes();
     Segment segment() const;
     void publishSegment(const Segment &segment); // decoder thread
+    void postNote(DecoderNote note);             // decoder thread
 
     std::unique_ptr<AudioOutput> m_output;
     int m_sampleRate;
     std::unique_ptr<RingBuffer> m_ring;
     std::size_t m_startHold;    // floats buffered before audio starts after a jump
     std::size_t m_rebufferHold; // floats buffered before audio resumes after running dry
-    QThread m_thread;
-    DecodeWorker *m_worker; // lives on m_thread
     QTimer *m_poll;
     QTimer *m_idleOutput; // stops the output a while after the end or a pause, so the device can sleep
     std::shared_ptr<audio::ByteSource> m_source;
@@ -149,8 +155,10 @@ private:
     bool m_started = false;      // audio of this play() has been heard
     QElapsedTimer m_waitingFor;  // how long the audio callback has been holding for data
 
-    mutable QMutex m_segmentMutex;
+    mutable std::mutex m_segmentMutex;
     Segment m_segment;
+    std::mutex m_notesMutex;
+    std::vector<DecoderNote> m_notes;
 
     // Shared with the decoder thread and the audio callback.
     std::atomic<qint64> m_generation{0};              // bumped by every jump: the decoder's older work is stale
@@ -167,6 +175,8 @@ private:
     float m_currentGain = 0.0F; // ramps towards m_gain (or 0 when pausing) so nothing clicks
     bool m_hold = true;
     std::size_t m_holdFloats = 0;
+
+    std::unique_ptr<DecodeWorker> m_worker; // last: its thread uses the members above
 };
 
 } // namespace selecta::playback
