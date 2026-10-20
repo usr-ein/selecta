@@ -14,7 +14,7 @@ target_link_libraries(selecta-cli PRIVATE selecta_base selecta_governor Qt6::Net
 file(GLOB _selecta_cli_core CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/commands/core/*.cpp")
 target_sources(selecta-cli PRIVATE ${_selecta_cli_core})
 
-foreach(_library slsk meta match audio convert collection)
+foreach(_library slsk meta match audio convert collection share)
     if(TARGET selecta_${_library})
         file(GLOB _selecta_cli_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/commands/${_library}/*.cpp")
         target_sources(selecta-cli PRIVATE ${_selecta_cli_sources})

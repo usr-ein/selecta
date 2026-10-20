@@ -11,6 +11,7 @@ library agent designs the details inside it and builds it.
 | Audio analysis and conversion | [media.md](media.md) | `src/audio/`, `src/convert/`, `tests/audio/`, `tests/convert/` | `lib/media` |
 | Name matching | [match.md](match.md) | `src/match/`, `tests/match/` | `lib/match` |
 | Collection scanner | [collection.md](collection.md) | `src/collection/`, `tests/collection/` | `lib/collection` |
+| Share index and upload queue | [share.md](share.md) | `src/share/`, `tests/share/` | `lib/share` |
 
 ## Rules for every library agent
 
