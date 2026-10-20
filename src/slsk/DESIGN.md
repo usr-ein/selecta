@@ -198,9 +198,11 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
   - Public headers and this design (S1–S5 API, `Client`).
   - S1 codec: `Codec`, `Zlib`, `Types`, the three message families, `Frame`; 125 tests; five libFuzzer targets
     (`tests/fuzz/slsk/`, 60 s smoke clean). Merged into main as `9f95706`.
-  - S2 `ServerSession` with `FakeServer` (`tests/slsk/fixtures/`): login, burst, keepalive, every end reason, notices,
-    PM acks, rooms, budgeted sends; 34 tests (the connect-timeout one skips on macOS, which completes connections
-    past a full backlog).
-- **Next:** S3 `PeerNetwork` (implementation written, kept out of the build until its tests with `FakePeer` pass),
-  then S4 transfers, S5 distributed, S6 devenv, S7 CLI.
+  - S2 `ServerSession` with `FakeServer` (`tests/slsk/fixtures/`): 34 tests (the connect-timeout one skips on macOS,
+    which completes connections past a full backlog). Merged into main.
+  - S3 `PeerNetwork` with `FakePeer` and `TestPermits`: listener, direct/indirect race, dial-backs, requests and
+    answers, caps, timers, socket cap, `F` hand-off and `D` traffic; 44 tests. `MetaTypes` registers every signal type.
+- **Next:** S4 transfers (downloads with resume, previews through a growing-file device, uploads), then S5
+  distributed, then main's `tools/devnet/` request (FakeServer + FakePeers as a local network for manual runs), S6
+  devenv, S7 CLI.
 - **Open questions:** none blocking.

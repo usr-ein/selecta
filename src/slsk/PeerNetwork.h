@@ -103,9 +103,11 @@ public:
 
     // --- listener ----------------------------------------------------------------------------------------------------
 
-    // Listens on all IPv4 interfaces. Port 0 picks a free port (tests). False, with `error` set, when the port can't be
-    // bound. The caller reports the port to the server (ServerSession::setListenPort()).
+    // Listens on all IPv4 interfaces (the protocol is IPv4 only). Port 0 picks a free port. False, with `error` set,
+    // when the port can't be bound. The caller reports the port to the server (ServerSession::setListenPort()).
     bool listen(quint16 port, QString *error = nullptr);
+    // Listens on one address only (tests use loopback).
+    bool listen(quint16 port, const QHostAddress &address, QString *error = nullptr);
     void stopListening();
     bool isListening() const;
     quint16 listenPort() const;
@@ -133,7 +135,7 @@ public:
     // --- generic `P` sends (TransferManager) -------------------------------------------------------------------------
 
     // Sends a framed peer message, opening a connection if needed.
-    void sendPeerMessage(const QString &username, const QByteArray &frame, ConnectPurpose purpose,
+    void sendPeerMessage(const QString &username, const QByteArray &bytes, ConnectPurpose purpose,
                          SendCallback done = {});
     // True while a `P` connection to `username` is established or being set up.
     bool hasPeerConnection(const QString &username) const;
@@ -153,7 +155,7 @@ public:
     // Connects to a parent candidate at a known address: direct dial raced against ConnectToPeer (purpose
     // Distributed). distributedConnected() or distributedConnectFailed() follows.
     void openDistributedConnection(const QString &username, const QHostAddress &address, quint16 port);
-    void sendDistributedMessage(const QString &username, const QByteArray &frame);
+    void sendDistributedMessage(const QString &username, const QByteArray &bytes);
     void closeDistributedConnection(const QString &username);
     // Whether to dial back when `username` asks for a `D` connection through the server. Without a filter, refused.
     void setDistributedConnectionFilter(std::function<bool(const QString &username)> filter);
