@@ -3,7 +3,10 @@
 
 #include "app/Format.h"
 
+#include <QAccessible>
+#include <QAccessibleWidget>
 #include <QFontDatabase>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -92,16 +95,111 @@ void label(QPainter &painter, const QString &text, QPointF anchor, bool alignRig
     painter.drawText(box, Qt::AlignCenter, text);
 }
 
+// What assistive technologies see of the waveform (UI-5): a slider over the track, valued in seconds, that steps as
+// Left and Right do. Created by Qt's accessibility on demand, through the factory below; it holds no state of its own.
+class WaveformAccessible : public QAccessibleWidget, public QAccessibleValueInterface
+{
+public:
+    explicit WaveformAccessible(WaveformView *view)
+        : QAccessibleWidget(view, QAccessible::Slider)
+    {
+    }
+
+    void *interface_cast(QAccessible::InterfaceType type) override
+    {
+        if (type == QAccessible::ValueInterface) {
+            return static_cast<QAccessibleValueInterface *>(this);
+        }
+        return QAccessibleWidget::interface_cast(type);
+    }
+
+    QString text(QAccessible::Text type) const override
+    {
+        switch (type) {
+        case QAccessible::Value:
+            return view()->positionText();
+        case QAccessible::Description:
+            return view()->detailText();
+        default:
+            return QAccessibleWidget::text(type);
+        }
+    }
+
+    // macOS's bridge hands VoiceOver currentValue().toString() as the slider's value, so there it is the words
+    // ("1:23 of 6:12"); other platforms' bridges want the number of seconds.
+    QVariant currentValue() const override
+    {
+#ifdef Q_OS_MACOS
+        return view()->positionText();
+#else
+        return view()->position();
+#endif
+    }
+    void setCurrentValue(const QVariant &value) override
+    {
+        bool ok = false;
+        const double seconds = value.toDouble(&ok);
+        if (ok) {
+            view()->step(seconds - view()->position());
+        }
+    }
+    QVariant maximumValue() const override { return view()->duration(); }
+    QVariant minimumValue() const override { return 0.0; }
+    QVariant minimumStepSize() const override { return WaveformView::kStepSeconds; }
+
+    QStringList actionNames() const override
+    {
+        return QStringList{increaseAction(), decreaseAction()} + QAccessibleWidget::actionNames();
+    }
+    void doAction(const QString &name) override
+    {
+        if (name == increaseAction()) {
+            view()->step(WaveformView::kStepSeconds);
+        } else if (name == decreaseAction()) {
+            view()->step(-WaveformView::kStepSeconds);
+        } else {
+            QAccessibleWidget::doAction(name);
+        }
+    }
+    QStringList keyBindingsForAction(const QString &name) const override
+    {
+        if (name == increaseAction()) {
+            return {QKeySequence(Qt::Key_Right).toString(QKeySequence::NativeText)};
+        }
+        if (name == decreaseAction()) {
+            return {QKeySequence(Qt::Key_Left).toString(QKeySequence::NativeText)};
+        }
+        return QAccessibleWidget::keyBindingsForAction(name);
+    }
+
+private:
+    WaveformView *view() const { return static_cast<WaveformView *>(widget()); }
+};
+
+QAccessibleInterface *waveformAccessible(const QString &key, QObject *object)
+{
+    auto *view = qobject_cast<WaveformView *>(object);
+    if (view != nullptr && key == QLatin1StringView(WaveformView::staticMetaObject.className())) {
+        return new WaveformAccessible(view);
+    }
+    return nullptr;
+}
+
 } // namespace
 
 WaveformView::WaveformView(QWidget *parent)
     : QWidget(parent)
 {
+    static const bool registered = [] {
+        QAccessible::installFactory(waveformAccessible);
+        return true;
+    }();
+    Q_UNUSED(registered)
     setObjectName(u"player.waveform"_s);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setMouseTracking(true);
+    setFocusPolicy(Qt::TabFocus); // a click leaves focus in the list, whose arrow keys keep choosing tracks
     setAccessibleName(tr("Waveform"));
-    setAccessibleDescription(tr("Drag the zoomed view, or click the overview, to move through the track."));
 }
 
 QSize WaveformView::sizeHint() const
@@ -129,6 +227,8 @@ void WaveformView::setDuration(double seconds)
         m_duration = duration;
         m_overviewCache = {};
         update();
+        QAccessibleValueChangeEvent event(this, positionText());
+        QAccessible::updateAccessibility(&event);
     }
 }
 
@@ -156,8 +256,14 @@ void WaveformView::setMessage(const QString &message)
     }
 }
 
+void WaveformView::setSource(const QString &source)
+{
+    m_source = source;
+}
+
 void WaveformView::clear()
 {
+    m_source.clear();
     m_waveform = {};
     m_gain = {1.0F, 1.0F, 1.0F};
     m_duration = 0.0;
@@ -185,6 +291,51 @@ double WaveformView::duration() const
         return m_duration;
     }
     return m_waveform.isComplete() ? m_waveform.durationSeconds() : 0.0;
+}
+
+void WaveformView::step(double seconds)
+{
+    const double length = duration();
+    if (length <= 0.0 || m_drag != Drag::None) {
+        return;
+    }
+    requestSeek(std::clamp(m_position + seconds, 0.0, length));
+}
+
+void WaveformView::requestSeek(double seconds)
+{
+    m_position = seconds; // until the player reports the new position
+    Q_EMIT seekRequested(seconds);
+    update();
+    // Only seeks are told: the position moving while it plays would have VoiceOver read it out every second.
+    QAccessibleValueChangeEvent event(this, positionText());
+    QAccessible::updateAccessibility(&event);
+}
+
+QString WaveformView::positionText() const
+{
+    const double length = duration();
+    if (length <= 0.0 && m_waveform.isNull()) {
+        return m_message.isEmpty() ? tr("Nothing playing") : m_message;
+    }
+    const QString position = format::clock(shownPosition());
+    return length > 0.0 ? tr("%1 of %2").arg(position, format::clock(length)) : position;
+}
+
+QString WaveformView::detailText() const
+{
+    QStringList parts;
+    if (!m_source.isEmpty()) {
+        parts.append(m_source + u'.');
+    }
+    const double length = duration();
+    if (m_buffered >= 0.0 && length > 0.0 && m_buffered < length) {
+        parts.append(tr("%1 % downloaded.").arg(static_cast<int>(std::floor(m_buffered / length * 100.0))));
+    }
+    if (length > 0.0) {
+        parts.append(tr("Left and Right arrows move 5 seconds."));
+    }
+    return parts.join(u' ');
 }
 
 double WaveformView::shownPosition() const
@@ -358,6 +509,13 @@ void WaveformView::paintEvent(QPaintEvent *event)
         painter.drawImage(overview.topLeft(), m_overviewCache);
         paintOverviewOverlay(painter, overview);
     }
+
+    if (hasFocus()) { // the keyboard's focus, as macOS rings a focused control
+        painter.setRenderHint(QPainter::Antialiasing, false);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(palette().color(QPalette::Highlight), 2));
+        painter.drawRect(QRectF(rect()).adjusted(1, 1, -1, -1));
+    }
 }
 
 void WaveformView::paintDetailOverlay(QPainter &painter, QRect rect, double from, double to) const
@@ -513,10 +671,32 @@ void WaveformView::mouseReleaseEvent(QMouseEvent *event)
     m_dragPosition.reset();
     unsetCursor();
     if (target) {
-        m_position = *target; // until the player reports the new position
-        Q_EMIT seekRequested(*target);
+        requestSeek(*target);
     }
     update();
+}
+
+void WaveformView::keyPressEvent(QKeyEvent *event)
+{
+    const Qt::KeyboardModifiers modifiers = event->modifiers() & ~Qt::KeypadModifier;
+    if (modifiers == Qt::NoModifier && (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)) {
+        step(event->key() == Qt::Key_Left ? -kStepSeconds : kStepSeconds);
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
+void WaveformView::focusInEvent(QFocusEvent *event)
+{
+    update();
+    QWidget::focusInEvent(event);
+}
+
+void WaveformView::focusOutEvent(QFocusEvent *event)
+{
+    update();
+    QWidget::focusOutEvent(event);
 }
 
 void WaveformView::leaveEvent(QEvent *event)

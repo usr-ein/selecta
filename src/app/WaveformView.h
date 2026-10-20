@@ -19,7 +19,9 @@ namespace selecta::app {
 // front; the overview stacked from the bottom.
 //
 // It only draws what it is given. Clicking or dragging the overview, or dragging the zoomed view, asks for a seek
-// when the button is released. Main thread.
+// when the button is released; with focus (Tab), Left and Right ask for one 5 seconds away. VoiceOver sees a slider
+// (UI-5, WaveformAccessible in the .cpp): "1:23 of 6:12", the source and how much has downloaded, and steps it as the
+// arrow keys do. Main thread.
 class WaveformView : public QWidget
 {
     Q_OBJECT
@@ -36,11 +38,24 @@ public:
     void setBuffered(double seconds);
     // Shown in the zoomed view when there is nothing to draw.
     void setMessage(const QString &message);
+    // Where the audio comes from ("Preview from vinyl_ghost"), for VoiceOver; it is on screen above the waveform.
+    void setSource(const QString &source);
     void clear();
 
     double position() const { return m_position; }
+    // The track's length as far as it is known: the player's, else the complete analysis's; 0 while unknown.
+    double duration() const;
+    // Asks for a seek `seconds` away from the position, kept within the track; nothing without a length.
+    void step(double seconds);
+    // What VoiceOver reads as the value, "1:23 of 6:12", and as the description: the source, the part downloaded
+    // and the keys.
+    QString positionText() const;
+    QString detailText() const;
+
     // The span the zoomed view shows.
     static constexpr double kZoomSeconds = 8.0;
+    // One press of Left or Right, as the player bar's 5-second buttons.
+    static constexpr double kStepSeconds = 5.0;
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
@@ -56,6 +71,9 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void changeEvent(QEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
 
 private:
     // Band levels for one pixel column, normalised for drawing (0…1); low < 0 means "no data here".
@@ -69,7 +87,7 @@ private:
 
     QRect detailRect() const;
     QRect overviewRect() const;
-    double duration() const;
+    void requestSeek(double seconds);
     double shownPosition() const;
     double timeAtOverview(int x) const;
     Levels levelsBetween(double from, double to) const;
@@ -86,6 +104,7 @@ private:
     double m_position = 0.0;
     double m_buffered = -1.0;
     QString m_message;
+    QString m_source;
     QImage m_overviewCache; // rebuilt when the waveform, length or size changes
     Drag m_drag = Drag::None;
     int m_dragStartX = 0;
