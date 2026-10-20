@@ -65,8 +65,7 @@ Governor::Governor(const base::Clock &clock, Options options, QObject *parent)
     , m_userInfos(clock, limits::kUserInfoBurst, limits::kUserInfoRefill)
     , m_folderContents(clock, limits::kFolderContentsBurst, limits::kFolderContentsRefill)
     , m_placeInQueue(clock, limits::kPlaceInQueueBurst, limits::kPlaceInQueueRefill)
-    , m_privateMessages(clock, 1, limits::kMessageSpacing)
-    , m_roomMessages(clock, 1, limits::kMessageSpacing)
+    , m_messages(clock, 1, limits::kMessageSpacing)
     , m_spotify(clock, limits::kSpotifyBurst, limits::kSpotifyRefill)
     , m_musicBrainz(clock, limits::kMusicBrainzBurst, limits::kMusicBrainzRefill)
     , m_coverArt(clock, limits::kCoverArtBurst, limits::kCoverArtRefill)
@@ -137,9 +136,8 @@ Decision Governor::decide(Operation operation, const Request &request)
     case Operation::FolderContents:
         return decideTimed(operation, m_folderContents, u"Folder requests"_s);
     case Operation::PrivateMessage:
-        return decideMessage(operation, request, m_privateMessages);
-    case Operation::RoomMessage:
-        return decideMessage(operation, request, m_roomMessages);
+    case Operation::RoomMessage: // one budget for both (references/soulseek-protocol.md §12.7)
+        return decideMessage(operation, request, m_messages);
     case Operation::SpotifyRequest:
         return decideTimed(operation, m_spotify, u"Spotify requests"_s);
     case Operation::MusicBrainzRequest:

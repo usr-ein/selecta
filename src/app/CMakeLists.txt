@@ -39,6 +39,7 @@ qt_add_library(selecta_app STATIC
     views/InboxView.h views/InboxView.cpp
     views/MessagesView.h views/MessagesView.cpp
     views/ReleasePickerDialog.h views/ReleasePickerDialog.cpp
+    views/RoomsView.h views/RoomsView.cpp
     views/SearchInspector.h views/SearchInspector.cpp
     views/SearchView.h views/SearchView.cpp
     views/SettingsView.h views/SettingsView.cpp

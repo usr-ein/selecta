@@ -237,6 +237,18 @@ TEST_F(GovernorTest, MessagesAreSpacedTwoSecondsApart)
               Refusal::RateLimited);
 }
 
+TEST_F(GovernorTest, RoomLinesShareTheMessageBudget)
+{
+    EXPECT_TRUE(governor.request(Operation::PrivateMessage, Request{.recipient = u"a"_s, .text = u"one"_s}).allowed());
+    EXPECT_EQ(governor.request(Operation::RoomMessage, Request{.recipient = u"nicotine"_s, .text = u"two"_s}).refusal,
+              Refusal::RateLimited);
+    clock.advance(3s);
+    EXPECT_TRUE(
+        governor.request(Operation::RoomMessage, Request{.recipient = u"nicotine"_s, .text = u"two"_s}).allowed());
+    EXPECT_EQ(governor.request(Operation::PrivateMessage, Request{.recipient = u"b"_s, .text = u"three"_s}).refusal,
+              Refusal::RateLimited);
+}
+
 TEST_F(GovernorTest, SameUserIsntBrowsedAgainSoon)
 {
     EXPECT_TRUE(governor.request(Operation::Browse, Request{.peer = u"Peer"_s}).allowed());

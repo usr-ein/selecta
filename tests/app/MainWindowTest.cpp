@@ -26,6 +26,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QStackedWidget>
@@ -853,4 +854,67 @@ TEST_F(MainWindowTest, MessagesShowConversationsWhatIsUnreadAndWhatArrives)
     EXPECT_EQ(people->model()->index(0, 1).data().toString(), u"Buddy"_s);
     EXPECT_EQ(people->model()->index(0, 2).data().toString(), u"Online"_s);
     EXPECT_EQ(people->model()->index(1, 1).data().toString(), u"Banned"_s);
+}
+
+TEST_F(MainWindowTest, RoomsShowWhatYoureInWhatIsUnreadAndWhoNamesYou)
+{
+    auto window = makeWindow();
+    Q_EMIT engine->roomListChanged({selecta::core::RoomListing{.name = u"dnb"_s, .users = 40},
+                                    selecta::core::RoomListing{.name = u"nicotine"_s, .users = 120}});
+    Q_EMIT engine->roomChanged(selecta::core::Room{.name = u"dnb"_s,
+                                                   .state = selecta::core::Room::State::Joined,
+                                                   .members = {u"lossless_lena"_s, u"selecta_test"_s},
+                                                   .unread = 3,
+                                                   .mentions = 1,
+                                                   .message = {}});
+    ASSERT_TRUE(window->navigateTo(u"rooms"_s));
+    EXPECT_EQ(window->currentSubtitle(), u"In 1 room · 3 unread"_s);
+    auto *list = window->findChild<QTreeView *>(u"rooms.list"_s);
+    ASSERT_NE(list, nullptr);
+    ASSERT_EQ(list->model()->rowCount(), 2);
+    EXPECT_EQ(list->model()->index(0, 0).data().toString(), u"nicotine"_s); // the busiest first
+    auto *joined = window->findChild<QTreeView *>(u"rooms.joined"_s);
+    ASSERT_NE(joined, nullptr);
+    ASSERT_EQ(joined->model()->rowCount(), 1);
+    EXPECT_EQ(joined->model()->index(0, 1).data().toString(), u"@ 3"_s);
+    auto *sidebar = window->findChild<QListView *>(u"sidebar.list"_s);
+    ASSERT_NE(sidebar, nullptr);
+    int count = 0;
+    for (int row = 0; row < sidebar->model()->rowCount(); ++row) {
+        if (sidebar->model()->index(row, 0).data(Qt::UserRole + 1).toString() == u"rooms"_s) {
+            count = sidebar->model()->index(row, 0).data(Qt::UserRole + 3).toInt();
+        }
+    }
+    EXPECT_EQ(count, 3);
+
+    // Opened, the room shows its members and the lines that come.
+    joined->setCurrentIndex(joined->model()->index(0, 0));
+    auto *name = window->findChild<QLabel *>(u"rooms.name"_s);
+    ASSERT_NE(name, nullptr);
+    EXPECT_EQ(name->text(), u"dnb"_s);
+    EXPECT_EQ(window->findChild<QLabel *>(u"rooms.details"_s)->text(), u"2 members"_s);
+    EXPECT_EQ(window->findChild<QListView *>(u"rooms.members"_s)->model()->rowCount(), 2);
+    Q_EMIT engine->roomLineAdded(u"dnb"_s, selecta::core::RoomLine{.atMs = QDateTime::currentMSecsSinceEpoch(),
+                                                                   .user = u"lossless_lena"_s,
+                                                                   .text = u"selecta_test: got the B-side?"_s,
+                                                                   .own = false,
+                                                                   .mention = true});
+    auto *lines = window->findChild<QTextBrowser *>(u"rooms.lines"_s);
+    ASSERT_NE(lines, nullptr);
+    EXPECT_TRUE(lines->toPlainText().contains(u"got the B-side?"_s));
+    // The window isn't active in the tests, so being named brings a notification.
+    auto *toasts = window->findChild<selecta::app::Toasts *>(u"toasts"_s);
+    ASSERT_NE(toasts, nullptr);
+    ASSERT_EQ(toasts->count(), 1);
+    EXPECT_EQ(toasts->texts().constFirst(), u"lossless_lena mentioned you in dnb\nselecta_test: got the B-side?"_s);
+
+    // A name nobody uses would create a room: Selecta asks first.
+    auto *filter = window->findChild<QLineEdit *>(u"rooms.filter"_s);
+    ASSERT_NE(filter, nullptr);
+    filter->setText(u"deep house"_s);
+    QTest::keyClick(filter, Qt::Key_Return);
+    auto *confirm = window->findChild<QMessageBox *>(u"rooms.createConfirm"_s);
+    ASSERT_NE(confirm, nullptr);
+    EXPECT_EQ(confirm->text(), u"Create the room “deep house”?"_s);
+    confirm->reject();
 }

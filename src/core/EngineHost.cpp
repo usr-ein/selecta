@@ -52,6 +52,10 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<QList<Conversation>>();
     qRegisterMetaType<ListedUser>();
     qRegisterMetaType<QList<ListedUser>>();
+    qRegisterMetaType<RoomListing>();
+    qRegisterMetaType<QList<RoomListing>>();
+    qRegisterMetaType<Room>();
+    qRegisterMetaType<RoomLine>();
     qRegisterMetaType<QList<WishlistItem>>();
     qRegisterMetaType<QList<SupersedeFlag>>();
     qRegisterMetaType<QList<ConverterItem>>();
@@ -190,6 +194,29 @@ void EngineHost::start()
         m_userLists = users;
         Q_EMIT userListsChanged(users);
     });
+    connect(engine, &Engine::roomListChanged, this, [this](const QList<RoomListing> &rooms) {
+        m_roomList = rooms;
+        Q_EMIT roomListChanged(rooms);
+    });
+    connect(engine, &Engine::roomChanged, this, [this](const Room &room) {
+        m_joinedRooms.insert(room.name, room);
+        Q_EMIT roomChanged(room);
+    });
+    connect(engine, &Engine::roomClosed, this, [this](const QString &room) {
+        m_joinedRooms.remove(room);
+        m_roomLines.remove(room);
+        Q_EMIT roomClosed(room);
+    });
+    connect(engine, &Engine::roomLineAdded, this, [this](const QString &room, const RoomLine &line) {
+        QList<RoomLine> &lines = m_roomLines[room];
+        lines.append(line);
+        if (lines.size() > RoomService::kKeptLines) {
+            lines.remove(0, lines.size() - RoomService::kKeptLines);
+        }
+        Q_EMIT roomLineAdded(room, line);
+    });
+    connect(engine, &Engine::roomRefused, this, &EngineHost::roomRefused);
+    connect(engine, &Engine::roomSaid, this, &EngineHost::roomSaid);
     connect(engine, &Engine::browseChanged, this, [this](const Browse &browse) {
         m_browses.insert(browse.peer, browse);
         Q_EMIT browseChanged(browse);
@@ -581,6 +608,57 @@ int EngineHost::unreadMessages() const
         unread += conversation.unread;
     }
     return unread;
+}
+
+void EngineHost::refreshRoomList()
+{
+    post([](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.rooms().refreshList();
+        }
+    });
+}
+
+void EngineHost::joinRoom(const QString &room)
+{
+    post([room](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.joinRoom(room);
+        }
+    });
+}
+
+void EngineHost::leaveRoom(const QString &room)
+{
+    post([room](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.rooms().leave(room);
+        }
+    });
+}
+
+void EngineHost::sayInRoom(const QString &room, const QString &text)
+{
+    post([room, text](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.sayInRoom(room, text);
+        }
+    });
+}
+
+void EngineHost::setViewingRoom(const QString &room)
+{
+    post([room](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.rooms().setViewing(room);
+        }
+    });
+}
+
+std::optional<Room> EngineHost::roomOf(const QString &room) const
+{
+    const auto it = m_joinedRooms.constFind(room);
+    return it == m_joinedRooms.constEnd() ? std::nullopt : std::optional(*it);
 }
 
 void EngineHost::browse(const QString &peer, bool refresh)

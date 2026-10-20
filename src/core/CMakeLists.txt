@@ -29,6 +29,7 @@ qt_add_library(selecta_core STATIC
     PeerStats.h PeerStats.cpp
     ReleaseJson.h ReleaseJson.cpp
     ResultAnnotator.h ResultAnnotator.cpp
+    RoomService.h RoomService.cpp
     SearchCache.h SearchCache.cpp
     SearchFilter.h SearchFilter.cpp
     SearchResults.h SearchResults.cpp

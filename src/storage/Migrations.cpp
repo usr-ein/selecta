@@ -282,6 +282,13 @@ constexpr std::array kMigrations{
             added_ms INTEGER NOT NULL
         ) STRICT;
     )sql"},
+    // Chat rooms open at quit (PRD NET-10): joined again at the next login.
+    Migration{14, R"sql(
+        CREATE TABLE joined_rooms (
+            name      TEXT PRIMARY KEY,
+            joined_ms INTEGER NOT NULL -- Unix time, ms
+        ) STRICT;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

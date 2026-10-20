@@ -294,6 +294,13 @@ bool Engine::start()
     connect(m_social.get(), &SocialService::listsChanged, this, &Engine::userListsChanged);
     connect(m_social.get(), &SocialService::bannedChanged, m_shares.get(), &ShareService::setBanned);
     m_shares->setBanned(m_social->banned());
+    // Chat rooms (NET-10).
+    m_rooms =
+        std::make_unique<RoomService>(*m_db, *m_governor, *m_network, *m_social, *m_activity, m_options.wallClock);
+    connect(m_rooms.get(), &RoomService::listChanged, this, &Engine::roomListChanged);
+    connect(m_rooms.get(), &RoomService::roomChanged, this, &Engine::roomChanged);
+    connect(m_rooms.get(), &RoomService::roomClosed, this, &Engine::roomClosed);
+    connect(m_rooms.get(), &RoomService::lineAdded, this, &Engine::roomLineAdded);
 
     // Browsing peers' shares (BRWS-1, BRWS-2).
     m_browse = std::make_unique<BrowseService>(*m_db, *m_governor, *m_network, m_options.wallClock);
@@ -374,6 +381,10 @@ bool Engine::start()
     Q_EMIT wishlistChanged(m_wishlist->items());
     Q_EMIT conversationsChanged(m_social->conversations());
     Q_EMIT userListsChanged(m_social->listed());
+    const QList<Room> rooms = m_rooms->rooms();
+    for (const Room &room : rooms) {
+        Q_EMIT roomChanged(room);
+    }
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -391,6 +402,7 @@ void Engine::stop()
     m_annotateTimer = nullptr;
     delete m_peerStatsTimer;
     m_peerStatsTimer = nullptr;
+    m_rooms.reset();
     m_social.reset();
     m_browse.reset();       // waits for an analysis in flight
     m_wishlist.reset();     // cancels its search in flight
@@ -503,6 +515,22 @@ void Engine::sendMessage(const QString &peer, const QString &text)
 {
     if (m_social) {
         Q_EMIT messageSent(peer, m_social->send(peer, text));
+    }
+}
+
+void Engine::joinRoom(const QString &room)
+{
+    if (m_rooms) {
+        if (const QString problem = m_rooms->join(room); !problem.isEmpty()) {
+            Q_EMIT roomRefused(room, problem);
+        }
+    }
+}
+
+void Engine::sayInRoom(const QString &room, const QString &text)
+{
+    if (m_rooms) {
+        Q_EMIT roomSaid(room, m_rooms->say(room, text));
     }
 }
 

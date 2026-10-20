@@ -14,6 +14,7 @@
 #include "core/MetaServices.h"
 #include "core/NetworkService.h"
 #include "core/PeerStats.h"
+#include "core/RoomService.h"
 #include "core/SearchCache.h"
 #include "core/SearchService.h"
 #include "core/ShareService.h"
@@ -172,6 +173,9 @@ public:
     // NET-7: sends a message (messageSent() says if it went); a conversation's messages (conversationLoaded()).
     void sendMessage(const QString &peer, const QString &text);
     void loadConversation(const QString &peer);
+    // NET-10: joining a room (roomRefused() says why not) and posting in it (roomSaid() says if it went).
+    void joinRoom(const QString &room);
+    void sayInRoom(const QString &room, const QString &text);
 
     // CACHE-2: the caches' sizes (cachesChanged()), and emptying them.
     void refreshCaches();
@@ -204,6 +208,7 @@ public:
     WishlistService &wishlist() { return *m_wishlist; }
     BrowseService &browse() { return *m_browse; }
     SocialService &social() { return *m_social; }
+    RoomService &rooms() { return *m_rooms; }
     storage::Database &database() { return *m_db; }
 
 Q_SIGNALS:
@@ -257,6 +262,13 @@ Q_SIGNALS:
     // What send() said: empty when the message went.
     void messageSent(const QString &peer, const QString &problem);
     void conversationLoaded(const QString &peer, const QList<selecta::core::ChatMessage> &messages);
+    // Chat rooms (RoomService's signals, forwarded).
+    void roomListChanged(const QList<selecta::core::RoomListing> &rooms);
+    void roomChanged(const selecta::core::Room &room);
+    void roomClosed(const QString &room);
+    void roomLineAdded(const QString &room, const selecta::core::RoomLine &line);
+    void roomRefused(const QString &room, const QString &problem);
+    void roomSaid(const QString &room, const QString &problem);
     // Browsing (BrowseService's signals, forwarded).
     void browseChanged(const selecta::core::Browse &browse);
     void browseClosed(const QString &peer);
@@ -317,6 +329,7 @@ private:
     std::unique_ptr<WishlistService> m_wishlist;
     std::unique_ptr<BrowseService> m_browse;
     std::unique_ptr<SocialService> m_social;
+    std::unique_ptr<RoomService> m_rooms;
     std::unique_ptr<YouTubePreviews> m_youtube;
     std::unique_ptr<ClipPreviews> m_clips;
     qint64 m_previewId = 0;             // the preview playing

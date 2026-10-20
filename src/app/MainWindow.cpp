@@ -14,13 +14,13 @@
 #include "app/views/CollectionView.h"
 #include "app/views/ConverterInspector.h"
 #include "app/views/ConverterView.h"
-#include "app/views/EmptyStateView.h"
 #include "app/views/GetTracksInspector.h"
 #include "app/views/GetTracksView.h"
 #include "app/views/HistoryView.h"
 #include "app/views/InboxInspector.h"
 #include "app/views/InboxView.h"
 #include "app/views/MessagesView.h"
+#include "app/views/RoomsView.h"
 #include "app/views/SearchInspector.h"
 #include "app/views/SearchView.h"
 #include "app/views/SharesView.h"
@@ -309,10 +309,6 @@ void MainWindow::addView(const QString &id, QWidget *widget, std::function<QStri
 
 void MainWindow::createViews()
 {
-    const auto emptyState = [this](const QString &symbol, const QString &fallback, const QString &title,
-                                   const QString &text, const QString &note) {
-        return new EmptyStateView(icons::symbol(symbol, fallback), title, text, note, m_stack);
-    };
     const auto fixed = [](const QString &text) { return [text] { return text; }; };
 
     createSearchView();
@@ -431,10 +427,7 @@ void MainWindow::createViews()
     connect(sharesView, &SharesView::browseRequested, this, &MainWindow::browsePeer);
     connect(sharesView, &SharesView::messageRequested, this, &MainWindow::messagePeer);
     createMessagesView();
-    addView(u"rooms"_s,
-            emptyState(u"person.3"_s, u"system-users"_s, tr("No rooms joined"),
-                       tr("Join a chat room to read and post."), tr("Not built yet (milestone M8).")),
-            fixed(tr("Not connected")));
+    createRoomsView();
     m_converterView = new ConverterView(m_services.engine, m_services.settings, m_stack);
     addView(u"converter"_s, m_converterView, [this] { return m_converterView->summary(); });
     m_inspector->addPanel(u"converter"_s, m_converterView->inspectorPanel());
@@ -551,6 +544,33 @@ void MainWindow::createMessagesView()
         QApplication::alert(this); // the Dock icon bounces once while Selecta is in the background
     });
     refreshUnread();
+}
+
+void MainWindow::createRoomsView()
+{
+    // Minimal chat rooms (NET-10): unread lines in the sidebar, a notification when someone names you.
+    m_roomsView = new RoomsView(m_services.engine, m_stack);
+    addView(u"rooms"_s, m_roomsView, [this] { return m_roomsView->summary(); });
+    connect(m_roomsView, &RoomsView::summaryChanged, this, [this] {
+        if (m_currentId == u"rooms"_s) {
+            refreshTitle();
+        }
+    });
+    connect(m_roomsView, &RoomsView::unreadChanged, this,
+            [this] { m_navModel->setCount(u"rooms"_s, m_roomsView->unread()); });
+    connect(m_roomsView, &RoomsView::browseRequested, this, &MainWindow::browsePeer);
+    connect(m_roomsView, &RoomsView::messageRequested, this, &MainWindow::messagePeer);
+    connect(&m_services.engine, &core::EngineHost::roomLineAdded, this,
+            [this](const QString &room, const core::RoomLine &line) {
+                if (!line.mention || m_roomsView->isReading(room)) {
+                    return;
+                }
+                m_toasts->show(tr("%1 mentioned you in %2").arg(line.user, room), line.text, Toasts::Kind::Info,
+                               {{tr("Show"), [this, room] {
+                                     navigateTo(u"rooms"_s);
+                                     m_roomsView->openRoom(room);
+                                 }}});
+            });
 }
 
 void MainWindow::refreshUnread()

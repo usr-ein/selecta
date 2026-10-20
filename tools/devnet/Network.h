@@ -86,6 +86,7 @@ private:
     struct Peer;
     void answerSearch(const Peer &peer, const slsk::fromserver::SearchRequest &request);
     void answerMessage(const QString &from, const slsk::toserver::MessageUser &message);
+    void answerRoomLine(const QString &from, const slsk::toserver::SayChatroom &line);
     void onPeerMessage(const Peer &peer, const QString &from, const slsk::PeerMessage &message);
     void connectLogging(const Peer &peer);
     void log(const QString &line);
@@ -94,6 +95,7 @@ private:
     NetworkOptions m_options;
     std::unique_ptr<slsk::testing::FakeServer> m_server;
     std::vector<std::unique_ptr<Peer>> m_peers;
+    QStringList m_roomPeers; // the peers in the network's room
     QRandomGenerator m_random;
     bool m_verbose = true;
 };

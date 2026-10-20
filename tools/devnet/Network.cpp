@@ -23,7 +23,8 @@ using slsk::testing::FakeServer;
 constexpr std::array kRefusals = {u"Too many files", u"Too many megabytes", u"Pending shutdown.", u"Banned"};
 constexpr qint64 kUncappedSpeed = qint64{10} * 1024 * 1024; // what a peer without a cap advertises
 constexpr qint64 kMinSearchDelayMs = 50;
-constexpr int kAnswerDelayMs = 1500; // before a peer answers a private message
+constexpr int kAnswerDelayMs = 1500;            // before a peer answers a private message or a room line
+constexpr const char *kRoom = "selecta-devnet"; // the room every peer sits in
 
 // The words of `text`, case-folded: runs of letters and digits.
 QStringList wordsOf(const QString &text)
@@ -137,6 +138,8 @@ DevNetwork::DevNetwork(NetworkOptions options, QObject *parent)
                 trace(u"server <- %1  %2"_s.arg(user, describe(message)));
                 if (const auto *written = std::get_if<slsk::toserver::MessageUser>(&message)) {
                     answerMessage(user, *written);
+                } else if (const auto *said = std::get_if<slsk::toserver::SayChatroom>(&message)) {
+                    answerRoomLine(user, *said);
                 }
             });
     connect(m_server.get(), &FakeServer::frameSent, this, [this](const QString &user, const QByteArray &frame) {
@@ -198,6 +201,9 @@ bool DevNetwork::addPeer(const LibraryPeer &library, QString *error)
     log(u"%1 shares %2 files (%3) at %4%5"_s.arg(library.username)
             .arg(library.fileCount())
             .arg(megabytes(library.totalBytes), speed, habit));
+    // Every peer sits in the network's own room, so the Rooms view has someone to talk to (NET-10).
+    m_server->joinRoomAs(library.username, QString::fromLatin1(kRoom));
+    m_roomPeers.append(library.username);
     m_peers.push_back(std::move(peer));
     return true;
 }
@@ -229,6 +235,21 @@ void DevNetwork::answerMessage(const QString &from, const slsk::toserver::Messag
     QTimer::singleShot(kAnswerDelayMs, this, [this, toClient = from, author = message.username, answer] {
         if (m_server->sendPrivateMessage(author, toClient, answer)) {
             log(u"%1 -> %2  private message answered"_s.arg(author, toClient));
+        }
+    });
+}
+
+void DevNetwork::answerRoomLine(const QString &from, const slsk::toserver::SayChatroom &line)
+{
+    // Someone in the room answers a line said there, naming its author, so mentions can be tried out too.
+    if (line.room != QLatin1StringView(kRoom) || m_roomPeers.isEmpty()) {
+        return;
+    }
+    const QString author = m_roomPeers.at(m_random.bounded(static_cast<int>(m_roomPeers.size())));
+    const QString answer = u"%1: heard you (an automatic answer from the local test network)"_s.arg(from);
+    QTimer::singleShot(kAnswerDelayMs, this, [this, author, room = line.room, answer] {
+        if (m_server->sayInRoom(author, room, answer)) {
+            log(u"%1 -> %2  answered in the room"_s.arg(author, room));
         }
     });
 }

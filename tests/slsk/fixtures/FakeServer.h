@@ -119,6 +119,10 @@ public:
     bool relayConnectToPeer(const QString &fromVirtual, const QString &toClient, ConnectionType type, quint32 token);
     bool relayCantConnectToPeer(quint32 token, const QString &toClient);
     bool sendPrivateMessage(const QString &from, const QString &toClient, const QString &text);
+    // A user who has no connection (a virtual user, say) joins a room or says a line in it; the logged-in members
+    // hear it as they would from a client. sayInRoom() is false when nobody logged in is in the room.
+    void joinRoomAs(const QString &username, const QString &room);
+    bool sayInRoom(const QString &from, const QString &room, const QString &text);
 
     QStringList loggedInUsers() const;
     bool isLoggedIn(const QString &username) const;

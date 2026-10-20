@@ -137,8 +137,7 @@ private:
     TokenBucket m_userInfos;
     TokenBucket m_folderContents;
     TokenBucket m_placeInQueue;
-    TokenBucket m_privateMessages;
-    TokenBucket m_roomMessages;
+    TokenBucket m_messages; // private messages and room lines together
     TokenBucket m_spotify;
     TokenBucket m_musicBrainz;
     TokenBucket m_coverArt;

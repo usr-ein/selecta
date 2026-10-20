@@ -126,6 +126,20 @@ public:
     std::optional<UserList> listOf(const QString &username) const;
     int unreadMessages() const;
 
+    // --- chat rooms (NET-10) ---
+    // Asks for the server's room list (at most once a minute): roomListChanged() brings it.
+    void refreshRoomList();
+    // Joins a room (roomRefused() says why not), leaves one, posts in one (roomSaid() says if it went).
+    void joinRoom(const QString &room);
+    void leaveRoom(const QString &room);
+    void sayInRoom(const QString &room, const QString &text);
+    // The room on screen, or none: its lines count as read.
+    void setViewingRoom(const QString &room);
+    QList<RoomListing> roomList() const { return m_roomList; }
+    QList<Room> joinedRooms() const { return m_joinedRooms.values(); }
+    std::optional<Room> roomOf(const QString &room) const;
+    QList<RoomLine> roomLines(const QString &room) const { return m_roomLines.value(room); }
+
     // --- browsing peers' shares (BRWS-1, BRWS-2) ---
     // Opens (or shows again) a peer's shares: browseChanged() follows.
     void browse(const QString &peer, bool refresh = false);
@@ -244,6 +258,12 @@ Q_SIGNALS:
     void messageSent(const QString &peer, const QString &problem);
     void conversationLoaded(const QString &peer, const QList<selecta::core::ChatMessage> &messages);
     void userListsChanged(const QList<selecta::core::ListedUser> &users);
+    void roomListChanged(const QList<selecta::core::RoomListing> &rooms);
+    void roomChanged(const selecta::core::Room &room);
+    void roomClosed(const QString &room);
+    void roomLineAdded(const QString &room, const selecta::core::RoomLine &line);
+    void roomRefused(const QString &room, const QString &problem);
+    void roomSaid(const QString &room, const QString &problem);
     void browseClosed(const QString &peer);
     void browseResultsReset(const QString &peer, const QList<selecta::core::SearchResult> &results);
     void wishlistFound(const selecta::core::WishlistItem &item, int newFiles);
@@ -274,6 +294,9 @@ private:
     QMap<QString, Browse> m_browses; // by peer
     QList<Conversation> m_conversations;
     QList<ListedUser> m_userLists;
+    QList<RoomListing> m_roomList;
+    QMap<QString, Room> m_joinedRooms;
+    QHash<QString, QList<RoomLine>> m_roomLines;         // the latest RoomService::kKeptLines of each room
     QHash<QString, QList<SearchResult>> m_browseResults; // by peer
     QList<ManualSearch> m_searches;                      // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;

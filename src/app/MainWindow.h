@@ -36,6 +36,7 @@ class ConverterView;
 class GetTracksView;
 class InboxView;
 class MessagesView;
+class RoomsView;
 class Inspector;
 class NavModel;
 class PlayerBar;
@@ -142,6 +143,7 @@ private:
     void createBrowseView();
     void previewBrowsedFile(bool toggleIfLoaded, core::PreviewSource source);
     void createMessagesView();
+    void createRoomsView();
     // The unread count in the sidebar and on the Dock icon (UI-6).
     void refreshUnread();
 
@@ -169,6 +171,7 @@ private:
     SearchView *m_searchView = nullptr;
     BrowseView *m_browseView = nullptr;
     MessagesView *m_messagesView = nullptr;
+    RoomsView *m_roomsView = nullptr;
     ConverterView *m_converterView = nullptr;
     quint64 m_searchRequest = 0; // the search the user asked for last, to show it when it opens
     QActionGroup *m_appearanceGroup = nullptr;

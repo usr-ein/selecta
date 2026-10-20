@@ -522,6 +522,33 @@ bool FakeServer::sendPrivateMessage(const QString &from, const QString &toClient
                                                             from, text, true});
 }
 
+void FakeServer::joinRoomAs(const QString &username, const QString &room)
+{
+    QStringList &members = m_rooms[room];
+    if (members.contains(username)) {
+        return;
+    }
+    const RoomMember member{username, UserStatus::Online, statsOf(username), 0, {}};
+    for (const QString &other : std::as_const(members)) {
+        if (Client *client = findLoggedIn(other)) {
+            writeMessage(*client, fromserver::RoomUserJoined{room, member});
+        }
+    }
+    members.append(username);
+}
+
+bool FakeServer::sayInRoom(const QString &from, const QString &room, const QString &text)
+{
+    bool heard = false;
+    const QStringList members = m_rooms.value(room);
+    for (const QString &member : members) {
+        if (Client *client = findLoggedIn(member)) {
+            heard = writeMessage(*client, fromserver::RoomMessage{room, from, text}) || heard;
+        }
+    }
+    return heard;
+}
+
 QStringList FakeServer::loggedInUsers() const
 {
     QStringList users;
