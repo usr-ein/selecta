@@ -412,3 +412,29 @@ TEST(FindingTimeLeft, FollowsTheGovernorsPace)
     // A wait longer than a refill is capped at a refill.
     EXPECT_EQ(selecta::core::findingTimeLeft(1, 0, 0, 10min), refill + collect);
 }
+
+TEST(SpreadChoice, ABatchSpreadsOverPeersWithTheSameFile)
+{
+    const auto choice = [](const QString &peer, double fit, bool freeSlot) {
+        selecta::core::FileChoice file;
+        file.peer = peer;
+        file.fit = fit;
+        file.fitsRelease = true;
+        file.freeSlot = freeSlot;
+        return file;
+    };
+    const selecta::core::FileChoice best = choice(u"lena"_s, 0.95, true);
+    const QList<selecta::core::FileChoice> alternatives = {choice(u"vera"_s, 0.93, true),
+                                                           choice(u"hugo"_s, 0.94, true)};
+    // Nobody loaded: the best stays.
+    EXPECT_EQ(selecta::core::spreadChoice(best, alternatives, {}), -1);
+    // Its peer already has one of the batch: the least loaded peer with as good a file takes it.
+    EXPECT_EQ(selecta::core::spreadChoice(best, alternatives, {{u"lena"_s, 1}}), 0);
+    EXPECT_EQ(selecta::core::spreadChoice(best, alternatives, {{u"lena"_s, 2}, {u"vera"_s, 1}}), 1);
+    // A clearly worse fit, a busy slot when the best has a free one, or another fit status never takes it.
+    EXPECT_EQ(selecta::core::spreadChoice(best, {choice(u"vera"_s, 0.80, true)}, {{u"lena"_s, 3}}), -1);
+    EXPECT_EQ(selecta::core::spreadChoice(best, {choice(u"vera"_s, 0.95, false)}, {{u"lena"_s, 3}}), -1);
+    selecta::core::FileChoice unsure = choice(u"vera"_s, 0.95, true);
+    unsure.fitsRelease = false;
+    EXPECT_EQ(selecta::core::spreadChoice(best, {unsure}, {{u"lena"_s, 3}}), -1);
+}

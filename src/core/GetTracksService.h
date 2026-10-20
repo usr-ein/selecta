@@ -77,6 +77,8 @@ public:
     // cache when it still has their results.
     void setFilter(const SearchFilter &filter);
     SearchFilter filter() const { return m_filter; }
+    // How many files were taken from a peer today, so ranking spreads over peers (FAIR-5).
+    void setPeerLoad(FileRanking::PeerLoad peerLoad) { m_peerLoad = std::move(peerLoad); }
     // Queues a search for each of these lines (every line still to find when empty). Lines still waiting for their
     // release lookup are searched once it is done.
     void find(const QList<qint64> &ids = {});
@@ -134,6 +136,7 @@ private:
     SearchService *m_search = nullptr;
     std::function<QStringList()> m_excludedPhrases;
     SearchFilter m_filter = builtInPreset(kMp3OrLosslessPreset).value_or(FilterPreset{}).filter;
+    FileRanking::PeerLoad m_peerLoad;
     QHash<qint64, quint64> m_finding; // line id → its queued or running search
     QSet<qint64> m_findAfterLookup;   // lines to search once their release lookup ends
     TransferService *m_transfers = nullptr;
