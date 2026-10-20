@@ -47,5 +47,9 @@ Watcher.h   Watcher: FSEvents (macOS) or QFileSystemWatcher, coalesced, folders 
 
 ## Progress
 
-- Done: contract and public headers.
-- Next: the walk and the reader, then album grouping, the Watcher, the benchmark and the CLI command.
+- Done: contract and public headers; the walk, the reader and `scan()`; `groupAlbums()`; the Watcher (FSEvents and
+  the portable QFileSystemWatcher, both tested on macOS through `Watcher::Mechanism`); 48 tests, clean under dev,
+  ASan and TSan.
+- Next: the benchmark (20 k files) and `selecta-cli collection scan`.
+- Header-only stream facts: `detail::probeStream()` in FileReader.cpp is the one place to switch when audio/ offers
+  a header probe (the head implementer asked the media agent for one).

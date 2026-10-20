@@ -10,7 +10,7 @@
 
 namespace selecta::collection {
 
-inline constexpr int kAlbumMinTracks = 3;             // tracks sharing an album tag that make a folder an album
+inline constexpr int kAlbumMinTracks = 3;               // tracks sharing an album tag that make a folder an album
 inline constexpr double kVariousArtistsTopShare = 0.25; // the most common artist below this share: various artists
 inline constexpr double kVariousArtistsDistinct = 0.75; // or more than this share of the tracks have distinct artists
 

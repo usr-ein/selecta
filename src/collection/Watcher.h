@@ -26,8 +26,15 @@ class Watcher : public QObject
 
 public:
     static constexpr int kLatencyMs = 2000;
+    static constexpr int kMaxPortableFolders = 8192; // Portable watches at most this many folders (then the roots only)
+
+    enum class Mechanism {
+        Native,   // FSEvents on macOS; QFileSystemWatcher elsewhere
+        Portable, // QFileSystemWatcher on every folder under the roots, on every platform (tests, odd volumes)
+    };
 
     explicit Watcher(QObject *parent = nullptr);
+    explicit Watcher(Mechanism mechanism, QObject *parent = nullptr);
     ~Watcher() override;
     Watcher(const Watcher &) = delete;
     Watcher &operator=(const Watcher &) = delete;
@@ -43,17 +50,23 @@ public:
     QStringList roots() const;
     bool isWatching() const;
     QString errorString() const;
+    Mechanism mechanism() const { return m_mechanism; }
 
-    struct Backend; // the platform's watcher (FSEvents, QFileSystemWatcher)
+    struct Backend; // one per platform mechanism
 
 Q_SIGNALS:
     // Folders under the roots where something changed, sorted, each once. Rescan each one recursively.
     void changed(const QStringList &folders);
 
 private:
+    friend struct Backend;
+    void deliver(quint64 session, const QStringList &folders);
+
+    Mechanism m_mechanism = Mechanism::Native;
     std::unique_ptr<Backend> m_backend;
     QStringList m_roots;
     QString m_error;
+    quint64 m_session = 0; // bumped by watch() and stop(): late events of an earlier session are dropped
 };
 
 } // namespace selecta::collection
