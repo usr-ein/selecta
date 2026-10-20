@@ -1034,6 +1034,42 @@ TEST_F(MainWindowTest, RoomsShowWhatYoureInWhatIsUnreadAndWhoNamesYou)
     confirm->reject();
 }
 
+TEST_F(MainWindowTest, JoiningARoomOpensIt)
+{
+    auto window = makeWindow();
+    Q_EMIT engine->roomListChanged({selecta::core::RoomListing{.name = u"dnb"_s, .users = 40}});
+    ASSERT_TRUE(window->navigateTo(u"rooms"_s));
+    auto *list = window->findChild<QTreeView *>(u"rooms.list"_s);
+    ASSERT_NE(list, nullptr);
+    list->setCurrentIndex(list->model()->index(0, 0));
+    auto *join = window->findChild<QPushButton *>(u"rooms.join"_s);
+    ASSERT_NE(join, nullptr);
+    join->click();
+
+    // The engine has the room, still joining: it opens without another click (QA Q16).
+    Q_EMIT engine->roomChanged(selecta::core::Room{.name = u"dnb"_s,
+                                                   .state = selecta::core::Room::State::Joining,
+                                                   .members = {},
+                                                   .unread = 0,
+                                                   .mentions = 0,
+                                                   .message = {}});
+    auto *name = window->findChild<QLabel *>(u"rooms.name"_s);
+    ASSERT_NE(name, nullptr);
+    EXPECT_EQ(name->text(), u"dnb"_s);
+    auto *joined = window->findChild<QTreeView *>(u"rooms.joined"_s);
+    ASSERT_NE(joined, nullptr);
+    EXPECT_EQ(joined->currentIndex().data().toString(), u"dnb"_s);
+
+    // A room joined at login, or by another window, doesn't take over the view.
+    Q_EMIT engine->roomChanged(selecta::core::Room{.name = u"house"_s,
+                                                   .state = selecta::core::Room::State::Joined,
+                                                   .members = {},
+                                                   .unread = 0,
+                                                   .mentions = 0,
+                                                   .message = {}});
+    EXPECT_EQ(name->text(), u"dnb"_s);
+}
+
 TEST_F(MainWindowTest, NewsWhileAwayReachesTheSystemAndAClickOpensIt)
 {
     auto window = makeWindow();

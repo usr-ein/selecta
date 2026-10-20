@@ -337,7 +337,7 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     outcome.sourceQuality = sourceQualityText(quality);
     const InboxFormat format = inboxFormatFor(quality, QFileInfo(source).suffix());
     QStringList warnings;
-    if (format.kept) {
+    if (format.belowFormat) {
         warnings.append(tr("Kept as %1: converting it to MP3 320 can't improve it.").arg(outcome.sourceQuality));
     }
     // PREV-9: is it what it claims? Checked on the original, before conversion; the findings inform, the format stays.

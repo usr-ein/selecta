@@ -100,11 +100,14 @@ std::pair<qsizetype, qsizetype> unexplainedCharacters(const AlignTokens &body, c
             titleSegments.append(body.at(j).segment);
         }
     }
+    // No title word in the file's name: the title can only come from the parent folder ("Title\01.flac"), so whatever
+    // the name says beyond the artist is another title ("Album\01. Other Track.flac") and every segment counts.
+    const bool titleInBody = !titleSegments.isEmpty();
     qsizetype total = 0;
     qsizetype unexplained = 0;
     for (qsizetype j = 0; j < body.size(); ++j) {
         const AlignToken &token = body.at(j);
-        if (token.ignorable || !titleSegments.contains(token.segment)) {
+        if (token.ignorable || (titleInBody && !titleSegments.contains(token.segment))) {
             continue;
         }
         const qsizetype length = token.facts.length;

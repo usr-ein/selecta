@@ -126,6 +126,10 @@ RoomsView::RoomsView(core::EngineHost &engine, QWidget *parent)
     connect(&m_engine, &core::EngineHost::roomListChanged, this, &RoomsView::rebuildList);
     connect(&m_engine, &core::EngineHost::roomChanged, this, [this](const core::Room &room) {
         m_rooms.insert(room.name, room);
+        if (room.name == m_opening) {
+            m_opening.clear();
+            openRoom(room.name); // joining a room opens it
+        }
         rebuildJoined();
         if (room.name == m_room) {
             refreshRoom();
@@ -150,6 +154,9 @@ RoomsView::RoomsView(core::EngineHost &engine, QWidget *parent)
         }
     });
     connect(&m_engine, &core::EngineHost::roomRefused, this, [this](const QString &room, const QString &problem) {
+        if (room == m_opening) {
+            m_opening.clear();
+        }
         m_joinProblem->setText(tr("Couldn't join “%1”: %2").arg(room, problem));
         m_joinProblem->show();
     });
@@ -513,6 +520,7 @@ void RoomsView::join(const QString &room)
     const bool listed =
         std::ranges::any_of(m_listings, [&room](const core::RoomListing &listing) { return listing.name == room; });
     if (listed) {
+        m_opening = room;
         m_engine.joinRoom(room);
         m_filter->clear();
         return;
@@ -532,6 +540,7 @@ void RoomsView::join(const QString &room)
     box->setWindowModality(Qt::WindowModal); // a sheet on macOS
     connect(box, &QMessageBox::finished, this, [this, box, create, room] {
         if (box->clickedButton() == create) {
+            m_opening = room;
             m_engine.joinRoom(room);
             m_filter->clear();
         }

@@ -157,6 +157,19 @@ QVariant PeersModel::data(const QModelIndex &index, int role) const
 
 QVariant PeersModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
+    if (orientation == Qt::Horizontal && role == Qt::ToolTipRole) {
+        // The counts come from two places, so Today can exceed All time: say what each one counts (QA Q13).
+        switch (section) {
+        case TodayColumn:
+            return tr("Files taken from this peer today, previews and covers included: what the daily limits count");
+        case SessionColumn:
+            return tr("Downloads from this peer that arrived since Selecta opened");
+        case AllTimeColumn:
+            return tr("Downloads from this peer that arrived, all time: previews and covers aren't counted");
+        default:
+            return {};
+        }
+    }
     if (orientation != Qt::Horizontal || role != Qt::DisplayRole) {
         return {};
     }

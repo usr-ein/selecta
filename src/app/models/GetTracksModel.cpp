@@ -210,6 +210,7 @@ GetTracksModel::StatusKind GetTracksModel::statusKind(const GetLine &line)
     case FindState::InInbox:
         return StatusKind::Have;
     case FindState::Queued:
+        return StatusKind::Waiting; // "Waiting to search", whatever the release lookup said
     case FindState::Idle:
         break;
     }

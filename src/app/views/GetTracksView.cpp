@@ -198,16 +198,21 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     connect(&m_engine, &core::EngineHost::networkStatusChanged, this, &GetTracksView::refreshProgress);
 
     auto *bar = new QHBoxLayout;
-    bar->setContentsMargins(16, 10, 16, 10);
+    bar->setContentsMargins(16, 10, 16, 6);
     bar->addWidget(m_add);
-    bar->addSpacing(8);
-    bar->addWidget(m_summary, 1);
-    bar->addWidget(m_progress);
+    bar->addStretch(1);
     bar->addWidget(m_export);
     bar->addWidget(m_preset);
     bar->addWidget(m_find);
     bar->addWidget(m_get);
     QWidget::setTabOrder({m_add, m_export, m_preset, m_find, m_get, m_table}); // the bar, left to right, then the list
+    // The counts and the pace on a line of their own, as in the mock: beside the buttons they ran into each other.
+    m_summary->setWordWrap(true);
+    m_progress->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    auto *infoBox = new QHBoxLayout;
+    infoBox->setContentsMargins(16, 0, 16, 6);
+    infoBox->addWidget(m_summary, 1);
+    infoBox->addWidget(m_progress);
     auto *noteBox = new QHBoxLayout;
     noteBox->setContentsMargins(16, 0, 16, 8);
     noteBox->addWidget(m_note);
@@ -216,6 +221,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addLayout(bar);
+    layout->addLayout(infoBox);
     layout->addLayout(noteBox);
     layout->addWidget(m_pages, 1);
 
@@ -369,6 +375,7 @@ void GetTracksView::refresh()
     m_pages->setCurrentIndex(m_model->rowCount() == 0 ? 0 : 1);
     m_add->setVisible(m_model->rowCount() > 0); // the empty page has its own button
     m_summary->setText(m_model->rowCount() > 0 ? summary() : QString());
+    m_summary->setVisible(m_model->rowCount() > 0);
     refreshProgress();
     Q_EMIT summaryChanged();
 }
@@ -419,6 +426,7 @@ void GetTracksView::refreshProgress()
     m_get->setDefault(toGet > 0);
     m_export->setVisible(finding == 0 && !unresolvedLines().isEmpty());
 
+    m_progress->setVisible(finding > 0);
     if (finding == 0) {
         m_progress->clear();
         m_countdown->stop();

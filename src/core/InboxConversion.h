@@ -25,6 +25,7 @@ struct InboxFormat
 {
     convert::EncodeSettings settings;
     bool kept = false;
+    bool belowFormat = false;   // kept, and not what the format promises: below its bitrate, or another format (CONV-2)
     QString extension;          // of the file in the Inbox
     QString format;             // as the Inbox shows it: "MP3", "AAC", "WAV"…
     std::optional<int> bitrate; // lossy formats
