@@ -7,31 +7,40 @@ maintainer reviews the **Decisions taken autonomously** and **Waiting for the ma
 
 | Milestone | State | Notes |
 |---|---|---|
-| M0 Definition and design | ✅ | PRD v0.4 (D1–D33), PLAN v0.4, research synthesis, ADR-001…010/012/013, mock |
-| M1 Foundations | 🟡 almost | Build system, static deps, app shell, storage, governor basics, lint, sanitizers, debug tools ✅ · CI workflow, BUILDING.md, devenv (with the slsk agent) ⏳ |
-| M2 Protocol core and governor | 🟡 most | Governor ✅ (saved per-peer state, activity log) · engine thread ✅ · slsk S1 codec, S2 server session, S3 peer network ✅ merged · core NetworkService (login, reconnect, PermitSource, search tokens) ✅ · S4 transfers, S5 distributed ⏳ (slsk agent) |
-| M3 Search experience | 🟡 started | SearchService (governor pacing, collection windows, cache) ✅ · FileRanking with match's ReleaseScorer ✅ · Search view ⏳ |
-| M4 Library and Inbox | 🟡 most | FileOps (singles and albums), InboxStore, HistoryStore, naming templates + cleaner ✅ · Inbox view (file, trash, reveal) ✅ · History by session ✅ · Settings → Library/File names ✅ · match X1–X4 merged ✅ · collection scanner + "you have it" ⏳ |
-| M5 Preview and waveform | 🟡 started | audio A1 decoder, A2 waveform analysis + cache ✅ merged · player, audio output, waveform widget (head) ⏳ · yt-dlp/clips (meta M5) ⏳ |
-| M6 Converter and arrival pipeline | 🟡 started | convert C1 tags ✅ merged · C2 transcode/verify ⏳ (media agent) · arrival pipeline (head) ⏳ |
-| M7 Sharing and fairness | ⏳ | |
-| M8 Get tracks, wishlist, browse, messages, rooms | 🟡 started | Get tracks: list, Spotify link import, release lookup (meta M4), finding with pacing, Ready/Check/Not found, inspector ✅ · downloads + arrival ⏳ · wishlist, browse, messages, rooms ⏳ |
+| M0 Definition and design | ✅ | PRD v0.4 (D1–D33), PLAN v0.4, research synthesis, ADR-001…013, mock |
+| M1 Foundations | 🟡 almost | Build system, static deps, app shell, storage, governor, lint, sanitizers, debug tools, devenv ✅ · CI workflow ⏳ |
+| M2 Protocol core and governor | ✅ | slsk S1–S7 merged (codec, server, peers, transfers, distributed, devnet, CLI) · core NetworkService, governor bookkeeping ✅ |
+| M3 Search experience | 🟡 | SearchService + FileRanking ✅ · Search view (manual searches) ⏳ |
+| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanner merged ✅ · core integration (index, Owned/In Inbox states, watcher) ⏳ |
+| M5 Preview and waveform | 🟡 most | Player (decoder thread, lock-free ring, CoreAudio AUHAL), rekordbox-style waveform, transport, Inbox previews ✅ · Get tracks previews (peer file, yt-dlp, clips) ⏳ |
+| M6 Converter and arrival pipeline | 🟡 most | Arrival pipeline: MusicBrainz label/genre, cover, MP3 320 (verified) or keep lossy, Inbox + history ✅ · media C1–C3, A3 merged ✅ · Converter view ⏳ |
+| M7 Sharing and fairness | ⏳ | slsk answering hooks ready; share index, upload queue ⏳ |
+| M8 Get tracks, wishlist, browse, messages, rooms | 🟡 | **Get tracks end to end ✅** (paste → release lookup → find → tick → Get → download with retries and resume → converted, tagged MP3 320 in the Inbox; verified against selecta-devnet) · wishlist, browse, messages, rooms ⏳ |
 | M9 Live-network beta | ⛔ maintainer only | never automated (CLAUDE.md) |
 | M10 v1.0 | ⏳ | |
 
 ## Library agents
 
+All four library contracts are delivered and merged.
+
 | Agent | Branch | Contract | State |
 |---|---|---|---|
-| slsk | `lib/slsk` | [contracts/slsk.md](contracts/slsk.md) | S1–S3 merged; S4 transfers next, then tools/devnet (local test network) |
-| meta | `lib/meta` | [contracts/meta.md](contracts/meta.md) | M1–M4 merged (Spotify, MusicBrainz, covers, Deezer, ReleaseResolver); M5 yt-dlp + clips next |
-| media | `lib/media` | [contracts/media.md](contracts/media.md) | A1, A2, C1 merged; C2 transcode/verify next, then A3 |
-| match | `lib/match` | [contracts/match.md](contracts/match.md) | X1–X4 merged (normaliser, parser, index, matcher, scorer, planner, tracklists); album matching + supersede next |
+| slsk | `lib/slsk` | [contracts/slsk.md](contracts/slsk.md) | S1–S7 ✅ merged. Fixing one fixture race (stale upload token after a killed transfer over the indirect path) |
+| meta | `lib/meta` | [contracts/meta.md](contracts/meta.md) | M1–M6 ✅ merged (Spotify, MusicBrainz, covers, Deezer, resolver, yt-dlp, clips, CLI; one manual smoke run) |
+| media | `lib/media` | [contracts/media.md](contracts/media.md) | A1–A3, C1–C3 ✅ merged, plus `probeStreamInfo` (header-only probe) |
+| match | `lib/match`, `lib/collection` | [contracts/match.md](contracts/match.md), [contracts/collection.md](contracts/collection.md) | X1–X5 ✅ and the collection scanner ✅ merged |
 
 ## Decisions taken autonomously (for review)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-20 | Downloads and conversions live in Application Support (`Downloads/Incoming`, `Downloads/Converting`), not the caches | macOS may empty caches under a partial download |
+| 2026-10-20 | A Get tracks line whose peer refuses or fails for good moves on to the next peer's copy the search found; a file that arrived but couldn't be converted doesn't | The first failure is the peer's; the second isn't |
+| 2026-10-20 | Transient download failures retry after 3, 10 and 30 minutes and resume the partial file; denials marked retryable by slsk (queue full) too | DL-2; the governor's back-off still applies on top |
+| 2026-10-20 | The engine and the app need the media libraries (`SELECTA_WITH_MEDIA`); without them only the libraries build | Arrival converts and the player decodes: there is no useful app without them |
+| 2026-10-20 | Worker threads hand results back through mutex-guarded mailboxes, not queued Qt events with payloads | The prebuilt static Qt isn't TSan-instrumented, so payloads inside its event queue show as races; standard primitives keep TSan meaningful |
+| 2026-10-20 | Space plays and pauses (not a menu shortcut); ⌥←/⌥→ skip 5 s, ⇧⌥←/⇧⌥→ 30 s, ⌘. stops | A menu key equivalent would take Space from text fields; arrows alone belong to the lists |
+| 2026-10-20 | Get tracks draws its own tick boxes | The macOS style draws item-view check boxes only for the current row in some window states |
 | 2026-10-20 | Get tracks keeps only files that can make a real MP3 320: lossless sources or MP3s at 320 kbps (other presets: lossless only, any) | D29 converts everything to MP3 320; anything lower would be an upsample |
 | 2026-10-20 | Tests and `--data-dir` runs point every metadata service at a closed loopback port (`--metadata-network` lifts it) | Tests and automated runs must never reach Spotify, Deezer or MusicBrainz |
 | 2026-10-20 | Playback goes straight to CoreAudio (AUHAL) instead of `QAudioSink` first | Qt Multimedia is a heavy static dependency for one class; ADR-003 planned AUHAL before v1.0 anyway |
@@ -52,6 +61,10 @@ maintainer reviews the **Decisions taken autonomously** and **Waiting for the ma
 | 2026-10-20 | Matching engine is a separate library (`src/match/`) built by its own agent | Pure logic with a large written spec: the clean boundary the maintainer asked for |
 
 ## Waiting for the maintainer (nothing blocks development)
+
+0. **Try the main flow locally:** `build/dev/tools/devnet/selecta-devnet --generate ~/devnet-corpus` prints a
+   server address; put it in Settings → Soulseek (any user name and password), paste lines from
+   `~/devnet-corpus/tracklist.txt` into Get tracks, Find Them, then Get. The MP3s land in the Inbox.
 
 1. Before the first push: rewrite the early commits' author to `usr-ein <usr-ein@pm.me>` (D16), create the GitHub
    repository, push. Not done autonomously: it's outward-facing.
