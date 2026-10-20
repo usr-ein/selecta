@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "meta/Priority.h"
 #include "meta/Release.h"
 #include "meta/Result.h"
 
@@ -72,12 +73,20 @@ public:
     DeezerClient &operator=(DeezerClient &&) = delete;
 
     // Plain-text track search ("artist title"), up to `limit` (1…50) hits. InvalidArgument for an empty query.
-    QFuture<Result<QList<DeezerTrack>>> search(const QString &query, int limit = 25);
+    QFuture<Result<QList<DeezerTrack>>> search(const QString &query, int limit = 25,
+                                               Priority priority = Priority::Interactive);
     // The track Deezer files under this ISRC (it picks one release itself). NotFound when Deezer has none.
     // `fresh` skips the cache (for a preview URL that must not have expired).
-    QFuture<Result<DeezerTrack>> trackByIsrc(const QString &isrc, bool fresh = false);
-    QFuture<Result<DeezerTrack>> track(const QString &trackId, bool fresh = false);
-    QFuture<Result<DeezerAlbum>> album(const QString &albumId);
+    QFuture<Result<DeezerTrack>> trackByIsrc(const QString &isrc, bool fresh = false,
+                                             Priority priority = Priority::Interactive);
+    // One track by Deezer's numeric ID. InvalidArgument for anything but digits; NotFound when it doesn't exist.
+    QFuture<Result<DeezerTrack>> track(const QString &trackId, bool fresh = false,
+                                       Priority priority = Priority::Interactive);
+    QFuture<Result<DeezerAlbum>> album(const QString &albumId, Priority priority = Priority::Interactive);
+
+    // The text search() sends for a query: control characters, quotes and colons (Deezer's advanced syntax, which
+    // misbehaves) removed, spaces collapsed, at most 200 characters. Thread-safe (pure).
+    static QString cleanQuery(const QString &query);
 
     // When a signed preview URL expires: the `exp=` time it carries, else `fallback` (Deezer's are ~15 min).
     // Thread-safe (pure).

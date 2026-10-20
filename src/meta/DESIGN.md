@@ -26,8 +26,7 @@ user's own yt-dlp. It owns no UI and returns copyable value types; `core/` decid
 | `MusicBrainzClient` | `MusicBrainzClient.h` | ISRC → recordings → releases (label, catno) → genres; D30 `enrich()` |
 | `CoverFetcher` | `CoverFetcher.h` | Largest linked image, then Cover Art Archive; bounded; disk cache |
 | `DeezerClient` | `DeezerClient.h` | Keyless search, ISRC lookup, track, album (label, genres, UPC), preview URL |
-| `TextMatcher`, `LocalTextMatcher` | `TextMatcher.h` | Keys, versions, similarity; swappable for `match/` |
-| `ReleaseResolver` | `ReleaseResolver.h` | Ranked candidates with score, tier and reasons |
+| `ReleaseResolver` | `ReleaseResolver.h` | A line → ranked candidates with score, tier and reasons; Spotify first, Deezer fallback |
 | `YtDlpRunner`, `YtDlpFetch` | `YtDlpRunner.h` | Discover/version-check yt-dlp, search, pick ±3 s, fetch into the preview cache |
 | `ClipSource` | `ClipSource.h` | Deezer 30-s clip URL by ISRC, else by search |
 
@@ -35,7 +34,9 @@ Internal (`detail/`, not for `core/`): `HttpChannel` (one per service: pacing, p
 manual redirects, retries, cache), `ServiceGate` (spacing / sliding window / in-flight / back-off scheduler, two
 lanes), `Json` (strict optional-field accessors), `LoopbackReceiver` (one-shot `QTcpServer` for the sign-in answer),
 `ImageHeader` (JPEG/PNG dimensions without decoding, bounded walk), `Identifiers` (ISRC, MBID, barcode, dates),
-`TextFold` (the §4.2 comparison key), `SpotifyJson` and `MusicBrainzJson` (strict mapping and the D30 choices).
+`TitleInfo` (a title read with `match/`: core key, version, featured artists, derivative markers, DJ-mix flag),
+`SpotifyJson`, `DeezerJson` and `MusicBrainzJson` (strict mapping and the D30 choices), `Worker` (a `std::thread`
+with mutex-guarded queues, so ThreadSanitizer sees the hand-offs that an uninstrumented Qt would hide).
 
 ## Threading
 
@@ -50,9 +51,10 @@ blocks and nothing sleeps. Public async calls return `QFuture<Result<T>>`:
 - the yt-dlp fetch is a job object (`YtDlpFetch`: `started(path)`, `progress`, `finished(Result)`, `cancel()`)
   because it has several events.
 
-Value types are reentrant. `TextMatcher` implementations are immutable and shareable across threads.
-`TokenStore` is thread-safe; its futures finish on a worker thread, so `SpotifyAuth` continues on its own thread
-with a context object. The Keychain store runs `SecItem*` on a one-thread pool because a Keychain prompt can block.
+Value types are reentrant. `ReleaseResolver::score()` and `rank()` are pure static functions, callable from any
+thread. `TokenStore` is thread-safe; its futures finish on a worker thread, so `SpotifyAuth` continues on its own
+thread with a context object. The Keychain store runs `SecItem*` on a `detail::Worker` because a Keychain prompt can
+block; the cover disk cache uses one too.
 
 ## Permit points
 
@@ -85,7 +87,7 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
 | The user's playlists, playlist items, Liked Songs | never cached | — |
 | Spotify entries (`spotify/` prefix) | dropped on sign-out | — |
 | Cover bytes | `CoverFetcher::Config::cacheDir`, one file per URL | 30 days |
-| Deezer preview URLs | never cached (signed, ~15 min) | — |
+| Deezer preview URLs | never used from the cache (signed, ~15 min): `ClipSource` asks with `fresh = true` | — |
 | yt-dlp audio | the preview cache folder the caller passes (PREV-8 LRU is core's) | — |
 
 ## Integration points for `core/`
@@ -99,15 +101,23 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
    `signIn()` from the "Connect" button (`Config::openUrl` = `QDesktopServices::openUrl`); `signIn(playlistScopes())`
    before the first playlist import. Show `signInExpiresAt()` two weeks ahead. On `signedOut()` drop any Spotify
    data core keeps.
-3. **Get tracks / search:** `ReleaseResolver::resolve()` per line — `Priority::Background` for a pasted batch,
-   `Priority::Interactive` for a search typed by hand; the chosen candidate's `durationMs` drives the ±3 s Soulseek
-   ranking (D23). Pasted Spotify links: `spotify::parsePastedLinks()` → `SpotifyClient::importLinks()` (background).
+3. **Get tracks / search:** `ReleaseResolver::resolve(ResolveQuery, Priority)` per line, with `ResolveQuery` filled
+   from `match::TracklistParser`'s line: `artist`, `title` with its version text kept, `durationMs` from
+   `durationSec`, `label` from `labelHint` (and `isrc` when a file or playlist item has one). Core wraps it in a
+   `std::function<QFuture<Result<Resolution>>(const ResolveQuery &)>`, runs at most 3 lines at once on
+   `Priority::Background` for a pasted batch (`Interactive` for a search typed by hand), and cancels a line's future
+   when the line is removed. Use the first candidate when `Resolution::confidence` is `Likely` or better, show the
+   list for `Ambiguous`, and the line as typed for `None`; `sourceErrors` says which service failed while another
+   answered (a resolution fails only when every source failed). The chosen candidate's `durationMs` drives the ±3 s
+   Soulseek ranking (D23). Pasted Spotify links: `spotify::parsePastedLinks()` → `SpotifyClient::importLinks()`
+   (background).
 4. **Arrival pipeline (D30):** `SpotifyClient::album()` for disc totals when tagging, `MusicBrainzClient::enrich()` +
    `applied()` for label/genre, `CoverFetcher::fetch()` for cover bytes → convert library.
 5. **Player:** `ClipSource::clipFor()` → stream the URL from memory; `YtDlpRunner::probe()` / `search()` / `pick()` /
    `fetch()` → open `YtDlpFetch::started(path)` with the growing-file reader.
 6. **Activity log (SAFE-4, META-7):** `RequestPacer::report()` receives one scrubbed `RequestRecord` per request.
-7. **Matching:** pass an adapter over `match/` as the `TextMatcher` once that library lands.
+7. **Matching:** meta uses `match/`'s `Normalizer`, `VersionClassifier` and `FieldMatcher` directly: one comparison
+   key and one version vocabulary for the whole app (`Candidate::version` is a `match::VersionCompatibility`).
 
 ## Priority lanes
 
@@ -152,6 +162,48 @@ and no Spotify request until Retry-After (1 h when absent).
 5. Genres: release group, else recording, else artist; most votes first, zero-vote genres dropped. A failure here
    keeps the label and reports "genres unavailable"; everything else fails the enrichment (no half-truth label).
 
+## Release resolution (M4, the note §4.4 and §14.5)
+
+`ReleaseResolver::resolve()` asks as little as it can, one request at a time:
+
+1. With an ISRC: Spotify `q=isrc:…`, then Deezer `/track/isrc:…`; an `Exact` candidate ends the line.
+2. Spotify `track:"<core title>" artist:"<primary artist>"` (≤ 10 results). A `Likely` or better candidate whose
+   version agrees ends the line. If the line names a version and no candidate of that version came back, one more
+   search with the version's words (never after an empty first page: more words only narrow it).
+3. Otherwise Deezer `"<primary artist> <core title>"` (25 results), and the same version search if needed.
+
+A source that fails (rate limit, network, server) is not asked again for that line. At most 6 requests per line,
+usually 1–2. Each release is scored once as it arrives; each step ranks the lot once.
+
+Scoring (`score()`, the note §14.5's initial weights, tuned later by experiment X5):
+
+- weighted over the fields both sides have: title core 0.40 (`match::FieldMatcher` on `Normalizer` keys, a length
+  within ±3 s corroborating a fuzzy match), artist 0.30 (0.7 for the line's primary artists among the release's, 0.3
+  for its featured artists, or for the share of the release's artists the line explains, the remixer included),
+  length 0.20 (1 within ±3 s, then `exp(−0.1·(Δ−3))`; only when the versions agree), album 0.05, label 0.05;
+- versions compared first (`match::VersionClassifier::compare`): another version scores 0 whatever its length; an
+  unspecified line against a named version without a length ×0.9;
+- penalties: DJ-mix segment ×0.3 and derivative uploads (slowed, sped up, nightcore, 8D, reverb, karaoke, tribute,
+  cover, bass boosted) ×0.2 unless the line asks for them; the same title by another artist ×0.5. DJ versions
+  (extended, club, dub, radio edit, remixes) are versions, never penalties;
+- the ISRC rule: the line's ISRC on a release whose length (if known) is within ±3 s and whose title is not a
+  different song → `Exact`.
+
+Tiers: `Confident` ≥ 0.92 for the first candidate only, with a 0.05 margin over every other recording or version
+(two versions that tie stay `Likely`); `Likely` ≥ 0.80; `Ambiguous` ≥ 0.60; else `None`. Copies of one recording
+(same ISRC and version) from both services merge into one candidate showing Spotify's album (not a compilation's,
+when Spotify has both), with Deezer's ID, label and covers added; two sources agreeing on the leading candidate's
+ISRC raise it one tier. `rank()` keeps other versions in the list, last, with their reasons.
+
+## Deezer
+
+Keyless JSON API (`api.deezer.com`): `/search?q=&limit≤50`, `/track/isrc:{ISRC}`, `/track/{id}`, `/album/{id}` (label,
+genres, UPC). Deezer reports errors as HTTP 200 with `{"error":{"code":…}}`: codes 4 (quota) and 700 (busy) back the
+service off and retry, 800 (no data) is `NotFound`, anything else `BadResponse`; none of them is cached. IDs are
+checked (`[1-9][0-9]{0,18}`) before they reach a path; queries lose quotes and colons (Deezer's advanced-search
+syntax) and stop at 200 characters. Preview URLs are kept only over HTTPS from Deezer's hosts; `previewExpiry()`
+reads the signed URL's `exp=`.
+
 ## Covers
 
 `CoverFetcher::fetch()`: the largest linked image (only from Spotify's and Deezer's CDNs; any other host is skipped,
@@ -181,6 +233,12 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
 | `Service::SpotifyImages` renamed `CoverImages` | The same channel fetches Deezer's CDN covers |
 | Cover URLs restricted to the services' CDN hosts | Defence against a hostile or broken answer pointing at internal hosts |
 | MusicBrainz defaults to the Background lane | It serves the arrival pipeline; interactive lookups pass `Priority::Interactive` |
+| `match/` used directly; `TextMatcher` and `TextFold` dropped (M4, approved by the head implementer) | One normaliser and one version vocabulary for the app; no adapter layer to keep in step |
+| A source that fails is not asked again for that line | The next request would fail the same way; a struggling service gets a break |
+| No version search after an empty first page | More words only narrow a search; saves a request per miss |
+| ISRC agreement raises the tier only for a candidate that leads by the margin | Both services carry every version of a track; agreement on one says nothing about which version the line meant |
+| Merged candidates show Spotify's copy, an album or single before a compilation | The compilation's album, date and track number would be wrong for tagging |
+| JSON APIs: a 200 body that isn't a JSON object fails `BadResponse` in the channel (`jsonInspection`) | A proxy page or truncated answer must never sit in the cache for 24 h or 30 days |
 
 ## Progress
 
@@ -189,12 +247,13 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
   - M1 (merged as `07df505`): error model, policies, caches, token stores (Keychain verified once by hand), PKCE,
     `ServiceGate`, `HttpChannel`, `LoopbackReceiver`, `SpotifyAuth`.
   - M2 (merged): priority lanes, `SpotifyLinks`, `Identifiers`, `SpotifyJson`, `SpotifyClient`.
-  - M3: `TextFold`, `ImageHeader` (bounded; truncation/malformation cases and a 20 000-buffer random test),
+  - M3 (merged): `ImageHeader` (bounded; truncation/malformation cases and a 20 000-buffer random test),
     `MusicBrainzJson`, `MusicBrainzClient` (lookups, search, `enrich()`, `applied()`), `CoverFetcher` (CDN allowlist,
-    CAA fallback through redirects, disk cache on a worker thread with TTL and size bound). 228 tests (+2 opt-in).
-- **Next:** M4 — merge main, adapt `match/`'s `Normalizer`/`VersionClassifier` behind `TextMatcher` (or keep the
-  local adapter where match/ doesn't cover it), `DeezerClient`, `ReleaseResolver` (Spotify first, Deezer fallback,
-  priority lanes, the duration and label hints from `TracklistParser`), the labelled table of tricky lines.
+    CAA fallback through redirects, disk cache on a worker thread with TTL and size bound).
+  - M4: `TextFold`/`TextMatcher` replaced by `match/`; `TitleInfo`, `DeezerJson`, `DeezerClient`, `ReleaseResolver`
+    (the labelled table of tricky lines and the request flows), `jsonInspection` for the JSON APIs. 268 tests.
+- **Next:** M5 — `YtDlpRunner`/`YtDlpFetch` (discovery, version check, search, pick, fetch, error mapping, the fake
+  yt-dlp script), `ClipSource`. Then M6 (CLI commands, `GovernorPacer`, the manual smoke run).
 - **Open questions:** none blocking.
 
 ### Notes for whoever resumes

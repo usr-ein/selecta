@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "meta/detail/MusicBrainzJson.h"
 
+#include "match/Normalizer.h"
 #include "meta/detail/Identifiers.h"
 #include "meta/detail/Json.h"
-#include "meta/detail/TextFold.h"
 
 #include <QJsonArray>
 
@@ -18,6 +18,12 @@ namespace {
 
 constexpr qint64 kMaxLengthMs = qint64{24} * 3600 * 1000;
 constexpr qint64 kLengthToleranceMs = 3000; // ±3 s (D23)
+
+// The squashed artist key of match's Normalizer, so "Röyksopp" = "Royksopp" and "Daft Punk" = "DaftPunk".
+QString artistKey(const QString &name)
+{
+    return match::Normalizer::squash(match::Normalizer::normalize(name, match::FieldKind::Artist));
+}
 
 QString mbid(const QJsonObject &object)
 {
@@ -190,13 +196,13 @@ bool creditsArtist(const Recording &recording, const QStringList &artists)
     if (artists.isEmpty()) {
         return true; // nothing to check against
     }
-    const QString mainKey = squash(foldKey(artists.first()));
+    const QString mainKey = artistKey(artists.first());
     if (mainKey.isEmpty()) {
         return true;
     }
     QString credited;
     for (const QString &artist : recording.artists) {
-        const QString key = squash(foldKey(artist));
+        const QString key = artistKey(artist);
         if (key == mainKey) {
             return true;
         }
@@ -249,14 +255,14 @@ std::optional<ReleaseInfo> chooseRelease(const QList<ReleaseInfo> &candidates, c
     const auto official = [](const ReleaseInfo &candidate) {
         return candidate.status.compare(u"Official"_s, Qt::CaseInsensitive) == 0;
     };
-    const QString albumKey = foldKey(release.album);
+    const QString albumKey = match::Normalizer::albumKey(release.album).key;
     const QString year = release.releaseDate.left(4);
     if (!albumKey.isEmpty()) {
         for (const ReleaseInfo &candidate : candidates) {
             // A bootleg or promo with the same title isn't the release; an unknown status is given the benefit.
             const bool trusted = official(candidate) || candidate.status.isEmpty();
-            if (trusted && foldKey(candidate.title) == albumKey && (year.isEmpty() || candidate.date.left(4) == year) &&
-                (compilation || !isCompilationOrMix(candidate))) {
+            if (trusted && match::Normalizer::albumKey(candidate.title).key == albumKey &&
+                (year.isEmpty() || candidate.date.left(4) == year) && (compilation || !isCompilationOrMix(candidate))) {
                 explain(u"release chosen by title and year"_s);
                 return candidate;
             }

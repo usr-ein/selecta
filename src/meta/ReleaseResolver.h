@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "match/Types.h"
+#include "meta/Priority.h"
 #include "meta/Release.h"
 #include "meta/Result.h"
-#include "meta/TextMatcher.h"
 
 #include <QFuture>
 #include <QList>
@@ -19,17 +20,17 @@ namespace selecta::meta {
 class DeezerClient;
 class SpotifyClient;
 
-// A line to resolve: from Get tracks, a parsed Soulseek result or an Inbox file. Rebuilt from parsed fields, never
-// from a raw remote path (paths can carry peer names, §14.8).
+// A line to resolve: a Get tracks line parsed by match's TracklistParser, a parsed Soulseek result or an Inbox file.
+// Built from parsed fields, never from a raw remote path (paths can carry peer names, the note §14.8).
 struct ResolveQuery
 {
-    QString artist;  // the credit as written: "Bicep", "Bicep feat. Clara La San"
-    QString title;   // may carry its version: "Glue (Extended Mix)", "Glue - Extended Mix"
-    QString version; // a version parsed separately; when set it overrides the one in the title
+    QString artist;  // the credit as written: "Bicep", "Bicep feat. Clara La San", "A & B"
+    QString title;   // as written, version included: "Glue (Extended Mix)", "Glue - Extended Mix"
+    QString version; // a version parsed separately ("Extended Mix"); when set it replaces the one in the title
     QString album;   // album hint (album downloads, Inbox folders), optional
     QString label;   // label hint ("[Ninja Tune]" in a tracklist), optional
-    std::optional<qint64> durationMs;
-    QString isrc; // from a file's TSRC or a playlist item, optional
+    std::optional<qint64> durationMs; // a length hint (TracklistParser's durationSec × 1000, a file's length)
+    QString isrc;                     // from a file's TSRC or a playlist item, optional
 };
 
 enum class Confidence : quint8 {
@@ -47,57 +48,64 @@ struct Candidate
     Release release;
     double score = 0.0; // 0…1 after multipliers
     Confidence confidence = Confidence::None;
-    VersionRelation version = VersionRelation::Unsure;
+    match::VersionCompatibility version = match::VersionCompatibility::Unsure; // the line's version vs the release's
     QStringList reasons; // why, for the inspector: "ISRC matches", "title 0.97 · artist 1.00 · length Δ 2 s"…
 };
 
 struct Resolution
 {
-    QList<Candidate> candidates;              // best first; other versions (version conflict, score 0) last
+    QList<Candidate> candidates;              // best first; other versions (score 0) last
     Confidence confidence = Confidence::None; // of the first candidate
     QList<Source> sourcesTried;
     QList<MetaError> sourceErrors; // sources that failed while others answered
 };
 
-// Turns a line into ranked release candidates with scores and explanations (META-2, D23; §14.5 of the metadata
-// note, with spotDL's lessons, §8.5):
-// - identifiers first: with an ISRC, the tracks carrying it (Spotify isrc: search, or Deezer's ISRC lookup);
-// - otherwise text: Spotify (field-filtered search, ≤ 10 hits) when signed in; Deezer (plain search, 25 hits) when
-//   Spotify isn't available or has nothing Likely; a second search with the version words when the line names a
-//   version and nothing compatible came back — at most 2 searches per source;
-// - every hit is scored, never "first hit wins": title 0.40, artist 0.30, length 0.20, album 0.05, label 0.05, with
-//   missing evidence leaving the denominator; the length counts only once the versions agree (1 within ±3 s, then
-//   exp(−0.1·(Δ−3))); a version conflict scores 0 (kept as an "other version" alternative); DJ-mix segments ×0.3
-//   and derivative junk ("slowed", "nightcore", …) ×0.2 unless the line asks for them; the same title by another
-//   artist ×0.5. DJ versions (remix, extended, dub, edit) are never penalised as words.
+// Turns a line into ranked release candidates with scores and explanations (META-2, D23; the note §14.5 with
+// spotDL's lessons, §8.5). Names and versions go through match/ (Normalizer, VersionClassifier, FieldMatcher), the
+// same rules the Soulseek ranking uses.
+//
+// Sources, at most two searches each:
+// - identifiers first: with an ISRC, Spotify's isrc: search (when signed in) and Deezer's ISRC lookup;
+// - then text: Spotify (field-filtered, ≤ 10 hits) when signed in; Deezer (plain, 25 hits) when Spotify isn't
+//   available or has nothing Likely; a second search with the version words when the line names a version and
+//   nothing compatible came back.
+// Every hit is scored — never "first hit wins": title 0.40, artist 0.30, length 0.20, album 0.05, label 0.05, missing
+// evidence leaving the denominator; the length counts only when the versions don't conflict (1 within ±3 s, then
+// exp(−0.1·(Δ−3))); a version conflict scores 0 (kept as an "other version" alternative); DJ-mix segments ×0.3 and
+// derivative junk ("slowed", "nightcore", …) ×0.2 unless the line asks for them; the same title by another artist
+// ×0.5; an unspecified line against an explicit version without a length to tell ×0.9. DJ versions (remix, extended,
+// dub, edit) are never penalised as words. Candidates sharing an ISRC across sources are merged (Spotify's first, with
+// Deezer's ID and link kept), and agreement of two sources on the best candidate's ISRC raises it one tier (at most
+// Confident).
 //
 // Threading: lives on the meta thread; futures finish there. Ownership: the clients must outlive the resolver; either
-// may be null (not configured). Failures: InvalidArgument for a line with neither artist nor title nor ISRC; when every
-// source failed, the first source's error. Cancelling the future cancels the searches in flight.
+// may be null (not configured). Failures: InvalidArgument for a line with neither artist nor title nor ISRC; when
+// every source failed, the first source's error. Cancelling the future cancels the request in flight.
 class ReleaseResolver : public QObject
 {
     Q_OBJECT
 
 public:
-    ReleaseResolver(SpotifyClient *spotify, DeezerClient *deezer, std::shared_ptr<const TextMatcher> matcher,
-                    QObject *parent = nullptr);
+    ReleaseResolver(SpotifyClient *spotify, DeezerClient *deezer, QObject *parent = nullptr);
     ~ReleaseResolver() override;
     ReleaseResolver(const ReleaseResolver &) = delete;
     ReleaseResolver &operator=(const ReleaseResolver &) = delete;
     ReleaseResolver(ReleaseResolver &&) = delete;
     ReleaseResolver &operator=(ReleaseResolver &&) = delete;
 
-    QFuture<Result<Resolution>> resolve(const ResolveQuery &query);
+    // Get tracks batches pass Priority::Background, so previews and typed searches go first (meta/Priority.h).
+    QFuture<Result<Resolution>> resolve(const ResolveQuery &query, Priority priority = Priority::Interactive);
 
     // Scores one release against a line (no tier margin applied). Thread-safe (pure).
-    static Candidate score(const ResolveQuery &query, const Release &release, const TextMatcher &matcher);
-    // Scores, de-duplicates (same ISRC and version: the first source wins), sorts and assigns tiers, including the
-    // Confident margin over the best *other* recording or version. Thread-safe (pure).
-    static Resolution rank(const ResolveQuery &query, const QList<Release> &releases, const TextMatcher &matcher);
+    static Candidate score(const ResolveQuery &query, const Release &release);
+    // Scores, merges (same ISRC and version: the first wins), sorts and assigns tiers, including the Confident margin
+    // over the best *other* recording or version. Thread-safe (pure).
+    static Resolution rank(const ResolveQuery &query, const QList<Release> &releases);
 
 private:
-    struct Private;
-    std::unique_ptr<Private> d;
+    class Job;
+    SpotifyClient *m_spotify;
+    DeezerClient *m_deezer;
 };
 
 } // namespace selecta::meta
