@@ -3,6 +3,7 @@
 
 #include "slsk/PeerNetwork.h"
 #include "slsk/ServerSession.h"
+#include "slsk/TransferManager.h"
 
 #include <QTcpSocket>
 
@@ -57,6 +58,12 @@ void registerMetaTypes()
         qRegisterMetaType<PeerError>();
         qRegisterMetaType<PeerRequest>();
         qRegisterMetaType<QTcpSocket *>();
+        qRegisterMetaType<TransferId>("selecta::slsk::TransferId");
+        qRegisterMetaType<DownloadState>();
+        qRegisterMetaType<UploadState>();
+        qRegisterMetaType<TransferError>();
+        qRegisterMetaType<DownloadInfo>();
+        qRegisterMetaType<UploadInfo>();
     });
 }
 

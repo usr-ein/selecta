@@ -78,13 +78,27 @@ public:
     QString denyReason = QStringLiteral("File not shared.");
     std::optional<quint32> placeInQueue; // answer PlaceInQueueRequest with this, or not at all
     QHash<QByteArray, Upload> files;     // raw remote path → what to send
-    QStringList searchHits;              // answer a search with the shares' files whose path contains a hit word
+    // As a downloader (when we upload to it): decline our TransferRequest with this reason (empty: allow), and the
+    // resume offset to ask for.
+    QString declineUploads;
+    quint64 resumeOffset = 0;
+    bool ignoreTransferRequests = false; // never answer an uploader's TransferRequest
+    qint64 closeDownloadAfter = -1;      // as a downloader, hang up after this many bytes
+    // As an uploader: open the F connection and send the token, then never send a byte.
+    bool stallUploads = false;
+    // As an uploader: allow-and-forget, i.e. never open the F connection after the downloader allows it.
+    bool neverConnectFile = false;
+    QStringList searchHits; // answer a search with the shares' files whose path contains a hit word
     // Called for every peer message, after the built-in answers.
     std::function<void(quint64 connection, const QString &from, const PeerMessage &message)> onMessage;
 
     // --- actions -----------------------------------------------------------------------------------------------------
-    // Opens a connection to `user` at `address`:`port` and identifies with PeerInit. Returns a connection id.
+    // Opens a connection to `user` at `address`:`port` and identifies with PeerInit. Returns a connection id. An F
+    // connection opened this way carries our upload.
     quint64 connectTo(const QString &user, const QHostAddress &address, quint16 port, ConnectionType type);
+    // Opens an F connection as the downloader of an upload `user` wants to send us (Soulseek.NET opens it itself when
+    // the uploader's connection doesn't arrive): we wait for their token, then send our offset.
+    quint64 connectAsDownloader(const QString &user, const QHostAddress &address, quint16 port);
     // Asks the server to have `user` connect to us (they answer with PierceFireWall `token`).
     bool requestIndirect(const QString &user, ConnectionType type, quint32 token);
     bool send(quint64 connection, const QByteArray &bytes);
@@ -108,9 +122,10 @@ public:
     };
     QList<Received> received;
     QList<std::pair<quint64, std::pair<quint32, QByteArray>>> distribReceived; // connection → (code, payload)
-    QList<quint32> pierceTokens;       // PierceFireWall tokens received on inbound connections
-    QStringList peerInitsFrom;         // usernames that identified with PeerInit on inbound connections
-    QList<QByteArray> downloadedFiles; // complete files received over F
+    QList<quint32> pierceTokens;          // PierceFireWall tokens received on inbound connections
+    QStringList peerInitsFrom;            // usernames that identified with PeerInit on inbound connections
+    QList<QByteArray> downloadedFiles;    // complete files received over F
+    QList<RemotePath> uploadFailuresSent; // UploadFailed echoes it sent after a downloader cut a transfer
     int indirectRequests = 0;
 
     template <typename M>
@@ -150,6 +165,7 @@ private:
         QByteArray raw; // F connections
         // F upload state
         quint32 transferToken = 0;
+        RemotePath path;
         QByteArray uploadContent;
         qint64 stopAfter = -1;
         bool offsetReceived = false;

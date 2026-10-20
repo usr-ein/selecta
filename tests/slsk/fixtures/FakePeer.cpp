@@ -3,6 +3,7 @@
 
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QtEndian>
 
 #include <algorithm>
@@ -148,6 +149,14 @@ void FakePeer::onClosed(quint64 id)
     if (it == m_connections.end()) {
         return;
     }
+    // Like real uploaders: a transfer cut short is reported on P, so the downloader can re-queue (or ignore it).
+    if (it->second.mode == Mode::FileUpload && it->second.offsetReceived && !it->second.path.isEmpty() &&
+        it->second.socket->bytesToWrite() > 0) {
+        const QString user = it->second.peer;
+        const RemotePath path = it->second.path;
+        uploadFailuresSent.append(path);
+        QTimer::singleShot(0, this, [this, user, path] { sendTo(user, frame(peer::UploadFailed{path})); });
+    }
     QTcpSocket *socket = it->second.socket;
     m_connections.erase(it);
     socket->disconnect(this);
@@ -201,6 +210,16 @@ quint64 FakePeer::connectTo(const QString &user, const QHostAddress &address, qu
     // Written now, sent once connected: PeerInit is always the first message.
     socket->write(frame(peerinit::PeerInit{m_username, type, 0}));
     identify(id, modeFor(type, true), user);
+    return id;
+}
+
+quint64 FakePeer::connectAsDownloader(const QString &user, const QHostAddress &address, quint16 port)
+{
+    auto *socket = new QTcpSocket(this);
+    const quint64 id = add(socket, true);
+    socket->connectToHost(address, port);
+    socket->write(frame(peerinit::PeerInit{m_username, ConnectionType::File, 0}));
+    identify(id, Mode::FileDownload, user);
     return id;
 }
 
@@ -302,6 +321,7 @@ void FakePeer::handleInit(quint64 id, const Frame &f)
                 identify(id, Mode::FileUpload, user);
                 Connection &c = m_connections.at(id);
                 c.transferToken = upload.key();
+                c.path = upload->path;
                 c.uploadContent = files.value(upload->path.raw).content;
                 c.stopAfter = files.value(upload->path.raw).stopAfter;
                 c.socket->write(file::encodeTransferInit(upload.key()));
@@ -385,7 +405,9 @@ struct FakePeer::Responder
             return;
         }
         if (m.allowed) {
-            peer.openFileConnection(upload->user, m.token);
+            if (!peer.neverConnectFile) {
+                peer.openFileConnection(upload->user, m.token);
+            }
         } else {
             peer.m_uploads.erase(upload);
         }
@@ -393,7 +415,11 @@ struct FakePeer::Responder
 
     void operator()(const peer::TransferRequest &m) const
     {
-        if (m.direction == TransferDirection::Upload) {
+        if (m.direction == TransferDirection::Upload && !peer.ignoreTransferRequests) {
+            if (!peer.declineUploads.isEmpty()) {
+                peer.send(id, frame(peer::TransferResponse{m.token, false, std::nullopt, peer.declineUploads}));
+                return;
+            }
             // They're ready to upload to us: allow it and wait for their F connection.
             peer.m_downloads.insert(m.token, {from, m.size.value_or(0)});
             peer.send(id, frame(peer::TransferResponse{m.token, true, std::nullopt, {}}));
@@ -441,6 +467,7 @@ void FakePeer::openFileConnection(const QString &user, quint32 token)
             connectTo(user, QHostAddress::LocalHost, static_cast<quint16>(client->listenPort), ConnectionType::File);
         Connection &c = m_connections.at(id);
         c.transferToken = token;
+        c.path = upload.path;
         c.uploadContent = files.value(upload.path.raw).content;
         c.stopAfter = files.value(upload.path.raw).stopAfter;
         c.socket->write(file::encodeTransferInit(token));
@@ -463,6 +490,9 @@ void FakePeer::handleFileUpload(quint64 id)
         const quint64 offset = file::decodeOffset(c->raw.first(file::kOffsetBytes)).value_or(0);
         c->raw.remove(0, file::kOffsetBytes);
         c->offsetReceived = true;
+        if (stallUploads) {
+            return; // keep the connection open and silent
+        }
         const auto start = static_cast<qsizetype>(std::min<quint64>(offset, c->uploadContent.size()));
         QByteArray body = c->uploadContent.mid(start);
         if (c->stopAfter >= 0 && c->stopAfter < body.size()) {
@@ -501,8 +531,12 @@ void FakePeer::handleFileDownload(quint64 id)
             return;
         }
         c->tokenReceived = true;
-        c->expectedSize = download->second;
-        c->socket->write(file::encodeOffset(0));
+        c->expectedSize = download->second > resumeOffset ? download->second - resumeOffset : 0;
+        c->socket->write(file::encodeOffset(resumeOffset));
+    }
+    if (closeDownloadAfter >= 0 && c->raw.size() >= closeDownloadAfter) {
+        close(id); // a downloader that gives up half-way
+        return;
     }
     if (std::cmp_greater_equal(c->raw.size(), c->expectedSize)) {
         downloadedFiles.append(c->raw.left(static_cast<qsizetype>(c->expectedSize)));

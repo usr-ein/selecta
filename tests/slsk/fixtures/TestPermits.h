@@ -12,7 +12,7 @@
 
 namespace selecta::slsk::testing {
 
-// A PermitSource for tests: grants (on a later event-loop turn, like core/, or at once), refuses, or holds requests
+// A PermitSource for tests: grants or refuses (on a later event-loop turn, like core/, or at once), or holds requests
 // until release(). Records every request.
 class TestPermits : public PermitSource
 {
@@ -41,7 +41,11 @@ public:
             }
             return;
         case Mode::Refuse:
-            QTimer::singleShot(0, &m_context, [deliver] { deliver(std::nullopt); });
+            if (synchronous) {
+                deliver(std::nullopt);
+            } else {
+                QTimer::singleShot(0, &m_context, [deliver] { deliver(std::nullopt); });
+            }
             return;
         case Mode::Defer:
             m_deferred.append(deliver);
