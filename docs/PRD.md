@@ -114,10 +114,10 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 | Share | The folders a user makes available to others. |
 | Slot / queue | Uploaders serve a limited number of transfers at once (slots); others wait in their queue. |
 | Session | One run of Selecta, from launch to quit. Sessions are numbered and dated. |
-| Inbox | Selecta-managed staging area where downloads land, already converted and tagged, before being filed. Selecta may modify and trash Inbox files. |
+| Inbox | Selecta-managed staging area where downloads land, already converted and tagged, before being filed. It lives in Selecta's data folder; the user never picks it. Selecta may modify and trash Inbox files. |
 | Filing | Moving an Inbox item into the collection — the only way Selecta writes into the collection. Conversion and tagging already happened on arrival (D29). |
-| Collection | The user's music folders on disk. Read-only for Selecta, except for filing new files into it. |
-| Single | A track downloaded on its own. Filed into the collection's Singles folder. |
+| Collection | The user's music on disk, in two folders: the tracks folder (loose tracks) and the albums folder (one album per subfolder). Read-only for Selecta, except for filing new files into it. |
+| Single | A track downloaded on its own. Filed into the tracks folder. |
 | Album download | An explicit "download whole folder" of a remote release. Filed as one folder per album. |
 | Supersede | An album download that contains a track the user already has as a single. |
 | Preview cache | Where preview audio is stored (peer files and yt-dlp audio); size-bounded; separate from the Inbox; never shared. |
@@ -209,9 +209,9 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 |---|---|---|
 | DL-1 | P0 | Download single files or a whole remote folder ("album download"). The transfer list shows each state: queued at the peer (with place in queue), connecting, transferring (speed, ETA), completed, or failed (with reason). Group by folder or by peer. |
 | DL-2 | P0 | Resume interrupted downloads, retry failures with backoff, and keep the queue across restarts. |
-| DL-3 | P0 | **Downloads land in the Inbox, converted and tagged** (D29): singles in `Inbox/Singles/` (flat), album downloads in `Inbox/Albums/<Artist> - <Album> (<Year>)/` with all their files, including the cover image. On arrival each audio file is converted to the **Inbox format** (default MP3 320 CBR, ID3v2.3, artwork embedded — see CONV-2) and tagged from its matched release (META-4). Files already in that format and quality are kept without re-encoding. Lossy files below it are kept as they are, with a warning, because re-encoding can't add quality. A converted lossless original goes to the macOS Trash once the converted file is verified (D11). |
+| DL-3 | P0 | **Downloads land in the Inbox, converted and tagged** (D29). The Inbox is Selecta's own folder, inside its data folder and hidden from the user: there is no setting for it (D39). Singles go in `Inbox/Singles/` (flat), album downloads in `Inbox/Albums/<Artist> - <Album> (<Year>)/` with all their files, including the cover image. On arrival each audio file is converted to the **Inbox format** (default MP3 320 CBR, ID3v2.3, artwork embedded — see CONV-2) and tagged from its matched release (META-4). Files already in that format and quality are kept without re-encoding. Lossy files below it are kept as they are, with a warning, because re-encoding can't add quality. A converted lossless original goes to the macOS Trash once the converted file is verified (D11). |
 | DL-4 | P0 | **Inbox view:** items with source peer, quality, tags, artwork and ownership status. Actions: play, edit basic tags, pick another release, **File**, Trash. |
-| DL-5 | P0 | **Filing** moves an Inbox item into the collection: singles → `<Collection>/<Singles folder>/`, albums → `<Collection>/<Albums folder>/<Artist> - <Album> (<Year>)/`. Conversion and tagging already happened on arrival (DL-3). Names come from templates; an existing file is never overwritten. |
+| DL-5 | P0 | **Filing** moves an Inbox item into the collection: singles → `<tracks folder>/` (flat), albums → `<albums folder>/<Artist> - <Album> (<Year>)/` (LIB-1, D39). Conversion and tagging already happened on arrival (DL-3). Names come from templates; an existing file is never overwritten. |
 | DL-6 | P0 | Files are filed by copy → verify → remove from Inbox, so a crash never loses a file. After filing, Selecta never moves, renames, re-tags or deletes them. |
 | DL-7 | P0 | **Supersede in the Inbox:** when an album download completes and contains a track that matches a single still in the Inbox, that single goes to the macOS Trash, with a notification and Undo. Uncertain matches are flagged for review instead. |
 | DL-8 | P0 | **Supersede in the collection — flag only:** when an album (in the Inbox or filed) contains a track matching a single already filed in the collection, the pair is flagged in the Library and Inbox views ("also on album X"). The filed single is never touched. |
@@ -225,7 +225,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 
 | ID | Pri | Requirement |
 |---|---|---|
-| LIB-1 | P0 | Configure one or more collection folders, plus the names of the Singles folder and the Albums folder. Scan recursively and read tags (TagLib), audio properties and file identity. Scanning is read-only. |
+| LIB-1 | P0 | **Two collection folders, each with its role** (D39), one folder picker each in Settings: the **tracks folder** holds loose tracks (only the files in it; its subfolders are ignored, and nothing in it is ever an album); the **albums folder** holds one album per subfolder, everything under the subfolder included (files lying in the folder itself are ignored). The two must be different folders, neither inside the other, and outside Selecta's Inbox. Settings asks for both until they are set. The scan follows the roles and reads tags (TagLib), audio properties and file identity; an empty albums folder counts no album. Scanning is read-only. |
 | LIB-2 | P0 | Incremental updates via FSEvents. Tolerate offline volumes (external drives) without forgetting their contents. |
 | LIB-3 | P0 | **Matching engine:** parse remote paths into artist / title / album / track number / version, then match them against the collection, the Inbox and the history. Confidence is exact, likely or none. Matching uses a duration tolerance and is version-aware (Original / Extended / Radio Edit / remixes). |
 | LIB-4 | P0 | **Upgrade detection:** you own the track, but in lower quality than the result. |
@@ -377,13 +377,12 @@ The mock ([mock/index.html](../mock/index.html)) is the reference for layout and
 
 | # | Question | Default until answered |
 |---|---|---|
-| OQ-1 | Path of the collection folder. The layout is settled: `Singles/` plus `Albums/<album>/` (D10). How are album folders named today? | `<Collection>/Albums/<Artist> - <Album> (<Year>)/` |
 | OQ-3 | Ratio definition: uploads vs downloads (files and bytes), shown next to the number of files shared. | As stated |
 | OQ-4 | Default per-peer caps. (Search pacing is settled: D31.) | From `references/network-etiquette-and-safe-development.md` §9.1: 1 active and 20 queued files per peer, warning at 20 files a day, stop at 50 |
 | OQ-6 | Waveform style: cumulative stack vs overlaid layers vs separate lanes. | Decide on the mock |
 | OQ-12 | Should files from outside Soulseek (e.g. Bandcamp purchases) dropped into the Inbox use the same filing pipeline? | Yes (P1) |
 
-Resolved: OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12, OQ-11 → D22, OQ-13 (what Space plays) → D26, OQ-14 (metadata source) → D29 and D30, OQ-15 (Spotify credentials) → D21, OQ-8 (Developer ID) → D33.
+Resolved: OQ-1 (the collection's layout) → D39, OQ-2 → D11, OQ-5 → D13, OQ-7 → D14, OQ-9 → D15, OQ-10 → D12, OQ-11 → D22, OQ-13 (what Space plays) → D26, OQ-14 (metadata source) → D29 and D30, OQ-15 (Spotify credentials) → D21, OQ-8 (Developer ID) → D33.
 
 ---
 
@@ -402,7 +401,7 @@ Answers given by the maintainer on 2026-10-19.
 | D7 | Conversion at filing | "Everything to a format I configure. Generally **MP3 320**." |
 | D8 | Session definition | **App launch → quit.** |
 | D9 | Look and feel | **macOS-native** ("not too crazy, but native"), **with a dark theme**. |
-| D10 | Collection layout on disk | **`Singles/` + `Albums/<album>/`** under one collection root. |
+| D10 | Collection layout on disk | **`Singles/` + `Albums/<album>/`** under one collection root (revised by D39: a tracks folder and an albums folder, chosen separately). |
 | D11 | Lossless original after filing as MP3 320 | **Move it to the Trash** (after the converted copy is verified). |
 | D12 | What to share by default | **The whole collection** (read-only). |
 | D13 | Preview skipped before its transfer finishes | **Cancel the transfer.** |
@@ -431,6 +430,7 @@ Answers given by the maintainer on 2026-10-19.
 | D36 | App logo, 2026-10-20 | **A round vinyl disc** in the spirit of the old djay icon, whose centre label is the **Jamaican flag** (gold saltire, green and black triangles), with a spindle hole. It is the app icon (a circle) and the window icon. |
 | D37 | How the work is run, 2026-10-20 | Up to five teammates work in parallel in their own worktrees; the head implementer merges their branches into `main` locally and pushes. No pull requests. The CI teammate may push its own branch so GitHub Actions can run. |
 | D38 | Automatic port mapping in v1, 2026-10-20 | **NET-3 is in v1** (the maintainer): UPnP IGD and NAT-PMP/PCP map the listening port, with a reachability check that uses no outside service. Isolated runs and tests never touch the real router. |
+| D39 | Collection folders and the Inbox, 2026-10-20 (beta feedback, P-001) | **Two folders with roles**, one picker each in Settings: a **tracks folder** of loose files (subfolders ignored, nothing in it is an album) and an **albums folder** where each subfolder is one album (loose files ignored). They must be separate: not the same folder, neither inside the other. The **Inbox is Selecta's own**, in its data folder and hidden: no picker, no nesting rule. After the update the old single folder isn't guessed into the two; Settings asks for both. The old Inbox folder is left as it is, and the new Inbox starts empty. Shares keep sharing both folders whole. |
 
 ## Appendix B — Raw brief (verbatim)
 

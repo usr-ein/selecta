@@ -96,9 +96,9 @@ RatioAssessment assessRatio(const ShareStatus &status)
     assessment.summary = u"↑ %1 · ↓ %2"_s.arg(size(up.bytes), size(down.bytes));
     if (status.files == 0) {
         assessment.level = RatioAssessment::Level::NotSharing;
-        assessment.guidance = ShareService::tr("You share nothing yet. Choose your collection folder in Settings → "
-                                               "Library: Selecta shares it, read-only, so others can get from you "
-                                               "too.");
+        assessment.guidance = ShareService::tr("You share nothing yet. Choose your tracks and albums folders in "
+                                               "Settings → Library: Selecta shares them, read-only, so others can get "
+                                               "from you too.");
         return assessment;
     }
     if (down.bytes <= kLittleTaken || up.bytes * 4 >= down.bytes) {

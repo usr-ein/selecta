@@ -8,12 +8,16 @@ RemotePathParser, Normalizer).
 ## Layers
 
 ```
-Scanner.h   scan(): walk (stat only) → compare signatures → read the files that changed (reader threads)
-            ├─ detail/Walk      the folder walk: skip rules, (device, inode) visited sets, signatures, NFC keys
-            └─ detail/FileReader one file: tags (convert::readTags), stream facts (audio::Decoder, header only),
-                                names from the file and folders (match::RemotePathParser) when there's no title
-Albums.h    groupAlbums(): album folders, disc folders merged, various artists, stable ids
-Watcher.h   Watcher: FSEvents (macOS) or QFileSystemWatcher, coalesced, folders under the given roots
+Scanner.h     scan(): walk (stat only) → compare signatures → read the files that changed (reader threads)
+              ├─ detail/Walk      the folder walk: skip rules, folder roles, (device, inode) visited sets, signatures,
+              │                   NFC keys
+              └─ detail/FileReader one file: tags (convert::readTags), stream facts (audio::Decoder, header only),
+                                  names from the file and folders (match::RemotePathParser) when there's no title
+FolderRoles.h the tracks folder (loose files) and the albums folder (one album per subfolder): what a file is, the scan
+              options, what to rescan after a change
+Albums.h      albumsOf(): one album per album folder, various artists, stable ids
+              groupAlbums(): album folders guessed from tags and names, for folders without a role (selecta-cli)
+Watcher.h     Watcher: FSEvents (macOS) or QFileSystemWatcher, coalesced, folders under the given roots
 ```
 
 ## Decisions (within the contract; for review)
@@ -36,13 +40,22 @@ Watcher.h   Watcher: FSEvents (macOS) or QFileSystemWatcher, coalesced, folders 
    read is dropped (and removed, when it was known).
 6. **Reader threads of its own.** `scan()` starts `readers` threads (no global pool to compete with) and calls
    `progress` on the calling thread; each result slot is written by one reader.
+7. **Folder roles (P-001, PRD LIB-1).** The collection is two folders: the tracks folder gives the files lying in it
+   (its subfolders are never walked), the albums folder gives its subfolders (the files lying in it are skipped), each
+   subfolder being one album with everything under it, whatever the tags say. The walk applies the roles wherever it
+   meets their folders, as a root or below one, so a rescan of a single album folder works like any other; known files
+   the roles leave out are removed. An empty albums folder has no album, and loose tracks are never one (the beta's
+   "4 albums" came from guessing albums in a folder of loose tracks). Settings keeps the two folders apart, but
+   `FolderRoles` handles every layout: one folder for both, or one inside the other.
 
 ## Integration points
 
 - **Core:** keep each file's `FileSignature` (path, size, modifiedMs) in the `file` table; pass them back as `known`.
-  Apply `added`, `changed`, `removed`; show `unreadable` in the library view. Build `match::LibraryTrack`s from
-  `ScannedFile` (`albumId` from `groupAlbums`), and `match::LibraryAlbum`s from `groupAlbums`.
-- **Watcher:** rescan each reported folder with `scan({folder}, knownUnder(folder))`.
+  Scan `FolderRoles::roots()` with the options `FolderRoles::applyTo()` sets. Apply `added`, `changed`, `removed`;
+  show `unreadable` in the library view. Build `match::LibraryTrack`s from `ScannedFile` (`albumId` from
+  `albumsOf`), and `match::LibraryAlbum`s from `albumsOf`.
+- **Watcher:** rescan the folders `FolderRoles::rescanFor(folder)` gives for each reported folder, with the known
+  signatures under them.
 
 ## Benchmark
 
