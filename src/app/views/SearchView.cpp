@@ -203,7 +203,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     m_table->setItemsExpandable(true);
     QHeaderView *header = m_table->header();
     header->setStretchLastSection(false);
-    header->setSortIndicatorClearable(true); // no indicator: best match (SRCH-18)
+    header->setSortIndicatorClearable(true); // no indicator: the default order, shortest wait first (SRCH-18)
     header->setSortIndicator(-1, Qt::AscendingOrder);
     header->setSectionResizeMode(SearchResultsModel::TitleColumn, QHeaderView::Stretch);
     header->setSectionResizeMode(SearchResultsModel::StatusColumn, QHeaderView::Interactive);
@@ -211,7 +211,8 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     m_table->setColumnWidth(SearchResultsModel::QualityColumn, 110);
     m_table->setColumnWidth(SearchResultsModel::LengthColumn, 80);
     m_table->setColumnWidth(SearchResultsModel::PeerColumn, 130);
-    m_table->setColumnWidth(SearchResultsModel::AvailabilityColumn, 125);
+    m_table->setColumnWidth(SearchResultsModel::QueueColumn, 40);
+    m_table->setColumnWidth(SearchResultsModel::SpeedColumn, 85);
     m_table->setSortingEnabled(true);
     m_table->installEventFilter(this); // Return downloads
     m_table->setAccessibleName(tr("Search results"));

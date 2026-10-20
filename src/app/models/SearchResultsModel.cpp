@@ -50,6 +50,13 @@ QIcon ownershipIcon(core::Ownership ownership)
     return {};
 }
 
+QFont queueFont()
+{
+    QFont font = QGuiApplication::font();
+    font.setWeight(QFont::DemiBold);
+    return font;
+}
+
 QString lastComponents(const QString &folder, int count)
 {
     QStringList parts = folder.split(QRegularExpression(u"[\\\\/]"_s), Qt::SkipEmptyParts);
@@ -59,12 +66,30 @@ QString lastComponents(const QString &folder, int count)
     return parts.join(u" › "_s);
 }
 
-QString availabilityText(const core::SearchHit &hit)
+QString queueText(const core::SearchHit &hit)
+{
+    return hit.freeSlot ? SearchResultsModel::tr("NQ") : SearchResultsModel::tr("Q");
+}
+
+QString queueToolTip(const core::SearchHit &hit)
+{
+    if (hit.freeSlot) {
+        return SearchResultsModel::tr("A free slot: no queue");
+    }
+    return hit.queueLength == 1 ? SearchResultsModel::tr("No free slot; 1 file queued")
+                                : SearchResultsModel::tr("No free slot; %1 files queued").arg(hit.queueLength);
+}
+
+QString speedText(const core::SearchHit &hit)
 {
     const QString speed = format::speed(hit.averageSpeed);
-    QString slot =
-        hit.freeSlot ? SearchResultsModel::tr("Free") : SearchResultsModel::tr("Queue %1").arg(hit.queueLength);
-    return speed.isEmpty() ? slot : slot + u" · "_s + speed;
+    return speed.isEmpty() ? u"—"_s : speed;
+}
+
+QString speedToolTip(const core::SearchHit &hit)
+{
+    return hit.averageSpeed > 0 ? SearchResultsModel::tr("The peer's upload speed, as the server reports it")
+                                : SearchResultsModel::tr("The peer's upload speed isn't known yet");
 }
 
 } // namespace
@@ -72,6 +97,34 @@ QString availabilityText(const core::SearchHit &hit)
 SearchResultsModel::SearchResultsModel(QObject *parent)
     : QAbstractItemModel(parent)
 {}
+
+SearchResultsModel::QueueLevel SearchResultsModel::queueLevel(const core::SearchHit &hit)
+{
+    if (hit.freeSlot) {
+        return QueueLevel::None;
+    }
+    if (hit.queueLength <= kShortQueue) {
+        return QueueLevel::Short;
+    }
+    return hit.queueLength <= kLongQueue ? QueueLevel::Long : QueueLevel::VeryLong;
+}
+
+QColor SearchResultsModel::queueColour(QueueLevel level)
+{
+    // macOS system colours, darker on a light background so that text stays readable.
+    const bool dark = QGuiApplication::palette().color(QPalette::Base).lightness() < 128;
+    switch (level) {
+    case QueueLevel::None:
+        return dark ? QColor(0x30, 0xD1, 0x58) : QColor(0x1E, 0x8E, 0x3E);
+    case QueueLevel::Short:
+        return dark ? QColor(0xFF, 0xD6, 0x0A) : QColor(0x9A, 0x74, 0x00);
+    case QueueLevel::Long:
+        return dark ? QColor(0xFF, 0x9F, 0x0A) : QColor(0xC9, 0x3C, 0x00);
+    case QueueLevel::VeryLong:
+        break;
+    }
+    return dark ? QColor(0xFF, 0x45, 0x3A) : QColor(0xC4, 0x1E, 0x14);
+}
 
 QString SearchResultsModel::statusText(core::Ownership ownership)
 {
@@ -194,14 +247,19 @@ void SearchResultsModel::sort(int column, Qt::SortOrder order)
 
 namespace {
 
-// "Best match" (SRCH-18): fit to the release first (length, then names and version), then quality, then
-// availability, then the peer we took least from. nullopt when the two are equal on all of it.
+// The default order (SRCH-18): files that fit the release first, then the shortest expected wait (speed, free slot and
+// queue), then the fit itself (length, then names and version), quality and the peer we took least from. nullopt
+// when the two are equal on all of it.
 std::optional<bool> bestMatchBefore(const core::SearchResult &x, const core::SearchResult &y, bool releaseChosen)
 {
+    if (releaseChosen && x.fitsRelease() != y.fitsRelease()) {
+        return x.fitsRelease();
+    }
+    if (const double xWait = core::expectedWaitSeconds(x.hit), yWait = core::expectedWaitSeconds(y.hit);
+        xWait != yWait) {
+        return xWait < yWait;
+    }
     if (releaseChosen) {
-        if (x.fitsRelease() != y.fitsRelease()) {
-            return x.fitsRelease();
-        }
         if (x.fit && y.fit) {
             if (const int identity = match::ReleaseScorer::compareIdentity(*x.fit, *y.fit); identity != 0) {
                 return identity < 0;
@@ -211,28 +269,38 @@ std::optional<bool> bestMatchBefore(const core::SearchResult &x, const core::Sea
     if (effectiveRank(x) != effectiveRank(y)) {
         return effectiveRank(x) > effectiveRank(y);
     }
-    if (x.hit.freeSlot != y.hit.freeSlot) {
-        return x.hit.freeSlot;
-    }
-    if (x.hit.queueLength != y.hit.queueLength) {
-        return x.hit.queueLength < y.hit.queueLength;
-    }
     if (x.peerFilesToday != y.peerFilesToday) {
         return x.peerFilesToday < y.peerFilesToday; // spread the load over peers (FAIR-5)
     }
     return std::nullopt;
 }
 
-std::optional<bool> availabilityBefore(const core::SearchHit &x, const core::SearchHit &y)
+// Ascending is the shortest queue first: a free slot, then fewer files queued, then the faster peer.
+std::optional<bool> queueBefore(const core::SearchHit &x, const core::SearchHit &y)
 {
     if (x.freeSlot != y.freeSlot) {
         return x.freeSlot;
     }
-    if (x.queueLength != y.queueLength) {
+    if (!x.freeSlot && x.queueLength != y.queueLength) {
         return x.queueLength < y.queueLength;
     }
     if (x.averageSpeed != y.averageSpeed) {
         return x.averageSpeed > y.averageSpeed;
+    }
+    return std::nullopt;
+}
+
+// Ascending is the fastest first, as every other column puts the better file first; then the shorter queue.
+std::optional<bool> speedBefore(const core::SearchHit &x, const core::SearchHit &y)
+{
+    if (x.averageSpeed != y.averageSpeed) {
+        return x.averageSpeed > y.averageSpeed;
+    }
+    if (x.freeSlot != y.freeSlot) {
+        return x.freeSlot;
+    }
+    if (!x.freeSlot && x.queueLength != y.queueLength) {
+        return x.queueLength < y.queueLength;
     }
     return std::nullopt;
 }
@@ -284,8 +352,10 @@ std::optional<bool> columnBefore(int column, const core::SearchResult &x, const 
             return order < 0;
         }
         return std::nullopt;
-    case SearchResultsModel::AvailabilityColumn:
-        return availabilityBefore(x.hit, y.hit);
+    case SearchResultsModel::QueueColumn:
+        return queueBefore(x.hit, y.hit);
+    case SearchResultsModel::SpeedColumn:
+        return speedBefore(x.hit, y.hit);
     default:
         return std::nullopt;
     }
@@ -302,7 +372,7 @@ bool SearchResultsModel::lessThan(int a, int b) const
             return m_sortOrder == Qt::AscendingOrder ? *before : !*before;
         }
     }
-    // Best match, whatever the order; ties of a column too. Then arrival.
+    // The default order, whatever the column's; ties of a column too. Then arrival.
     return bestMatchBefore(x, y, m_releaseChosen).value_or(a < b);
 }
 
@@ -452,15 +522,22 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         return result.index;
     case IsFolderRole:
         return false;
+    case QueueLevelRole:
+        return column == QueueColumn ? QVariant(static_cast<int>(queueLevel(result.hit))) : QVariant();
     case Qt::ForegroundRole:
         if (m_filter.owned == core::SearchFilter::OwnedResults::Dim && core::isOwned(result.ownership)) {
             return QGuiApplication::palette().color(QPalette::Disabled, QPalette::Text);
         }
-        return {};
+        return column == QueueColumn ? QVariant(queueColour(queueLevel(result.hit))) : QVariant();
+    case Qt::FontRole:
+        return column == QueueColumn ? QVariant(queueFont()) : QVariant();
     case Qt::DecorationRole:
         return column == StatusColumn ? QVariant(ownershipIcon(result.ownership)) : QVariant();
     case Qt::TextAlignmentRole:
-        return column == LengthColumn ? QVariant(Qt::AlignRight | Qt::AlignVCenter) : QVariant();
+        if (column == LengthColumn || column == SpeedColumn) {
+            return QVariant(Qt::AlignRight | Qt::AlignVCenter);
+        }
+        return column == QueueColumn ? QVariant(Qt::AlignCenter) : QVariant();
     case Qt::ToolTipRole:
         switch (column) {
         case StatusColumn:
@@ -488,6 +565,10 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
             return result.peerFilesToday == 1
                        ? tr("1 download from %1 today").arg(result.hit.peer)
                        : tr("%1 downloads from %2 today").arg(result.peerFilesToday).arg(result.hit.peer);
+        case QueueColumn:
+            return queueToolTip(result.hit);
+        case SpeedColumn:
+            return speedToolTip(result.hit);
         default:
             return {};
         }
@@ -526,8 +607,10 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
             return u"%1 · %2"_s.arg(result.hit.peer).arg(result.peerFilesToday);
         }
         return result.hit.peer;
-    case AvailabilityColumn:
-        return availabilityText(result.hit);
+    case QueueColumn:
+        return queueText(result.hit);
+    case SpeedColumn:
+        return speedText(result.hit);
     default:
         return {};
     }
@@ -561,6 +644,10 @@ QString SearchResultsModel::accessibleText(const core::SearchResult &result, int
                        : tr("%1, %2 downloads today").arg(result.hit.peer).arg(result.peerFilesToday);
         }
         return result.hit.peer;
+    case QueueColumn:
+        return queueToolTip(result.hit);
+    case SpeedColumn:
+        return result.hit.averageSpeed > 0 ? speedText(result.hit) : tr("Speed unknown");
     default:
         return resultData(result, column, Qt::DisplayRole).toString();
     }
@@ -568,6 +655,8 @@ QString SearchResultsModel::accessibleText(const core::SearchResult &result, int
 
 QVariant SearchResultsModel::folderData(const Folder &folder, int column, int role) const
 {
+    // A folder is one peer's: its queue and speed are its first file's.
+    const core::SearchResult *lead = folder.members.isEmpty() ? nullptr : &m_results.at(folder.members.first());
     switch (role) {
     case ResultIndexRole:
         return -1;
@@ -579,7 +668,14 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
         return font;
     }
     case Qt::ToolTipRole:
-        return column == TitleColumn ? folder.path : QVariant();
+        if (column == TitleColumn) {
+            return folder.path;
+        }
+        return lead ? resultData(*lead, column, role) : QVariant();
+    case Qt::ForegroundRole:
+    case Qt::TextAlignmentRole:
+    case QueueLevelRole:
+        return lead && (column == QueueColumn || column == SpeedColumn) ? resultData(*lead, column, role) : QVariant();
     case Qt::DisplayRole:
         break;
     default:
@@ -604,8 +700,10 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
     }
     case PeerColumn:
         return folder.peer;
-    case AvailabilityColumn:
-        return folder.members.isEmpty() ? QVariant() : availabilityText(m_results.at(folder.members.first()).hit);
+    case QueueColumn:
+        return lead ? queueText(lead->hit) : QVariant();
+    case SpeedColumn:
+        return lead ? speedText(lead->hit) : QVariant();
     default:
         return {};
     }
@@ -613,7 +711,20 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
 
 QVariant SearchResultsModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-    if (orientation != Qt::Horizontal || role != Qt::DisplayRole) {
+    if (orientation != Qt::Horizontal) {
+        return {};
+    }
+    if (role == Qt::ToolTipRole || role == Qt::AccessibleTextRole) {
+        switch (section) {
+        case QueueColumn:
+            return tr("Queue: NQ when a slot is free, otherwise Q coloured by the queue's length");
+        case SpeedColumn:
+            return tr("The peer's upload speed");
+        default:
+            return {};
+        }
+    }
+    if (role != Qt::DisplayRole) {
         return {};
     }
     switch (section) {
@@ -627,8 +738,10 @@ QVariant SearchResultsModel::headerData(int section, Qt::Orientation orientation
         return tr("Length");
     case PeerColumn:
         return tr("Peer · today");
-    case AvailabilityColumn:
-        return tr("Availability");
+    case QueueColumn:
+        return tr("Q");
+    case SpeedColumn:
+        return tr("Speed");
     default:
         return {};
     }

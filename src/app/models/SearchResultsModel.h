@@ -5,13 +5,14 @@
 #include "core/SearchResults.h"
 
 #include <QAbstractItemModel>
+#include <QColor>
 #include <QList>
 #include <QString>
 
 namespace selecta::app {
 
 // One search's results for the Search view (PRD SRCH-9…11, SRCH-18): filtered with a core::SearchFilter, sorted by
-// best match or by a column, flat or grouped by remote folder. Mirrors the engine's list: reset() when every result
+// default (files that fit the release first, then the shortest expected wait) or by a column, flat or grouped by remote folder. Mirrors the engine's list: reset() when every result
 // changes, append() as they stream in (then refresh(), which the view paces), update() when some change.
 //
 // Every change rebuilds the visible rows with a model reset; the view keeps its selection by result index. Main thread
@@ -27,14 +28,29 @@ public:
         QualityColumn,
         LengthColumn,
         PeerColumn,
-        AvailabilityColumn,
+        QueueColumn, // "NQ" or a coloured "Q"; the queue length on hover
+        SpeedColumn, // the peer's upload speed
         ColumnCount
     };
     enum Role {                             // NOLINT(cppcoreguidelines-use-enum-class): Qt item roles are plain ints
         ResultIndexRole = Qt::UserRole + 1, // int: the result's index, -1 for a folder row
         IsFolderRole,                       // bool
+        QueueLevelRole,                     // int (QueueLevel), on the Queue column
     };
-    static constexpr int kBestMatch = -1; // sort column for "Best match" (SRCH-18)
+    static constexpr int kBestMatch = -1; // sort column for the default order: fit, then shortest wait (SRCH-18)
+
+    // How long a peer's queue is, for the Queue column's colour.
+    enum class QueueLevel : quint8 {
+        None,  // a free slot: no queue ("NQ", green)
+        Short, // up to kShortQueue files ahead (yellow)
+        Long,  // up to kLongQueue (orange)
+        VeryLong, // more (red)
+    };
+    static constexpr quint32 kShortQueue = 10;
+    static constexpr quint32 kLongQueue = 50;
+    static QueueLevel queueLevel(const core::SearchHit &hit);
+    // The level's colour, readable on the current appearance (light or dark).
+    static QColor queueColour(QueueLevel level);
 
     explicit SearchResultsModel(QObject *parent = nullptr);
 
