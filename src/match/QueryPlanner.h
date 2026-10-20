@@ -46,17 +46,17 @@ struct QueryPlan
 
 // Plans network queries from a release (note §17.7). Words are split the way responders split shared paths
 // (Nicotine+'s punctuation set, so "Ke$ha" is "ke" + "ha" and "Don't" is "don" + "t"), case-folded but otherwise
-// spelled as the release; words under 3 characters, stop and version words, and both fragments of an apostrophe or
-// symbol split are dropped; words with diacritics, apostrophes or symbols are left out when the rest stays selective
-// (≥ 2 words of ≥ 4 characters, or one of ≥ 6); at most 5 words, keeping the longest; the remixer's words join the
-// query for remix versions. No wildcards, ever.
+// spelled as the release, from the first artist and the title core (plus the remixer for remix versions); words under
+// 3 characters and stop and version words are dropped; words with diacritics, and pieces of a word split at an
+// apostrophe or a symbol, are left out when the rest stays selective (≥ 2 words of ≥ 4 characters, or one of ≥ 6);
+// at most 5 words, dropping the shortest. No wildcards, ever.
 //
 // Threading: immutable; plan() may be called from any thread. Failure modes: none; see QueryStatus.
 class QueryPlanner final
 {
 public:
     // `excludedPhrases` is the list the server sends at login (ExcludedSearchPhrases, code 160).
-    explicit QueryPlanner(QStringList excludedPhrases = {});
+    explicit QueryPlanner(const QStringList &excludedPhrases = {});
 
     // One step's query. `typed` is what the user typed, only used to report a respelling.
     QueryPlan plan(const ReleaseReference &release, QueryStep step = QueryStep::Default, QStringView typed = {}) const;

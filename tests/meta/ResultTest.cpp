@@ -59,7 +59,7 @@ TEST(Result, EveryNetworkServiceMapsToItsGovernorOperation)
 {
     EXPECT_EQ(operationFor(Service::SpotifyApi), Operation::SpotifyRequest);
     EXPECT_EQ(operationFor(Service::SpotifyAccounts), Operation::SpotifyRequest);
-    EXPECT_EQ(operationFor(Service::SpotifyImages), Operation::CoverArtRequest);
+    EXPECT_EQ(operationFor(Service::CoverImages), Operation::CoverArtRequest);
     EXPECT_EQ(operationFor(Service::CoverArtArchive), Operation::CoverArtRequest);
     EXPECT_EQ(operationFor(Service::Deezer), Operation::DeezerRequest);
     EXPECT_EQ(operationFor(Service::MusicBrainz), Operation::MusicBrainzRequest);
@@ -95,6 +95,6 @@ TEST(ServicePolicy, PublishedLimitsHold)
     EXPECT_GE(policyFor(Service::YtDlp).minSpacing, std::chrono::milliseconds(2000));
     EXPECT_LE(policyFor(Service::YtDlp).windowCount, 30);
     // Covers are bounded to 20 MiB.
-    EXPECT_EQ(policyFor(Service::SpotifyImages).maxBodyBytes, kMaxCoverBytes);
+    EXPECT_EQ(policyFor(Service::CoverImages).maxBodyBytes, kMaxCoverBytes);
     EXPECT_EQ(policyFor(Service::CoverArtArchive).maxBodyBytes, kMaxCoverBytes);
 }

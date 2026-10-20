@@ -565,9 +565,11 @@ Segmented segment(QStringView remainder, bool scene, bool sequence)
         }
     }
     // A segment that is only a track number, or starts with one ("Artist - 03 - Title", "Artist - Album - 01 Title").
+    // A bare number is a track number only when a segment follows it: in "MK - 17" it is the title.
     for (qsizetype i = 1; i < result.segments.size(); ++i) {
         const QString &segmentText = result.segments.at(i);
-        if (detail::isDigits(segmentText) && segmentText.size() <= 3) {
+        const bool followed = i + 1 < result.segments.size();
+        if (followed && detail::isDigits(segmentText) && segmentText.size() <= 3) {
             result.midTrack = segmentText.toInt();
             result.segments.removeAt(i);
             break;

@@ -1,0 +1,21 @@
+{
+  "release-count": 2,
+  "releases": [
+    {
+      "id": "3fd42359-92ed-4f45-9a1a-fe878b33e968",
+      "title": "Club Sounds 2026",
+      "status": "Official",
+      "date": "2026-01-10",
+      "label-info": [{ "catalog-number": "CC100", "label": { "name": "Compilation Co" } }],
+      "release-group": { "id": "687c966c-377b-4aa2-bb2e-db20035b7399", "primary-type": "Album", "secondary-types": ["Compilation"] }
+    },
+    {
+      "id": "de11cc9d-ea95-4c21-ae9c-82b1478c281d",
+      "title": "Live at the Harbour",
+      "status": "Official",
+      "date": "2025-12-01",
+      "label-info": [{ "catalog-number": "MIX1", "label": { "name": "Mix Label" } }],
+      "release-group": { "id": "c30d8b76-28db-425e-a3b2-29f1c4069545", "primary-type": "Album", "secondary-types": ["DJ-mix"] }
+    }
+  ]
+}

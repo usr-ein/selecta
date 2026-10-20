@@ -43,8 +43,8 @@ inline constexpr qint64 kMiB = qint64{1024} * 1024;
 inline constexpr ServicePolicy kSpotifyApiPolicy{200ms, 5, 5s, 2, 15s, 8 * kMiB, 3, 2, 5s, 60s, 30s};
 // accounts.spotify.com: sign-in and refreshes only, on demand.
 inline constexpr ServicePolicy kSpotifyAccountsPolicy{2s, 6, 60s, 1, 15s, 1 * kMiB, 0, 1, 10s, 60s, 30s};
-// i.scdn.co cover images.
-inline constexpr ServicePolicy kSpotifyImagesPolicy{500ms, 10, 10s, 2, 30s, 20 * kMiB, 3, 1, 5s, 30s, 30s};
+// Cover images on the Spotify and Deezer CDNs.
+inline constexpr ServicePolicy kCoverImagesPolicy{500ms, 10, 10s, 2, 30s, 20 * kMiB, 3, 1, 5s, 30s, 30s};
 // api.deezer.com: "50 requests / 5 seconds" per IP (second-hand); meta uses 2/s. Quota errors (code 4): 5 s ×2.
 inline constexpr ServicePolicy kDeezerPolicy{500ms, 10, 5s, 2, 15s, 4 * kMiB, 3, 2, 5s, 300s, 30s};
 // musicbrainz.org: 1 request/s on average per IP, and 503 above it; start 1.1 s apart. 503: 2 s ×2 up to 60 s,
@@ -76,7 +76,7 @@ static_assert(qint64{kDeezerPolicy.windowCount} * 1000 / kDeezerPolicy.window.co
               "Deezer allows 50 requests per 5 s (10/s)");
 static_assert(kYtDlpPolicy.maxInFlight == 1, "one yt-dlp process at a time (PREV-11)");
 static_assert(kYtDlpPolicy.minSpacing >= 2s && kYtDlpPolicy.windowCount <= 30 && kYtDlpPolicy.window >= 600s);
-static_assert(kSpotifyImagesPolicy.maxBodyBytes == kMaxCoverBytes &&
+static_assert(kCoverImagesPolicy.maxBodyBytes == kMaxCoverBytes &&
               kCoverArtArchivePolicy.maxBodyBytes == kMaxCoverBytes);
 
 } // namespace selecta::meta

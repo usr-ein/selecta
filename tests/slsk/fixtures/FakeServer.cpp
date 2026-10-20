@@ -21,12 +21,6 @@ quint32 ipv4(const QHostAddress &address)
 
 } // namespace
 
-FakeServer::VirtualUser::~VirtualUser() = default;
-
-void FakeServer::VirtualUser::searchRequested(const fromserver::SearchRequest & /*request*/) {}
-
-void FakeServer::VirtualUser::cantConnectToPeer(quint32 /*token*/) {}
-
 FakeServer::FakeServer(QObject *parent)
     : QObject(parent)
     , m_listener(new QTcpServer(this))

@@ -1,0 +1,76 @@
+{
+  "release-count": 5,
+  "release-offset": 0,
+  "releases": [
+    {
+      "id": "3fd42359-92ed-4f45-9a1a-fe878b33e968",
+      "title": "Club Sounds 2026",
+      "status": "Official",
+      "date": "2026-01-10",
+      "country": "XE",
+      "barcode": "5056000000099",
+      "label-info": [{ "catalog-number": "CC100", "label": { "id": "aaaaaaaa-0000-4000-8000-000000000001", "name": "Compilation Co" } }],
+      "release-group": {
+        "id": "687c966c-377b-4aa2-bb2e-db20035b7399",
+        "title": "Club Sounds 2026",
+        "primary-type": "Album",
+        "secondary-types": ["Compilation"]
+      }
+    },
+    {
+      "id": "de11cc9d-ea95-4c21-ae9c-82b1478c281d",
+      "title": "Live at the Harbour",
+      "status": "Official",
+      "date": "2025-12-01",
+      "barcode": "",
+      "label-info": [{ "catalog-number": "MIX1", "label": { "name": "Mix Label" } }],
+      "release-group": {
+        "id": "c30d8b76-28db-425e-a3b2-29f1c4069545",
+        "primary-type": "Album",
+        "secondary-types": ["DJ-mix"]
+      }
+    },
+    {
+      "id": "9e30691c-2386-42ea-926a-1e48cc11d357",
+      "title": "Glass Harbour",
+      "status": "Bootleg",
+      "date": "2026-02-01",
+      "barcode": null,
+      "label-info": [{ "catalog-number": "[none]", "label": { "name": "[no label]" } }],
+      "release-group": {
+        "id": "0d464138-a623-4255-bfc1-ea36f17fd374",
+        "primary-type": "Single",
+        "secondary-types": []
+      }
+    },
+    {
+      "id": "5f2dd97f-1cfb-40f6-a827-688de6a16a3b",
+      "title": "Tidal Lines",
+      "status": "Official",
+      "date": "2025-11-21",
+      "barcode": "5056000000017",
+      "label-info": [{ "catalog-number": "LGR010", "label": { "name": "Lantern Grove Records" } }],
+      "release-group": {
+        "id": "617959ce-3f1f-45a8-9e52-71007814e8a2",
+        "primary-type": "Album",
+        "secondary-types": []
+      }
+    },
+    {
+      "id": "c6a53877-7733-4bdb-9721-0dff076ce2ef",
+      "title": "Glass Harbour",
+      "status": "Official",
+      "date": "2026-03-13",
+      "barcode": "5056000000024",
+      "label-info": [
+        { "catalog-number": "[none]", "label": { "name": "[no label]" } },
+        { "catalog-number": "LGR012", "label": { "name": "Lantern Grove Records" } }
+      ],
+      "release-group": {
+        "id": "0d464138-a623-4255-bfc1-ea36f17fd374",
+        "primary-type": "Single",
+        "secondary-types": []
+      }
+    }
+  ]
+}

@@ -11,8 +11,11 @@ selecta_add_test_suite(selecta_slsk_tests
         PeerMessagesTest.cpp
         DistributedMessagesTest.cpp
         ServerSessionTest.cpp
+        PeerNetworkTest.cpp
         fixtures/Samples.h fixtures/Samples.cpp
         fixtures/FakeServer.h fixtures/FakeServer.cpp
+        fixtures/FakePeer.h fixtures/FakePeer.cpp
+        fixtures/TestPermits.h
         fixtures/TestUtil.h
     LIBRARIES selecta_slsk Qt6::Network)
 target_include_directories(selecta_slsk_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")

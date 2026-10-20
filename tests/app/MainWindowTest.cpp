@@ -266,3 +266,38 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
     QTRY_COMPARE_WITH_TIMEOUT(window->currentSubtitle(), u"Nothing waiting"_s, 5000);
     engine->stop();
 }
+
+TEST_F(MainWindowTest, GetTracksListsPastedLinesAndSaysWhatHappened)
+{
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"get"_s));
+    EXPECT_EQ(window->currentSubtitle(), u"Nothing in the list"_s);
+
+    QSignalSpy added(engine.get(), &selecta::core::EngineHost::tracksAdded);
+    engine->addTracks(u"Okuma Drift - Neon Rain\nHalden & Rue - Tidewater (Original Mix)\nID - ID\n"_s);
+    ASSERT_TRUE(added.wait(5000));
+    EXPECT_EQ(added.at(0).at(0).toInt(), 2);
+    EXPECT_EQ(added.at(0).at(2).toInt(), 1);
+
+    auto *table = window->findChild<QTreeView *>(u"get.lines"_s);
+    ASSERT_NE(table, nullptr);
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 2, 5000);
+    EXPECT_EQ(table->model()->index(0, 1).data().toString(), u"Okuma Drift - Neon Rain"_s);
+    EXPECT_TRUE(window->currentSubtitle().startsWith(u"2 tracks"_s));
+    const auto *note = window->findChild<QLabel *>(u"get.note"_s);
+    ASSERT_NE(note, nullptr);
+    EXPECT_TRUE(note->text().contains(u"Added 2 tracks."_s));
+    EXPECT_TRUE(note->text().contains(u"unidentified"_s));
+
+    // Removing a line from the list.
+    table->selectionModel()->select(table->model()->index(0, 0),
+                                    QItemSelectionModel::Select | QItemSelectionModel::Rows);
+    QSignalSpy reset(engine.get(), &selecta::core::EngineHost::getLinesReset);
+    QTest::keyClick(table, Qt::Key_Backspace);
+    ASSERT_TRUE(reset.wait(5000));
+    QTRY_COMPARE_WITH_TIMEOUT(table->model()->rowCount(), 1, 5000);
+    engine->stop();
+}

@@ -32,9 +32,10 @@ user's own yt-dlp. It owns no UI and returns copyable value types; `core/` decid
 | `ClipSource` | `ClipSource.h` | Deezer 30-s clip URL by ISRC, else by search |
 
 Internal (`detail/`, not for `core/`): `HttpChannel` (one per service: pacing, permits, timeouts, bounded bodies,
-manual redirects, retries, cache), `ServiceGate` (spacing / sliding window / in-flight / back-off scheduler),
-`Json` (strict optional-field accessors), `LoopbackReceiver` (one-shot `QTcpServer` for the sign-in answer),
-`ImageHeader` (JPEG/PNG dimensions without decoding).
+manual redirects, retries, cache), `ServiceGate` (spacing / sliding window / in-flight / back-off scheduler, two
+lanes), `Json` (strict optional-field accessors), `LoopbackReceiver` (one-shot `QTcpServer` for the sign-in answer),
+`ImageHeader` (JPEG/PNG dimensions without decoding, bounded walk), `Identifiers` (ISRC, MBID, barcode, dates),
+`TextFold` (the §4.2 comparison key), `SpotifyJson` and `MusicBrainzJson` (strict mapping and the D30 choices).
 
 ## Threading
 
@@ -63,7 +64,7 @@ retry; one per yt-dlp process that talks to YouTube (`--version` is local and ta
 |---|---|---|---|
 | `SpotifyApi` | api.spotify.com | `SpotifyRequest` | 1/s, bursts of 5, 2 in flight; 429 → Retry-After |
 | `SpotifyAccounts` | accounts.spotify.com | `SpotifyRequest` | ≥ 2 s apart, ≤ 6/min, 1 in flight |
-| `SpotifyImages` | i.scdn.co | `CoverArtRequest` | 2/s, 2 in flight, 20 MiB |
+| `CoverImages` | i.scdn.co, *.spotifycdn.com, *.dzcdn.net | `CoverArtRequest` | 2/s, 2 in flight, 20 MiB |
 | `Deezer` | api.deezer.com | `DeezerRequest` | 2/s (published 50/5 s); quota code 4 → 5 s ×2 |
 | `MusicBrainz` | musicbrainz.org | `MusicBrainzRequest` | ≥ 1.1 s apart, 1 in flight; 503 → 2 s ×2, 3 tries |
 | `CoverArtArchive` | coverartarchive.org, archive.org | `CoverArtRequest` | 1/s, bursts of 5 (redirect chains) |
@@ -135,6 +136,30 @@ Errors: 401 → one refresh and one retry, then `SignInRequired`; 403 → `Forbi
 tracks instead); 429 → Retry-After when short, else `RateLimited`; 429 with `reason: QUOTA_EXCEEDED` → `QuotaExceeded`
 and no Spotify request until Retry-After (1 h when absent).
 
+## MusicBrainz gap fill (D30, the note §5.3)
+
+`MusicBrainzClient::enrich()` runs, one request after another at ≥ 1.1 s:
+
+1. `GET /isrc/{isrc}?inc=artist-credits` (a 404 is remembered 24 h). Unknown ISRC, or none: one recording search
+   `recording:"<title without version>" AND artist:"<main artist>" AND dur:[ms−3000 TO ms+3000]`, hits ≥ 90 only.
+2. Keep recordings crediting the main artist (comparison keys) and, when both lengths are known, within ±3 s; take
+   the closest.
+3. `GET /release?recording=…&inc=labels+release-groups&limit=100`; choose barcode = UPC, else title and year
+   (official or unknown status only: a same-titled bootleg is passed over), else the earliest official release of
+   the same type (Spotify's "single" covers EPs), else the earliest official, else the earliest. Compilations and
+   DJ mixes are never used unless the release is a compilation: their label is the compiler's.
+4. Label and catalogue number from that release; MusicBrainz's `[no label]` and `[none]` are no answer.
+5. Genres: release group, else recording, else artist; most votes first, zero-vote genres dropped. A failure here
+   keeps the label and reports "genres unavailable"; everything else fails the enrichment (no half-truth label).
+
+## Covers
+
+`CoverFetcher::fetch()`: the largest linked image (only from Spotify's and Deezer's CDNs; any other host is skipped,
+so a hostile answer can't point Selecta at a LAN address), then CAA `/release/{mbid}/front-1200`, then
+`/release-group/{mbid}/front-1200`. Redirect hops to archive.org are paced and permitted. `CoverFetcher::inspect()`
+reads the header with `detail::readImageHeader()` — JPEG SOFn after a bounded segment walk (4 MiB, 4096 segments) or
+PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. Nothing in meta decodes images.
+
 ## Decisions taken here
 
 | Decision | Why |
@@ -153,20 +178,24 @@ and no Spotify request until Retry-After (1 h when absent).
 | Pasted links resolved one at a time by a self-owned importer | Pacing does the waiting; a fatal error (quota, sign-in) stops early and keeps what was found; destroying the client cancels it cleanly |
 | Paging by offset and `total`, not by following `next` URLs | The client decides what it requests; a hostile `next` can't redirect it |
 | Local files in playlists kept as text-only releases; episodes skipped and counted | They still make useful Get tracks lines (the note §14.6) |
+| `Service::SpotifyImages` renamed `CoverImages` | The same channel fetches Deezer's CDN covers |
+| Cover URLs restricted to the services' CDN hosts | Defence against a hostile or broken answer pointing at internal hosts |
+| MusicBrainz defaults to the Background lane | It serves the arrival pipeline; interactive lookups pass `Priority::Interactive` |
 
 ## Progress
 
 - **Done:**
   - Public headers (`1c7f454`).
-  - M1 (merged as `07df505`): `Result`/`MetaError`, `ServicePolicy`, `MemoryMetaCache`, `InMemoryTokenStore`,
-    `KeychainTokenStore` (verified once against the real login Keychain with a throwaway service name,
-    `SELECTA_TEST_KEYCHAIN=1`), PKCE, `detail::ServiceGate`, `detail::HttpChannel`, `detail::Json`,
-    `detail::LoopbackReceiver`, `SpotifyAuth` (PKCE + loopback, refresh, rotation, 6-month expiry, client credentials).
-  - M2: priority lanes, `SpotifyLinks`, `detail::Identifiers`, `detail::SpotifyJson`, `SpotifyClient` (search, ISRC,
-    track, album paging, playlists, Liked Songs, pasted links). 174 tests (+2 opt-in Keychain).
-- **Next:** M3 — `MusicBrainzClient` (ISRC → recordings → releases → genres, `enrich()`), `CoverFetcher` with
-  `detail::ImageHeader` (bounded JPEG/PNG parser, fuzz-style test), disk cache on a worker thread.
-- **Open questions:** none blocking. Merge main before M4 to adapt `match/`'s `Normalizer` / `VersionClassifier`.
+  - M1 (merged as `07df505`): error model, policies, caches, token stores (Keychain verified once by hand), PKCE,
+    `ServiceGate`, `HttpChannel`, `LoopbackReceiver`, `SpotifyAuth`.
+  - M2 (merged): priority lanes, `SpotifyLinks`, `Identifiers`, `SpotifyJson`, `SpotifyClient`.
+  - M3: `TextFold`, `ImageHeader` (bounded; truncation/malformation cases and a 20 000-buffer random test),
+    `MusicBrainzJson`, `MusicBrainzClient` (lookups, search, `enrich()`, `applied()`), `CoverFetcher` (CDN allowlist,
+    CAA fallback through redirects, disk cache on a worker thread with TTL and size bound). 228 tests (+2 opt-in).
+- **Next:** M4 — merge main, adapt `match/`'s `Normalizer`/`VersionClassifier` behind `TextMatcher` (or keep the
+  local adapter where match/ doesn't cover it), `DeezerClient`, `ReleaseResolver` (Spotify first, Deezer fallback,
+  priority lanes, the duration and label hints from `TracklistParser`), the labelled table of tricky lines.
+- **Open questions:** none blocking.
 
 ### Notes for whoever resumes
 
