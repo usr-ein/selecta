@@ -1,40 +1,58 @@
 # Selecta — development status
 
-Kept up to date by the head implementer during autonomous development. Newest first within each section. The
-maintainer reviews the **Decisions taken autonomously** and **Waiting for the maintainer** sections.
+Kept up to date by the head implementer (session `main-impl`). Newest first within each section. The maintainer reviews
+the **Decisions taken autonomously** and **Waiting for the maintainer** sections. The progress report against every PRD
+requirement (2026-10-20): https://claude.ai/code/artifact/e3077d17-237e-44dd-84ce-afc8aa483747
 
 ## Milestones
 
 | Milestone | State | Notes |
 |---|---|---|
 | M0 Definition and design | ✅ | PRD v0.4 (D1–D33), PLAN v0.4, research synthesis, ADR-001…013, mock |
-| M1 Foundations | 🟡 almost | Build system, static deps, app shell, storage, governor, lint, sanitizers, debug tools, devenv ✅ · CI workflow ⏳ |
+| M1 Foundations | 🟡 almost | Build system, static deps, app shell, storage, governor, lint, sanitizers, debug tools, devenv ✅ · CI on GitHub (macOS, lint, ASan/TSan, Linux; Windows experimental) 🔨 selecta-ci |
 | M2 Protocol core and governor | ✅ | slsk S1–S7 merged (codec, server, peers, transfers, distributed, devnet, CLI) · core NetworkService, governor bookkeeping ✅ |
-| M3 Search experience | 🟡 most | SearchService, FileRanking ✅ · **Search view** ✅ (release first, streamed results, filters and presets, why hidden, ownership badges, 24 h SQLite cache, preview and download from results) · search history (P1) ⏳ |
-| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanned, watched and matched ✅ · Inbox inspector (tags, cover, provenance, edit, choose another release) ✅ · **album downloads** ✅ (Download Folder as Album, DL-12 offer, folder listed by the peer, one tagged MP3 320 album with cover.jpg in Inbox/Albums, resumes after a restart; verified against selecta-devnet) · **supersede** ✅ (Inbox singles to the Trash with Undo, the circuit breaker asks first, filed singles only flagged) · "also on album X" flags shown in the views ⏳ |
-| M5 Preview and waveform | ✅ | Player, waveform, transport ✅ · Space previews from YouTube (the user's yt-dlp), else Deezer's 30-s clip, else the peer; ⇧Space the peer's file; K keeps it (a preview in flight becomes the download) ✅ · analysis cache, 2 GB preview cache, Preview as You Move ✅ · spectrum check (P1) ⏳ |
-| M6 Converter and arrival pipeline | ✅ | Arrival pipeline: MusicBrainz label/genre, cover, MP3 320 (verified) or keep lossy, Inbox + history ✅ · media C1–C3, A3 merged ✅ · **Converter view** ✅ (drop or add files, or "Convert…" from the Inbox; MP3 CBR/VBR, AIFF, WAV, FLAC; ID3v2.3/2.4; tags filled from folder and file names, folder cover embedded; advisor warnings with "Convert anyway"; verified, placed as new files next to the originals or in a folder) |
-| M7 Sharing and fairness | 🟡 most | share library merged ✅ · core ShareService: index from the collection, distributed network, search answers, browses, uploads in queue order, upload records ✅ · Shares view, toolbar ratio ✅ · **Activity → Transfers** (DL-1: by folder or peer, states with place in queue, speed and time left, cancel and retry) and **Activity → Peers** (FAIR-1: today, session, all time, last, queue, limit meter) ✅ · buddies/bans (P1) ⏳ |
-| M8 Get tracks, wishlist, browse, messages, rooms | 🟡 | **Get tracks end to end ✅** (paste → release lookup → find → tick → Get → download with retries and resume → converted, tagged MP3 320 in the Inbox; verified against selecta-devnet) · wishlist, browse, messages, rooms ⏳ |
+| M3 Search experience | ✅ | SearchService, FileRanking ✅ · **Search view** ✅ (release first, streamed results, filters, why hidden, ownership badges, 24 h SQLite cache, preview and download from results) · search history ✅ · **named filter presets** shared by Search, Get tracks and the Wishlist, min peer speed ✅ (SRCH-8, SRCH-5) |
+| M4 Library and Inbox | 🟡 most | FileOps, Inbox/History stores, naming + cleaner, Inbox view, History ✅ · match X1–X5 ✅ · collection scanned, watched and matched ✅ · Inbox inspector (tags, cover, provenance, edit, choose another release) ✅ · **album downloads** ✅ (Download Folder as Album, DL-12 offer, folder listed by the peer, one tagged MP3 320 album with cover.jpg in Inbox/Albums, resumes after a restart; verified against selecta-devnet) · **supersede** ✅ (Inbox singles to the Trash with Undo, the circuit breaker asks first, filed singles only flagged) · "also on album X" flags in the Inbox and the Collection ✅ (DL-8) · Library numbers ✅ (LIB-5) · downloads carry the quarantine attribute ✅ (NFR-4) · arrival length check ✅ (DL-10) · user corrections (LIB-6) ⏳ |
+| M5 Preview and waveform | 🟡 most | Player, waveform, transport ✅ · Space previews from YouTube (the user's yt-dlp), else Deezer's 30-s clip, else the peer; ⇧Space the peer's file; K keeps it ✅ · analysis cache, Preview as You Move ✅ · previews that survive a restart + Discard 🔨 selecta-previews · spectrum check: spectrogram and cached quality reports in `audio` 🔨 selecta-media, badge and spectrogram view ⏳ |
+| M6 Converter and arrival pipeline | ✅ | Arrival pipeline: MusicBrainz label/genre, cover, MP3 320 (verified) or keep lossy, Inbox + history ✅ · media C1–C3, A3 merged ✅ · **Converter view** ✅ (drop or add files, or "Convert…" from the Inbox; MP3 CBR/VBR, AIFF, WAV, FLAC; ID3v2.3/2.4; tags filled from folder and file names, folder cover embedded; advisor warnings with "Convert anyway"; verified, placed as new files next to the originals or in a folder) · sample rate, bit depth, ALAC 🔨 selecta-gaps |
+| M7 Sharing and fairness | 🟡 most | share library merged ✅ · core ShareService: index from the collection, distributed network, search answers, browses, uploads in queue order, upload records ✅ · Shares view, toolbar ratio ✅ · **Activity → Transfers** (DL-1: by folder or peer, states with place in queue, speed and time left, cancel and retry) and **Activity → Peers** (FAIR-1: today, session, all time, last, queue, limit meter) ✅ · buddies, ignore and ban ✅ (NET-8) · buddy-only folders out of v1 (D34) |
+| M8 Get tracks, wishlist, browse, messages, rooms | 🟡 most | **Get tracks end to end ✅**, also against real Spotify, yt-dlp, Deezer and MusicBrainz with the maintainer's playlist (D35; findings in task "live-test fixes") · Wishlist ✅ · Browse ✅ · Messages ✅ · Rooms ✅ · Export Not Found ✅ · native notifications and Dock badge 🔨 selecta-notify · the whole list's time left (BATCH-4), spreading across peers (BATCH-7) ⏳ |
 | M9 Live-network beta | ⛔ maintainer only | never automated (CLAUDE.md) |
 | M10 v1.0 | ⏳ | |
 
-## Library agents
+## Team (since 2026-10-20 midday)
 
-All four library contracts are delivered and merged.
+Each teammate is its own Claude session (`claude agents` lists them; `claude attach selecta-<name>`), working in its
+own worktree under `.claude/worktrees/`. They report to `main-impl`, which merges into `main` locally and pushes (D37).
+Briefs: `local/briefs/` (git-ignored).
 
-| Agent | Branch | Contract | State |
+| Session | Branch | Task | Effort |
 |---|---|---|---|
-| slsk | `lib/slsk` | [contracts/slsk.md](contracts/slsk.md) | S1–S7 ✅ merged. Fixing one fixture race (stale upload token after a killed transfer over the indirect path) |
-| meta | `lib/meta` | [contracts/meta.md](contracts/meta.md) | M1–M6 ✅ merged (Spotify, MusicBrainz, covers, Deezer, resolver, yt-dlp, clips, CLI; one manual smoke run) |
-| media | `lib/media` | [contracts/media.md](contracts/media.md) | A1–A3, C1–C3 ✅ merged, plus `probeStreamInfo` (header-only probe) |
-| match | `lib/match`, `lib/collection` | [contracts/match.md](contracts/match.md), [contracts/collection.md](contracts/collection.md) | X1–X5 ✅ and the collection scanner ✅ merged |
-| share | `lib/share` | [contracts/share.md](contracts/share.md) | ✅ merged: share index, safe opening for uploads, upload queue (135 tests) |
+| selecta-media | `lib/media` | PREV-9 audio side (spectrogram in the quality pass, cached quality reports), then converter advisor gaps R1–R4 | max |
+| selecta-ci | `worktree-agent-a70a72901e0097c60` (pushed as `ci/green`) | CI green on GitHub, TSan run, Windows first run, QTest throw-on-fail in the test mains | max |
+| selecta-previews | `worktree-agent-a1a218cfab5360037` | Previews that survive a restart (CACHE-1, PREV-8), Discard (PREV-5) | high |
+| selecta-notify | `worktree-agent-a223647c04edd413c` | Native notifications and the Dock badge (UI-6, NET-7) | high |
+| selecta-gaps | `worktree-agent-af96d2f083df4f12e` | Quarantine and the Spotify notice merged; converter sample rate, bit depth and ALAC (CONV-1); Spotify "Open Again" | high |
+| selecta-logo | `worktree-agent-a9168c5df69391a2a` | The app icon: vinyl disc with the Jamaican flag, variant B (D36) | high |
+
+The library agents of the first night (slsk, meta, match, collection, share) are merged; their worktrees are removed and
+their branches are on origin.
 
 ## Decisions taken autonomously (for review)
 
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-20 | The dev preset builds with line tables only (`-g1`) | Keeps file:line backtraces; build folders about half the size (the maintainer asked for about 10 GB for the whole repo, worktrees included) |
+| 2026-10-20 | Presets: Selecta's four (MP3 320 or lossless, the default; lossless only; hi-res 24-bit; any quality) plus the user's, kept in settings.ini; each Wishlist search keeps a copy of its filter | A saved search shouldn't change under a later edit of a preset; SRCH-8 |
+| 2026-10-20 | Changing Get tracks' quality ranks the lines already found again, from the search cache | Spends no search budget; a new network search only when the cache has nothing |
+| 2026-10-20 | Quarantine: written directly as `0081;<time>;Selecta;`, never replacing an existing attribute; filing never adds one | LaunchServices' setter writes a row in the user's quarantine database for every file (tests too); NFR-4, ADR-009 (selecta-gaps) |
+| 2026-10-20 | The Spotify terms notice shows before the first Save or Sign In; accepted once, kept in settings.ini; the engine's Spotify switch is off until then | META-4, D30 (selecta-gaps) |
+| 2026-10-20 | Rooms: the room list at most once a minute, one join every 2 s, 10 rooms at most, rejoined after login; lines kept in memory (500 a room); private-message and room lines share one governor budget | references/soulseek-protocol.md §12.7; the shared budget makes the governor stricter |
+| 2026-10-20 | Messages: kept in SQLite; ignored users' messages dropped unread; banned users get "Banned" and none of our shares; buddies watched at login (200 at most) | NET-7, NET-8 |
+| 2026-10-20 | Live private messages take Selecta's clock; only messages re-delivered after being offline keep the server's time | A conversation stays in order whatever the server's clock says |
+| 2026-10-20 | Browse lists are kept a day; Refresh asks again through the governor; a browsed folder downloaded as an album skips the folder-contents request | BRWS-2; the listing is already known |
+| 2026-10-20 | The Wishlist uses the server's wishlist search, one at a time, at most every 2 minutes whatever the server says; Get tracks and the Wishlist leave a reserve of the search budget for searches typed by hand | NET-6, SRCH-14 |
+| 2026-10-20 | Arrival flags a file more than ±5 s off the release (matching keeps ±3 s) | DL-10 |
 | 2026-10-20 | The Converter makes each file in Selecta's staging folder, verifies it, then places it as a new file (next to the original by default, or in a chosen folder); a taken name gets " (2)" | CONV-3: originals untouched, nothing overwritten; ADR-009 keeps writes outside the caches in FileOps |
 | 2026-10-20 | Activity has three pages: Transfers (DL-1), Peers (FAIR-1) and the Log (SAFE-4) | The mock's Activity is the transfer list; the log still needs a home |
 | 2026-10-20 | The transfer list shows this session's downloads and the unfinished ones; earlier finished ones are in History | A transfer list of every download ever would bury what's moving now |
@@ -83,23 +101,20 @@ All four library contracts are delivered and merged.
 
 ## Waiting for the maintainer (nothing blocks development)
 
-0. **Try the main flow locally:** `build/dev/tools/devnet/selecta-devnet --generate ~/devnet-corpus` prints a
-   server address; put it in Settings → Soulseek (any user name and password), paste lines from
-   `~/devnet-corpus/tracklist.txt` into Get tracks, Find Them, then Get. The MP3s land in the Inbox.
-
-1. First push: `git push -u origin main`. Ready since 2026-10-20: every commit carries `usr-ein <usr_ein@pm.me>` (D16),
-   and `origin` fetches from GitHub (`usr-ein/selecta`, public) and pushes to both Gitea and GitHub. Not done
-   autonomously: it's outward-facing.
-2. Before M9: ask the Nicotine+ maintainers to reserve a login version number for Selecta.
-3. Waveform calibration in rekordbox 7 and an import check of Selecta-tagged files (RESEARCH-SYNTHESIS §6). Two
+0. **Review the decisions** above and in the progress report; answer with "keep N, change M".
+1. Before M9: ask the Nicotine+ maintainers to reserve a login version number for Selecta.
+2. Waveform calibration in rekordbox 7 and an import check of Selecta-tagged files (RESEARCH-SYNTHESIS §6). Two
    tag questions from the media agent (src/convert/DESIGN.md): which grouping frame rekordbox shows (GRP1 or TIT1),
    and whether it reads the M4A KEY atom.
-4. Spotify: register a development app with redirect `http://127.0.0.1/callback`. The Client ID in
-   `local/secrets.env` is used only by manual smoke tools.
-5. Check that Undo after a move to the Trash works with the real macOS Trash (macOS may keep apps out of
+3. Check that Undo after a move to the Trash works with the real macOS Trash (macOS may keep apps out of
    `~/.Trash`; if it does, Undo says the item is no longer in the Trash and nothing else happens).
-6. Earlier development runs (before isolated runs got their own Trash) left a few synthetic FLAC files from the
+4. Earlier development runs (before isolated runs got their own Trash) left a few synthetic FLAC files from the
    test network in your Trash (`01 - Saffron Tide.flac`, `02 - Glass Meridian.flac` and the like): safe to empty.
+5. Native notifications need a real logged-in session to see the permission prompt and the banners; if macOS refuses
+   the ad-hoc-signed dev bundle, `codesign --force --sign - build/dev/src/app/Selecta.app`.
+
+Done today: the first push (main and the library branches are on origin); Spotify sign-in and a playlist import with
+the maintainer's own playlist; the logo variant (B).
 
 ## How to see it
 
