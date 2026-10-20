@@ -946,12 +946,11 @@ void SearchView::addCorrections(QMenu &menu, const QList<int> &selected)
         }
         using core::Ownership;
         const Ownership ownership = result->ownership;
-        const bool sure = ownership == Ownership::InCollection || ownership == Ownership::Upgrade ||
-                          (ownership == Ownership::InInbox &&
-                           std::ranges::any_of(result->candidates, [result](const core::OwnedCandidate &candidate) {
-                               return candidate.id == result->ownedId && candidate.source == result->ownedSource &&
-                                      candidate.tier == match::Tier::Exact;
-                           }));
+        bool sure = ownership == Ownership::InCollection || ownership == Ownership::Upgrade;
+        for (const core::OwnedCandidate &candidate : result->candidates) {
+            sure = sure || (ownership == Ownership::InInbox && candidate.id == result->ownedId &&
+                            candidate.source == result->ownedSource && candidate.tier == match::Tier::Exact);
+        }
         if (sure || ownership == Ownership::LikelyInCollection || ownership == Ownership::InInbox ||
             ownership == Ownership::OtherVersion) {
             owned.append(index);

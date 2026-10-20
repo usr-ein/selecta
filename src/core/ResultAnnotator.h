@@ -47,7 +47,7 @@ public:
 
 private:
     void correct(SearchResult &result);
-    TrackIdentity identityOf(const OwnedCandidate &candidate);
+    TrackIdentity identityOf(quint64 id, match::Source source);
     void markQueued(SearchResult &result) const;
     void settleUpgrade(SearchResult &result);
     void describe(SearchResult &result);

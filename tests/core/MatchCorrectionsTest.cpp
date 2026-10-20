@@ -206,9 +206,8 @@ TEST(SettleOwnership, VerdictsSetCandidatesAsideOrMakeThemSure)
                          OwnedCandidate{2, Source::Inbox, Tier::Exact, Relation::Same},
                          OwnedCandidate{3, Source::Collection, Tier::Exact, Relation::OtherVersion}};
     const auto with = [&result](const QHash<quint64, Verdict> &verdicts) {
-        selecta::core::settleOwnership(result, [verdicts](const OwnedCandidate &candidate) {
-            return verdicts.contains(candidate.id) ? std::optional<Verdict>(verdicts.value(candidate.id))
-                                                   : std::nullopt;
+        selecta::core::settleOwnership(result, [verdicts](quint64 id, Source /*source*/) {
+            return verdicts.contains(id) ? std::optional<Verdict>(verdicts.value(id)) : std::nullopt;
         });
         return std::pair{result.ownership, result.ownedId};
     };

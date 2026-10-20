@@ -219,7 +219,7 @@ void settleOwnership(SearchResult &result, const CandidateVerdict &verdictOf)
     // The candidates as the user sees them: one set aside is gone, one confirmed is a sure match of the same track.
     QList<OwnedCandidate> candidates;
     for (const OwnedCandidate &candidate : std::as_const(result.candidates)) {
-        const std::optional<Verdict> verdict = verdictOf ? verdictOf(candidate) : std::nullopt;
+        const std::optional<Verdict> verdict = verdictOf ? verdictOf(candidate.id, candidate.source) : std::nullopt;
         if (verdict == Verdict::Different) {
             continue;
         }
@@ -232,10 +232,10 @@ void settleOwnership(SearchResult &result, const CandidateVerdict &verdictOf)
         }
         candidates.append(seen);
     }
-    const auto take = [&result](const OwnedCandidate &candidate, Ownership ownership) {
+    const auto take = [&result](quint64 id, match::Source source, Ownership ownership) {
         result.ownership = ownership;
-        result.ownedId = candidate.id;
-        result.ownedSource = candidate.source;
+        result.ownedId = id;
+        result.ownedSource = source;
     };
     const auto first = [&candidates](match::Source source) -> const OwnedCandidate * {
         for (const OwnedCandidate &candidate : std::as_const(candidates)) {
@@ -248,15 +248,15 @@ void settleOwnership(SearchResult &result, const CandidateVerdict &verdictOf)
     if (const OwnedCandidate *collection = first(match::Source::Collection)) {
         // Only a sure match claims more than "likely": an unclear version may be another track to a DJ.
         if (collection->tier != match::Tier::Exact) {
-            take(*collection, Ownership::LikelyInCollection);
+            take(collection->id, collection->source, Ownership::LikelyInCollection);
         } else {
-            take(*collection,
+            take(collection->id, collection->source,
                  collection->relation == match::Relation::Upgrade ? Ownership::Upgrade : Ownership::InCollection);
         }
         return;
     }
     if (const OwnedCandidate *inbox = first(match::Source::Inbox)) {
-        take(*inbox, Ownership::InInbox);
+        take(inbox->id, inbox->source, Ownership::InInbox);
         return;
     }
     if (!result.historyIds.isEmpty()) {
@@ -265,7 +265,7 @@ void settleOwnership(SearchResult &result, const CandidateVerdict &verdictOf)
     }
     for (const OwnedCandidate &candidate : std::as_const(candidates)) {
         if (candidate.relation == match::Relation::OtherVersion) {
-            take(candidate, Ownership::OtherVersion);
+            take(candidate.id, candidate.source, Ownership::OtherVersion);
             return;
         }
     }

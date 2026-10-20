@@ -105,9 +105,9 @@ void scoreResults(QList<SearchResult> &results, const std::optional<match::Relea
 void matchResults(QList<SearchResult> &results, const std::shared_ptr<const match::MatchIndex> &index);
 // The ownership a result's candidates and download history give it, in badge precedence: a sure collection match,
 // a likely one, the Inbox, a past download, another version. `verdictOf` gives the user's verdict on a candidate (PRD
-// LIB-6): Different sets it aside, Same makes it sure (another version included). Sets ownership, ownedId and
-// ownedSource; Queued and the engine's details are left to the caller. Pure.
-using CandidateVerdict = std::function<std::optional<Verdict>(const OwnedCandidate &)>;
+// LIB-6), by the candidate's id and source: Different sets it aside, Same makes it sure (another version included).
+// Sets ownership, ownedId and ownedSource; Queued and the engine's details are left to the caller. Pure.
+using CandidateVerdict = std::function<std::optional<Verdict>(quint64 id, match::Source source)>;
 void settleOwnership(SearchResult &result, const CandidateVerdict &verdictOf = {});
 
 } // namespace selecta::core

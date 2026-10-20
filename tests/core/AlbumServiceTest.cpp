@@ -641,7 +641,8 @@ TEST_F(AlbumServiceTest, NotTheSameTrackIsNeverFlaggedAgain)
     EXPECT_TRUE(selecta::core::SupersedeFlagStore(db).all().isEmpty());
     EXPECT_TRUE(QFileInfo::exists(filed));
     bool said = false;
-    for (const selecta::core::ActivityEntry &entry : selecta::core::ActivityLog::recent(db, 50)) {
+    const QList<selecta::core::ActivityEntry> recent = selecta::core::ActivityLog::recent(db, 50);
+    for (const selecta::core::ActivityEntry &entry : recent) {
         said = said || (entry.operation == u"supersede"_s && entry.outcome == u"corrected"_s);
     }
     EXPECT_TRUE(said) << "the activity log says why";

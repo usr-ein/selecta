@@ -52,23 +52,23 @@ void ResultAnnotator::correct(SearchResult &result)
         return;
     }
     const TrackIdentity remote = remoteIdentity(result.parsed, result.durationSec());
-    settleOwnership(result, [this, &remote](const OwnedCandidate &candidate) {
-        return m_corrections.verdict(CorrectionKind::SearchResult, remote, identityOf(candidate));
+    settleOwnership(result, [this, &remote](quint64 id, match::Source source) {
+        return m_corrections.verdict(CorrectionKind::SearchResult, remote, identityOf(id, source));
     });
 }
 
-TrackIdentity ResultAnnotator::identityOf(const OwnedCandidate &candidate)
+TrackIdentity ResultAnnotator::identityOf(quint64 id, match::Source source)
 {
-    const std::pair<quint64, int> key{candidate.id, static_cast<int>(candidate.source)};
+    const std::pair<quint64, int> key{id, static_cast<int>(source)};
     if (const auto found = m_identities.constFind(key); found != m_identities.cend()) {
         return *found;
     }
     TrackIdentity identity;
-    if (candidate.source == match::Source::Inbox) {
-        if (const std::optional<library::InboxItem> item = m_inbox.find(static_cast<qint64>(candidate.id))) {
+    if (source == match::Source::Inbox) {
+        if (const std::optional<library::InboxItem> item = m_inbox.find(static_cast<qint64>(id))) {
             identity = inboxIdentity(*item);
         }
-    } else if (const std::optional<CollectionFile> file = fileOf(candidate.id)) {
+    } else if (const std::optional<CollectionFile> file = fileOf(id)) {
         identity = collectionIdentity(file->file);
     }
     m_identities.insert(key, identity);
