@@ -260,14 +260,28 @@ public:
 
     void add(std::span<const float> interleaved, int channels)
     {
+        const auto frames = static_cast<qint64>(interleaved.size() / static_cast<std::size_t>(channels));
+        const qint64 chunkStart = m_seen;
+        m_seen += frames;
         if (m_next >= m_positions.size()) {
             return;
         }
-        const std::size_t frames = interleaved.size() / static_cast<std::size_t>(channels);
-        for (std::size_t f = 0; f < frames; ++f) {
+        // Frames before the next window are never needed: only the windows' frames (about 5 % of a long file) are
+        // mixed and kept.
+        qint64 from = 0;
+        if (m_history.empty()) {
+            const qint64 needed = m_positions[m_next];
+            if (chunkStart + frames <= needed) {
+                return;
+            }
+            from = std::max<qint64>(0, needed - chunkStart);
+            m_historyStart = chunkStart + from;
+        }
+        const auto stride = static_cast<std::size_t>(channels);
+        for (qint64 f = from; f < frames; ++f) {
             float sum = 0.0F;
-            for (int c = 0; c < channels; ++c) {
-                sum += interleaved[(f * static_cast<std::size_t>(channels)) + static_cast<std::size_t>(c)];
+            for (std::size_t c = 0; c < stride; ++c) {
+                sum += interleaved[(static_cast<std::size_t>(f) * stride) + c];
             }
             m_history.push_back(sum / static_cast<float>(channels));
         }
@@ -287,6 +301,7 @@ private:
     std::size_t m_next = 0;
     std::vector<float> m_history; // mono, from frame m_historyStart
     qint64 m_historyStart = 0;
+    qint64 m_seen = 0; // frames received so far
 };
 
 // The cut-off and, above 48 kHz, the content bandwidth, when the spectrum has enough windows and a reference band.
@@ -331,6 +346,9 @@ void addFindings(const StreamInfo &info, bool padded, QualityReport &report)
     // compare.
     if (mp3 && report.lameLowpassHz && *report.lameLowpassHz < (info.sampleRate / 2) - 500 &&
         report.cutoffHz + kReencodedMarginHz < *report.lameLowpassHz) {
+        if (!report.likelySourceKbps) {
+            report.likelySourceKbps = likelyKbps(report.cutoffHz);
+        }
         report.findings.append(QualityFinding::LikelyReencoded);
     }
     if (info.sampleRate > 48000 && report.contentBandwidthHz > 0 && report.contentBandwidthHz <= kUpsampledLimitHz) {

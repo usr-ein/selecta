@@ -5,6 +5,7 @@
 // synthetic (tones over noise), encoded at start-up: six minutes of 16-bit 44.1 kHz FLAC, and one minute of 24-bit
 // 96 kHz FLAC for the resampling case.
 #include "SyntheticAudio.h"
+#include "convert/QualityAdvisor.h"
 #include "convert/Transcoder.h"
 
 #include <QCoreApplication>
@@ -45,9 +46,21 @@ QString writeSource(const QString &name, const QByteArray &bytes)
     return path;
 }
 
+const Pcm &sixMinutes()
+{
+    static const Pcm pcm = tonesOverNoise(360.0, 44100, 16);
+    return pcm;
+}
+
 const QString &cdSource()
 {
-    static const QString path = writeSource(u"six-minutes.flac"_s, makeFlac(tonesOverNoise(360.0, 44100, 16)));
+    static const QString path = writeSource(u"six-minutes.flac"_s, makeFlac(sixMinutes()));
+    return path;
+}
+
+const QString &mp3Source()
+{
+    static const QString path = writeSource(u"six-minutes.mp3"_s, makeMp3(sixMinutes(), {}));
     return path;
 }
 
@@ -83,8 +96,25 @@ void convert(benchmark::State &state, OutputFormat format, bool hiRes)
     }
 }
 
+// probeSourceQuality() with the quality checks: one full decode, the word-length check and 200 FFTs.
+void probe(benchmark::State &state, bool mp3)
+{
+    const QString &source = mp3 ? mp3Source() : cdSource();
+    while (state.KeepRunning()) {
+        const Result<SourceQuality> quality = probeSourceQuality(source, /*runChecks=*/true);
+        if (!quality.ok() || !quality.value().checks) {
+            state.SkipWithError("probe failed");
+            return;
+        }
+        int cutoff = quality.value().checks->cutoffHz;
+        benchmark::DoNotOptimize(cutoff);
+    }
+}
+
 } // namespace
 
+BENCHMARK_CAPTURE(probe, mp3_320_quality_checks, true)->Unit(benchmark::kMillisecond)->UseRealTime();
+BENCHMARK_CAPTURE(probe, flac16_quality_checks, false)->Unit(benchmark::kMillisecond)->UseRealTime();
 BENCHMARK_CAPTURE(convert, flac16_to_mp3_320, OutputFormat::Mp3, false)->Unit(benchmark::kMillisecond)->UseRealTime();
 BENCHMARK_CAPTURE(convert, flac16_to_aiff, OutputFormat::Aiff, false)->Unit(benchmark::kMillisecond)->UseRealTime();
 BENCHMARK_CAPTURE(convert, flac16_to_flac, OutputFormat::Flac, false)->Unit(benchmark::kMillisecond)->UseRealTime();

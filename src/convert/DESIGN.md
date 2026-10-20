@@ -15,7 +15,7 @@ design), ADR-003, ADR-009, PRD D29/D30, CONV-1…8.
 | `EncodeSettings.h` | `EncodeSettings`, `resolveOutput()`, `checkSettings()` | Output format and the rules for rate, word length and dither (shared by transcoder and advisor). |
 | `Transcoder.h` | `transcode()`, `TranscodeJob` | Decode → soxr → TPDF → encode → tag → verify → rename. Cancellable, with progress. |
 | `OutputVerifier.h` | `verifyOutput()`, `pcmDigest()` | Full decode, length, PCM digest, MP3 frame bitrates and LAME tag, tags and artwork. |
-| `QualityAdvisor.h` | `advise()`, `makeSourceQuality()`, `probeSourceQuality()`, `describeNotice()` | The warning matrix of §6.2 and its UI copy. |
+| `QualityAdvisor.h` | `advise()`, `makeSourceQuality()`, `probeSourceQuality()`, `describeNotice()`, `judgeQuality()`, `describeSource()` | The warning matrix of §6.2 and its UI copy; the per-file verdict for the inspector. |
 | `ArtworkProcessor.h` | `processArtwork()`, `inspectImage()` | Baseline sRGB JPEG q90 ≤ 800 px, near-square crop, never upscaled, bounded decoding. |
 | `ArtworkFinder.h` | `chooseFolderCover()` | Folder cover ranking (§5.1), pure. |
 
@@ -148,8 +148,38 @@ encode, tags, full verification decode, fsync and rename (`selecta_convert_bench
 | 6 min FLAC → ALAC 16 | 2.9 s |
 | 6 min FLAC kept as it is (copy, retag, two decodes) | 1.4 s |
 | 1 min FLAC 24/96 → MP3 320 (soxr VHQ to 44.1 kHz) | 1.1 s |
+| `probeSourceQuality(…, runChecks)`: 6 min MP3 320 / FLAC 16 | 0.31 s / 0.39 s (decode-bound) |
 
 A conversion keeps one core busy, so the worker pool (CONV-8) can run about one job per performance core.
+
+## Artwork and advice in practice (C3)
+
+- **Artwork.** `processArtwork()` refuses an image over 20 MB, then reads the header only (`QImageReader::size()`)
+  and refuses more than 10 000 px a side or 50 megapixels, before any pixel is decoded; it never touches
+  QImageReader's process-wide allocation limit. Selecta's own JPEG marker walk reports the frame type (baseline or
+  not), the component count, an ICC profile, and a scan that never reaches its end-of-image marker (a cut download,
+  which libjpeg would decode with grey filling in: refused as Corrupt). A baseline 3-component JPEG with no profile,
+  no EXIF rotation, within 800 px and 500 KB and not near-square-but-not-square is returned byte for byte, after a
+  decode check; anything else is decoded (EXIF orientation applied), converted to sRGB (CMYK and grey with
+  profiles through `convertedToColorSpace`), flattened over white, centre-cropped when its ratio is within 0.9–1.1,
+  scaled down to 800 px (never up) and written as a baseline JPEG at quality 90 with no ICC or EXIF. The result
+  carries its MIME type and size for core.
+- **Folder covers.** `chooseFolderCover()` looks only at the album folder and its `Scans/`, `Artwork/` or `Covers/`
+  subfolder, never above (paths with `..` or a leading `/` are ignored). Exact names (cover, folder, front, in that
+  order) beat whole-word matches (front, cover, folder, albumart) without an excluded word (back, cd, disc, inlay,
+  inside, tray, booklet, label); otherwise the only plausible image or the largest roughly square one is offered as
+  "guessed".
+- **Advice.** `advise()` follows the matrix of conversion §6.2 with `resolveOutput()` deciding the columns, so the
+  advice describes exactly what `transcode()` will do. In the filing context, lossy audio is never re-encoded: MP3s
+  at the target are kept, others kept with "below target" (judged on the bitrate the checks say a suspect MP3 really
+  delivers) and AAC with "format differs"; Ogg/Opus/WMA are asked about (D-5). Lossy to a higher rate or depth is
+  refused. Warnings are listed before information. `describeNotice()` fills §6.3's texts with the real numbers.
+- **Padded 24-bit.** The quantiser leaves samples already on the target grid alone even with dither on, so reducing
+  a padded 24-bit file to 16 bits is lossless (and digital silence stays silent); the advisor says so
+  (LosslessReduction) instead of announcing dither.
+- **Verdict.** `judgeQuality()` turns a `SourceQuality` with checks into Genuine / Suspect / Unchecked, the claimed
+  quality ("MP3 320 kbps CBR", "FLAC 24-bit / 96 kHz") and a reason for the inspector, worded "likely" (A3's
+  findings, plus the MP3 cut-off rule applied to AAC, Vorbis and Opus files claiming 256 kbps or more).
 
 ## Threading
 
@@ -157,13 +187,14 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
 |---|---|
 | `MetadataModel`, `EncodeSettings`, `Advice`… | Plain values |
 | `readTags`, `writeTags`, `transcode`, `verifyOutput`, `processArtwork`, `probeSourceQuality` | Reentrant, blocking: workers only |
-| `advise`, `applyTagPolicy`, `chooseFolderCover`, `id3v23View` | Pure |
+| `advise`, `applyTagPolicy`, `chooseFolderCover`, `id3v23View`, `judgeQuality`, `describeNotice` | Pure |
 | `TranscodeJob` | Lives in its creating thread; work on `QThreadPool::globalInstance()`. Results reach it through a mutex-guarded mailbox and a data-free queued call (the WaveformJob pattern, ThreadSanitizer-visible); progress is coalesced to 10 updates a second; nothing is emitted after `cancel()` or destruction. |
 | Parallel conversions | Independent: LAME's `lame_init()`/`lame_init_params()`/`lame_close()` are serialised process-wide, every other state belongs to one job. Tested byte for byte against the same conversions run alone, under TSan. |
 
 ## Integration: the arrival pipeline (core, D29)
 
-1. `probeSourceQuality(path, /*runChecks=*/true)` → `advise(quality, inboxSettings, AdviceContext::Filing)`.
+1. `probeSourceQuality(path, /*runChecks=*/true)` → `advise(quality, inboxSettings, AdviceContext::Filing)`, and
+   `judgeQuality(quality)` for the inspector (fake-320 detection; 0.3–0.4 s for a 6-minute file: one decode).
 2. `Convert` → `TranscodeJob({source, stagingOutput, settings, releaseTags})`; `KeepAsIs` → the same job with
    `OutputFormat::KeepAudio` (tags rewritten on a copy, audio verified identical) plus the badge; `Ask` → the user.
 3. On `finished`, FileOps publishes `stagingOutput` into the Inbox and trashes a lossless original (D11).
@@ -192,6 +223,10 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
 | MP4: BPM rounded, non-numeric track/disc numbers left out | TagLib would truncate "127.98" to 127 and store "A1" as 0. |
 | Encoder fields, length and iTunes data kept when the audio is kept | They describe the kept audio (iTunSMPB is AAC's gapless data); the reference's deny-list is "on transcode". |
 | MD5 for the PCM digest | Not adversarial (both sides are computed by Selecta); fast enough next to LAME. |
+| Dither skips samples already on the target grid | Padded 16-bit audio and digital silence stay exact; for genuine deeper audio the skipped samples are a random 1/256 with zero error, so the noise stays signal-independent. |
+| A truncated JPEG cover is refused | libjpeg decodes it with grey filling the missing part; embedding that would be worse than no cover. |
+| Filing never re-encodes lossy audio (except formats rekordbox can't play, after asking) | CONV-2: a re-encode can't improve it, only lose more. |
+| The verdict extends the MP3 cut-off rule to AAC/Vorbis/Opus at ≥ 256 kbps | Core asked for fake-high-bitrate detection on every download; the rule is as safe for them as for MP3. |
 
 ## Progress
 
@@ -200,6 +235,12 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
   independently through TagLib's format classes. C2: `resolveOutput`/`checkSettings`, the LAME, FFmpeg (FLAC, ALAC,
   AIFF) and WAV encoders, `transcode()` with KeepAudio, `TranscodeJob`, `verifyOutput()`/`pcmDigest()`,
   `tagsAsWritten()`, the conversion benchmark. 53 tests; dev, ASan and TSan clean.
-- **Next:** C3 (quality advisor, artwork processor and finder), A3 (quality checks), the `media-convert` CLI command.
+- **Done (C3):** `processArtwork()`/`inspectImage()`, `chooseFolderCover()`, `advise()`/`describeNotice()`,
+  `makeSourceQuality()`/`probeSourceQuality()`, `judgeQuality()`/`describeSource()`. 76 convert tests.
+- **Done (CLI):** `selecta-cli media-convert <in> <out.mp3|.aiff|.flac|.wav|.m4a> [--title … --artist … --cover img]`
+  prints the source, the verdict (`--check`), the advice and its notices, then converts, tags and verifies (the
+  output format follows the extension; `--keep-audio`, `--bitrate`, `--vbr`, `--bits`, `--rate`, `--id3v24`,
+  `--tag KEY=VALUE`; an Ask needs `--yes`, a Refuse stops).
+- **Next:** nothing planned in C1–C3; rekordbox checks by the maintainer (below).
 - **Open questions:** which ID3 frame rekordbox shows as grouping (TIT1 or GRP1, conversion E-1); the M4A key atom
   (E-7). Both need the maintainer's rekordbox import.
