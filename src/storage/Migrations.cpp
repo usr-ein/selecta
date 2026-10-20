@@ -327,11 +327,16 @@ constexpr std::array kMigrations{
         ALTER TABLE supersede_flags ADD COLUMN track_key TEXT NOT NULL DEFAULT '';
         ALTER TABLE supersede_flags ADD COLUMN track_ms INTEGER NOT NULL DEFAULT 0;
     )sql"},
+    // An Inbox item the user got anyway, below the quality wanted (Get tracks' near misses): why it fell short of the
+    // list's preset, in words ("under 320 kbps"); '' when it met it. An upgrade can be offered for it later.
+    Migration{18, R"sql(
+        ALTER TABLE inbox_items ADD COLUMN below_wanted TEXT NOT NULL DEFAULT '';
+    )sql"},
     // P-001 (PRD D39): the Inbox is Selecta's own, in its data folder, and starts empty, so the Inbox items of earlier
     // builds go. History keeps what it says about them. The foreign keys do the rest, as when any Inbox item goes:
     // History, downloads and album downloads lose their links to the items, and the flags of the items' singles go
     // with them. Its version is kInboxMovedVersion.
-    Migration{18, R"sql(
+    Migration{19, R"sql(
         DELETE FROM inbox_items;
     )sql"},
 };

@@ -313,7 +313,8 @@ QWidget *ActivityView::createLogPage()
     m_table->header()->setSectionResizeMode(ActivityModel::Time, QHeaderView::ResizeToContents);
     m_table->header()->setSectionResizeMode(ActivityModel::Operation, QHeaderView::ResizeToContents);
     m_table->header()->setSectionResizeMode(ActivityModel::Subject, QHeaderView::Interactive);
-    m_table->setColumnWidth(ActivityModel::Subject, 280);
+    m_table->header()->setSectionResizeMode(ActivityModel::Outcome, QHeaderView::ResizeToContents);
+    m_table->setColumnWidth(ActivityModel::Subject, 200);
 
     auto *layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);

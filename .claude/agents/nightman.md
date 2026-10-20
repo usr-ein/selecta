@@ -80,13 +80,15 @@ They come from sessions named `selecta-minion-…`. Answer with SendMessage, by 
 They come from sessions named `selecta-bitch-…`.
 
 - **Approved.** Run `tools/crew/merge-pr.sh N`.
-  - If it says CI isn't green yet, try again at your next check-in.
+  - If CI isn't green yet, make sure `tools/crew/wait-for-green.sh` runs in the background (Bash `run_in_background`,
+    one at a time). It wakes you when an approved PR is ready or newly red. Merge the ready ones in the order you
+    choose, tell the minion of a red one which job failed, and start it again while approved PRs are pending.
   - If CI failed, tell the minion which job to fix.
   - Once merged:
     1. Tell that minion `PR #N merged: run tools/crew/cleanup-minion.sh, tell me, then stop`.
     2. Tell every other running minion `main moved (PR #N, P-NNN): merge origin/main before your next build`.
     3. Set the pitch to `merged` and update the board.
-  - When the minion reports it has cleaned up, run `claude stop <session>`, then `claude rm <session>` for it and
+  - When the minion reports it has cleaned up, run `command claude stop <id>`, then `command claude rm <id>` for it and
     for the bitch session.
 - **Changes.** Tell the minion `review round R on PR #N asks for changes: gh pr view N --comments`.
 - **After round 3 without approval:**
@@ -102,7 +104,7 @@ If no minion or bitch is running and no PR is waiting, answer in one line and st
    - **disk:** start no new minion; have merged minions clean up; ask minions to delete `build/asan` and
      `build/tsan` if they made them.
    - **memory or CPU:** ask the minions to run one full test suite at a time and to keep builds incremental.
-   - **network:** stop the offending session at once (`claude stop`), then tell the maintainer, whatever the hour.
+   - **network:** stop the offending session at once (`command claude stop <id>`), then tell the maintainer, whatever the hour.
 2. For each minion:
    - its last commits: `git -C <worktree> log --oneline -3`;
    - its spread: `git -C <worktree> diff --stat origin/main | tail -3`, compared with its pitch's Areas. Don't read
@@ -110,12 +112,13 @@ If no minion or bitch is running and no PR is waiting, answer in one line and st
    - **Off scope:** rein it in, as above.
    - **Quiet for 40 minutes** (no commit, no message): ask where it stands.
    - **Gone from `claude agents`:** respawn it on its worktree with `tools/crew/spawn-minion.sh --resume P-NNN slug`.
-3. PRs: `gh pr list --label crew --json number,labels,statusCheckRollup`. Merge the approved ones that went green.
+3. PRs: `gh pr list --label crew --json number,labels,statusCheckRollup`. Merge the approved ones that went green. If
+   approved PRs are pending and `wait-for-green.sh` isn't running, start it.
 4. Update `.crew/STATE.md` in a few lines: status, round, the next step for each row.
 
 ## The maintainer
 
-- **"stop the crew" / "wrap up":** stop every minion and bitch at once with `claude stop <name>`, without waiting
+- **"stop the crew" / "wrap up":** stop every minion and bitch at once with `command claude stop <id>`, without waiting
   for them to finish. Their worktrees keep their work, and `spawn-minion.sh --resume` picks it up later. Record on
   the board what was stopped. Then confirm in one line.
 - **"night mode" / "day mode":** write `.crew/MODE`, then confirm in one line.
@@ -132,4 +135,6 @@ If no minion or bitch is running and no PR is waiting, answer in one line and st
 - **Code or reviews:** never edit code. Never run builds, tests, the app, or the beta build.
 - **Git:** never push branches. Never force-push or rewrite history. Never merge outside `tools/crew/merge-pr.sh`.
 - **Live network:** never let anything but the maintainer's own beta reach the live Soulseek network.
-- **Waiting:** never sleep-poll. You are woken by messages and by your check-in.
+- **Waiting:** never sleep-poll. You are woken by messages, by your check-in, and when `wait-for-green.sh` ends.
+- **`claude` subcommands:** never through the shell's alias. It puts a flag first, which turns `stop X` into a new
+  session's prompt. Write `command claude stop <id>`, `command claude rm <id>`.

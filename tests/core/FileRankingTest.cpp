@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/FileRanking.h"
 
+#include <QSet>
+
 #include <gtest/gtest.h>
 
 using namespace Qt::StringLiterals;
@@ -160,4 +162,106 @@ TEST(FileRanking, PeersTakenFromLessComeFirstAllElseEqual)
     // Without the load, the order is by name: the tie-break is the load, nothing else.
     const auto plain = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset));
     EXPECT_EQ(plain.files[0].peer, u"busy_today"_s);
+}
+
+TEST(FileRanking, NothingInTheQualityWantedGivesTheTracksNearMisses)
+{
+    SearchOutcome outcome;
+    outcome.hits = {
+        hit(u"low_peer"_s, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 192, 372, 8'900'000),
+        hit(u"lower_peer"_s, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 128, 372, 5'950'000),
+        hit(u"low_peer"_s, u"@@a\\Okuma Drift - Neon Rain (2).mp3"_s, u"mp3"_s, 128, 372, 5'950'000), // its worse copy
+        hit(u"aac_peer"_s, u"@@c\\Okuma Drift - Neon Rain.m4a"_s, u"m4a"_s, 256, 372, 11'900'000),
+        hit(u"remix_peer"_s, u"@@d\\Okuma Drift - Neon Rain (Ines Varga Remix).mp3"_s, u"mp3"_s, 192, 401, 9'600'000),
+        hit(u"other_peer"_s, u"@@e\\Halden Rue - Tidewater.mp3"_s, u"mp3"_s, 192, 401, 9'600'000),
+    };
+    const auto ranked = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset));
+    EXPECT_TRUE(ranked.files.isEmpty());
+    EXPECT_EQ(ranked.considered, 6);
+    EXPECT_EQ(ranked.candidates, 0);
+    // The track's files, below the quality wanted: not the remix, not another track. Each peer's best, best first.
+    EXPECT_EQ(ranked.belowQuality, 4);
+    ASSERT_EQ(ranked.nearMisses.size(), 3);
+    EXPECT_EQ(ranked.nearMisses[0].peer, u"aac_peer"_s); // AAC 256 ranks above MP3 192
+    EXPECT_EQ(ranked.nearMisses[1].peer, u"low_peer"_s);
+    EXPECT_EQ(ranked.nearMisses[1].bitrate, 192);
+    EXPECT_EQ(ranked.nearMisses[2].peer, u"lower_peer"_s);
+    for (const selecta::core::FileChoice &miss : ranked.nearMisses) {
+        EXPECT_TRUE(miss.fitsRelease) << miss.peer.toStdString();
+        EXPECT_FALSE(miss.shortfall.isEmpty()) << miss.peer.toStdString();
+    }
+    EXPECT_EQ(ranked.nearMisses[1].shortfall, u"under 320 kbps"_s);
+    EXPECT_TRUE(ranked.nearMisses[0].shortfall.contains(u"AAC"_s)) << ranked.nearMisses[0].shortfall.toStdString();
+}
+
+TEST(FileRanking, NearMissesOnlyWhenNothingPasses)
+{
+    SearchOutcome outcome;
+    outcome.hits = {hit(u"good"_s, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 320, 372, 14'900'000),
+                    hit(u"low"_s, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 192, 372, 8'900'000)};
+    const auto ranked = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset));
+    ASSERT_EQ(ranked.files.size(), 1);
+    EXPECT_TRUE(ranked.files[0].shortfall.isEmpty());
+    EXPECT_TRUE(ranked.nearMisses.isEmpty());
+    EXPECT_EQ(ranked.belowQuality, 0);
+}
+
+TEST(FileRanking, AtMostFiveNearMissesOnePerPeer)
+{
+    SearchOutcome outcome;
+    for (int i = 0; i < 8; ++i) {
+        outcome.hits.append(hit(u"peer%1"_s.arg(i), u"@@a\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s,
+                                static_cast<quint32>(128 + (8 * i)), 372, 7'000'000));
+    }
+    const auto ranked = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset));
+    EXPECT_EQ(ranked.belowQuality, 8);
+    ASSERT_EQ(ranked.nearMisses.size(), FileRanking::kMaxChoices);
+    QSet<QString> peers;
+    for (const selecta::core::FileChoice &miss : ranked.nearMisses) {
+        peers.insert(miss.peer);
+    }
+    EXPECT_EQ(peers.size(), FileRanking::kMaxChoices);
+}
+
+TEST(FileRanking, ShortfallsSayWhatThePresetWanted)
+{
+    // Lossless only turns an MP3 320 down for its format; hi-res a 16-bit FLAC for its depth.
+    SearchOutcome mp3;
+    mp3.hits = {hit(u"peer"_s, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 320, 372, 14'900'000)};
+    const auto lossless = FileRanking::rank(resolvedLine(), mp3, preset(selecta::core::kLosslessPreset));
+    ASSERT_EQ(lossless.nearMisses.size(), 1);
+    EXPECT_EQ(lossless.nearMisses[0].shortfall, u"MP3 isn't a format wanted"_s);
+
+    SearchOutcome flac;
+    flac.hits = {hit(u"peer"_s, u"@@a\\Okuma Drift - Neon Rain.flac"_s, u"flac"_s, std::nullopt, 372, 42'000'000)};
+    const auto hiRes = FileRanking::rank(resolvedLine(), flac, preset(selecta::core::kHiResPreset));
+    ASSERT_EQ(hiRes.nearMisses.size(), 1);
+    EXPECT_EQ(hiRes.nearMisses[0].shortfall, u"under 24-bit"_s);
+
+    // A file that doesn't say its quality falls to strict mode.
+    SearchOutcome silent;
+    silent.hits = {hit(u"peer"_s, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, std::nullopt, 372, 14'900'000)};
+    const auto unknown = FileRanking::rank(resolvedLine(), silent, preset(selecta::core::kMp3OrLosslessPreset));
+    ASSERT_EQ(unknown.nearMisses.size(), 1);
+    EXPECT_EQ(unknown.nearMisses[0].shortfall, u"its quality isn't stated"_s);
+
+    // A user's preset: a busy peer and a slow one.
+    selecta::core::SearchFilter filter = preset(selecta::core::kMp3OrLosslessPreset);
+    filter.freeSlotOnly = true;
+    SearchOutcome busy;
+    busy.hits = {hit(u"busy"_s, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, u"mp3"_s, 320, 372, 14'900'000, false)};
+    const auto noSlot = FileRanking::rank(resolvedLine(), busy, filter);
+    ASSERT_EQ(noSlot.nearMisses.size(), 1);
+    EXPECT_EQ(noSlot.nearMisses[0].shortfall, u"no free slot"_s);
+}
+
+TEST(FileRanking, NothingOfTheTrackGivesNoNearMisses)
+{
+    SearchOutcome outcome;
+    outcome.hits = {hit(u"other"_s, u"@@e\\Halden Rue - Tidewater.mp3"_s, u"mp3"_s, 192, 401, 9'600'000)};
+    const auto ranked = FileRanking::rank(resolvedLine(), outcome, preset(selecta::core::kMp3OrLosslessPreset));
+    EXPECT_TRUE(ranked.files.isEmpty());
+    EXPECT_TRUE(ranked.nearMisses.isEmpty());
+    EXPECT_EQ(ranked.belowQuality, 0);
+    EXPECT_EQ(ranked.considered, 1);
 }

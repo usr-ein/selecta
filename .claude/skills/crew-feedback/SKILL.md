@@ -47,7 +47,7 @@ Say in one or two sentences which of these it was:
 - **Test** any script or hook you changed, by running it on a sample input as its header shows.
 - **Commit them on `main` in the main checkout,** naming the paths:
   `git commit -m "crew: <the change>" -- <paths>`, with the `Co-Authored-By` line from `CLAUDE.md`. Then
-  `git push origin main`. Process changes are small, so they don't go through a PR.
+  `git push origin main`, then `git push gitea main` (the Gitea mirror carries `main` only). Process changes are small, so they don't go through a PR.
 - **Running sessions keep the instructions they started with.**
   - If the change matters to them now, tell them by SendMessage, in two lines: the nightman, the minions it
     concerns.

@@ -939,7 +939,9 @@ void MainWindow::createMenus()
     connect(about, &QAction::triggered, this, [this] {
         QMessageBox::about(this, tr("About Selecta"),
                            tr("<b>Selecta %1</b><p>A quality-first Soulseek client for DJs and collectors.</p>"
-                              "<p>Free software under the GNU General Public License, version 3 or later.</p>")
+                              "<p>Free software under the GNU General Public License, version 3 or later.</p>"
+                              "<p>Peers' countries: <a href=\"https://db-ip.com\">IP Geolocation by DB-IP</a>, "
+                              "under CC BY 4.0.</p>")
                                .arg(m_services.build.version));
     });
 

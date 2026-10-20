@@ -441,6 +441,7 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     item.peer = job.download.peer;
     item.remotePath = job.download.remotePath;
     item.warning = warnings.join(u' ');
+    item.belowWanted = job.download.file ? job.download.file->shortfall : QString(); // got anyway (Get tracks)
     applySpectrumCheck(spectrum, item);
     outcome.warning = item.warning;
     outcome.relativePath = item.relativePath;

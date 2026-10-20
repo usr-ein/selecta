@@ -72,16 +72,18 @@ struct NetworkStatus
 };
 
 // slsk's PermitSource on the Governor: one PeerLookup permit per new outbound peer connection, delivered on a later
-// event-loop turn as slsk asks (never from inside requestPeerLookup()). Engine thread.
+// event-loop turn as slsk asks (never from inside requestPeerLookup()). Each decision goes to the activity log with its
+// purpose. Engine thread; the governor and the activity log outlive it.
 class GovernorPermits final : public slsk::PermitSource
 {
 public:
-    GovernorPermits(governor::Governor &governor, QObject *context);
+    GovernorPermits(governor::Governor &governor, ActivityLog &activity, QObject *context);
 
     void requestPeerLookup(const QString &username, slsk::ConnectPurpose purpose, Callback deliver) override;
 
 private:
     governor::Governor &m_governor;
+    ActivityLog &m_activity;
     QPointer<QObject> m_context;
 };
 
@@ -158,8 +160,9 @@ public:
 
 Q_SIGNALS:
     void statusChanged(const selecta::core::NetworkStatus &status);
+    // `address`: where the results came from (null when unknown), for the peer's country (P-002).
     void searchResponseReceived(quint32 token, const QString &username,
-                                const selecta::slsk::peer::FileSearchResponse &response);
+                                const selecta::slsk::peer::FileSearchResponse &response, const QHostAddress &address);
     // A search that reached us, from the server or the distributed network (ShareService answers it).
     void searchRequestReceived(const selecta::slsk::IncomingSearch &search);
     // The server's list of privileged users (they go first in the upload queue).

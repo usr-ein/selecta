@@ -8,6 +8,7 @@
 #include <QList>
 #include <QMetaType>
 #include <QString>
+#include <QStringList>
 
 #include <chrono>
 #include <optional>
@@ -34,6 +35,9 @@ struct FileChoice
     int queueLength = 0;
     double fit = 0.0;         // 0…1, how well it matches the release
     bool fitsRelease = false; // same length within ±3 s and the version agrees (BATCH-5)
+    // Why the list's preset turned this file down, in words ("under 320 kbps"); empty for a file that passed. Set on
+    // near misses, and kept when the user gets one anyway: the Inbox then marks it below the quality wanted.
+    QString shortfall;
 
     bool operator==(const FileChoice &) const = default;
 };
@@ -64,12 +68,25 @@ struct GetLine
     FindState findState = FindState::Idle;
     std::optional<FileChoice> best;
     QList<FileChoice> alternatives; // other peers' files, best first (not saved: found again on the next search)
+    // Not found: the track's files the preset turned down, best first, one per peer, each with its shortfall, for
+    // "Get anyway" (not saved, like the alternatives).
+    QList<FileChoice> nearMisses;
+    bool foundThisSession = false; // searched since Selecta started: alternatives and near misses are known (not saved)
     bool ticked = false;
     DownloadState downloadState = DownloadState::None;
     QString message; // why a step failed, in words
     qint64 addedAt = 0;
     qint64 downloadId = 0;          // the download for the chosen file (not saved: restored from the downloads)
     double downloadProgress = -1.0; // 0…1 while transferring, -1 otherwise (not saved)
+    // While the download waits in a peer's queue (not saved): its place when the peer says, and whether it is stuck
+    // (the stuck-queue rule, core/Downloads.h).
+    std::optional<int> placeInQueue;
+    bool stuck = false;
+    // "Try another peer" (not saved): a search for other peers' copies is running; what it came to, when it found no
+    // other peer; the peers the user moved away from, never offered again for this line.
+    bool lookingForPeers = false;
+    QString peersNote;
+    QStringList leftPeers;
 };
 
 // Reads and writes Get tracks lines (table get_lines). Uses the Database on its owning thread; failures are reported
@@ -107,8 +124,9 @@ std::chrono::milliseconds findingTimeLeft(int searchesToStart, int searchesColle
 
 // Spreading a batch over peers (BATCH-7): which file a line should download, given how many of the batch's downloads
 // each peer already has (`load`). The best file stays unless an alternative is as good (as close a fit to the release,
-// a free slot if the best has one) and its peer has fewer of the batch's downloads; the least loaded such peer wins.
-// -1: the best; otherwise the alternative's index. Every alternative already passed the list's preset. Pure.
+// a free slot if the best has one, and the list's preset passed) and its peer has fewer of the batch's downloads; the
+// least loaded such peer wins. A file got anyway, below the quality wanted, is the user's pick: it stays. -1: the
+// best; otherwise the alternative's index. Pure.
 qsizetype spreadChoice(const FileChoice &best, const QList<FileChoice> &alternatives, const QHash<QString, int> &load);
 
 } // namespace selecta::core

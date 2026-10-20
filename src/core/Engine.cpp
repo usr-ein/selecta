@@ -138,6 +138,12 @@ bool Engine::start()
     connect(m_network.get(), &NetworkService::statusChanged, m_search.get(), &SearchService::networkChanged);
     connect(m_governor.get(), &governor::Governor::pausedChanged, m_search.get(), &SearchService::networkChanged);
     connect(m_search.get(), &SearchService::queueChanged, this, &Engine::searchQueueChanged);
+    if (m_options.countries) {
+        // Peers' flags (P-002): the country database, downloaded once when it isn't on disk yet.
+        m_countries = std::make_unique<CountryDatabaseFetcher>(*m_options.countries, m_meta->network());
+        connect(m_countries.get(), &CountryDatabaseFetcher::ready, m_search.get(), &SearchService::setCountries);
+        m_countries->start();
+    }
 
     m_getTracks = std::make_unique<GetTracksService>(*m_db, m_options.wallClock);
     m_getTracks->setSearch(m_search.get(), [this] { return m_governor->excludedPhrases(); });
@@ -427,6 +433,7 @@ void Engine::stop()
     m_converter.reset();  // cancels conversions in flight: nothing half-made is left
     m_albums.reset();     // cancels albums being made (they are made again at the next launch)
     m_arrival.reset();    // cancels conversions in flight (they run again at the next launch) and records finished ones
+    m_countries.reset();  // waits for its worker; before the network manager it uses (owned by m_meta)
     m_search.reset();
     m_searchCache.reset();
     m_searchNetwork.reset();

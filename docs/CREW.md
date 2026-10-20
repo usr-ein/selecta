@@ -46,7 +46,7 @@ Effort: the nightman always runs at `max`, bitches at `high`. A minion runs at `
    - After three rounds without approval, the nightman decides at night: merge with a follow-up pitch, or park.
    - By day, it asks the maintainer.
 8. **Merged.** The nightman merges once the PR is labelled `review:approved` and CI's gating jobs are green
-   (`tools/crew/merge-pr.sh <PR>`): a squash merge (the only kind the repo allows; GitHub deletes the head branch), then local `main` fast-forwarded, then pushed to every remote. It
+   (`tools/crew/merge-pr.sh <PR>`): a squash merge (the only kind the repo allows; GitHub deletes the head branch), then local `main` fast-forwarded, then pushed to GitHub, and `main` alone to the Gitea mirror, which carries nothing else. While CI runs, `tools/crew/wait-for-green.sh`, in the background, wakes the nightman when an approved PR is green or newly red. The nightman merges, in the order it chooses. It
    then tells every running minion "main moved". Each merges `origin/main` into its branch when it next builds.
 9. **Cleaned up.** The merged minion runs `tools/crew/cleanup-minion.sh`. It removes its worktree with its build
    folder, and its local branch. The minion tells the nightman, and the nightman stops its session.
@@ -107,4 +107,4 @@ The nightman gets a check-in reminder while any minion or bitch is running. On e
 | `.crew/pitches/P-NNN-slug.md` | one pitch, with its answers and status | maintainer, nightman |
 | `.crew/DECISIONS.md` | decisions taken at night, and open questions | nightman; the maintainer marks them |
 | `.crew/FEEDBACK.md` | snags and the process changes made for them | `/crew-feedback` |
-| `tools/crew/*.sh` | `start-nightman`, `spawn-minion`, `spawn-bitch`, `merge-pr`, `cleanup-minion`, `resources`, `guard` | committed |
+| `tools/crew/*.sh` | `start-nightman`, `spawn-minion`, `spawn-bitch`, `merge-pr`, `wait-for-green`, `cleanup-minion`, `resources`, `guard` | committed |

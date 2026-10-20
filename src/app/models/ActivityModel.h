@@ -8,7 +8,8 @@
 
 namespace selecta::app {
 
-// The network activity log as a table, newest line first (PRD SAFE-4). Filled once from the database, then kept current
+// The network activity log as a table, newest line first (PRD SAFE-4). The last column says, in a sentence, who started
+// each line about a peer and why (core::ActivityLog::describe()). Filled once from the database, then kept current
 // from the engine's live lines; a line already shown is ignored, so the two sources may overlap. Holds at most
 // kMaxRows lines: the database keeps the rest. Main thread only.
 class ActivityModel : public QAbstractTableModel
@@ -21,6 +22,7 @@ public:
         Operation,
         Subject,
         Outcome,
+        Details,
         ColumnCount
     };
     static constexpr int kMaxRows = 2000;

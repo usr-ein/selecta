@@ -136,7 +136,7 @@ QString GetTracksModel::statusText(const GetLine &line)
 {
     switch (line.downloadState) {
     case DownloadState::Queued:
-        return tr("Queued at the peer");
+        return line.stuck ? tr("Stuck at the peer") : tr("Queued at the peer");
     case DownloadState::Transferring:
         return line.downloadProgress >= 0.0
                    ? tr("Downloading %1 %").arg(static_cast<int>(line.downloadProgress * 100.0))
@@ -187,6 +187,7 @@ GetTracksModel::StatusKind GetTracksModel::statusKind(const GetLine &line)
 {
     switch (line.downloadState) {
     case DownloadState::Queued:
+        return line.stuck ? StatusKind::Check : StatusKind::Working; // stuck: the user may try another peer
     case DownloadState::Transferring:
     case DownloadState::Converting:
         return StatusKind::Working;

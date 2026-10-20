@@ -69,6 +69,7 @@ if(SELECTA_WITH_MEDIA)
             core/ArrivalServiceTest.cpp
             core/BrowseServiceTest.cpp
             core/CollectionServiceTest.cpp
+            core/CountryDatabaseTest.cpp
             core/ConverterServiceTest.cpp
             core/DownloadsTest.cpp
             core/EngineTest.cpp
@@ -95,7 +96,7 @@ if(SELECTA_WITH_MEDIA)
             core/TransferServiceTest.cpp
             core/WishlistServiceTest.cpp
             core/YouTubePreviewsTest.cpp
-        LIBRARIES selecta_core selecta_media_test_support selecta_slsk_testing Qt6::Gui)
+        LIBRARIES selecta_core selecta_media_test_support selecta_slsk_testing Qt6::Gui ZLIB::ZLIB)
     # The fake yt-dlp and its fixtures live with meta's tests.
     target_compile_definitions(selecta_core_tests PRIVATE
         SELECTA_META_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/meta/fixtures")
@@ -111,6 +112,7 @@ if(SELECTA_WITH_MEDIA)
             app/DiagnosticsTest.cpp
             app/ConverterViewTest.cpp
             app/FormatTest.cpp
+            app/GetTracksInspectorTest.cpp
             app/GetTracksModelTest.cpp
             app/LibrarySettingsTest.cpp
             app/MainWindowTest.cpp

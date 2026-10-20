@@ -174,3 +174,32 @@ TEST(InboxStoreMigration, ItemsFromBeforeTheSpectrumCheckReadAsUnchecked)
     // The flag is a boolean.
     EXPECT_FALSE(db.exec(u"UPDATE inbox_items SET quality_checked = 2;"_s));
 }
+
+TEST_F(InboxStoreTest, KeepsWhatAFileGotAnywayFellShortOf)
+{
+    InboxItem item = single(u"Singles/low.mp3"_s);
+    item.belowWanted = u"under 320 kbps"_s;
+    const auto id = store.add(item);
+    ASSERT_TRUE(id.has_value()) << db.lastError().toStdString();
+    item.id = *id;
+    EXPECT_EQ(*store.find(*id), item);
+    item.belowWanted.clear(); // replaced by a better copy, say
+    ASSERT_TRUE(store.update(item)) << db.lastError().toStdString();
+    EXPECT_EQ(*store.find(*id), item);
+}
+
+TEST(InboxStoreMigration, ItemsFromBeforeGetAnywayMetTheQualityWanted)
+{
+    selecta::storage::Database db;
+    ASSERT_TRUE(db.open(u":memory:"_s));
+    const auto migrations = selecta::storage::selectaMigrations();
+    ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(17)).ok());
+    ASSERT_TRUE(db.exec(u"INSERT INTO inbox_items (kind, relative_path, state, created_at) "
+                        "VALUES ('single', 'Singles/old.mp3', 'ready', 1);"_s));
+    // Up to the schema of earlier builds: the next migration empties the Inbox (P-001).
+    const auto beforeTheMove = static_cast<std::size_t>(selecta::storage::kInboxMovedVersion - 1);
+    ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(beforeTheMove)).ok());
+    const auto old = InboxStore(db).findByPath(u"Singles/old.mp3"_s);
+    ASSERT_TRUE(old.has_value());
+    EXPECT_TRUE(old->belowWanted.isEmpty());
+}

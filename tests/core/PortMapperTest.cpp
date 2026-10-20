@@ -5,6 +5,7 @@
 
 #include "core/FakeRouter.h"
 
+#include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QTest>
 #include <QUdpSocket>
@@ -24,12 +25,18 @@ using State = PortMappingStatus::State;
 
 namespace {
 
-constexpr quint16 kPort = 42234; // only a number in the requests: nothing listens on it
+constexpr quint16 kPort = 42234;                             // only a number in the requests: nothing listens on it
+constexpr std::chrono::milliseconds kQuickNatPmpWait = 50ms; // the first NAT-PMP wait where nobody answers
 
 class PortMapperTest : public ::testing::Test
 {
 protected:
     // Options aimed at the fakes, with short waits. `natPmp` / `igd`: false leaves that protocol with nobody answering.
+    //
+    // The fakes answer from this thread's event loop, which a loaded runner can hold up for a while. So when the
+    // NAT-PMP fake answers, the mapper waits for it up to 1 + 2 s: a slow answer is never taken for a router that went
+    // away, which would add an attempt. A port where nobody answers costs only 50 + 100 ms; tests that silence the fake
+    // set that short wait themselves.
     PortMapper::Options options(bool natPmp, bool igd)
     {
         PortMapper::Options o;
@@ -38,7 +45,7 @@ protected:
         o.natPmpPort = natPmpPort;
         o.ssdp = Endpoint{QHostAddress(QHostAddress::LocalHost), igd ? igdFake.ssdpPort() : silent.localPort()};
         o.bindAddress = QHostAddress(QHostAddress::LocalHost);
-        o.timing = {50ms, 2, 300ms, 1000ms};
+        o.timing = {natPmp ? 1000ms : kQuickNatPmpWait, 2, 300ms, 1000ms};
         o.quitTiming = {50ms, 1, 0ms, 300ms};
         o.minRenewal = 200ms;
         o.retryDelays = {100ms, 100ms};
@@ -113,14 +120,42 @@ TEST_F(PortMapperTest, RenewsBeforeTheLeaseEnds)
 
 TEST_F(PortMapperTest, NeverRenewsFasterThanTheFloor)
 {
-    natPmpFake.grantedLifetime = 1;
+    natPmpFake.grantedLifetime = 1; // half of it is 500 ms, well under the floor
     PortMapper::Options o = options(true, false);
-    o.minRenewal = 10s;
+    o.minRenewal = 1500ms;
+    PortMapper mapper(o);
+    QElapsedTimer sinceStart;
+    sinceStart.start();
+    mapper.configure(true, kPort);
+    ASSERT_TRUE(reaches(mapper, State::Mapped));
+    ASSERT_TRUE(waitFor([&] { return natPmpFake.mapRequests() >= 2; }));
+    // The renewal timer starts once the mapping is made, after this clock: a slow runner only makes the renewal look
+    // later, never earlier. Qt's coarse timers may fire up to 5 % early.
+    EXPECT_GE(sinceStart.elapsed(), 1500 * 95 / 100);
+}
+
+TEST_F(PortMapperTest, ARetransmittedRequestIsNotANewOne)
+{
+    natPmpFake.loseFirstAnswers = true; // the router acts on each request; its first answer never comes back
+    PortMapper::Options o = options(true, false);
+    o.timing.natPmpFirstWait = 200ms; // asked again after 200 ms, then waits 400 + 800 + 1600 ms
+    o.timing.natPmpTries = 4;
+    const auto copies = [&](bool removal) {
+        int n = 0;
+        for (const FakeNatPmp::Request &request : std::as_const(natPmpFake.requests)) {
+            n += request.opcode == 2 && request.retransmission && (request.lifetime == 0) == removal ? 1 : 0;
+        }
+        return n;
+    };
     PortMapper mapper(o);
     mapper.configure(true, kPort);
     ASSERT_TRUE(reaches(mapper, State::Mapped));
-    QTest::qWait(1200);
+    EXPECT_GE(copies(false), 1); // mapped from the copy's answer
     EXPECT_EQ(natPmpFake.mapRequests(), 1);
+    mapper.configure(false, kPort);
+    ASSERT_TRUE(waitFor([&] { return copies(true) >= 1; }));
+    EXPECT_EQ(natPmpFake.removals(), 1);
+    EXPECT_TRUE(natPmpFake.mappings.isEmpty());
 }
 
 TEST_F(PortMapperTest, RemovesTheMappingAtQuit)
@@ -140,7 +175,8 @@ TEST_F(PortMapperTest, TurningItOffRemovesTheMapping)
     ASSERT_TRUE(reaches(mapper, State::Mapped));
     mapper.configure(false, kPort);
     EXPECT_EQ(mapper.status().state, State::Off);
-    ASSERT_TRUE(waitFor([&] { return natPmpFake.removals() == 1; }));
+    ASSERT_TRUE(waitFor([&] { return natPmpFake.removals() >= 1; }));
+    EXPECT_EQ(natPmpFake.removals(), 1);
     EXPECT_TRUE(natPmpFake.mappings.isEmpty());
     EXPECT_FALSE(mapper.mapping().has_value());
 }
@@ -203,7 +239,9 @@ TEST_F(PortMapperTest, ARefusalIsReportedWithItsReason)
 TEST_F(PortMapperTest, NoRouterGivesUpAfterAFewAttempts)
 {
     natPmpFake.silent = true;
-    PortMapper mapper(options(true, false));
+    PortMapper::Options o = options(true, false);
+    o.timing.natPmpFirstWait = kQuickNatPmpWait;
+    PortMapper mapper(o);
     mapper.configure(true, kPort);
     ASSERT_TRUE(waitFor([&] { return mapper.status().state == State::NoRouter && mapper.status().givenUp; }, 10s));
     const int askedSoFar = natPmpFake.received;
@@ -232,7 +270,9 @@ TEST_F(PortMapperTest, NoGatewayAndNoIgdIsNoRouter)
 TEST_F(PortMapperTest, AFailedRenewalCountsAsAFailedAttempt)
 {
     natPmpFake.grantedLifetime = 1;
-    PortMapper mapper(options(true, false));
+    PortMapper::Options o = options(true, false);
+    o.timing.natPmpFirstWait = kQuickNatPmpWait; // the router goes silent
+    PortMapper mapper(o);
     mapper.configure(true, kPort);
     ASSERT_TRUE(reaches(mapper, State::Mapped));
     natPmpFake.silent = true; // the router went away

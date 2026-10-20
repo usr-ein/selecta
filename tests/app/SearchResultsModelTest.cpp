@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/models/SearchResultsModel.h"
 
+#include "app/Format.h"
+
 #include <QAbstractItemModelTester>
+#include <QColor>
+#include <QSet>
 
 #include <gtest/gtest.h>
+#include <limits>
 
 using namespace Qt::StringLiterals;
 using selecta::app::SearchResultsModel;
@@ -54,6 +59,16 @@ QList<SearchResult> results(const std::optional<selecta::match::ReleaseReference
         0, {}, release);
 }
 
+// A free-slot or queued hit of `size` bytes at `speed` bytes per second.
+SearchHit peerHit(const QString &peer, quint32 speed, bool freeSlot, quint32 queueLength, quint64 size = 10'000'000)
+{
+    SearchHit result = hit(peer, u"@@x\\Okuma Drift - Neon Rain.mp3"_s, 320, 250, freeSlot);
+    result.averageSpeed = speed;
+    result.queueLength = queueLength;
+    result.size = size;
+    return result;
+}
+
 QList<int> shownOrder(const SearchResultsModel &model)
 {
     QList<int> order;
@@ -88,7 +103,8 @@ TEST(SearchResultsModelTest, BestMatchPutsTheReleaseFirst)
     model.setReleaseChosen(true, 372'000);
     const QList<int> order = shownOrder(model);
     ASSERT_EQ(order.size(), 4);
-    // The FLAC of this release, then its MP3 (lower quality), then another version and another track.
+    // The two files of this release first: the FLAC's peer has a free slot, the MP3's a queue. Then another version
+    // and another track.
     EXPECT_EQ(order.at(0), 2);
     EXPECT_EQ(order.at(1), 0);
     EXPECT_EQ(model.index(0, SearchResultsModel::LengthColumn).data().toString(), u"6:13 ✓"_s);
@@ -107,8 +123,10 @@ TEST(SearchResultsModelTest, ColumnsSortBothWays)
     EXPECT_EQ(shownOrder(model).constFirst(), 3); // 5:01
     model.sort(SearchResultsModel::LengthColumn, Qt::DescendingOrder);
     EXPECT_EQ(shownOrder(model).constFirst(), 1); // 7:35
-    model.sort(SearchResultsModel::AvailabilityColumn, Qt::AscendingOrder);
+    model.sort(SearchResultsModel::QueueColumn, Qt::AscendingOrder);
     EXPECT_EQ(shownOrder(model).constLast(), 0); // the busy peer last
+    model.sort(SearchResultsModel::QueueColumn, Qt::DescendingOrder);
+    EXPECT_EQ(shownOrder(model).constFirst(), 0);
     model.sort(SearchResultsModel::kBestMatch);
     EXPECT_EQ(model.sortColumn(), SearchResultsModel::kBestMatch);
 }
@@ -195,7 +213,8 @@ TEST(SearchResultsModelTest, VoiceOverReadsTheSymbolsInWords)
         return model.index(row, column).data(Qt::AccessibleTextRole).toString();
     };
     EXPECT_EQ(spoken(0, SearchResultsModel::LengthColumn), u"6:13, same length as the release"_s);
-    EXPECT_EQ(spoken(2, SearchResultsModel::LengthColumn), u"7:35, +83 s against the release"_s);
+    EXPECT_EQ(model.indexOfResult(1, SearchResultsModel::LengthColumn).data(Qt::AccessibleTextRole).toString(),
+              u"7:35, +83 s against the release"_s); // the extended mix
     EXPECT_EQ(spoken(0, SearchResultsModel::PeerColumn), u"vinyl_ghost"_s);
     // Columns without symbols read as they show.
     EXPECT_EQ(spoken(0, SearchResultsModel::TitleColumn),
@@ -203,4 +222,224 @@ TEST(SearchResultsModelTest, VoiceOverReadsTheSymbolsInWords)
     // A cell's tooltip is its description.
     EXPECT_EQ(model.index(0, SearchResultsModel::TitleColumn).data(Qt::AccessibleDescriptionRole),
               model.index(0, SearchResultsModel::TitleColumn).data(Qt::ToolTipRole));
+}
+
+TEST(SearchResultsModelTest, ExpectedWaitCombinesSpeedSlotAndQueue)
+{
+    using selecta::core::expectedWaitSeconds;
+    // A free slot: the file alone, at the peer's speed.
+    EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 0)), 10.0);
+    // A free slot wins over a queue reported alongside it: the transfer starts now.
+    EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 40)), 10.0);
+    // Each queued file counts as a typical track ahead of ours.
+    EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 3)),
+                     4.0 * selecta::core::kTypicalQueuedFileBytes / 1'000'000);
+    // The file's own size doesn't count: the files of one peer tie, and the tie-breakers decide.
+    EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 0, 3'000'000)),
+                     expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, true, 0, 90'000'000)));
+    // No free slot and no queue: still one file ahead.
+    EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 0)),
+                     expectedWaitSeconds(peerHit(u"a"_s, 1'000'000, false, 1)));
+    // An unknown speed is taken as slow.
+    EXPECT_DOUBLE_EQ(expectedWaitSeconds(peerHit(u"a"_s, 0, true, 0)),
+                     10'000'000.0 / selecta::core::kUnknownSpeedBytesPerSecond);
+    // The largest values stay finite.
+    EXPECT_GT(expectedWaitSeconds(
+                  peerHit(u"a"_s, 1, false, std::numeric_limits<quint32>::max(), std::numeric_limits<quint64>::max())),
+              0.0);
+}
+
+TEST(SearchResultsModelTest, DefaultOrderIsTheShortestWaitFirst)
+{
+    SearchResultsModel model;
+    model.reset(selecta::core::analyzeHits(
+        {
+            peerHit(u"slow_free"_s, 50'000, true, 0),        // 200 s
+            peerHit(u"fast_queued"_s, 5'000'000, false, 20), // 42 s
+            peerHit(u"fast_free"_s, 2'000'000, true, 0),     // 5 s
+            peerHit(u"silent"_s, 0, true, 0),                // unknown speed: 500 s
+            peerHit(u"long_queue"_s, 1'000'000, false, 300), // 3010 s
+        },
+        0, {}, {}));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    EXPECT_EQ(model.sortColumn(), SearchResultsModel::kBestMatch);
+    EXPECT_EQ(shownOrder(model), (QList<int>{2, 1, 0, 3, 4}));
+
+    // The Speed column: fastest first, then back.
+    model.sort(SearchResultsModel::SpeedColumn, Qt::AscendingOrder);
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 2, 4, 0, 3}));
+    model.sort(SearchResultsModel::SpeedColumn, Qt::DescendingOrder);
+    EXPECT_EQ(shownOrder(model).constFirst(), 3);
+    // The Q column: free slots (fastest first), then the shorter queue.
+    model.sort(SearchResultsModel::QueueColumn, Qt::AscendingOrder);
+    EXPECT_EQ(shownOrder(model), (QList<int>{2, 0, 3, 1, 4}));
+}
+
+TEST(SearchResultsModelTest, DefaultOrderKeepsTheReleaseFirst)
+{
+    QList<SearchHit> hits = {
+        hit(u"slow"_s, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, 320, 372),
+        hit(u"fast"_s, u"@@a\\Okuma Drift - Neon Rain (Extended Mix).mp3"_s, 320, 455),
+        hit(u"faster"_s, u"@@a\\Okuma Drift - Neon Rain.flac"_s, 0, 373),
+    };
+    hits[0].averageSpeed = 10'000;
+    hits[1].averageSpeed = 9'000'000;
+    hits[2].averageSpeed = 900'000;
+    SearchResultsModel model;
+    model.reset(selecta::core::analyzeHits(hits, 0, {}, neonRain()));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    model.setReleaseChosen(true, 372'000);
+    // The two files of the release first, the faster of them first; the other version, however fast, after.
+    EXPECT_EQ(shownOrder(model), (QList<int>{2, 0, 1}));
+}
+
+TEST(SearchResultsModelTest, QueueColumnColoursByPresetCutoffs)
+{
+    using Level = SearchResultsModel::QueueLevel;
+    const quint32 shortQueue = SearchResultsModel::kShortQueue;
+    const quint32 longQueue = SearchResultsModel::kLongQueue;
+    EXPECT_EQ(SearchResultsModel::queueLevel(peerHit(u"a"_s, 1, true, 0)), Level::None);
+    EXPECT_EQ(SearchResultsModel::queueLevel(peerHit(u"a"_s, 1, true, 500)), Level::None);
+    EXPECT_EQ(SearchResultsModel::queueLevel(peerHit(u"a"_s, 1, false, 0)), Level::Short);
+    EXPECT_EQ(SearchResultsModel::queueLevel(peerHit(u"a"_s, 1, false, shortQueue)), Level::Short);
+    EXPECT_EQ(SearchResultsModel::queueLevel(peerHit(u"a"_s, 1, false, shortQueue + 1)), Level::Long);
+    EXPECT_EQ(SearchResultsModel::queueLevel(peerHit(u"a"_s, 1, false, longQueue)), Level::Long);
+    EXPECT_EQ(SearchResultsModel::queueLevel(peerHit(u"a"_s, 1, false, longQueue + 1)), Level::VeryLong);
+    // Four distinct colours.
+    QSet<QRgb> colours;
+    for (const Level level : {Level::None, Level::Short, Level::Long, Level::VeryLong}) {
+        colours.insert(SearchResultsModel::queueColour(level).rgb());
+    }
+    EXPECT_EQ(colours.size(), 4);
+
+    SearchResultsModel model;
+    const QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Fatal);
+    model.reset(selecta::core::analyzeHits(
+        {peerHit(u"free"_s, 1'000'000, true, 0), peerHit(u"busy"_s, 1'000'000, false, 272)}, 0, {}, {}));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    const QModelIndex free = model.indexOfResult(0, SearchResultsModel::QueueColumn);
+    const QModelIndex busy = model.indexOfResult(1, SearchResultsModel::QueueColumn);
+    EXPECT_EQ(free.data().toString(), u"NQ"_s);
+    EXPECT_EQ(busy.data().toString(), u"Q"_s);
+    EXPECT_EQ(free.data(SearchResultsModel::QueueLevelRole).toInt(), static_cast<int>(Level::None));
+    EXPECT_EQ(busy.data(SearchResultsModel::QueueLevelRole).toInt(), static_cast<int>(Level::VeryLong));
+    EXPECT_EQ(free.data(Qt::ForegroundRole).value<QColor>(), SearchResultsModel::queueColour(Level::None));
+    EXPECT_EQ(busy.data(Qt::ForegroundRole).value<QColor>(), SearchResultsModel::queueColour(Level::VeryLong));
+    // Hovering gives the exact queue length; VoiceOver reads it too.
+    EXPECT_TRUE(busy.data(Qt::ToolTipRole).toString().contains(u"272"_s));
+    EXPECT_TRUE(busy.data(Qt::AccessibleTextRole).toString().contains(u"272"_s));
+    EXPECT_FALSE(free.data(Qt::ToolTipRole).toString().isEmpty());
+    // Other columns aren't coloured.
+    EXPECT_FALSE(model.indexOfResult(1, SearchResultsModel::TitleColumn).data(Qt::ForegroundRole).isValid());
+}
+
+TEST(SearchResultsModelTest, SpeedColumnShowsTheUploadSpeed)
+{
+    SearchResultsModel model;
+    model.reset(selecta::core::analyzeHits({peerHit(u"fast"_s, 1'200'000, true, 0), peerHit(u"silent"_s, 0, true, 0)},
+                                           0, {}, {}));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    const QModelIndex fast = model.indexOfResult(0, SearchResultsModel::SpeedColumn);
+    const QModelIndex silent = model.indexOfResult(1, SearchResultsModel::SpeedColumn);
+    EXPECT_EQ(fast.data().toString(), selecta::app::format::speed(1'200'000));
+    EXPECT_EQ(silent.data().toString(), u"—"_s);
+    EXPECT_FALSE(silent.data(Qt::AccessibleTextRole).toString().contains(u"—"_s));
+    EXPECT_EQ(model.headerData(SearchResultsModel::QueueColumn, Qt::Horizontal).toString(), u"Q"_s);
+    EXPECT_EQ(model.headerData(SearchResultsModel::SpeedColumn, Qt::Horizontal).toString(), u"Speed"_s);
+}
+
+TEST(SearchResultsModelTest, FolderRowsShowTheirPeersQueueAndSpeed)
+{
+    SearchResultsModel model;
+    const QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Fatal);
+    SearchHit busy = peerHit(u"busy"_s, 1'200'000, false, 30);
+    busy.country = u"JP"_s;
+    model.reset(selecta::core::analyzeHits({busy}, 0, {}, {}));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    model.setGrouped(true);
+    ASSERT_EQ(model.rowCount(), 1);
+    const QModelIndex queue = model.index(0, SearchResultsModel::QueueColumn);
+    EXPECT_EQ(queue.data().toString(), u"Q"_s);
+    EXPECT_EQ(queue.data(Qt::ForegroundRole).value<QColor>(),
+              SearchResultsModel::queueColour(SearchResultsModel::QueueLevel::Long));
+    EXPECT_TRUE(queue.data(Qt::ToolTipRole).toString().contains(u"30"_s));
+    EXPECT_EQ(model.index(0, SearchResultsModel::SpeedColumn).data().toString(),
+              selecta::app::format::speed(1'200'000));
+    EXPECT_EQ(model.index(0, SearchResultsModel::PeerColumn).data().toString(), u"🇯🇵 busy"_s);
+}
+
+TEST(SearchResultsModelTest, PeersShowTheirCountrysFlag)
+{
+    EXPECT_EQ(SearchResultsModel::flagText(u"FR"_s), u"🇫🇷"_s);
+    EXPECT_EQ(SearchResultsModel::flagText(u"JP"_s), u"🇯🇵"_s);
+    EXPECT_TRUE(SearchResultsModel::flagText(u"ZZ"_s).isEmpty());
+    EXPECT_TRUE(SearchResultsModel::flagText(u"fr"_s).isEmpty());
+    EXPECT_TRUE(SearchResultsModel::flagText({}).isEmpty());
+
+    SearchHit french = peerHit(u"paris"_s, 1'000'000, true, 0);
+    french.country = u"FR"_s;
+    SearchResultsModel model;
+    model.reset(selecta::core::analyzeHits({french, peerHit(u"nowhere"_s, 900'000, true, 0)}, 0, {}, {}));
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    const QModelIndex paris = model.indexOfResult(0, SearchResultsModel::PeerColumn);
+    const QModelIndex nowhere = model.indexOfResult(1, SearchResultsModel::PeerColumn);
+    EXPECT_EQ(paris.data().toString(), u"🇫🇷 paris"_s);
+    EXPECT_EQ(nowhere.data().toString(), u"nowhere"_s); // no flag when unknown
+    // VoiceOver says the country; the tooltip too, with DB-IP's credit.
+    EXPECT_EQ(paris.data(Qt::AccessibleTextRole).toString(), u"paris, France"_s);
+    EXPECT_TRUE(paris.data(Qt::ToolTipRole).toString().contains(u"France"_s));
+    EXPECT_TRUE(paris.data(Qt::ToolTipRole).toString().contains(u"DB-IP"_s));
+    EXPECT_FALSE(nowhere.data(Qt::ToolTipRole).toString().contains(u"DB-IP"_s));
+    // Sorting by peer goes by name, not by flag.
+    model.sort(SearchResultsModel::PeerColumn, Qt::AscendingOrder);
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0}));
+}
+
+TEST(SearchResultsModelTest, OnePeersFilesGoByQuality)
+{
+    // The same track from one peer: the FLAC is larger, and still first.
+    const QList<SearchResult> analysed = selecta::core::analyzeHits(
+        {
+            hit(u"bassbin"_s, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, 320, 372),
+            hit(u"bassbin"_s, u"@@b\\Okuma Drift - Neon Rain.flac"_s, 0, 372),
+        },
+        0, {}, {});
+    ASSERT_LT(analysed.at(0).hit.size, analysed.at(1).hit.size);
+    SearchResultsModel model;
+    model.reset(analysed);
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0}));
+}
+
+TEST(SearchResultsModelTest, OnePeersFilesGoByFitToTheRelease)
+{
+    // Neither fits the release (6:12): the longer file is 7 s off, the shorter 32 s off. The closer one is first,
+    // though it is larger.
+    const QList<SearchResult> analysed = selecta::core::analyzeHits(
+        {
+            hit(u"bassbin"_s, u"@@b\\short\\Okuma Drift - Neon Rain.mp3"_s, 320, 340),
+            hit(u"bassbin"_s, u"@@b\\long\\Okuma Drift - Neon Rain.mp3"_s, 320, 379),
+        },
+        0, {}, neonRain());
+    ASSERT_TRUE(analysed.at(0).fit && analysed.at(1).fit);
+    ASSERT_FALSE(analysed.at(0).fitsRelease() || analysed.at(1).fitsRelease());
+    ASSERT_GT(selecta::match::ReleaseScorer::compareIdentity(*analysed.at(0).fit, *analysed.at(1).fit), 0);
+    SearchResultsModel model;
+    model.reset(analysed);
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    model.setReleaseChosen(true, 372'000);
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0}));
+}
+
+TEST(SearchResultsModelTest, EqualPeersGoByFewestDownloadsToday)
+{
+    QList<SearchResult> analysed = selecta::core::analyzeHits(
+        {peerHit(u"busy_today"_s, 1'000'000, true, 0, 9'000'000), peerHit(u"fresh"_s, 1'000'000, true, 0, 12'000'000)},
+        0, {}, {});
+    analysed[0].peerFilesToday = 4;
+    analysed[1].peerFilesToday = 0;
+    SearchResultsModel model;
+    model.reset(analysed);
+    model.setFilter(selecta::core::SearchFilter{.onlyThisRelease = false});
+    EXPECT_EQ(shownOrder(model), (QList<int>{1, 0})); // spread the load (FAIR-5)
 }

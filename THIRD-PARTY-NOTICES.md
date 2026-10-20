@@ -36,9 +36,17 @@ Versions are pinned by `vcpkg.json` (its `builtin-baseline`) and `cmake/vcpkg-po
 | SQLite | public domain | the library database |
 | OpenSSL | Apache-2.0 | TLS for the metadata services (through Qt) |
 | RapidFuzz (rapidfuzz-cpp) | MIT | fuzzy string matching |
-| zlib | Zlib | Soulseek message compression |
+| zlib | Zlib | Soulseek message compression; unpacking the country database |
 | libnatpmp | BSD-3-Clause | finding the default gateway, for opening the listening port on the router (NET-3) |
+| libmaxminddb | Apache-2.0 (with BSD-2-Clause and BSD-3-Clause parts) | reading the country database, for peers' flags |
 | libjpeg-turbo, libpng, FreeType, HarfBuzz, PCRE2, double-conversion, Brotli, bzip2, md4c, BLAKE2 (libb2) | BSD-style, FTL, MIT, Boost, IJG and similar permissive licences | dependencies of Qt |
+
+## Data
+
+- **IP to Country Lite** by DB-IP (<https://db-ip.com>), under the Creative Commons Attribution 4.0 International
+  licence (CC BY 4.0). Selecta doesn't ship it: it downloads the file once, at its first run, and looks up only the
+  addresses of peers it is already connected to, to show their country's flag next to their name. IP Geolocation by
+  DB-IP.
 
 Tests also use GoogleTest and Google Benchmark (BSD-3-Clause); neither ships in the app.
 

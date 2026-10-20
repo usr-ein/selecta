@@ -37,6 +37,7 @@
 #include <cstdio>
 #include <exception>
 #include <memory>
+#include <optional>
 
 using namespace Qt::StringLiterals;
 namespace paths = selecta::base::paths;
@@ -160,6 +161,19 @@ std::unique_ptr<Diagnostics> startDiagnostics(selecta::app::MainWindow &window, 
     return diagnostics;
 }
 
+// Peers' flags (P-002): DB-IP's country database, downloaded at the first run. Isolated runs stay offline.
+std::optional<selecta::core::CountryDatabaseOptions> countryDatabase(const Options &options, const QString &dataDir)
+{
+    if (options.isolated && !options.metadataNetwork) {
+        return std::nullopt;
+    }
+    return selecta::core::CountryDatabaseOptions{
+        .path = dataDir + u"/GeoIP/dbip-country-lite.mmdb"_s,
+        .sources = selecta::core::dbIpCountryLiteSources(QDateTime::currentDateTimeUtc().date()),
+        .stallMs = 30'000,
+        .totalMs = 180'000};
+}
+
 int runSelecta(int argc, char **argv)
 {
     const QApplication app(argc, argv);
@@ -266,6 +280,7 @@ int runSelecta(int argc, char **argv)
     } else if (!options.metadataNetwork) {
         engineOptions.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // nothing leaves the machine
     } // isolated runs keep secrets in memory only
+    engineOptions.countries = countryDatabase(options, dataDir);
     if (options.portMapping) {
         engineOptions.portMapping = selecta::core::PortMapper::Options{}; // NET-3; isolated runs leave the router alone
     }
