@@ -423,13 +423,13 @@ namespace {
 bool writeFakeYtDlp(const QString &path)
 {
     const QString fixtures = QStringLiteral(SELECTA_META_FIXTURES);
-    const QByteArray wrapper = u"#!/bin/sh\n"
-                               u"FAKE_YTDLP_SEARCH='%1'\n"
-                               u"export FAKE_YTDLP_SEARCH\n"
-                               u"exec /bin/sh '%2' \"$@\"\n"_s
-                                   .arg(fixtures + u"/youtube/search_glass_harbour.json"_s,
-                                        fixtures + u"/fake-yt-dlp"_s)
-                                   .toUtf8();
+    const QByteArray wrapper =
+        u"#!/bin/sh\n"
+        u"FAKE_YTDLP_SEARCH='%1'\n"
+        u"export FAKE_YTDLP_SEARCH\n"
+        u"exec /bin/sh '%2' \"$@\"\n"_s
+            .arg(fixtures + u"/youtube/search_glass_harbour.json"_s, fixtures + u"/fake-yt-dlp"_s)
+            .toUtf8();
     QFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(wrapper) != wrapper.size()) {
         return false;

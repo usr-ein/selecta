@@ -58,8 +58,8 @@ public:
 
     // Opens (and creates) the folder, then deletes what the index doesn't vouch for, expired files and the least
     // recently used beyond the bound. An empty `directory` makes an unusable cache.
-    PreviewCache(QString directory, Options options);
-    explicit PreviewCache(QString directory); // the default bound, the system clock
+    PreviewCache(const QString &directory, Options options);
+    explicit PreviewCache(const QString &directory); // the default bound, the system clock
     ~PreviewCache();
     PreviewCache(const PreviewCache &) = delete;
     PreviewCache &operator=(const PreviewCache &) = delete;

@@ -44,7 +44,7 @@ bool usableText(const QString &text)
 
 } // namespace
 
-PreviewCache::PreviewCache(QString directory, Options options)
+PreviewCache::PreviewCache(const QString &directory, Options options)
     : m_options(std::move(options))
 {
     if (!m_options.now) {
@@ -72,8 +72,8 @@ PreviewCache::PreviewCache(QString directory, Options options)
     save();
 }
 
-PreviewCache::PreviewCache(QString directory)
-    : PreviewCache(std::move(directory), Options{})
+PreviewCache::PreviewCache(const QString &directory)
+    : PreviewCache(directory, Options{})
 {}
 
 PreviewCache::~PreviewCache() = default;
