@@ -32,6 +32,7 @@ protected:
         result.databasePath = dir.filePath(u"selecta.sqlite3"_s);
         result.clock = &clock;
         result.wallClock = [] { return qint64{1'800'000'000'000}; };
+        result.metaEndpoints = selecta::core::MetaEndpoints::unreachable(); // tests never reach real services
         return result;
     }
 

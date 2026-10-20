@@ -3,7 +3,6 @@
 
 #include "meta/Release.h"
 #include "meta/Result.h"
-#include "meta/TextMatcher.h"
 
 #include <QDateTime>
 #include <QFuture>
@@ -40,7 +39,7 @@ class ClipSource : public QObject
     Q_OBJECT
 
 public:
-    ClipSource(DeezerClient &deezer, std::shared_ptr<const TextMatcher> matcher, QObject *parent = nullptr);
+    explicit ClipSource(DeezerClient &deezer, QObject *parent = nullptr);
     ~ClipSource() override;
     ClipSource(const ClipSource &) = delete;
     ClipSource &operator=(const ClipSource &) = delete;

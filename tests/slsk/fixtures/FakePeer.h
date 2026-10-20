@@ -13,10 +13,13 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 
+class QIODevice;
 class QTcpServer;
 class QTcpSocket;
+class QTimer;
 
 namespace selecta::slsk::testing {
 
@@ -40,13 +43,16 @@ public:
         FileDownload, // we receive a file: waiting for the token, then the bytes
     };
 
-    // A file the peer can upload: content, and how to misbehave while sending it.
+    // A file the peer can upload: its bytes (`content`, or the local file `sourceFile`, read as it is sent), and how
+    // to misbehave while sending it.
     struct Upload
     {
         QByteArray content;
-        qint64 stopAfter = -1;       // close the F connection after this many bytes (a killed transfer)
+        qint64 stopAfter = -1;       // close the F connection after this many bytes (a killed transfer), once
         bool reportZeroSize = false; // SoulseekQt sends size 0 for files over 2 GiB
+        QString sourceFile;          // when set, the file's bytes instead of `content`
     };
+    static quint64 sizeOf(const Upload &upload);
 
     // How the peer answers a QueueUpload.
     enum class QueueBehaviour {
@@ -78,13 +84,30 @@ public:
     QString denyReason = QStringLiteral("File not shared.");
     std::optional<quint32> placeInQueue; // answer PlaceInQueueRequest with this, or not at all
     QHash<QByteArray, Upload> files;     // raw remote path → what to send
-    QStringList searchHits;              // answer a search with the shares' files whose path contains a hit word
+    // As a downloader (when we upload to it): decline our TransferRequest with this reason (empty: allow), and the
+    // resume offset to ask for.
+    QString declineUploads;
+    quint64 resumeOffset = 0;
+    bool ignoreTransferRequests = false; // never answer an uploader's TransferRequest
+    qint64 closeDownloadAfter = -1;      // as a downloader, hang up after this many bytes
+    // As an uploader: open the F connection and send the token, then never send a byte.
+    bool stallUploads = false;
+    // As an uploader: allow-and-forget, i.e. never open the F connection after the downloader allows it.
+    bool neverConnectFile = false;
+    qint64 uploadRate = 0;  // bytes per second for each upload; 0: as fast as the connection takes them
+    QStringList searchHits; // answer a search with the shares' files whose path contains a hit word
+    // When set, searches go here instead of the searchHits answer; reply with sendSearchResponse().
+    std::function<void(const fromserver::SearchRequest &request)> onSearch;
     // Called for every peer message, after the built-in answers.
     std::function<void(quint64 connection, const QString &from, const PeerMessage &message)> onMessage;
 
     // --- actions -----------------------------------------------------------------------------------------------------
-    // Opens a connection to `user` at `address`:`port` and identifies with PeerInit. Returns a connection id.
+    // Opens a connection to `user` at `address`:`port` and identifies with PeerInit. Returns a connection id. An F
+    // connection opened this way carries our upload.
     quint64 connectTo(const QString &user, const QHostAddress &address, quint16 port, ConnectionType type);
+    // Opens an F connection as the downloader of an upload `user` wants to send us (Soulseek.NET opens it itself when
+    // the uploader's connection doesn't arrive): we wait for their token, then send our offset.
+    quint64 connectAsDownloader(const QString &user, const QHostAddress &address, quint16 port);
     // Asks the server to have `user` connect to us (they answer with PierceFireWall `token`).
     bool requestIndirect(const QString &user, ConnectionType type, quint32 token);
     bool send(quint64 connection, const QByteArray &bytes);
@@ -94,6 +117,13 @@ public:
     void closeAll();
     // Sends TransferRequest(upload) for a held queue entry.
     bool startUpload(const QString &user, const RemotePath &path);
+    // Drops a held queue entry and tells the downloader with UploadDenied.
+    bool denyHeld(const QString &user, const RemotePath &path, const QString &reason);
+    // A held entry's place in the queue (1 = next), or 0.
+    int heldPosition(const QString &user, const RemotePath &path) const;
+    int heldCount() const { return static_cast<int>(m_held.size()); }
+    // Delivers search results to `user`: on our P connection with them, or a new one to their listening port.
+    bool sendSearchResponse(const QString &user, const peer::FileSearchResponse &response);
 
     // --- distributed -------------------------------------------------------------------------------------------------
     // As a parent on connection `connection`: level, root, searches.
@@ -108,9 +138,10 @@ public:
     };
     QList<Received> received;
     QList<std::pair<quint64, std::pair<quint32, QByteArray>>> distribReceived; // connection → (code, payload)
-    QList<quint32> pierceTokens;       // PierceFireWall tokens received on inbound connections
-    QStringList peerInitsFrom;         // usernames that identified with PeerInit on inbound connections
-    QList<QByteArray> downloadedFiles; // complete files received over F
+    QList<quint32> pierceTokens;          // PierceFireWall tokens received on inbound connections
+    QStringList peerInitsFrom;            // usernames that identified with PeerInit on inbound connections
+    QList<QByteArray> downloadedFiles;    // complete files received over F
+    QList<RemotePath> uploadFailuresSent; // UploadFailed echoes it sent after a downloader cut a transfer
     int indirectRequests = 0;
 
     template <typename M>
@@ -138,6 +169,14 @@ Q_SIGNALS:
     void identified(quint64 connection, const QString &peer, selecta::slsk::ConnectionType type);
     void messageReceived(quint64 connection, const QString &from, const selecta::slsk::PeerMessage &message);
     void closed(quint64 connection);
+    // Every frame sent on a P connection.
+    void peerFrameSent(quint64 connection, const QString &to, const QByteArray &frame);
+    // An upload got its offset and starts streaming; it ended (`complete`: every byte went out and the downloader
+    // closed).
+    void uploadStarted(quint64 connection, const QString &to, const selecta::slsk::RemotePath &path, quint64 offset,
+                       quint64 size);
+    void uploadFinished(quint64 connection, const QString &to, const selecta::slsk::RemotePath &path, quint64 sent,
+                        bool complete);
 
 private:
     struct Connection
@@ -150,9 +189,14 @@ private:
         QByteArray raw; // F connections
         // F upload state
         quint32 transferToken = 0;
-        QByteArray uploadContent;
-        qint64 stopAfter = -1;
+        RemotePath path;
         bool offsetReceived = false;
+        std::unique_ptr<QIODevice> source; // open once the offset arrives
+        qint64 remaining = 0;              // bytes still to send (to the end, or to a stopAfter)
+        quint64 sent = 0;
+        qint64 budget = 0;      // with uploadRate: what this upload may still send this tick
+        bool killAfter = false; // hang up once `remaining` is sent (stopAfter)
+        bool uploaderClosed = false;
         // F download state
         quint64 expectedSize = 0;
         bool tokenReceived = false;
@@ -174,6 +218,9 @@ private:
     struct Responder;
     friend struct Responder;
     void handleFileUpload(quint64 id);
+    bool openSource(Connection &c, quint64 offset);
+    void pumpUpload(quint64 id);
+    void onRateTick();
     void handleFileDownload(quint64 id);
     void openFileConnection(const QString &user, quint32 token);
     Connection *find(quint64 id);
@@ -181,6 +228,7 @@ private:
     QString m_username;
     FakeServer *m_server;
     QTcpServer *m_listener = nullptr;
+    QTimer *m_rateTimer = nullptr;
     std::map<quint64, Connection> m_connections;
     QHash<quint32, std::pair<QString, ConnectionType>> m_indirectTokens; // our requestIndirect() tokens
     QHash<quint32, PendingUpload> m_uploads;                             // TransferRequest tokens we sent

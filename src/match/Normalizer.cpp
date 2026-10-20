@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <optional>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -179,10 +180,60 @@ bool isLeetSymbol(char32_t codePoint)
     return codePoint == U'$' || codePoint == U'@' || codePoint == U'!';
 }
 
+bool isAscii(QStringView text)
+{
+    return std::ranges::all_of(text, [](QChar c) { return c.unicode() < 0x80; });
+}
+
+bool isAsciiWordCharacter(char16_t c)
+{
+    return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9');
+}
+
+// foldTokens() for ASCII text, which NFKD, NFC, mark removal and transliteration leave alone: the same tokens without
+// the Unicode work (most file names are ASCII). A property test holds it to the general path.
+QStringList foldAsciiTokens(QStringView prepared, bool keepLeetSymbols)
+{
+    QStringList tokens;
+    QString word;
+    const auto flush = [&tokens, &word] {
+        if (!word.isEmpty()) {
+            tokens.append(std::exchange(word, QString()));
+        }
+    };
+    const qsizetype n = prepared.size();
+    for (qsizetype i = 0; i < n; ++i) {
+        const char16_t c = prepared[i].unicode();
+        if (isAsciiWordCharacter(c)) {
+            word.append(QChar(c >= u'A' && c <= u'Z' ? static_cast<char16_t>(c - u'A' + u'a') : c));
+            continue;
+        }
+        const bool leetSymbolInWord = keepLeetSymbols && isLeetSymbol(c) && !word.isEmpty() && i + 1 < n &&
+                                      isAsciiWordCharacter(prepared[i + 1].unicode());
+        if (leetSymbolInWord) {
+            word.append(QChar(c));
+        } else if (c == u'&' || c == u'+') {
+            flush();
+            tokens.append(u"and"_s);
+        } else if (c == u'$' && !keepLeetSymbols) {
+            word.append(u's');
+        } else if (lexicon::isApostrophe(c)) {
+            // removed without a space: "What's" → "whats"
+        } else {
+            flush();
+        }
+    }
+    flush();
+    return tokens;
+}
+
 // Steps 1–6 (note §4.2): NFKD, case fold, non-spacing marks dropped, transliteration, symbol rules, tokens. With
 // `keepLeetSymbols`, "$", "@" and "!" between word characters stay in the word (for the leet key).
 QStringList foldTokens(QStringView prepared, bool keepLeetSymbols)
 {
+    if (isAscii(prepared)) {
+        return foldAsciiTokens(prepared, keepLeetSymbols);
+    }
     const QString folded = prepared.toString().normalized(QString::NormalizationForm_KD).toCaseFolded();
     QStringList tokens;
     QString word;
@@ -326,8 +377,10 @@ QStringList splitArtists(QStringView text)
     qsizetype i = 0;
     while (i < text.size()) {
         qsizetype matched = 0;
+        const QChar c = text[i];
+        const bool mayStart = c == u' ' || c == u',' || c == u';'; // every separator starts with one of these
         for (const QStringView separator : kSeparators) {
-            if (text.sliced(i).startsWith(separator, Qt::CaseInsensitive)) {
+            if (mayStart && text.sliced(i).startsWith(separator, Qt::CaseInsensitive)) {
                 matched = separator.size();
                 break;
             }
@@ -532,7 +585,14 @@ ArtistKeys Normalizer::artistKeys(QStringView artist)
     const QString primary = moveArticleSuffix(split.primary);
     ArtistKeys keys;
     keys.field = fieldKey(primary, FieldKind::Artist);
-    keys.set = artistSet({primary});
+    const QStringList members = splitArtists(primary);
+    if (members.size() == 1 && members.front() == primary) {
+        if (!keys.field.key.isEmpty()) {
+            keys.set = QStringList{keys.field.key}; // the same normalisation artistSet() would do
+        }
+    } else {
+        keys.set = artistSet({primary});
+    }
     keys.featured = artistSet(split.featured);
     return keys;
 }

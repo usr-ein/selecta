@@ -26,16 +26,19 @@ user's own yt-dlp. It owns no UI and returns copyable value types; `core/` decid
 | `MusicBrainzClient` | `MusicBrainzClient.h` | ISRC → recordings → releases (label, catno) → genres; D30 `enrich()` |
 | `CoverFetcher` | `CoverFetcher.h` | Largest linked image, then Cover Art Archive; bounded; disk cache |
 | `DeezerClient` | `DeezerClient.h` | Keyless search, ISRC lookup, track, album (label, genres, UPC), preview URL |
-| `TextMatcher`, `LocalTextMatcher` | `TextMatcher.h` | Keys, versions, similarity; swappable for `match/` |
-| `ReleaseResolver` | `ReleaseResolver.h` | Ranked candidates with score, tier and reasons |
-| `YtDlpRunner`, `YtDlpFetch` | `YtDlpRunner.h` | Discover/version-check yt-dlp, search, pick ±3 s, fetch into the preview cache |
-| `ClipSource` | `ClipSource.h` | Deezer 30-s clip URL by ISRC, else by search |
+| `ReleaseResolver` | `ReleaseResolver.h` | A line → ranked candidates with score, tier and reasons; Spotify first, Deezer fallback |
+| `YtDlpRunner`, `YtDlpFetch` | `YtDlpRunner.h` | The user's own yt-dlp: discover and version-check, search, pick ±3 s, fetch one video's audio into the preview cache |
+| `ClipSource` | `ClipSource.h` | Deezer's official 30-s clip: a freshly signed URL by Deezer ID, ISRC, else search |
 
 Internal (`detail/`, not for `core/`): `HttpChannel` (one per service: pacing, permits, timeouts, bounded bodies,
 manual redirects, retries, cache), `ServiceGate` (spacing / sliding window / in-flight / back-off scheduler, two
 lanes), `Json` (strict optional-field accessors), `LoopbackReceiver` (one-shot `QTcpServer` for the sign-in answer),
 `ImageHeader` (JPEG/PNG dimensions without decoding, bounded walk), `Identifiers` (ISRC, MBID, barcode, dates),
-`TextFold` (the §4.2 comparison key), `SpotifyJson` and `MusicBrainzJson` (strict mapping and the D30 choices).
+`TitleInfo` (a title read with `match/`: core key, version, featured artists, derivative markers, DJ-mix flag),
+`SpotifyJson`, `DeezerJson` and `MusicBrainzJson` (strict mapping and the D30 choices), `Worker` (a `std::thread`
+with mutex-guarded queues, so ThreadSanitizer sees the hand-offs that an uninstrumented Qt would hide), `ToolProcess`
+(one external process: argument list, given environment, own session, bounded line-split output, idle and total
+timeouts, group kill), `YtDlpOutput` (yt-dlp's command lines, strict readers of its output, the §12.6 error map).
 
 ## Threading
 
@@ -50,9 +53,10 @@ blocks and nothing sleeps. Public async calls return `QFuture<Result<T>>`:
 - the yt-dlp fetch is a job object (`YtDlpFetch`: `started(path)`, `progress`, `finished(Result)`, `cancel()`)
   because it has several events.
 
-Value types are reentrant. `TextMatcher` implementations are immutable and shareable across threads.
-`TokenStore` is thread-safe; its futures finish on a worker thread, so `SpotifyAuth` continues on its own thread
-with a context object. The Keychain store runs `SecItem*` on a one-thread pool because a Keychain prompt can block.
+Value types are reentrant. `ReleaseResolver::score()` and `rank()` are pure static functions, callable from any
+thread. `TokenStore` is thread-safe; its futures finish on a worker thread, so `SpotifyAuth` continues on its own
+thread with a context object. The Keychain store runs `SecItem*` on a `detail::Worker` because a Keychain prompt can
+block; the cover disk cache uses one too.
 
 ## Permit points
 
@@ -85,7 +89,7 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
 | The user's playlists, playlist items, Liked Songs | never cached | — |
 | Spotify entries (`spotify/` prefix) | dropped on sign-out | — |
 | Cover bytes | `CoverFetcher::Config::cacheDir`, one file per URL | 30 days |
-| Deezer preview URLs | never cached (signed, ~15 min) | — |
+| Deezer preview URLs | never used from the cache (signed, ~15 min): `ClipSource` asks with `fresh = true` | — |
 | yt-dlp audio | the preview cache folder the caller passes (PREV-8 LRU is core's) | — |
 
 ## Integration points for `core/`
@@ -99,15 +103,40 @@ instead of waiting, and later requests fail the same way until it ends: nothing 
    `signIn()` from the "Connect" button (`Config::openUrl` = `QDesktopServices::openUrl`); `signIn(playlistScopes())`
    before the first playlist import. Show `signInExpiresAt()` two weeks ahead. On `signedOut()` drop any Spotify
    data core keeps.
-3. **Get tracks / search:** `ReleaseResolver::resolve()` per line — `Priority::Background` for a pasted batch,
-   `Priority::Interactive` for a search typed by hand; the chosen candidate's `durationMs` drives the ±3 s Soulseek
-   ranking (D23). Pasted Spotify links: `spotify::parsePastedLinks()` → `SpotifyClient::importLinks()` (background).
+3. **Get tracks / search:** `ReleaseResolver::resolve(ResolveQuery, Priority)` per line, with `ResolveQuery` filled
+   from `match::TracklistParser`'s line: `artist`, `title` with its version text kept, `durationMs` from
+   `durationSec`, `label` from `labelHint` (and `isrc` when a file or playlist item has one). Core wraps it in a
+   `std::function<QFuture<Result<Resolution>>(const ResolveQuery &)>`, runs at most 3 lines at once on
+   `Priority::Background` for a pasted batch (`Interactive` for a search typed by hand), and cancels a line's future
+   when the line is removed. Use the first candidate when `Resolution::confidence` is `Likely` or better, show the
+   list for `Ambiguous`, and the line as typed for `None`; `sourceErrors` says which service failed while another
+   answered (a resolution fails only when every source failed). The chosen candidate's `durationMs` drives the ±3 s
+   Soulseek ranking (D23). Pasted Spotify links: `spotify::parsePastedLinks()` → `SpotifyClient::importLinks()`
+   (background).
 4. **Arrival pipeline (D30):** `SpotifyClient::album()` for disc totals when tagging, `MusicBrainzClient::enrich()` +
    `applied()` for label/genre, `CoverFetcher::fetch()` for cover bytes → convert library.
-5. **Player:** `ClipSource::clipFor()` → stream the URL from memory; `YtDlpRunner::probe()` / `search()` / `pick()` /
-   `fetch()` → open `YtDlpFetch::started(path)` with the growing-file reader.
+5. **Player:** `ClipSource::clipFor(release)` → stream `Clip::url` from memory before `expiresAt` (never store it:
+   Deezer's terms), with the attribution and `pageUrl`. YouTube previews, on an explicit audition only:
+   `YtDlpRunner::search(YtDlpRunner::searchText(release))` → `pick(candidates, release)` (nullopt: "No YouTube match
+   within ±3 s", fall back to the clip or the peer's file) → `fetch(id, <preview cache>/yt)` → open
+   `YtDlpFetch::started(path)` with the growing-file reader; `finished()` says when the file is complete. Delete the
+   job (or `cancel()`) when the audition ends early. `AgeRestricted`, `GeoBlocked` and `Unavailable` mean "try the next
+   candidate once"; `RateLimited`/`BotCheck` start the hour's pause (`paused()`, `pausedUntil()`); `ToolNotFound`,
+   `ToolUnsafe`, `ToolTooOld`, `ToolMissingRuntime` carry the message for Settings. `probe()` from Settings shows the
+   version, `stale` and whether Deno was found; `setExecutable()` takes the Settings path (empty: auto-discover).
 6. **Activity log (SAFE-4, META-7):** `RequestPacer::report()` receives one scrubbed `RequestRecord` per request.
-7. **Matching:** pass an adapter over `match/` as the `TextMatcher` once that library lands.
+7. **Matching:** meta uses `match/`'s `Normalizer`, `VersionClassifier` and `FieldMatcher` directly: one comparison
+   key and one version vocabulary for the whole app (`Candidate::version` is a `match::VersionCompatibility`).
+8. **Endpoints for tests and isolated runs (`core::MetaEndpoints`):** every service's base URL is injectable —
+   `SpotifyAuth::Config::accountsUrl`, `SpotifyClient`'s and `DeezerClient`'s `apiUrl`, `MusicBrainzClient`'s `apiUrl`,
+   `CoverFetcher::Config::coverArtArchiveUrl` — and `ClipSource` only uses the `DeezerClient` it is given. Cover image
+   URLs come from the answers and are limited to the services' CDN hosts. A non-HTTPS base (`http://127.0.0.1:1`) fails
+   every request at once without opening a socket. For yt-dlp, an empty `Config::executable` means auto-discovery
+   (the production default); an isolated run passes `YtDlpRunner::Config::disabled()`, which never finds or runs
+   anything (every call fails with `NotConfigured`, whatever `setExecutable()` says later).
+8a. **Shutdown:** destroying `YtDlpRunner` with a search, fetch or version check in flight kills the child's process
+   group and reaps it before returning (a few milliseconds), deletes the partial file, cancels pending futures and
+   finishes jobs with `Cancelled`.
 
 ## Priority lanes
 
@@ -152,6 +181,107 @@ and no Spotify request until Retry-After (1 h when absent).
 5. Genres: release group, else recording, else artist; most votes first, zero-vote genres dropped. A failure here
    keeps the label and reports "genres unavailable"; everything else fails the enrichment (no half-truth label).
 
+## Release resolution (M4, the note §4.4 and §14.5)
+
+`ReleaseResolver::resolve()` asks as little as it can, one request at a time:
+
+1. With an ISRC: Spotify `q=isrc:…`, then Deezer `/track/isrc:…`; an `Exact` candidate ends the line.
+2. Spotify `track:"<core title>" artist:"<primary artist>"` (≤ 10 results). A `Likely` or better candidate whose
+   version agrees ends the line. If the line names a version and no candidate of that version came back, one more
+   search with the version's words (never after an empty first page: more words only narrow it).
+3. Otherwise Deezer `"<primary artist> <core title>"` (25 results), and the same version search if needed.
+
+A source that fails (rate limit, network, server) is not asked again for that line. At most 6 requests per line,
+usually 1–2. Each release is scored once as it arrives; each step ranks the lot once.
+
+Scoring (`score()`, the note §14.5's initial weights, tuned later by experiment X5):
+
+- weighted over the fields both sides have: title core 0.40 (`match::FieldMatcher` on `Normalizer` keys, a length
+  within ±3 s corroborating a fuzzy match), artist 0.30 (0.7 for the line's primary artists among the release's, 0.3
+  for its featured artists, or for the share of the release's artists the line explains, the remixer included),
+  length 0.20 (1 within ±3 s, then `exp(−0.1·(Δ−3))`; only when the versions agree), album 0.05, label 0.05;
+- versions compared first (`match::VersionClassifier::compare`): another version scores 0 whatever its length; an
+  unspecified line against a named version without a length ×0.9;
+- penalties: DJ-mix segment ×0.3 and derivative uploads (slowed, sped up, nightcore, 8D, reverb, karaoke, tribute,
+  cover, bass boosted) ×0.2 unless the line asks for them; the same title by another artist ×0.5. DJ versions
+  (extended, club, dub, radio edit, remixes) are versions, never penalties;
+- the ISRC rule: the line's ISRC on a release whose length (if known) is within ±3 s and whose title is not a
+  different song → `Exact`.
+
+Tiers: `Confident` ≥ 0.92 for the first candidate only, with a 0.05 margin over every other recording or version
+(two versions that tie stay `Likely`); `Likely` ≥ 0.80; `Ambiguous` ≥ 0.60; else `None`. Copies of one recording
+(same ISRC and version) from both services merge into one candidate showing Spotify's album (not a compilation's,
+when Spotify has both), with Deezer's ID, label and covers added; two sources agreeing on the leading candidate's
+ISRC raise it one tier. `rank()` keeps other versions in the list, last, with their reasons.
+
+## Deezer
+
+Keyless JSON API (`api.deezer.com`): `/search?q=&limit≤50`, `/track/isrc:{ISRC}`, `/track/{id}`, `/album/{id}` (label,
+genres, UPC). Deezer reports errors as HTTP 200 with `{"error":{"code":…}}`: codes 4 (quota) and 700 (busy) back the
+service off and retry, 800 (no data) is `NotFound`, anything else `BadResponse`; none of them is cached. IDs are
+checked (`[1-9][0-9]{0,18}`) before they reach a path; queries lose quotes and colons (Deezer's advanced-search
+syntax) and stop at 200 characters. Preview URLs are kept only over HTTPS from Deezer's hosts; `previewExpiry()`
+reads the signed URL's `exp=`.
+
+## yt-dlp previews (M5, D26, the note §12)
+
+`YtDlpRunner` is the only place Selecta starts yt-dlp, and only on an explicit audition.
+
+- **Discovery (§12.1):** the Settings path (absolute only), else `yt-dlp` in `/opt/homebrew/bin`, `/usr/local/bin`,
+  `~/.local/bin`, then the absolute `PATH` entries; never the working directory. The first file found decides: it must
+  be a regular executable after resolving symlinks, not writable by group or others, owned by the user or root
+  (`ToolNotFound`, `ToolUnsafe`). Deno is looked up in the same directories and passed as
+  `--js-runtimes deno:<path>` (the child's `PATH` may not include Homebrew).
+- **Version:** `--version` (local, no permit) once per install; a changed file (size, time, path) or a newly found
+  Deno probes again. Older than 2025.11.12 (the release that added `--js-runtimes` and `--no-remote-components`) is
+  `ToolTooOld`, and so is "no such option" from an older tool; more than 90 days old sets `stale` ("run
+  `brew upgrade yt-dlp`"). Selecta never updates yt-dlp.
+- **Safety flags on every run (§12.5):** `--ignore-config --no-plugin-dirs --no-cookies --no-cookies-from-browser
+  --no-remote-components`, `--cache-dir <Config::ytDlpCacheDir>` or `--no-cache-dir`, `--color never --socket-timeout
+  15 --retries 2 --fragment-retries 2`; `--sleep-requests 0.75` for YouTube runs; `--` before the query or URL; the
+  video as a full watch URL, never a bare ID. Never `-U`, `--exec`, cookies, accounts, config locations, batch files,
+  `--impersonate` or `--extractor-args` (the fake script fails any run that breaks this).
+- **Process hygiene:** `QProcess` with an argument list; environment `HOME`, `PATH` (yt-dlp's and Deno's folders,
+  Homebrew, system), `LANG=en_US.UTF-8`, `TMPDIR` and nothing else; stdin `/dev/null`; descriptors above stderr closed
+  and signal handlers reset in the child; its own session, so a kill (`SIGKILL` to the process group) also ends Deno
+  or anything else it started.
+- **One process at a time,** version checks included, in submission order. YouTube runs then pass the yt-dlp gate
+  (≥ 2 s apart, ≤ 30 per 10 minutes; a wait beyond 15 s fails at once with `RateLimited` + `retryAfter`) and take one
+  `YtDlpRun` permit each.
+- **Search (§12.2):** `--flat-playlist -J -- ytsearch<N>:<text>` (N ≤ 20, text cleaned and ≤ 200 characters), 60 s
+  timeout, stdout ≤ 4 MiB. Entries keep id (11 × `[A-Za-z0-9_-]`), title, channel, channel ID, duration, views, live
+  status, verified flag; channels, playlists and broken IDs are dropped. Checked by hand once against the real tool
+  (2026-10-20, one five-result search): the output has exactly this shape.
+- **Pick (§12.3), pure:** length within ±3 s of the release (whole seconds; no release length, no pick); never live,
+  upcoming or post-live; all the release's title words present; the version compatible (`match::VersionClassifier`);
+  no DJ-mix segment or derivative upload the release doesn't have. Then the "<artist> - Topic" channel, a channel
+  named like the artist or the label, the better version agreement, a verified channel, the closer length, the most
+  views.
+- **Fetch (§12.4):** `-f "bestaudio[ext=m4a]/bestaudio[acodec=opus]/bestaudio" -P <dir> -o "%(id)s.%(ext)s"
+  --no-part --no-mtime --fixup never --force-overwrites --max-filesize 200M --no-playlist --abort-on-error -q
+  --progress --newline` with `SELECTA-PROGRESS`, `SELECTA-FORMAT` (before_dl) and `SELECTA-FILE` (after_move) marker
+  lines, read from both pipes. `started(path)` once the named file exists; `progress`; `finished` with the path,
+  container, codec and size, after checking the file is the expected `<dir>/<id>.<ext>` and not empty. 30 s without
+  output or 120 s in all → killed, `Timeout`. On any failure or cancel the partial file goes, and so does any
+  `<id>.*` file changed during the run (yt-dlp may not have named its format yet); older previews stay.
+- **Errors (§12.6, `YtDlpOutput::classifyFailure`):** rate limit / HTTP 429 → `RateLimited`; "not a bot", other
+  sign-in requests, captcha → `BotCheck` (both pause yt-dlp for 60 minutes: queued runs fail, new ones fail at once
+  with the time left, `probe()` still works); "confirm your age" → `AgeRestricted`; private, removed, DRM, members-only
+  → `Unavailable`; region → `GeoBlocked`; missing format or failed challenge → `ToolMissingRuntime` without Deno, else
+  `ToolTooOld`; HTTP 403 → `ToolTooOld`; network → `Network`; else `ToolFailed` with yt-dlp's reason (home folder
+  shown as `~`).
+- **Tests** run `tests/meta/fixtures/fake-yt-dlp` (POSIX sh) through a per-test wrapper: it checks the safety flags
+  (exit 99) and that Selecta's environment didn't leak (exit 98), logs its arguments and process starts and ends,
+  prints canned JSON, writes a file with progress, and fails in each §12.6 way or hangs with a child process.
+
+## Clips (META-5, the note §9.1)
+
+`ClipSource::clipFor(release)` asks Deezer for a fresh signed URL every time (they expire after about 15 minutes):
+`/track/{deezerId}` when the release has one (a stale ID falls through), else `/track/isrc:{ISRC}`, else a search on
+the main artist and core title whose best hit must agree on the version, fit ±3 s and score at least `Likely`
+(`ReleaseResolver::score`), then `/track/{id}` for the signature (search answers are cached). `expiresAt` comes from
+the URL's `exp=`, else ten minutes from now. No match or no preview → `NotFound`; other errors pass through.
+
 ## Covers
 
 `CoverFetcher::fetch()`: the largest linked image (only from Spotify's and Deezer's CDNs; any other host is skipped,
@@ -181,6 +311,19 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
 | `Service::SpotifyImages` renamed `CoverImages` | The same channel fetches Deezer's CDN covers |
 | Cover URLs restricted to the services' CDN hosts | Defence against a hostile or broken answer pointing at internal hosts |
 | MusicBrainz defaults to the Background lane | It serves the arrival pipeline; interactive lookups pass `Priority::Interactive` |
+| `match/` used directly; `TextMatcher` and `TextFold` dropped (M4, approved by the head implementer) | One normaliser and one version vocabulary for the app; no adapter layer to keep in step |
+| A source that fails is not asked again for that line | The next request would fail the same way; a struggling service gets a break |
+| No version search after an empty first page | More words only narrow a search; saves a request per miss |
+| ISRC agreement raises the tier only for a candidate that leads by the margin | Both services carry every version of a track; agreement on one says nothing about which version the line meant |
+| Merged candidates show Spotify's copy, an album or single before a compilation | The compilation's album, date and track number would be wrong for tagging |
+| JSON APIs: a 200 body that isn't a JSON object fails `BadResponse` in the channel (`jsonInspection`) | A proxy page or truncated answer must never sit in the cache for 24 h or 30 days |
+| yt-dlp minimum 2025.11.12; "no such option" also means too old | Every safety flag Selecta passes exists from that release; an older tool would reject the command line |
+| The first yt-dlp found decides, even when unsafe | Silently running another copy would hide a problem the user should fix |
+| Version checks share the one-process slot but take no permit | D26's "one process at a time"; `--version` never reaches YouTube |
+| A yt-dlp gate wait beyond 15 s fails at once | A preview that starts minutes later is useless; the caller can retry after `retryAfter` |
+| `--force-overwrites` on every fetch | A leftover partial file must never pass for a finished download; reuse is core's preview-cache decision |
+| Job signals and the `paused` signal are delivered from the event loop | A receiver that deletes the job or starts another run never re-enters the runner mid-step |
+| `ClipSource` always signs afresh, even after a cached search | The URL in a cached answer may already have expired |
 
 ## Progress
 
@@ -189,12 +332,15 @@ PNG IHDR — and refuses anything else, over 20 MiB, or over 10 000 px a side. N
   - M1 (merged as `07df505`): error model, policies, caches, token stores (Keychain verified once by hand), PKCE,
     `ServiceGate`, `HttpChannel`, `LoopbackReceiver`, `SpotifyAuth`.
   - M2 (merged): priority lanes, `SpotifyLinks`, `Identifiers`, `SpotifyJson`, `SpotifyClient`.
-  - M3: `TextFold`, `ImageHeader` (bounded; truncation/malformation cases and a 20 000-buffer random test),
+  - M3 (merged): `ImageHeader` (bounded; truncation/malformation cases and a 20 000-buffer random test),
     `MusicBrainzJson`, `MusicBrainzClient` (lookups, search, `enrich()`, `applied()`), `CoverFetcher` (CDN allowlist,
-    CAA fallback through redirects, disk cache on a worker thread with TTL and size bound). 228 tests (+2 opt-in).
-- **Next:** M4 — merge main, adapt `match/`'s `Normalizer`/`VersionClassifier` behind `TextMatcher` (or keep the
-  local adapter where match/ doesn't cover it), `DeezerClient`, `ReleaseResolver` (Spotify first, Deezer fallback,
-  priority lanes, the duration and label hints from `TracklistParser`), the labelled table of tricky lines.
+    CAA fallback through redirects, disk cache on a worker thread with TTL and size bound).
+  - M4 (merged): `TextFold`/`TextMatcher` replaced by `match/`; `TitleInfo`, `DeezerJson`, `DeezerClient`,
+    `ReleaseResolver` (the labelled table of tricky lines and the request flows), `jsonInspection` for the JSON APIs.
+  - M5: `ToolProcess`, `YtDlpOutput`, `YtDlpRunner`/`YtDlpFetch` (discovery, version, search, pick, fetch, error map,
+    pause, cleanup) against the fake yt-dlp script, `ClipSource`. 324 tests (+2 opt-in Keychain tests).
+- **Next:** M6 — `selecta-cli` commands `meta-search`, `meta-isrc`, `meta-ytdlp-search` with a `GovernorPacer`; the
+  manual smoke run (10 real lines, one yt-dlp search, at most one short download into a deleted temp folder).
 - **Open questions:** none blocking.
 
 ### Notes for whoever resumes

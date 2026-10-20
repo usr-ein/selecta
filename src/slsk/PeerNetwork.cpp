@@ -212,7 +212,9 @@ public:
     void onConnectToPeerRequested(const fromserver::ConnectToPeerRequest &request);
     void dialDirect(Attempt &attempt, const QHostAddress &address, quint16 port);
     void maybeFail(quint64 attemptId);
+    std::optional<Attempt> takeAttempt(quint64 attemptId); // forgets it without a word
     void failAttempt(quint64 attemptId, PeerError error);
+    void failLater(quint64 attemptId, PeerError error);
     void completeAttempt(quint64 attemptId, quint64 connectionId);
     void failAllAttempts(PeerError error);
 
@@ -265,6 +267,7 @@ public:
     TokenGenerator connectTokens;
     TokenGenerator folderTokens;
     quint64 nextId = 1;
+    quint64 starting = 0; // the attempt whose permit startAttempt() is asking for
 };
 
 // --- bookkeeping -----------------------------------------------------------------------------------------------------
@@ -498,25 +501,9 @@ void PeerNetworkPrivate::onSweep()
 
 quint64 PeerNetworkPrivate::startAttempt(Attempt attempt)
 {
-    const auto fail = [&attempt, this](PeerError error) {
-        for (const Pending &pending : std::as_const(attempt.queue)) {
-            if (pending.done) {
-                pending.done(error);
-            }
-        }
-        if (attempt.type == ConnectionType::File) {
-            Q_EMIT q->fileConnectionFailed(attempt.fileRequest, attempt.username, error);
-        } else if (attempt.type == ConnectionType::Distributed) {
-            Q_EMIT q->distributedConnectFailed(attempt.username, error);
-        }
-        return quint64{0};
-    };
-    if (!server.isLoggedIn()) {
-        return fail(PeerError::NotLoggedIn);
-    }
-    if (atSocketLimit()) {
-        return fail(PeerError::SocketLimit);
-    }
+    // Nothing is reported from inside this call. An attempt that fails while it starts (no session, no socket to
+    // spare, a permit refused on the spot) fails on the next event-loop turn instead, so the caller holds whatever id
+    // it was given before hearing of it, and cancelling it meanwhile (cancelFileConnection()) silences it.
     const quint64 id = nextId++;
     attempt.id = id;
     const QString username = attempt.username;
@@ -525,15 +512,30 @@ quint64 PeerNetworkPrivate::startAttempt(Attempt attempt)
         attemptByKey.insert(PeerKey{attempt.username, attempt.type}, id);
     }
     attempts.emplace(id, std::move(attempt));
+    if (!server.isLoggedIn()) {
+        failLater(id, PeerError::NotLoggedIn);
+        return id;
+    }
+    if (atSocketLimit()) {
+        failLater(id, PeerError::SocketLimit);
+        return id;
+    }
     qCDebug(lcSlskPeer).noquote() << "connecting to" << username << "for" << connectPurposeName(purpose);
     // The callback may run now (tests) or on a later turn (core/); it holds no raw pointer.
     const QPointer<PeerNetwork> guard(q);
+    starting = id;
     permits.requestPeerLookup(username, purpose, [guard, id](std::optional<governor::Permit> permit) {
         if (guard) {
             guard->d->onPermit(id, std::move(permit));
         }
     });
+    starting = 0;
     return id;
+}
+
+void PeerNetworkPrivate::failLater(quint64 attemptId, PeerError error)
+{
+    QTimer::singleShot(0, q, [this, attemptId, error] { failAttempt(attemptId, error); });
 }
 
 void PeerNetworkPrivate::onPermit(quint64 attemptId, std::optional<governor::Permit> permit)
@@ -637,13 +639,13 @@ void PeerNetworkPrivate::onCantConnect(quint32 token)
     maybeFail(attemptId);
 }
 
-void PeerNetworkPrivate::failAttempt(quint64 attemptId, PeerError error)
+std::optional<Attempt> PeerNetworkPrivate::takeAttempt(quint64 attemptId)
 {
     const auto it = attempts.find(attemptId);
     if (it == attempts.end()) {
-        return;
+        return std::nullopt;
     }
-    const Attempt a = std::move(it->second);
+    Attempt a = std::move(it->second);
     attempts.erase(it);
     if (a.type != ConnectionType::File) {
         const PeerKey key{a.username, a.type};
@@ -651,13 +653,29 @@ void PeerNetworkPrivate::failAttempt(quint64 attemptId, PeerError error)
             attemptByKey.remove(key);
         }
     }
-    attemptByToken.remove(a.token);
+    if (a.token != 0) {
+        attemptByToken.remove(a.token);
+    }
     if (a.directConnection != 0) {
         if (Connection *c = find(a.directConnection)) {
-            c->attemptId = 0; // closing it must not report back to the attempt we're failing
+            c->attemptId = 0; // closing it must not report back to the attempt we're dropping
             onClosed(a.directConnection);
         }
     }
+    return a;
+}
+
+void PeerNetworkPrivate::failAttempt(quint64 attemptId, PeerError error)
+{
+    if (attemptId == starting) {
+        failLater(attemptId, error); // a permit refused inside startAttempt(): see there
+        return;
+    }
+    const std::optional<Attempt> taken = takeAttempt(attemptId);
+    if (!taken) {
+        return;
+    }
+    const Attempt &a = *taken;
     qCDebug(lcSlskPeer).noquote() << "could not connect to" << a.username << ":" << peerErrorName(error);
     for (const Pending &pending : a.queue) {
         if (pending.done) {
@@ -1510,7 +1528,8 @@ void PeerNetwork::cancelFileConnection(quint64 id)
 {
     for (const auto &[attemptId, attempt] : d->attempts) {
         if (attempt.type == ConnectionType::File && attempt.fileRequest == id) {
-            d->failAttempt(attemptId, PeerError::Cancelled);
+            qCDebug(lcSlskPeer).noquote() << "file connection to" << attempt.username << "cancelled";
+            d->takeAttempt(attemptId); // invalidates `attempt`
             return;
         }
     }

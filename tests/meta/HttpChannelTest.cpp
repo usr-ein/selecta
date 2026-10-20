@@ -426,6 +426,37 @@ TEST_F(HttpChannelTest, CacheAnswersRepeatsWithoutPermitOrNetwork)
     EXPECT_EQ(network.requestCount(), 2);
 }
 
+TEST_F(HttpChannelTest, JsonInspectionKeepsBrokenBodiesOutOfTheCache)
+{
+    makeChannel(Service::MusicBrainz);
+    channel->setInspector([](const HttpResponse &response) { return jsonInspection(Service::MusicBrainz, response); });
+    HttpRequest request;
+    request.cacheKey = u"musicbrainz/x"_s;
+    request.cacheTtl = 60s;
+    network.enqueue("GET", u"/x$"_s, FakeResponse::json("<html>proxy error</html>"));
+    get(u"https://api.test/x"_s, request);
+    ASSERT_TRUE(waitResult());
+    ASSERT_FALSE(result->ok());
+    EXPECT_EQ(result->error().code, ErrorCode::BadResponse);
+    EXPECT_EQ(network.requestCount(), 1);                           // not retried
+    network.enqueue("GET", u"/x$"_s, FakeResponse::json("[1, 2]")); // JSON, but not an object
+    get(u"https://api.test/x"_s, request);
+    ASSERT_TRUE(waitAdvancing());
+    EXPECT_EQ(result->error().code, ErrorCode::BadResponse);
+    network.enqueue("GET", u"/x$"_s, FakeResponse::json(R"({"v":1})"));
+    get(u"https://api.test/x"_s, request);
+    ASSERT_TRUE(waitAdvancing());
+    ASSERT_TRUE(result->ok());
+    EXPECT_FALSE(result->value().fromCache);
+    EXPECT_EQ(network.requestCount(), 3);
+    // Other statuses are left to the caller, as with the default inspection.
+    network.enqueue("GET", u"/y$"_s, FakeResponse::json("not json", 404));
+    get(u"https://api.test/y"_s);
+    ASSERT_TRUE(waitAdvancing());
+    ASSERT_TRUE(result->ok());
+    EXPECT_EQ(result->value().status, 404);
+}
+
 TEST_F(HttpChannelTest, NotFoundIsCachedOnlyWhenAsked)
 {
     makeChannel(Service::MusicBrainz);

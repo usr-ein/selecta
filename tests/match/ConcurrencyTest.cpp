@@ -2,6 +2,7 @@
 // Thread safety (contract "Threading"): one immutable MatchIndex shared by many threads, snapshots swapped while
 // readers keep using the old one. Run under the tsan preset, this proves the claims in the headers.
 #include "MatchTestSupport.h"
+#include "match/AlbumMatcher.h"
 #include "match/ArtistDictionary.h"
 #include "match/MatchIndex.h"
 #include "match/Matcher.h"
@@ -152,6 +153,66 @@ TEST(Concurrency, ReadersKeepTheirSnapshotWhileANewOneIsPublished)
     }
     EXPECT_EQ(failures.load(), 0);
     EXPECT_EQ(snapshot()->generation(), 6U);
+}
+
+TEST(Concurrency, OneAlbumMatcherServesManyThreads)
+{
+    MatchIndexInput input;
+    for (int a = 0; a < 20; ++a) {
+        selecta::match::LibraryAlbum album;
+        album.id = static_cast<quint64>(a) + 1;
+        album.artist = u"Band %1"_s.arg(a);
+        album.title = u"Record %1"_s.arg(a);
+        input.albums.append(album);
+        for (int t = 0; t < 8; ++t) {
+            LibraryTrack track;
+            track.id = (static_cast<quint64>(a) * 100) + static_cast<quint64>(t);
+            track.artist = album.artist;
+            track.title = u"Piece %1 of %2"_s.arg(t).arg(a);
+            track.album = album.title;
+            track.albumId = album.id;
+            track.trackNumber = t + 1;
+            track.durationMs = 150000 + (a * 7000) + (t * 11000);
+            input.tracks.append(track);
+        }
+    }
+    const std::shared_ptr<const MatchIndex> index = MatchIndex::build(input);
+    const auto folderOf = [&index](int a) {
+        QStringList names;
+        for (int t = 0; t < 8; ++t) {
+            names.append(u"%1 - Band %2 - Piece %3 of %2.mp3"_s.arg(t + 1, 2, 10, QChar(u'0')).arg(a).arg(t));
+        }
+        const QString path = u"Music\\Band %1 - Record %1"_s.arg(a);
+        const QList<ParsedRemote> parsed = RemotePathParser::parseFolder(path, names, {&index->artists(), nullptr});
+        QList<selecta::match::RemoteAlbumFile> files;
+        for (int t = 0; t < 8; ++t) {
+            selecta::match::RemoteAlbumFile file;
+            file.parsed = parsed.at(t);
+            file.file.path = path + u'\\' + names.at(t);
+            file.file.attributes.durationSec = 150 + (a * 7) + (t * 11);
+            files.append(file);
+        }
+        return files;
+    };
+    const selecta::match::AlbumMatcher matcher(index); // one object, shared
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+    threads.reserve(kThreads);
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&, t] {
+            for (int a = t % 4; a < 20; a += 4) {
+                const selecta::match::AlbumMatchResult result = matcher.match(folderOf(a));
+                if (!result.best.inCollection || result.best.albumId != static_cast<quint64>(a) + 1 ||
+                    result.owned != 8) {
+                    failures.fetch_add(1);
+                }
+            }
+        });
+    }
+    for (std::thread &thread : threads) {
+        thread.join();
+    }
+    EXPECT_EQ(failures.load(), 0);
 }
 
 TEST(Concurrency, ArtistDictionaryAndParserAreReentrant)

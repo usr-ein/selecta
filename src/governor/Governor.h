@@ -62,6 +62,7 @@ public:
     bool isPaused() const { return m_paused; }
     // Phrases the server says it excludes (code 160). Searches containing one are refused.
     void setExcludedPhrases(const QStringList &phrases);
+    const QStringList &excludedPhrases() const { return m_excludedPhrases; }
     // Server session events. A ban notice also pauses the network.
     void serverEvent(ReconnectPolicy::Event event);
 

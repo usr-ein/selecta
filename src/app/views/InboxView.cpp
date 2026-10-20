@@ -149,6 +149,11 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
         menu.addAction(tr("Move to Trash"), this, &InboxView::trashSelected);
         menu.exec(m_table->viewport()->mapToGlobal(position));
     });
+    connect(m_table, &QTreeView::doubleClicked, this, [this](const QModelIndex &index) {
+        if (index.data(kIdRole).isValid()) {
+            Q_EMIT previewRequested();
+        }
+    });
     auto *trashShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Backspace), m_table);
     trashShortcut->setContext(Qt::WidgetWithChildrenShortcut);
     connect(trashShortcut, &QShortcut::activated, this, &InboxView::trashSelected);
@@ -226,6 +231,35 @@ QList<qint64> InboxView::selectedIds() const
         }
     }
     return ids;
+}
+
+std::optional<InboxView::PreviewTarget> InboxView::previewTarget() const
+{
+    QVariant id = m_table->currentIndex().siblingAtColumn(ItemColumn).data(kIdRole);
+    const QList<qint64> selected = selectedIds();
+    if (!id.isValid() || !selected.contains(id.toLongLong())) {
+        if (selected.isEmpty()) {
+            return std::nullopt;
+        }
+        id = selected.constFirst();
+    }
+    for (const core::InboxEntry &entry : std::as_const(m_entries)) {
+        const InboxItem &item = entry.item;
+        if (item.id != id.toLongLong()) {
+            continue;
+        }
+        PreviewTarget target;
+        target.path = QDir(m_config.inboxRoot).filePath(item.relativePath);
+        target.track.title = item.kind == InboxItem::Kind::Album && !item.album.isEmpty() ? item.album : item.title;
+        if (item.kind == InboxItem::Kind::Single && !item.version.isEmpty() &&
+            !item.title.contains(item.version, Qt::CaseInsensitive)) {
+            target.track.title += u" ("_s + item.version + u')';
+        }
+        target.track.artist = item.artist;
+        target.track.source = tr("Your Inbox");
+        return target;
+    }
+    return std::nullopt;
 }
 
 void InboxView::rebuild(const QList<core::InboxEntry> &entries)

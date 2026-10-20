@@ -5,6 +5,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
@@ -18,6 +19,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -65,10 +67,12 @@ QChar separatorOf(const QComboBox *box)
 
 } // namespace
 
-SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::LibraryConfig library, QWidget *parent)
+SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::LibraryConfig library,
+                           core::NetworkConfig networkConfig, QWidget *parent)
     : QWidget(parent)
     , m_appearance(new QComboBox(this))
     , m_library(std::move(library))
+    , m_network(std::move(networkConfig))
 {
     setObjectName(u"view.settings"_s);
 
@@ -119,6 +123,7 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     columnLayout->addWidget(appearanceBox);
     columnLayout->addWidget(createLibraryBox(column));
     columnLayout->addWidget(createFilingBox(column));
+    columnLayout->addWidget(createNetworkBox(column));
     columnLayout->addWidget(createSpotifyBox(column));
     columnLayout->addWidget(dataBox);
     columnLayout->addWidget(aboutBox);
@@ -306,6 +311,144 @@ QWidget *SettingsView::createSpotifyBox(QWidget *parent)
     form->addRow(QString(), buttons);
     setSpotifyStatus(m_spotify);
     return box;
+}
+
+QWidget *SettingsView::createNetworkBox(QWidget *parent)
+{
+    auto *box = new QGroupBox(tr("Soulseek"), parent);
+    auto *form = new QFormLayout(box);
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    m_networkState = new QLabel(box);
+    m_networkState->setObjectName(u"settings.network.state"_s);
+    m_networkState->setWordWrap(true);
+    form->addRow(tr("Status:"), m_networkState);
+
+    auto *serverRow = new QWidget(box);
+    auto *serverLayout = new QHBoxLayout(serverRow);
+    serverLayout->setContentsMargins(0, 0, 0, 0);
+    m_networkHost = new QLineEdit(m_network.host, serverRow);
+    m_networkHost->setObjectName(u"settings.network.host"_s);
+    m_networkPort = new QSpinBox(serverRow);
+    m_networkPort->setObjectName(u"settings.network.port"_s);
+    m_networkPort->setRange(1, 65535);
+    m_networkPort->setValue(m_network.port);
+    serverLayout->addWidget(m_networkHost, 1);
+    serverLayout->addWidget(new QLabel(tr("Port:"), serverRow));
+    serverLayout->addWidget(m_networkPort);
+    form->addRow(tr("Server:"), serverRow);
+
+    m_networkUser = new QLineEdit(m_network.username, box);
+    m_networkUser->setObjectName(u"settings.network.username"_s);
+    form->addRow(tr("Username:"), m_networkUser);
+    m_networkPassword = new QLineEdit(box);
+    m_networkPassword->setObjectName(u"settings.network.password"_s);
+    m_networkPassword->setEchoMode(QLineEdit::Password);
+    m_networkPassword->setPlaceholderText(tr("Saved in the Keychain once entered"));
+    form->addRow(tr("Password:"), m_networkPassword);
+
+    m_listenPort = new QSpinBox(box);
+    m_listenPort->setObjectName(u"settings.network.listenPort"_s);
+    m_listenPort->setRange(1024, 65535);
+    m_listenPort->setValue(std::max<int>(1024, m_network.listenPort));
+    m_listenPort->setToolTip(tr("Other users connect to you on this port. Forward it in your router for faster "
+                                "transfers; without it, connections go through the server."));
+    form->addRow(tr("Listening port:"), m_listenPort);
+
+    m_connectAtLaunch = new QCheckBox(tr("Connect when Selecta opens"), box);
+    m_connectAtLaunch->setObjectName(u"settings.network.connectAtLaunch"_s);
+    m_connectAtLaunch->setChecked(m_network.connectAtLaunch);
+    form->addRow(QString(), m_connectAtLaunch);
+
+    auto *buttons = new QHBoxLayout;
+    m_networkSave = new QPushButton(tr("Save"), box);
+    m_networkSave->setObjectName(u"settings.network.save"_s);
+    m_networkConnect = new QPushButton(tr("Connect"), box);
+    m_networkConnect->setObjectName(u"settings.network.connect"_s);
+    connect(m_networkSave, &QPushButton::clicked, this, &SettingsView::submitNetwork);
+    connect(m_networkPassword, &QLineEdit::returnPressed, this, &SettingsView::submitNetwork);
+    connect(m_networkConnect, &QPushButton::clicked, this, [this] {
+        const bool online = m_networkStatus.state == core::NetworkStatus::State::Online ||
+                            m_networkStatus.state == core::NetworkStatus::State::Connecting ||
+                            m_networkStatus.state == core::NetworkStatus::State::Reconnecting;
+        if (online) {
+            Q_EMIT disconnectRequested();
+        } else {
+            Q_EMIT connectRequested();
+        }
+    });
+    buttons->addWidget(m_networkSave);
+    buttons->addWidget(m_networkConnect);
+    buttons->addStretch(1);
+    form->addRow(QString(), buttons);
+
+    auto *note = new QLabel(tr("Selecta paces every search and download to stay a good citizen of the network: see "
+                               "Activity for what it sent and why."),
+                            box);
+    note->setWordWrap(true);
+    note->setForegroundRole(QPalette::PlaceholderText);
+    form->addRow(note);
+    setNetworkStatus(m_networkStatus);
+    return box;
+}
+
+void SettingsView::submitNetwork()
+{
+    core::NetworkConfig config = m_network;
+    config.host = m_networkHost->text().trimmed();
+    config.port = static_cast<quint16>(m_networkPort->value());
+    config.username = m_networkUser->text().trimmed();
+    config.listenPort = static_cast<quint16>(m_listenPort->value());
+    config.connectAtLaunch = m_connectAtLaunch->isChecked();
+    if (config.host.isEmpty()) {
+        config.host = m_network.host;
+    }
+    const QString password = m_networkPassword->text();
+    m_networkPassword->clear(); // the password doesn't stay in the window
+    if (!(config == m_network)) {
+        m_network = config;
+        Q_EMIT networkConfigChanged(config);
+    }
+    if (!password.isEmpty()) {
+        Q_EMIT networkPasswordSubmitted(password);
+    }
+}
+
+void SettingsView::setNetworkStatus(const core::NetworkStatus &status)
+{
+    using State = core::NetworkStatus::State;
+    m_networkStatus = status;
+    QString text;
+    switch (status.state) {
+    case State::NotConfigured:
+        text = status.detail.isEmpty() ? tr("Not set up.") : status.detail;
+        break;
+    case State::Offline:
+        text = tr("Offline.");
+        break;
+    case State::Connecting:
+        text = tr("Connecting…");
+        break;
+    case State::Online:
+        text = tr("Online as %1 on %2.").arg(status.username, status.server);
+        if (!status.listening) {
+            text += u' ' + tr("Not listening for peers: connections go through the server.");
+        }
+        break;
+    case State::Reconnecting:
+        text = tr("%1 Trying again at %2.")
+                   .arg(status.detail, QLocale().toString(QDateTime::fromMSecsSinceEpoch(status.retryAtMs).time(),
+                                                          QLocale::ShortFormat));
+        break;
+    case State::NeedsUser:
+        text = status.detail;
+        break;
+    }
+    m_networkState->setText(text);
+    const bool active =
+        status.state == State::Online || status.state == State::Connecting || status.state == State::Reconnecting;
+    m_networkConnect->setText(active ? tr("Disconnect") : tr("Connect"));
+    m_networkConnect->setEnabled(active || status.state != State::NotConfigured);
 }
 
 void SettingsView::submitSpotify()

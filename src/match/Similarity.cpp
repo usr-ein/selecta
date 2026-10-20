@@ -7,6 +7,7 @@
 #include <QVarLengthArray>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <rapidfuzz/distance/OSA.hpp>
 #include <rapidfuzz/fuzz.hpp>
@@ -75,6 +76,75 @@ Osa osa(QStringView a, QStringView b)
         }
     }
     return {d[at(n, m)].first, d[at(n, m)].second};
+}
+
+// skeleton(a) == skeleton(b), without building the skeletons.
+bool sameSkeleton(QStringView a, QStringView b)
+{
+    qsizetype i = 0;
+    qsizetype j = 0;
+    while (i < a.size() && j < b.size()) {
+        const QChar c = a[i];
+        if (b[j] != c) {
+            return false;
+        }
+        while (i < a.size() && a[i] == c) {
+            ++i;
+        }
+        while (j < b.size() && b[j] == c) {
+            ++j;
+        }
+    }
+    return i == a.size() && j == b.size();
+}
+
+QChar leetFolded(QChar c, bool fold)
+{
+    if (!fold || !c.isDigit()) {
+        return c;
+    }
+    const char16_t replacement = detail::lexicon::leetFold(c.unicode());
+    return replacement != 0 ? QChar(replacement) : c;
+}
+
+// leetFold(a) == leetFold(b), without building the folded strings.
+bool sameLeet(QStringView a, QStringView b)
+{
+    if (a.size() != b.size()) {
+        return false;
+    }
+    const bool foldA = hasLetter(a) && hasDigit(a);
+    const bool foldB = hasLetter(b) && hasDigit(b);
+    for (qsizetype i = 0; i < a.size(); ++i) {
+        if (leetFolded(a[i], foldA) != leetFolded(b[i], foldB)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// A lower bound of the OSA distance over code units: an insertion, deletion or substitution changes the character
+// counts by at most one on each side, a transposition not at all. Characters share 64 buckets (a collision can only
+// lower the bound).
+int bagDistance(QStringView a, QStringView b)
+{
+    std::array<qint16, 64> counts{};
+    for (const QChar c : a) {
+        ++counts[c.unicode() & 63U];
+    }
+    for (const QChar c : b) {
+        --counts[c.unicode() & 63U];
+    }
+    int surplus = 0;
+    int deficit = 0;
+    for (const qint16 count : counts) {
+        if (count > 0) {
+            surplus += count;
+        } else {
+            deficit -= count;
+        }
+    }
+    return std::max(surplus, deficit);
 }
 
 // The first two letters swapped and nothing else ("bciep"/"biecp" aside): allowed despite the first-letter rule.
@@ -147,7 +217,7 @@ TokenComparison TokenRules::compare(QStringView a, QStringView b)
     }
     // Digits are never edited (§17.3): tokens with digits match exactly or through leet folding only.
     if (hasDigit(a) || hasDigit(b)) {
-        if ((hasLetter(a) || hasLetter(b)) && leetFold(a) == leetFold(b)) {
+        if ((hasLetter(a) || hasLetter(b)) && sameLeet(a, b)) {
             return {TokenMatchKind::Leet, 0, false, false};
         }
         return {};
@@ -160,10 +230,16 @@ TokenComparison TokenRules::compare(QStringView a, QStringView b)
         return {};
     }
     // Doubled letters (≥ 5 characters): "gallaxy" = "galaxy", one edit, no corroboration needed.
-    if (shorter >= 5 && skeleton(a) == skeleton(b)) {
+    if (shorter >= 5 && sameSkeleton(a, b)) {
         return {TokenMatchKind::Skeleton, 1, false, false};
     }
-    // Bit-parallel pre-filter: most pairs fail here.
+    if (shorter <= 8 && a.front() != b.front() && !isLeadingTransposition(a, b)) {
+        return {}; // same first letter up to 8 characters (Pollock & Zamora: 7.8 % of typos hit it)
+    }
+    // Pre-filters before the edit script, cheapest first; most pairs fail here.
+    if (bagDistance(a, b) > budget) {
+        return {};
+    }
     const auto cutoff = static_cast<std::size_t>(budget);
     const std::size_t prefilter =
         rapidfuzz::osa_distance(a.utf16(), a.utf16() + a.size(), b.utf16(), b.utf16() + b.size(), cutoff);
@@ -173,9 +249,6 @@ TokenComparison TokenRules::compare(QStringView a, QStringView b)
     const Osa script = osa(a, b);
     if (script.edits == 0 || script.edits > budget) {
         return {};
-    }
-    if (shorter <= 8 && a.front() != b.front() && !isLeadingTransposition(a, b)) {
-        return {}; // same first letter up to 8 characters (Pollock & Zamora: 7.8 % of typos hit it)
     }
     TokenComparison comparison{TokenMatchKind::Fuzzy, script.edits, script.substitutions > 0, false};
     if (shorter <= 5) {
@@ -233,23 +306,46 @@ FieldMatch exactMatch(FieldMatch::Route route)
     return match;
 }
 
+// digitsOf(a) == digitsOf(b), without building the digit strings.
+bool sameDigits(QStringView a, QStringView b)
+{
+    qsizetype i = 0;
+    qsizetype j = 0;
+    while (true) {
+        while (i < a.size() && !a[i].isDigit()) {
+            ++i;
+        }
+        while (j < b.size() && !b[j].isDigit()) {
+            ++j;
+        }
+        if (i == a.size() || j == b.size()) {
+            return i == a.size() && j == b.size();
+        }
+        if (a[i] != b[j]) {
+            return false;
+        }
+        ++i;
+        ++j;
+    }
+}
+
 // The squashed keys as one token, for concatenations the pair join misses ("okumadrft" against "okuma drift"):
-// equal digits, fuzz::ratio ≥ 85, and the token rules under the field budget.
+// equal digits, the token rules under the field budget, and fuzz::ratio ≥ 85 (the costly test, last).
 void trySquashedRoute(FieldMatch &match, QStringView a, QStringView b, FieldMatchOptions options)
 {
-    if (match.exact || a.isEmpty() || b.isEmpty() || digitsOf(a) != digitsOf(b)) {
-        return;
-    }
-    const double ratio =
-        rapidfuzz::fuzz::ratio(a.utf16(), a.utf16() + a.size(), b.utf16(), b.utf16() + b.size(), kSquashedRatioMin);
-    if (ratio < kSquashedRatioMin) {
+    if (match.exact || a.isEmpty() || b.isEmpty() || !sameDigits(a, b)) {
         return;
     }
     const TokenComparison whole = TokenRules::compare(a, b);
     const qsizetype shorter = std::min(TokenRules::length(a), TokenRules::length(b));
     const bool allowed = whole.matched() && whole.edits <= TokenRules::fieldEditBudget(shorter) &&
                          (!whole.needsCorroboration || options.durationCorroborates);
-    if (allowed && whole.score() > match.similarity) {
+    if (!allowed || whole.score() <= match.similarity) {
+        return;
+    }
+    const double ratio =
+        rapidfuzz::fuzz::ratio(a.utf16(), a.utf16() + a.size(), b.utf16(), b.utf16() + b.size(), kSquashedRatioMin);
+    if (ratio >= kSquashedRatioMin) {
         match.similarity = whole.score();
         match.coverageA = whole.score();
         match.coverageB = whole.score();
@@ -264,7 +360,7 @@ void trySquashedRoute(FieldMatch &match, QStringView a, QStringView b, FieldMatc
 
 } // namespace
 
-FieldMatch compareFields(const FieldView &a, const FieldView &b, FieldMatchOptions options)
+FieldMatch compareFields(const FieldView &a, const FieldView &b, FieldMatchOptions options, bool withPairs)
 {
     if (a.isEmpty() || b.isEmpty()) {
         return {};
@@ -286,13 +382,15 @@ FieldMatch compareFields(const FieldView &a, const FieldView &b, FieldMatchOptio
     match.coverageB = alignment.coverageB();
     match.edits = alignment.edits;
     match.fuzzy = alignment.fuzzy;
-    match.pairs = alignment.pairs;
+    if (withPairs) {
+        match.pairs = QList<TokenPair>(alignment.pairs.cbegin(), alignment.pairs.cend());
+    }
     match.route = alignment.pairs.isEmpty() ? FieldMatch::Route::None : FieldMatch::Route::Tokens;
     match.exact = match.similarity >= 1.0 && match.edits == 0;
     qsizetype unexplained = 0;
     qsizetype total = 0;
     for (qsizetype j = 0; j < b.tokens.size(); ++j) {
-        const qsizetype len = TokenRules::length(b.tokens.at(j).text);
+        const qsizetype len = b.tokens.at(j).facts.length;
         total += len;
         if (j >= alignment.scoreB.size() || alignment.scoreB.at(j) <= 0.0) {
             unexplained += len;

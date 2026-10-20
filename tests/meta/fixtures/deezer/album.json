@@ -1,0 +1,21 @@
+{
+  "id": 302127,
+  "title": "Glass Harbour",
+  "upc": "5056000000024",
+  "link": "https://www.deezer.com/album/302127",
+  "cover_xl": "https://e-cdns-images.dzcdn.net/images/cover/abc/1000x1000-000000-80-0-0.jpg",
+  "cover_big": "https://e-cdns-images.dzcdn.net/images/cover/abc/500x500-000000-80-0-0.jpg",
+  "genre_id": 106,
+  "genres": { "data": [ { "id": 106, "name": "Electro", "type": "genre" }, { "id": 113, "name": "Dance", "type": "genre" } ] },
+  "label": "Lantern Grove Records",
+  "nb_tracks": 3,
+  "duration": 1004,
+  "fans": 120,
+  "release_date": "2026-03-13",
+  "record_type": "single",
+  "available": true,
+  "explicit_lyrics": false,
+  "artist": { "id": 1001, "name": "Kestrel Moon" },
+  "type": "album",
+  "tracks": { "data": [] }
+}

@@ -26,6 +26,25 @@ Q_LOGGING_CATEGORY(lcEngine, "selecta.core.engine")
 
 constexpr auto kActivityPruneInterval = 6h;
 
+// SearchService's view of the network service.
+class NetworkSearch final : public SearchNetwork
+{
+public:
+    explicit NetworkSearch(NetworkService &network)
+        : m_network(network)
+    {}
+
+    bool isOnline() const override { return m_network.isOnline(); }
+    quint32 search(const QString &query, governor::Permit permit) override
+    {
+        return m_network.search(query, std::move(permit));
+    }
+    void stopSearch(quint32 token) override { m_network.stopSearch(token); }
+
+private:
+    NetworkService &m_network;
+};
+
 } // namespace
 
 Engine::Engine(EngineOptions options, QObject *parent)
@@ -91,10 +110,26 @@ bool Engine::start()
     MetaServices::Options metaOptions;
     metaOptions.tokens = m_options.tokenStore ? m_options.tokenStore() : std::make_unique<meta::InMemoryTokenStore>();
     metaOptions.openUrl = m_options.openUrl;
+    metaOptions.endpoints = m_options.metaEndpoints;
     m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 
+    m_network = std::make_unique<NetworkService>(*m_governor, *m_activity, m_meta->tokens(), m_options.wallClock);
+    connect(m_network.get(), &NetworkService::statusChanged, this, &Engine::networkStatusChanged);
+
+    m_searchNetwork = std::make_unique<NetworkSearch>(*m_network);
+    m_search = std::make_unique<SearchService>(*m_governor, *m_searchNetwork, *m_clock);
+    connect(m_network.get(), &NetworkService::searchResponseReceived, m_search.get(), &SearchService::received);
+    connect(m_network.get(), &NetworkService::statusChanged, m_search.get(), &SearchService::networkChanged);
+    connect(m_governor.get(), &governor::Governor::pausedChanged, m_search.get(), &SearchService::networkChanged);
+    connect(m_search.get(), &SearchService::queueChanged, this, &Engine::searchQueueChanged);
+
     m_getTracks = std::make_unique<GetTracksService>(*m_db, m_options.wallClock);
+    m_getTracks->setSearch(m_search.get(), [this] { return m_governor->excludedPhrases(); });
+    // Release lookups for a whole list go in the background lane: previews the user waits for overtake them.
+    m_getTracks->setResolver([resolver = &m_meta->resolver()](const meta::ResolveQuery &query) {
+        return resolver->resolve(query, meta::Priority::Background);
+    });
     connect(m_getTracks.get(), &GetTracksService::linesReset, this, &Engine::getLinesReset);
     connect(m_getTracks.get(), &GetTracksService::lineChanged, this, &Engine::getLineChanged);
 
@@ -117,6 +152,7 @@ bool Engine::start()
     }
     m_inbox->reconcile();
     m_meta->restore();
+    m_network->start(m_options.network);
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
     Q_EMIT startFinished(true, QString());
@@ -131,6 +167,9 @@ void Engine::stop()
     delete m_budgetTimer;
     m_budgetTimer = nullptr;
     m_getTracks.reset();
+    m_search.reset();
+    m_searchNetwork.reset();
+    m_network.reset(); // before the token store it reads from (owned by m_meta)
     m_meta.reset();
     m_inbox.reset(); // waits for file work in flight and records it
     m_governorStore.reset();

@@ -57,7 +57,17 @@ public:
     void clearTracks();
     void tickTracks(const QList<qint64> &ids, bool ticked);
     void retryTracks(const QList<qint64> &ids);
+    // Finds the best file for these lines (all lines still to find when empty), paced by the governor.
+    void findTracks(const QList<qint64> &ids = {});
+    void stopFindingTracks();
     QList<GetLine> getLines() const { return m_getLines; }
+
+    // --- the Soulseek network (Settings → Network) ---
+    void setNetworkConfig(const NetworkConfig &config);
+    void setNetworkPassword(const QString &password);
+    void connectNetwork();
+    void disconnectNetwork();
+    NetworkStatus networkStatus() const { return m_networkStatus; }
 
     // Runs `work(engine)` on the engine thread, if the engine is running. For services that have no dedicated
     // method here yet; `work` must not capture anything owned by the UI thread by reference.
@@ -83,6 +93,8 @@ Q_SIGNALS:
     void getLineChanged(const selecta::core::GetLine &line);
     // What adding did, for a short message: lines added, already there, unidentified, and a note.
     void tracksAdded(int added, int duplicates, int unidentified, const QString &note);
+    void networkStatusChanged(const selecta::core::NetworkStatus &status);
+    void searchQueueChanged(int waiting, int collecting, qint64 nextInMs);
 
 private:
     EngineOptions m_options;
@@ -93,6 +105,7 @@ private:
     QList<InboxEntry> m_inboxEntries;
     SpotifyStatus m_spotifyStatus;
     QList<GetLine> m_getLines;
+    NetworkStatus m_networkStatus;
 };
 
 } // namespace selecta::core

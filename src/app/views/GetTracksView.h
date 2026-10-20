@@ -4,8 +4,10 @@
 #include <QList>
 #include <QWidget>
 
+class QElapsedTimer;
 class QLabel;
 class QPushButton;
+class QTimer;
 class QStackedWidget;
 class QTreeView;
 
@@ -49,6 +51,7 @@ private:
     void refresh();
     void showSelection();
     void showAdded(int added, int duplicates, int unidentified, const QString &note);
+    void refreshProgress();
 
     core::EngineHost &m_engine;
     GetTracksModel *m_model;
@@ -58,6 +61,12 @@ private:
     QLabel *m_summary;
     QLabel *m_note;
     QPushButton *m_add;
+    QPushButton *m_find;
+    QLabel *m_progress;
+    QTimer *m_countdown;
+    int m_waiting = 0;     // searches waiting for the governor
+    int m_collecting = 0;  // searches collecting results
+    qint64 m_nextAtMs = 0; // when the governor allows the next search (steady clock, ms)
 };
 
 } // namespace selecta::app

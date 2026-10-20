@@ -110,7 +110,11 @@ struct MusicBrainzClient::Private
         , cache(c)
         , api(std::move(apiUrl))
         , channel(std::make_unique<detail::HttpChannel>(Service::MusicBrainz, network, pacer, c, clock))
-    {}
+    {
+        channel->setInspector([](const detail::HttpResponse &response) {
+            return detail::jsonInspection(Service::MusicBrainz, response);
+        });
+    }
 
     // A GET with fmt=json. `done` runs exactly once, never inside this call, unless `slot` is cancelled first.
     void get(const Get &request, const detail::CancelSlot &slot, const JsonDone &done)

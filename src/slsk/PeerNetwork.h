@@ -73,7 +73,9 @@ enum class PeerRequest {
 //
 // Threading: lives on the engine thread and is used only from it. Ownership: a QObject; owns its sockets until it hands
 // an `F` socket over. Not owned: the ServerSession and PermitSource (they must outlive it) and the providers.
-// Failures are reported per request (requestFailed) or per send (the `done` callbacks); nothing fails silently.
+// Failures are reported per request (requestFailed) or per send (the `done` callbacks); nothing fails silently. A call
+// that starts work never reports from inside itself: a failure known at once arrives on a later event-loop turn.
+// closeAll() is the exception: it reports every cancellation before it returns.
 class PeerNetwork : public QObject
 {
     Q_OBJECT
@@ -143,8 +145,9 @@ public:
     // --- `F` connections (TransferManager) ---------------------------------------------------------------------------
 
     // Opens a file connection to `username` (uploads; purpose Transfer). Returns an id; fileConnectionReady() or
-    // fileConnectionFailed() follows with it.
+    // fileConnectionFailed() follows with it, never before this returns.
     quint64 openFileConnection(const QString &username);
+    // Gives up on an openFileConnection() id that hasn't been reported yet. Nothing more is heard of it.
     void cancelFileConnection(quint64 id);
     // Whether to dial back when `username` asks for an `F` connection through the server (only for transfers we
     // expect). Without a filter, such requests are refused.

@@ -84,6 +84,10 @@ using Inspector = std::function<RetryAdvice(const HttpResponse &response)>;
 // 429 and 503 → Retry, blocking the service, after Retry-After if given; 500, 502, 504 → Retry; else Accept.
 RetryAdvice defaultInspection(Service service, const HttpResponse &response);
 
+// defaultInspection, and a 200 answer whose body isn't a JSON object fails with BadResponse: never cached, never
+// retried. For the JSON APIs (Spotify, Deezer, MusicBrainz).
+RetryAdvice jsonInspection(Service service, const HttpResponse &response);
+
 // A Retry-After value: delta seconds or an HTTP date (relative to `now`), bounded to 0…48 h; nullopt if unreadable.
 std::optional<std::chrono::milliseconds> parseRetryAfter(QByteArrayView value, const QDateTime &now);
 

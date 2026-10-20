@@ -4,7 +4,6 @@
 #include "base/Clock.h"
 #include "meta/Release.h"
 #include "meta/Result.h"
-#include "meta/TextMatcher.h"
 
 #include <QDate>
 #include <QFuture>
@@ -42,6 +41,7 @@ struct YouTubeCandidate
     std::optional<int> durationSec;
     std::optional<qint64> viewCount;
     QString liveStatus; // "not_live", "is_live", "is_upcoming", "was_live", or empty
+    bool channelVerified = false;
 
     QUrl watchUrl() const; // https://www.youtube.com/watch?v=<id>
 };
@@ -96,6 +96,11 @@ public:
         std::chrono::milliseconds idleTimeout{30'000};   // a fetch with no output for this long is killed
         std::chrono::milliseconds totalTimeout{120'000}; // a fetch longer than this is killed
         std::function<QDate()> today = [] { return QDate::currentDate(); };
+        bool enabled = true; // false: every call fails with NotConfigured; nothing is looked up or run
+
+        // A configuration that never finds or runs anything, whatever setExecutable() says later: for tests and
+        // isolated runs (core::MetaEndpoints).
+        static Config disabled();
     };
 
     // /opt/homebrew/bin, /usr/local/bin, ~/.local/bin (pipx), then the directories of PATH; never the working
@@ -121,14 +126,13 @@ public:
     QFuture<Result<QList<YouTubeCandidate>>> search(const QString &text, int count = 10);
 
     // The search text for a release: main artist, base title, and the version words (remixer + "remix" for a remix).
-    static QString searchText(const Release &release, const TextMatcher &matcher);
+    static QString searchText(const Release &release);
 
     // The candidate to fetch for a release (§12.3): length within ±3 s of the release, not live or upcoming, no DJ-mix
     // or derivative junk the release doesn't have, the release's title words present; then the "<main artist> -
     // Topic" channel, a channel named like the artist, most views. Nullopt when none fits (or the release has no
     // length: ±3 s can't be checked). Thread-safe (pure).
-    static std::optional<YouTubePick> pick(const QList<YouTubeCandidate> &candidates, const Release &release,
-                                           const TextMatcher &matcher);
+    static std::optional<YouTubePick> pick(const QList<YouTubeCandidate> &candidates, const Release &release);
 
     // Starts fetching the audio of one video into `previewCacheDir` (which must exist): the job waits for yt-dlp's
     // turn, then reports the growing file, progress, and the result. The caller owns the job (deleting it cancels).
@@ -137,6 +141,9 @@ public:
 
     // When previews are paused after a YouTube rate limit or bot check, the time they resume.
     std::optional<base::Clock::TimePoint> pausedUntil() const;
+
+    // The path set in Settings (empty: search Config::searchDirectories). The next run probes again.
+    void setExecutable(const QString &path);
 
 Q_SIGNALS:
     // YouTube rate-limited Selecta or asked for a bot check: no yt-dlp until `until`.
@@ -179,6 +186,9 @@ Q_SIGNALS:
 private:
     friend class YtDlpRunner;
     YtDlpFetch(YtDlpRunner *runner, QString videoId, QString directory, QObject *parent);
+    // Signals go out from the event loop, so the runner never sees a receiver's reaction inside its own work.
+    void notifyStarted(const QString &path);
+    void notifyProgress(qint64 downloadedBytes, qint64 totalBytes);
     void finish(Result<FetchedAudio> result);
 
     QPointer<YtDlpRunner> m_runner;

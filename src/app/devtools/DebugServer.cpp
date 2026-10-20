@@ -3,6 +3,7 @@
 
 #include "app/Appearance.h"
 #include "app/MainWindow.h"
+#include "app/Preview.h"
 #include "base/DebugProtocol.h"
 #include "base/Version.h"
 
@@ -19,6 +20,7 @@
 #include <QLineEdit>
 #include <QLocalSocket>
 #include <QLoggingCategory>
+#include <QMetaEnum>
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QStyleHints>
@@ -243,6 +245,13 @@ QJsonObject DebugServer::handle(const QJsonObject &request)
         {
             result = log(args, &error);
         }
+    } else if (command == u"select") {
+        result = select(args, &error);
+    } else if (command == u"play-pause") {
+        m_window.playOrPause();
+        result = true;
+    } else if (command == u"player") {
+        result = player(args, &error);
     } else if (command == u"quit") {
         QTimer::singleShot(0, qApp, &QCoreApplication::quit);
         result = true;
@@ -403,6 +412,82 @@ QJsonValue DebugServer::type(const QJsonObject &args, QString *error)
     }
     *error = u"no text field named "_s + name;
     return {};
+}
+
+// select name=<item view> row=<n> [parent=<n>]: makes a row current and selected (a child row under `parent` in a
+// tree).
+QJsonValue DebugServer::select(const QJsonObject &args, QString *error)
+{
+    const QString name = args.value("name"_L1).toString();
+    auto *view = m_window.findChild<QAbstractItemView *>(name);
+    if (!view || !view->model()) {
+        *error = u"no item view named "_s + name;
+        return {};
+    }
+    QModelIndex parent;
+    if (args.contains("parent"_L1)) {
+        parent = view->model()->index(args.value("parent"_L1).toInt(), 0);
+        if (!parent.isValid()) {
+            *error = u"no row %1 at the top level"_s.arg(args.value("parent"_L1).toInt());
+            return {};
+        }
+    }
+    const QModelIndex index = view->model()->index(args.value("row"_L1).toInt(-1), 0, parent);
+    if (!index.isValid()) {
+        *error =
+            u"no row %1 there (%2 rows)"_s.arg(args.value("row"_L1).toInt(-1)).arg(view->model()->rowCount(parent));
+        return {};
+    }
+    view->setCurrentIndex(index);
+    view->selectionModel()->select(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    return index.data().toString();
+}
+
+// player [action=toggle|stop|seek|skip|play] [seconds=<s>] [path=<file>]: drives the preview, then reports its state.
+QJsonValue DebugServer::player(const QJsonObject &args, QString *error)
+{
+    PreviewController &preview = m_window.preview();
+    playback::Player &player = preview.player();
+    const QString action = args.value("action"_L1).toString();
+    const double seconds = args.value("seconds"_L1).toDouble();
+    if (action == u"toggle") {
+        preview.toggle();
+    } else if (action == u"stop") {
+        preview.stop();
+    } else if (action == u"seek") {
+        player.seek(seconds);
+    } else if (action == u"skip") {
+        player.skip(seconds);
+    } else if (action == u"play") {
+        const QString path = args.value("path"_L1).toString();
+        const LocalPreview local = previewForPath(path, {QFileInfo(path).completeBaseName(), {}, u"Debug"_s});
+        if (!local.request) {
+            *error = local.error;
+            return {};
+        }
+        preview.preview(*local.request);
+    } else if (!action.isEmpty()) {
+        *error = u"unknown action \"%1\": toggle, stop, seek, skip or play"_s.arg(action);
+        return {};
+    }
+    const audio::Waveform &waveform = preview.waveform();
+    return QJsonObject{
+        {"state"_L1, QString::fromLatin1(
+                         QMetaEnum::fromType<playback::Player::State>().valueToKey(static_cast<int>(player.state())))},
+        {"title"_L1, player.track().title},
+        {"artist"_L1, player.track().artist},
+        {"source"_L1, player.track().source},
+        {"position"_L1, player.position()},
+        {"duration"_L1, player.duration()},
+        {"buffered"_L1, player.buffered()},
+        {"volume"_L1, player.volume()},
+        {"detail"_L1, player.detail()},
+        {"error"_L1, player.error()},
+        {"identity"_L1, preview.identity()},
+        {"waveform"_L1, QJsonObject{{"columns"_L1, waveform.detail().size()},
+                                    {"complete"_L1, waveform.isComplete()},
+                                    {"seconds"_L1, waveform.isNull() ? 0.0 : waveform.durationSeconds()}}},
+    };
 }
 
 QJsonValue DebugServer::appearance(const QJsonObject &args, QString *error)

@@ -1,0 +1,79 @@
+{
+  "id": "Kestrel Moon Glass Harbour Extended Mix",
+  "title": "Kestrel Moon Glass Harbour Extended Mix",
+  "_type": "playlist",
+  "webpage_url": "ytsearch10:Kestrel Moon Glass Harbour Extended Mix",
+  "extractor": "youtube:search",
+  "extractor_key": "YoutubeSearch",
+  "playlist_count": 10,
+  "entries": [
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "KmArtist0Ex",
+      "url": "https://www.youtube.com/watch?v=KmArtist0Ex",
+      "title": "Kestrel Moon - Glass Harbour (Extended Mix) [Official Audio]",
+      "description": "Out now on Lantern Grove Records.",
+      "duration": 392, "channel_id": "UCkestrelmoon000000000a", "channel": "Kestrel Moon",
+      "channel_url": "https://www.youtube.com/channel/UCkestrelmoon000000000a", "uploader": "Kestrel Moon",
+      "view_count": 52000, "live_status": null, "channel_is_verified": true
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "KmTopic00Ex",
+      "url": "https://www.youtube.com/watch?v=KmTopic00Ex",
+      "title": "Glass Harbour (Extended Mix)",
+      "description": "Provided to YouTube by Lantern Grove Records",
+      "duration": 391, "channel_id": "UCkestrelmoontopic0000a", "channel": "Kestrel Moon - Topic",
+      "view_count": 12000, "live_status": null, "channel_is_verified": null
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "KmTopic00Re",
+      "url": "https://www.youtube.com/watch?v=KmTopic00Re",
+      "title": "Glass Harbour (Radio Edit)",
+      "duration": 202, "channel_id": "UCkestrelmoontopic0000a", "channel": "Kestrel Moon - Topic",
+      "view_count": 30500, "live_status": null
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "LofiSlowed1",
+      "url": "https://www.youtube.com/watch?v=LofiSlowed1",
+      "title": "kestrel moon - glass harbour (slowed + reverb)",
+      "duration": 455, "channel_id": "UClofiuploads0000000000", "channel": "Lofi Uploads",
+      "view_count": 2400000, "live_status": null, "channel_is_verified": null
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "MixedCut001",
+      "url": "https://www.youtube.com/watch?v=MixedCut001",
+      "title": "Kestrel Moon - Glass Harbour (Mixed)",
+      "duration": 391, "channel_id": "UCclubcompilations00000", "channel": "Club Compilations",
+      "view_count": 800, "live_status": null
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "NightTram01",
+      "url": "https://www.youtube.com/watch?v=NightTram01",
+      "title": "Kestrel Moon - Glass Harbour (Night Tram Remix)",
+      "duration": 412.0, "channel_id": "UCnighttram000000000000", "channel": "Night Tram",
+      "view_count": 7000, "live_status": null, "channel_is_verified": true
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "LiveSet0001",
+      "url": "https://www.youtube.com/watch?v=LiveSet0001",
+      "title": "Kestrel Moon live at Harbourfront 2026 (full set)",
+      "duration": 3612, "channel_id": "UCharbourfront000000000", "channel": "Harbourfront",
+      "view_count": 41000, "live_status": "was_live"
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "Radio24x7xx",
+      "url": "https://www.youtube.com/watch?v=Radio24x7xx",
+      "title": "Kestrel Moon radio 24/7 - Glass Harbour and more",
+      "duration": null, "channel": "Deep Radio", "view_count": null, "live_status": "is_live"
+    },
+    {
+      "_type": "url", "ie_key": "Youtube", "id": "short",
+      "title": "an entry with a broken id", "duration": 391, "channel": "Nobody"
+    },
+    {
+      "_type": "url", "ie_key": "YoutubeTab", "id": "UCkestrelmoon000000000a",
+      "url": "https://www.youtube.com/channel/UCkestrelmoon000000000a",
+      "title": "Kestrel Moon", "channel": "Kestrel Moon"
+    }
+  ],
+  "epoch": 1792459928
+}

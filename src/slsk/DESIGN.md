@@ -38,6 +38,7 @@ when or how often to send, never touches files, never decides what is shared, an
 | `DistributedNode.h` | Distributed network membership |
 | `Client.h` | The facade |
 | `TokenGenerator.h` | Random-start, wrapping, never-0 tokens |
+| `MetaTypes.h` | `registerMetaTypes()`: every type carried by a signal |
 | `internal/` | Private implementation classes; not for core/ |
 
 ## Threading and ownership
@@ -124,6 +125,10 @@ exactly once per session.
   is written.
 - **Socket cap**: 512 (`protocol::kSocketsMax`) including `F` sockets; new attempts fail with `SocketLimit` and new
   inbound sockets are closed at the cap.
+- **No report from inside the call that started the work**: a failure known at once (no session, the socket cap, a
+  permit refused synchronously) is reported on the next event-loop turn, so a caller always holds the id it was
+  given before hearing of it. `cancelFileConnection()` is silent: nothing more is heard of that id. `closeAll()` is
+  the one call that reports (every cancellation) before it returns.
 - **Tokens**: random start in [1, 2^32/1000], increment, wrap, skip 0; indirect-connection tokens are unique among
   pending ones (a `PierceFireWall` carries nothing else).
 
@@ -131,6 +136,12 @@ exactly once per session.
 
 Download: `Queued → Requested → Connecting → Transferring → Completed | Failed | Cancelled`.
 Upload: `Requested → Connecting → Transferring → Completed | Failed | Cancelled | Declined`.
+
+Every transfer has a `TransferId` (never 0, never reused by a manager) carried by every signal about it; asking again
+for a file already being downloaded returns the existing id. A download is `Requested` once we allow the uploader's
+`TransferRequest` (waiting for its `F` connection and token), `Connecting` once the token matched and our resume offset
+is sent (waiting for the first bytes), `Transferring` from the first byte. A small file can go from `Connecting`
+straight to `Completed`; states never go backwards.
 
 - Download: `QueueUpload` (QueueDownload permit). The uploader's `TransferRequest` (matched by user and raw path) is
   allowed when the download is still queued and `DownloadStorage::openDownload()` gives a device; the `F`
@@ -145,10 +156,21 @@ Upload: `Requested → Connecting → Transferring → Completed | Failed | Canc
   then waits up to 30 s for the downloader to close. Completed uploads report their average speed to the server
   (`SendUploadSpeed`). A broken upload sends `UploadFailed`; a cancel by core/ sends `UploadDenied(reason)` or
   `UploadFailed`. An optional global upload speed limit is shared by active uploads.
-- Inbound `F` connections (`PeerInit F`) normally carry a download (the uploader sends the token). If none is
-  expected from that user but an upload to them is waiting for its `F` connection, the socket is used for that
-  upload (Soulseek.NET downloaders open it themselves after 10 s).
-- Progress signals at most every 100 ms per transfer, plus every state change.
+- Inbound `F` connections (`PeerInit F`) normally carry a download (the uploader sends the token, within 20 s, or
+  the socket is dropped; the download keeps waiting for a proper one until its own 60 s run out). If no download from
+  that user is waiting but an upload to them is waiting for its `F` connection, the socket serves that upload (some
+  downloaders open it themselves when ours is slow to arrive) and our own attempt is cancelled.
+- Upload timers: 45 s from `TransferRequest` to the first byte (Nicotine+), 60 s without the downloader reading, 30 s
+  for it to close once every byte is sent.
+- Progress (`downloadProgress` / `uploadProgress`: id, bytes done including a resumed part, total) is coalesced: at
+  most one signal per transfer every 250 ms (~4 a second) with the latest numbers, a trailing one when it stops
+  moving, a final one on completion, none after the terminal state.
+- Signals reach every receiver in the order of the changes, even when a slot calls back into the manager (cancels, or
+  starts another transfer): a signal caused inside a slot is queued and delivered once the current one has reached
+  every receiver. Code never assumes a transfer still exists after emitting.
+- Destroying the manager closes open download devices through `DownloadStorage` and emits nothing.
+- Previews (PREV): an ordinary download with `preview = true`; core/ hands out a growing-file writer as its device
+  and plays from the file while it grows.
 
 ## Distributed network
 
@@ -169,11 +191,36 @@ payload; code 93 from the server or a parent is unpacked identically.
    `peers().searchResponseReceived`; `stopSearch(token)` when the SRCH-16 window ends.
 6. Answering: implement `ShareProvider` and `UserInfoProvider`; answer `Client::searchRequestReceived` with
    `peers().sendSearchResponse()` (apply excluded phrases, caps and the ≥ 3-character rule in core/).
-7. Transfers: implement `DownloadStorage`; `transfers().download(request, permit)`; feed the governor with
-   `downloadChanged` (queued/started/finished/withdrawn, `rejection` → `peerDenied`). Uploads: own the queue,
-   answer `uploadRequested` with `denyUpload()` or `startUpload(request, device)`.
+7. Transfers: implement `DownloadStorage`; `transfers().download(request, permit)` returns the stable id to map to
+   a Get tracks line; `downloadChanged` (state, error, rejection) and `downloadProgress(id, done, total)` (~4/s)
+   update it. Feed the governor from `downloadChanged` (queued/started/finished/withdrawn, `rejection` →
+   `peerDenied`). Uploads: own the queue, answer `uploadRequested` with `denyUpload()` or
+   `startUpload(request, device)`; close the device after the terminal `uploadChanged`.
 8. Distributed: nothing to do; optionally `setChildrenAllowed(false)` from a setting.
 9. Kill switch (SAFE-5): `server().disconnectFromServer()`, `peers().stopListening()`, `peers().closeAll()`.
+
+## Local test network: `selecta-devnet`
+
+`tools/devnet/` builds `selecta-devnet` on the test fixtures: a `FakeServer` and one `FakePeer` per subfolder of a
+library folder (the peer is named after the folder and shares everything below it, with attributes read from the
+MP3/FLAC/WAV/AIFF headers), all on 127.0.0.1 and nowhere else. It prints the `127.0.0.1:<port>` to put in Selecta's
+settings and accepts any login (or only `--user`/`--password`).
+
+- `--generate <dir>` first writes a small synthetic corpus with ffmpeg, the same for the same `--seed`: invented
+  artists and generated tones (never music); peers with different habits (FLAC 16/44.1 and 24/96 with cue sheets and
+  rip logs, scene-style MP3 320, V0 with disc folders, a 192 kbps "Unsorted" folder of loose files, AIFF and WAV
+  extended mixes); overlapping releases, so one search finds a track in several qualities; the naming mess real
+  shares have. Next to the peers it writes `tracklist.txt` (every shared "Artist - Title", for a Get tracks list),
+  `tracklist-missing.txt` (tracks nobody shares) and `devnet.conf`.
+- `devnet.conf` (or `--queue <peer>=<s>` / `--refuse <peer>[=<reason>]`) makes peers misbehave on purpose: in the
+  corpus, `queue_quinn` keeps each download queued 45 s (no free slot advertised, place-in-queue answered) and
+  `refusing_rita` refuses every one with "Too many files"; each alone shares one release, so the queue and failure
+  paths can't be avoided for those tracks.
+- Peers answer searches after a random delay (whole-word matching, `-word` exclusions, `*part` partials) with their
+  free slot, speed and queue; answer browses, user info and folder requests; queue download requests, start them
+  after a random wait (`--queue-wait`) or refuse a share of them with real reasons (`--deny`); and stream the local
+  files at their own speed (25–100 % of `--speed`). Every message both ways is logged unless `--quiet`.
+- It is hooked from `tests/slsk/CMakeLists.txt` (it needs the fixtures), so it builds with the tests.
 
 ## Decisions taken here (for review)
 
@@ -187,6 +234,8 @@ payload; code 93 from the server or a parent is unpacked identically.
 | 6 | Downloads get their device from `DownloadStorage` when the uploader is ready, not at queue time | A queued download may wait hours; holding 200 open files would waste descriptors |
 | 7 | Share lists over 1 MiB are parsed on a worker thread | A 1 GiB inflate would stall the engine thread for seconds |
 | 8 | `ConnectFailed` and `ProtocolViolation` are distinct end reasons | The governor's event list has no counterpart; reported to the head implementer |
+| 9 | `TransferManager` queues signals raised inside a slot until the current one has reached every receiver | core/ will connect several receivers (a controller that cancels, a model that displays); without the queue a receiver connected after the controller would see `Cancelled` before the `Transferring` that caused it |
+| 10 | Failures are never reported from inside the call that started the work (`PeerNetwork`) | The caller holds the id first; no re-entrant callback while its own state is half-updated (the crash this fixed: a synchronous `fileConnectionFailed` finishing the upload being adopted) |
 
 Ported behaviour (not code) follows Nicotine+ (GPL-3.0-or-later) `pynicotine/slskproto.py`, `slskmessages.py`,
 `uploads.py` at `f3b9d4d`: caps, parent selection and child limit, connection replacement, upload close handling.
@@ -202,7 +251,16 @@ No code from Soulseek.NET, slskd, Seeker, sockseek or soulseekcpp was read or us
     which completes connections past a full backlog). Merged into main.
   - S3 `PeerNetwork` with `FakePeer` and `TestPermits`: listener, direct/indirect race, dial-backs, requests and
     answers, caps, timers, socket cap, `F` hand-off and `D` traffic; 44 tests. `MetaTypes` registers every signal type.
-- **Next:** S4 transfers (downloads with resume, previews through a growing-file device, uploads), then S5
-  distributed, then main's `tools/devnet/` request (FakeServer + FakePeers as a local network for manual runs), S6
-  devenv, S7 CLI.
+    Merged into main.
+  - S4 `TransferManager`: downloads (resume from the device's size, size-0 fallback, token matching, both `F`
+    directions, denials classified, withdrawn and unsolicited requests answered `Cancelled`, `UploadFailed` echo
+    ignored), uploads (TransferRequest, offset validation, streaming under a shared speed limit, linger,
+    `SendUploadSpeed`, `UploadFailed`/`UploadDenied`, downloader-opened `F` connections), stable ids, coalesced
+    progress, ordered signals, every wait timed; 38 tests (PeerNetwork now 44). The fixtures are a static library,
+    `selecta_slsk_testing` (`#include "fixtures/FakeServer.h"` …), for core/'s end-to-end tests.
+  - `selecta-devnet` (see above), with `FakePeer` streaming uploads from files at a set speed, a search hook, and
+    queue control, and `FakeServer` on a chosen port with an optional single account; 19 tests, one of which writes
+    a corpus with ffmpeg (skipped without it) and checks every format probes as planned. S4 merged into main as
+    `974a017`.
+- **Next:** S5 (`DistributedNode`, and the `Client` facade with the share-index answering hooks), S6 devenv, S7 CLI.
 - **Open questions:** none blocking.

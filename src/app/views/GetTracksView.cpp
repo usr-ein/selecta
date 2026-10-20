@@ -10,6 +10,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
@@ -19,6 +20,7 @@
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStringList>
+#include <QTimer>
 #include <QTreeView>
 #include <QVBoxLayout>
 
@@ -36,6 +38,9 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     , m_summary(new QLabel(this))
     , m_note(new QLabel(this))
     , m_add(new QPushButton(tr("Add Tracks…"), this))
+    , m_find(new QPushButton(tr("Find Them"), this))
+    , m_progress(new QLabel(this))
+    , m_countdown(new QTimer(this))
 {
     setObjectName(u"view.get"_s);
 
@@ -56,19 +61,30 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
                                   "release, then the best file on Soulseek. You preview, then each track lands in "
                                   "your Inbox as an MP3 320 with proper tags and its cover."),
                                empty);
-    explain->setAlignment(Qt::AlignCenter);
+    explain->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     explain->setWordWrap(true);
     explain->setForegroundRole(QPalette::PlaceholderText);
-    explain->setMaximumWidth(460);
     auto *emptyAdd = new QPushButton(tr("Add Tracks…"), empty);
     emptyAdd->setObjectName(u"get.emptyAdd"_s);
     emptyAdd->setDefault(true);
     connect(emptyAdd, &QPushButton::clicked, this, &GetTracksView::addTracks);
-    emptyLayout->addWidget(symbol);
-    emptyLayout->addWidget(heading);
-    emptyLayout->addWidget(explain, 0, Qt::AlignHCenter);
-    emptyLayout->addSpacing(8);
-    emptyLayout->addWidget(emptyAdd, 0, Qt::AlignHCenter);
+    // The wrapped text spans a centred column: an alignment flag on its layout item would size it to its unwrapped
+    // hint and clip it (see EmptyStateView).
+    auto *column = new QWidget(empty);
+    column->setMaximumWidth(460);
+    auto *columnLayout = new QVBoxLayout(column);
+    columnLayout->setContentsMargins(0, 0, 0, 0);
+    columnLayout->setSpacing(10);
+    columnLayout->addWidget(symbol);
+    columnLayout->addWidget(heading);
+    columnLayout->addWidget(explain);
+    columnLayout->addSpacing(8);
+    columnLayout->addWidget(emptyAdd, 0, Qt::AlignHCenter);
+    auto *row = new QHBoxLayout;
+    row->addStretch(1);
+    row->addWidget(column, 100);
+    row->addStretch(1);
+    emptyLayout->addLayout(row);
     emptyLayout->addStretch(3);
     m_pages->addWidget(empty);
 
@@ -133,11 +149,40 @@ GetTracksView::GetTracksView(core::EngineHost &engine, QWidget *parent)
     m_note->setObjectName(u"get.note"_s);
     m_note->setWordWrap(true);
     m_note->hide();
+    m_find->setObjectName(u"get.find"_s);
+    m_find->setToolTip(tr("Search Soulseek for each track, paced to stay a good citizen of the network: up to 6 "
+                          "searches at once, then one every 30 seconds"));
+    connect(m_find, &QPushButton::clicked, this, [this] {
+        bool finding = false;
+        for (const core::GetLine &line : m_model->lines()) {
+            finding = finding || line.findState == core::GetLine::FindState::Queued ||
+                      line.findState == core::GetLine::FindState::Searching;
+        }
+        if (finding) {
+            m_engine.stopFindingTracks();
+        } else {
+            m_engine.findTracks();
+        }
+    });
+    m_progress->setObjectName(u"get.progress"_s);
+    m_progress->setForegroundRole(QPalette::PlaceholderText);
+    m_countdown->setInterval(1000);
+    connect(m_countdown, &QTimer::timeout, this, &GetTracksView::refreshProgress);
+    connect(&m_engine, &core::EngineHost::searchQueueChanged, this, [this](int waiting, int collecting, qint64 nextIn) {
+        m_waiting = waiting;
+        m_collecting = collecting;
+        m_nextAtMs = nextIn > 0 ? QDateTime::currentMSecsSinceEpoch() + nextIn : 0;
+        refreshProgress();
+    });
+    connect(&m_engine, &core::EngineHost::networkStatusChanged, this, &GetTracksView::refreshProgress);
+
     auto *bar = new QHBoxLayout;
     bar->setContentsMargins(16, 10, 16, 10);
     bar->addWidget(m_add);
     bar->addSpacing(8);
     bar->addWidget(m_summary, 1);
+    bar->addWidget(m_progress);
+    bar->addWidget(m_find);
     auto *noteBox = new QHBoxLayout;
     noteBox->setContentsMargins(16, 0, 16, 8);
     noteBox->addWidget(m_note);
@@ -253,7 +298,48 @@ void GetTracksView::refresh()
     m_pages->setCurrentIndex(m_model->rowCount() == 0 ? 0 : 1);
     m_add->setVisible(m_model->rowCount() > 0); // the empty page has its own button
     m_summary->setText(m_model->rowCount() > 0 ? summary() : QString());
+    refreshProgress();
     Q_EMIT summaryChanged();
+}
+
+void GetTracksView::refreshProgress()
+{
+    int toFind = 0;
+    int finding = 0;
+    for (const core::GetLine &line : m_model->lines()) {
+        using FindState = core::GetLine::FindState;
+        if (line.downloadState != core::GetLine::DownloadState::None) {
+            continue;
+        }
+        if (line.findState == FindState::Idle) {
+            ++toFind;
+        } else if (line.findState == FindState::Queued || line.findState == FindState::Searching) {
+            ++finding;
+        }
+    }
+    m_find->setVisible(m_model->rowCount() > 0);
+    m_find->setText(finding > 0 ? tr("Stop") : tr("Find Them"));
+    m_find->setEnabled(finding > 0 || toFind > 0);
+    m_find->setDefault(finding == 0 && toFind > 0);
+
+    if (finding == 0) {
+        m_progress->clear();
+        m_countdown->stop();
+        return;
+    }
+    QString text = finding == 1 ? tr("Finding · 1 left") : tr("Finding · %1 left").arg(finding);
+    if (m_engine.networkStatus().state != core::NetworkStatus::State::Online) {
+        text += u" · "_s + tr("waiting for the network");
+    } else if (m_engine.isPaused()) {
+        text += u" · "_s + tr("network paused");
+    } else if (m_collecting == 0 && m_nextAtMs > 0) {
+        const qint64 seconds = std::max<qint64>(0, (m_nextAtMs - QDateTime::currentMSecsSinceEpoch() + 999) / 1000);
+        text += u" · "_s + tr("next search in %1 s").arg(seconds);
+    }
+    m_progress->setText(text);
+    if (!m_countdown->isActive()) {
+        m_countdown->start();
+    }
 }
 
 void GetTracksView::showSelection()
