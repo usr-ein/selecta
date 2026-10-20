@@ -268,7 +268,7 @@ TEST_F(AccessibilityTest, TabGoesFromTheSidebarToTheViewThenThePlayer)
         window->navigateTo(id);
         QApplication::processEvents();
         QStringList chain;
-        QWidget *next = window.get();
+        const QWidget *next = window.get();
         for (int step = 0; step < 5000; ++step) {
             next = next->nextInFocusChain();
             if (next == window.get()) {
