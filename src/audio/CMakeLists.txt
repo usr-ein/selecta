@@ -16,6 +16,7 @@ qt_add_library(selecta_audio STATIC
     BandAnalyzer.h BandAnalyzer.cpp
     WaveformAnalyzer.h WaveformAnalyzer.cpp
     AnalysisCache.h AnalysisCache.cpp
+    QualityCheck.h QualityCheck.cpp
     detail/ThreadHandOver.h
     detail/AvioAdapter.h detail/AvioAdapter.cpp
     detail/Backend.h

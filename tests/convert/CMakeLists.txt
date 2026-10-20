@@ -12,6 +12,7 @@ selecta_set_warnings(selecta_convert_test_support)
 
 selecta_add_test_suite(selecta_convert_tests
     SOURCES
+        ArtworkTest.cpp
         EncodeSettingsTest.cpp
         MetadataTest.cpp
         OutputVerifierTest.cpp
