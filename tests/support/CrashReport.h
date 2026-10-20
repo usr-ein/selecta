@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <initializer_list>
 #include <typeinfo>
 
 #if defined(__APPLE__) || defined(__linux__)
@@ -21,19 +23,19 @@ namespace selecta::testing {
 
 [[noreturn]] inline void reportTermination()
 {
-    std::fputs("\n*** std::terminate", stderr);
+    (void)std::fputs("\n*** std::terminate", stderr);
 #if defined(__APPLE__) || defined(__linux__)
     if (const std::type_info *type = abi::__cxa_current_exception_type()) {
-        std::fputs(" (uncaught ", stderr);
-        std::fputs(type->name(), stderr);
-        std::fputs(")", stderr);
+        (void)std::fputs(" (uncaught ", stderr);
+        (void)std::fputs(type->name(), stderr);
+        (void)std::fputs(")", stderr);
     }
-    std::fputs(", backtrace:\n", stderr);
-    void *frames[64];
-    const int count = backtrace(frames, 64);
-    backtrace_symbols_fd(frames, count, STDERR_FILENO);
+    (void)std::fputs(", backtrace:\n", stderr);
+    std::array<void *, 64> frames{};
+    const int count = backtrace(frames.data(), static_cast<int>(frames.size()));
+    backtrace_symbols_fd(frames.data(), count, STDERR_FILENO);
 #else
-    std::fputs("\n", stderr);
+    (void)std::fputs("\n", stderr);
 #endif
     std::abort();
 }
@@ -43,14 +45,19 @@ namespace selecta::testing {
 // formally async-signal-safe, but this only ever runs in a test binary that is about to die anyway.
 inline void reportCrash(int signal)
 {
-    const char *name = signal == SIGSEGV ? "\n*** SIGSEGV" : signal == SIGBUS ? "\n*** SIGBUS" : "\n*** SIGILL";
+    const char *name = "\n*** SIGILL";
+    if (signal == SIGSEGV) {
+        name = "\n*** SIGSEGV";
+    } else if (signal == SIGBUS) {
+        name = "\n*** SIGBUS";
+    }
     (void)write(STDERR_FILENO, name, std::strlen(name));
     (void)write(STDERR_FILENO, ", backtrace:\n", 13);
-    void *frames[64];
-    const int count = backtrace(frames, 64);
-    backtrace_symbols_fd(frames, count, STDERR_FILENO);
-    std::signal(signal, SIG_DFL);
-    std::raise(signal);
+    std::array<void *, 64> frames{};
+    const int count = backtrace(frames.data(), static_cast<int>(frames.size()));
+    backtrace_symbols_fd(frames.data(), count, STDERR_FILENO);
+    (void)std::signal(signal, SIG_DFL);
+    (void)std::raise(signal);
 }
 #endif
 
@@ -59,7 +66,7 @@ inline void installCrashReport()
     std::set_terminate(&reportTermination);
 #if defined(__APPLE__) || defined(__linux__)
     for (const int signal : {SIGSEGV, SIGBUS, SIGILL}) {
-        std::signal(signal, &reportCrash);
+        (void)std::signal(signal, &reportCrash);
     }
 #endif
 }
