@@ -65,8 +65,7 @@ UploadQueue::Decision UploadQueue::enqueue(const QString &user, const slsk::Remo
     if (it == m_users.end()) {
         User arrival;
         arrival.name = user;
-        arrival.turn = m_clock; // waiting since now
-        arrival.arrival = ++m_arrivals;
+        arrival.lastActivity = ++m_clock; // waiting since now
         arrival.privilegedHint = privileged;
         it = m_users.insert(user, std::move(arrival));
     }
@@ -112,7 +111,7 @@ bool UploadQueue::started(const QString &user, const slsk::RemotePath &path)
     --m_queued;
     it->active.append(std::move(entry));
     ++m_active;
-    it->turn = ++m_clock;
+    it->lastActivity = ++m_clock;
     return true;
 }
 
@@ -128,6 +127,7 @@ bool UploadQueue::finished(const QString &user, const slsk::RemotePath &path)
     }
     it->active.removeAt(index);
     --m_active;
+    it->lastActivity = ++m_clock;
     dropIfIdle(it);
     return true;
 }
@@ -145,6 +145,7 @@ bool UploadQueue::remove(const QString &user, const slsk::RemotePath &path)
     } else if (const qsizetype active = indexOf(it->active, path); active >= 0) {
         it->active.removeAt(active);
         --m_active;
+        it->lastActivity = ++m_clock; // an upload ended
     } else {
         return false;
     }
@@ -189,6 +190,13 @@ std::optional<quint32> UploadQueue::placeInQueue(const QString &user, const slsk
     }
     const User &self = it.value();
     const bool privileged = isPrivileged(self);
+    // Active uploads count as just ended: those users take their next turn after everyone else in their group.
+    const auto before = [](const User &a, const User &b) {
+        if (a.active.isEmpty() != b.active.isEmpty()) {
+            return a.active.isEmpty();
+        }
+        return a.lastActivity < b.lastActivity;
+    };
     // The file is served in round `index + 1` of its group's turns: count every file served before it.
     const qsizetype round = index + 1;
     qint64 place = round;
@@ -202,7 +210,7 @@ std::optional<quint32> UploadQueue::placeInQueue(const QString &user, const slsk
             place += otherPrivileged ? files : 0; // a privileged user's files all come first
             continue;
         }
-        place += goesBefore(other, self) ? std::min(files, round) : std::min(files, round - 1);
+        place += before(other, self) ? std::min(files, round) : std::min(files, round - 1);
     }
     return static_cast<quint32>(std::min<qint64>(place, std::numeric_limits<quint32>::max()));
 }
@@ -219,10 +227,7 @@ bool UploadQueue::goesBefore(const User &a, const User &b) const
     if (privilegedA != privilegedB) {
         return privilegedA;
     }
-    if (a.turn != b.turn) {
-        return a.turn < b.turn;
-    }
-    return a.arrival < b.arrival;
+    return a.lastActivity < b.lastActivity;
 }
 
 void UploadQueue::dropIfIdle(QHash<QString, User>::iterator it)

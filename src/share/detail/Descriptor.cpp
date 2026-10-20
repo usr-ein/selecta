@@ -11,6 +11,14 @@ namespace selecta::share::detail {
 
 namespace {
 
+void closeQuietly(int fd)
+{
+    // A descriptor opened read-only that was never written: close() has nothing to report.
+    (void)::close(fd);
+}
+
+} // namespace
+
 bool isDataless([[maybe_unused]] const struct stat &status)
 {
 #ifdef SF_DATALESS
@@ -19,14 +27,6 @@ bool isDataless([[maybe_unused]] const struct stat &status)
     return false;
 #endif
 }
-
-void closeQuietly(int fd)
-{
-    // A descriptor opened read-only that was never written: close() has nothing to report.
-    (void)::close(fd);
-}
-
-} // namespace
 
 OpenFailure verify(const struct stat &status, const FileIdentity &expected)
 {

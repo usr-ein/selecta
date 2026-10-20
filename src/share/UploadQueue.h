@@ -17,9 +17,10 @@ namespace selecta::share {
 // cancels the transfers, and tells the queue what happened.
 //
 // The order: privileged users' files come before everyone else's. Within each of the two groups, users take turns:
-// the user who has waited longest since their last turn goes first (for a user not served since arriving, since they
-// arrived; arrival order breaks ties), and each turn serves one file, the user's oldest. A file is queued until
-// started(), then active until finished() or remove(). Limits count queued files only, as Nicotine+'s do.
+// the user whose last upload activity is oldest goes first (arriving in the queue, or an upload of theirs starting or
+// ending, as Nicotine+ counts it), and each turn serves one file, the user's oldest. A user who just had a turn waits
+// behind everyone who was waiting meanwhile, newcomers included. A file is queued until started(), then active until
+// finished() or remove(). Limits count queued files only, as Nicotine+'s do.
 //
 // Threading: not thread-safe; one owner thread (core keeps it on the engine thread). Failure modes: none; refusals
 // are answers (Decision), and calls about files the queue doesn't hold return false and change nothing. Memory:
@@ -96,8 +97,8 @@ public:
     void setPrivileged(const QSet<QString> &users);
 
     // The 1-based place of a queued file in the order next() serves, as if uploads were started one at a time and
-    // users with an active upload were done with it: what PlaceInQueueResponse reports. nullopt when the file isn't
-    // queued (unknown, or active).
+    // every active upload had just ended: what PlaceInQueueResponse reports. nullopt when the file isn't queued
+    // (unknown, or active).
     std::optional<quint32> placeInQueue(const QString &user, const slsk::RemotePath &path) const;
 
     int queued() const { return m_queued; } // files waiting, all users (QueueLength in search answers)
@@ -117,13 +118,12 @@ private:
         QList<Entry> queued; // oldest first
         QList<Entry> active;
         quint64 queuedBytes = 0;
-        quint64 turn = 0;    // the clock at the user's last start, or at arrival
-        quint64 arrival = 0; // arrival order, for ties
+        quint64 lastActivity = 0; // the clock when the user arrived or an upload of theirs started or ended
         bool privilegedHint = false;
     };
 
     bool isPrivileged(const User &user) const;
-    // The order of turns: privileged first, then the longest wait, then arrival.
+    // The order of turns: privileged first, then the oldest activity.
     bool goesBefore(const User &a, const User &b) const;
     // Forgets a user who holds no file any more.
     void dropIfIdle(QHash<QString, User>::iterator it);
@@ -131,8 +131,7 @@ private:
     Options m_options;
     QHash<QString, User> m_users;
     QSet<QString> m_privileged;
-    quint64 m_clock = 0;    // ticks on every start
-    quint64 m_arrivals = 0; // ticks on every arrival
+    quint64 m_clock = 0; // ticks on every activity, so no two users share a stamp
     int m_queued = 0;
     int m_active = 0;
 };

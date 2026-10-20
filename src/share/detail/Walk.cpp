@@ -67,16 +67,6 @@ bool hasHiddenFlag([[maybe_unused]] const struct stat &status)
 #endif
 }
 
-// A file whose data lives only in the cloud (iCloud Drive, File Provider): reading it starts a download.
-bool isDataless([[maybe_unused]] const struct stat &status)
-{
-#ifdef SF_DATALESS
-    return (status.st_flags & SF_DATALESS) != 0;
-#else
-    return false;
-#endif
-}
-
 QString errorText(int error)
 {
     return qt_error_string(error); // strerror_r underneath: thread-safe
@@ -112,9 +102,11 @@ bool isUnder(QStringView key, QStringView folder)
 class Walker
 {
 public:
-    Walker(const QStringList &excludedFolders, AttributeSource &attributes, const audio::CancellationFlag *cancel)
+    Walker(const QStringList &excludedFolders, AttributeSource &attributes, const audio::CancellationFlag *cancel,
+           const WalkOptions &options)
         : m_attributes(attributes)
         , m_cancel(cancel)
+        , m_options(options)
     {
         for (const QString &folder : excludedFolders) {
             if (folder.isEmpty()) {
@@ -264,6 +256,9 @@ private:
             }
             return;
         }
+        if (m_options.afterStat) {
+            m_options.afterStat(folder.nativePath + '/' + name, status);
+        }
         if (S_ISDIR(status.st_mode)) {
             visitFolder(folder, index, name, status, listing);
         } else if (S_ISREG(status.st_mode)) {
@@ -287,12 +282,12 @@ private:
         if (isJunkFolderName(local.virtualName)) {
             return;
         }
-        if (folder.depth + 1 > kMaxDepth) {
-            report(displayPath(nativePath), u"nested more than %1 folders deep"_s.arg(kMaxDepth));
+        if (folder.depth + 1 > m_options.maxDepth) {
+            report(displayPath(nativePath), u"nested more than %1 folders deep"_s.arg(m_options.maxDepth));
             return;
         }
         const qsizetype virtualBytes = folder.virtualBytes + 1 + local.virtualName.toUtf8().size();
-        if (virtualBytes > kMaxVirtualPathBytes) {
+        if (virtualBytes > m_options.maxVirtualPathBytes) {
             report(displayPath(nativePath), u"its path is too long for peers"_s);
             return;
         }
@@ -334,7 +329,7 @@ private:
             return;
         }
         QByteArray virtualName = local.virtualName.toUtf8();
-        if (folder.virtualBytes + 1 + virtualName.size() > kMaxVirtualPathBytes) {
+        if (folder.virtualBytes + 1 + virtualName.size() > m_options.maxVirtualPathBytes) {
             report(displayPath(nativePath), u"its path is too long for peers"_s);
             return;
         }
@@ -342,7 +337,7 @@ private:
             report(displayPath(nativePath), u"another file beside it has the same name for peers"_s);
             return;
         }
-        if (m_walk.files >= kMaxFiles || m_poolBytes >= kMaxPoolBytes) {
+        if (m_walk.files >= m_options.maxFiles || m_poolBytes >= m_options.maxPoolBytes) {
             markFull(u"more than %1 files to share: the rest aren't shared"_s.arg(m_walk.files));
             return;
         }
@@ -360,6 +355,7 @@ private:
 
     AttributeSource &m_attributes;
     const audio::CancellationFlag *m_cancel = nullptr;
+    const WalkOptions &m_options;
     std::unordered_set<NodeId, NodeIdHash> m_excludedNodes;
     QStringList m_excludedKeys;
     std::unordered_set<NodeId, NodeIdHash> m_visitedFolders;
@@ -373,9 +369,9 @@ private:
 } // namespace
 
 Walk walk(const QList<WalkRoot> &roots, const QStringList &excludedFolders, AttributeSource &attributes,
-          const audio::CancellationFlag *cancel)
+          const audio::CancellationFlag *cancel, const WalkOptions &options)
 {
-    return Walker(excludedFolders, attributes, cancel).run(roots);
+    return Walker(excludedFolders, attributes, cancel, options).run(roots);
 }
 
 } // namespace selecta::share::detail

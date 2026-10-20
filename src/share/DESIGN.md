@@ -58,11 +58,13 @@ UploadQueue.h UploadQueue: per-user FIFOs, turns between users, slots, limits, p
    (exFAT, SMB) opens even though Qt would re-encode it to NFD.
 10. **`open()` errors:** `File not shared.` when the file is gone, replaced or resized (index stale); `File read
     error.` when it is the indexed file but unreadable now (permissions, I/O, descriptors, data only in iCloud).
-11. **Upload turns.** A user's turn stamp is the queue's clock at their last start, or at arrival for a user not
-    served since arriving (a returning user doesn't jump ahead of users already waiting, and queueing more files
-    doesn't lose a user's turn); arrival order breaks ties. Privileged users go first only among users who can start
-    now, as in Nicotine+, so a privileged user's active upload never leaves slots idle. Per-user limits count queued
-    files only; the global bound counts everything held.
+11. **Upload turns.** A user's stamp is the queue's clock at their last upload activity: arriving in the queue, or
+    an upload of theirs starting or ending (Nicotine+'s update counter). The oldest stamp goes first, so a user who
+    just had a turn waits behind everyone who waited meanwhile, newcomers included, and queueing more files never
+    costs a user their turn. Privileged users go first only among users who can start now, as in Nicotine+, so a
+    privileged user's active upload never leaves slots idle. Per-user limits count queued files only; the global
+    bound counts everything held. `placeInQueue()` counts as if uploads ran one at a time and active ones had just
+    ended.
 12. **One access level, kept in the design** (D-S4): every folder record carries a level (always public in v1). P1's
     buddy-only folders add a level to `ShareRoot`, a second precompressed list (the private section) and a level
     argument to `search`, `folderContents` and `lookup`.
