@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: vcpkg-save
+description: >-
+  Saves the vcpkg binary cache restored by ../vcpkg when this run changed it. After a complete install it first drops
+  the archives this build no longer uses (older ABIs), so the cache doesn't grow with every compiler or port update.
+inputs:
+  key:
+    description: The cache key (the vcpkg action's cache-key output).
+    required: true
+  installed:
+    description: The build's vcpkg_installed folder.
+    required: true
+  complete:
+    description: "'true' when every dependency installed (the configure step succeeded)."
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Compare the binary cache with what was restored
+      id: changes
+      shell: bash
+      env:
+        STATUS: ${{ inputs.installed }}/vcpkg/status
+        COMPLETE: ${{ inputs.complete }}
+      run: |
+        cache="$VCPKG_DEFAULT_BINARY_CACHE"
+        if [[ "$COMPLETE" == true && -f "$STATUS" ]]; then
+          sed -n 's/^Abi: //p' "$STATUS" | sort -u > "$RUNNER_TEMP/vcpkg-used.txt"
+          find "$cache" -name '*.zip' | while read -r archive; do
+            grep -qx "$(basename "$archive" .zip)" "$RUNNER_TEMP/vcpkg-used.txt" || rm -f "$archive"
+          done
+        fi
+        find "$cache" -name '*.zip' | sort > "$RUNNER_TEMP/vcpkg-now.txt"
+        echo "$(wc -l < "$RUNNER_TEMP/vcpkg-now.txt" | tr -d ' ') archives now"
+        if cmp -s "$RUNNER_TEMP/vcpkg-restored.txt" "$RUNNER_TEMP/vcpkg-now.txt"; then
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Save the binary cache
+      if: steps.changes.outputs.changed == 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: ${{ inputs.key }}

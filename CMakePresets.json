@@ -25,9 +25,28 @@
       }
     },
     {
+      "name": "vcpkg-static-linux",
+      "hidden": true,
+      "description": "Static dependencies from vcpkg on Linux (NFR-1, ADR-004). Needs VCPKG_ROOT.",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-linux-selecta",
+        "VCPKG_HOST_TRIPLET": "x64-linux-selecta",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-ports"
+      }
+    },
+    {
       "name": "dev",
       "displayName": "Debug",
       "inherits": [ "base", "vcpkg-static" ],
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux",
+      "displayName": "Debug on Linux",
+      "inherits": [ "base", "vcpkg-static-linux" ],
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
     },
     {
@@ -67,6 +86,7 @@
   ],
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
+    { "name": "linux", "configurePreset": "linux" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "tsan", "configurePreset": "tsan" },
     { "name": "lint", "configurePreset": "lint" },
@@ -82,6 +102,7 @@
       "environment": { "QT_QPA_PLATFORM": "minimal" }
     },
     { "name": "dev", "inherits": "base", "configurePreset": "dev" },
+    { "name": "linux", "inherits": "base", "configurePreset": "linux" },
     { "name": "asan", "inherits": "base", "configurePreset": "asan" },
     { "name": "tsan", "inherits": "base", "configurePreset": "tsan" },
     { "name": "ci", "inherits": "base", "configurePreset": "ci" }

@@ -1,54 +1,307 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Static vcpkg build, tests and the lint pipeline on macOS. Never touches the live Soulseek network.
+# CI (PLAN §5.4, NFR-1, NFR-7), all with static vcpkg dependencies (ADR-004):
+#   macOS     build, tests and the static-linking check; the lint gate (tools/lint.sh) in its own job.
+#   asan/tsan the whole suite under AddressSanitizer + UBSan and under ThreadSanitizer (macOS), on main, CI branches
+#             (ci/**), nightly and on request; not on pull requests.
+#   Linux     build and tests.
+#
+# Network safety (CLAUDE.md): nothing here talks to the Soulseek network or to the metadata services. Tests use
+# loopback fakes only (on Linux they run in a network namespace that has nothing but loopback), and the live-server
+# build switch stays OFF: CMake refuses to build tests with it, and every job checks it after configuring. The only
+# downloads are tools, vcpkg ports and the pinned sources in cmake/SelectaDependencies.cmake.
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'ci/**']
+    paths-ignore: ['docs/**', 'references/**', 'mock/**', '**/*.md']
   pull_request:
+    paths-ignore: ['docs/**', 'references/**', 'mock/**', '**/*.md']
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_ENV_HINTS: 1
+  VCPKG_DISABLE_METRICS: 1
+  # vcpkg's own pinned CMake rather than the runner's: its version is part of every package ABI, and runner images
+  # update theirs often, which would rebuild Qt.
+  VCPKG_FORCE_DOWNLOADED_BINARIES: 1
+  CCACHE_MAXSIZE: 600M
 
 jobs:
   macos:
+    name: macOS · build, tests, static linking
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
-      VCPKG_ROOT: ${{ github.workspace }}/vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Tools
-        run: brew install ninja llvm clazy cppcheck clang-format
+        run: brew install autoconf autoconf-archive automake libtool ccache
 
-      - name: Restore the vcpkg binary cache
-        uses: actions/cache@v4
+      - name: vcpkg
+        id: vcpkg
+        uses: ./.github/actions/vcpkg
         with:
-          path: vcpkg-cache
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake') }}
-          restore-keys: vcpkg-${{ runner.os }}-
+          triplet: arm64-osx-selecta
 
-      - name: vcpkg at the manifest baseline
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-dev-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-macos-dev-
+
+      - name: Configure (builds missing dependencies)
+        id: configure
+        run: >-
+          cmake --preset dev -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Save the vcpkg binary cache
+        if: always() && steps.vcpkg.outcome == 'success'
+        uses: ./.github/actions/vcpkg-save
+        with:
+          key: ${{ steps.vcpkg.outputs.cache-key }}
+          installed: build/dev/vcpkg_installed
+          complete: ${{ steps.configure.outcome == 'success' }}
+
+      - name: The live-server switch is off
+        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/dev/CMakeCache.txt
+
+      - name: Build
+        id: build
+        run: cmake --build --preset dev
+
+      - name: Save the compiler cache
+        if: always() && steps.build.outcome != 'skipped'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-dev-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Test
+        timeout-minutes: 30
+        run: ctest --preset dev --parallel "$(sysctl -n hw.ncpu)" --timeout 300
+
+      - name: Static linking check
         run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg.git "$VCPKG_ROOT"
-          git -C "$VCPKG_ROOT" checkout "$(jq -r '."builtin-baseline"' vcpkg.json)"
-          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          # Every dependency is static (ADR-004): only macOS system frameworks and system libraries may be loaded.
+          status=0
+          for binary in build/dev/src/app/Selecta.app/Contents/MacOS/Selecta build/dev/tools/selecta-cli/selecta-cli; do
+            bad="$(otool -L "$binary" | tail -n +2 | awk '{print $1}' | grep -v -E '^/System/Library/|^/usr/lib/' || true)"
+            if [[ -n "$bad" ]]; then
+              echo "::error::$binary loads non-system dynamic libraries: $bad"
+              status=1
+            fi
+          done
+          exit "$status"
 
-      - name: Configure, build, test
-        run: cmake --workflow --preset dev
+      - name: Keep the test log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-test-log
+          path: build/dev/Testing/Temporary/LastTest*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  lint:
+    name: macOS · lint
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-archives
+    steps:
+      - uses: actions/checkout@v7
+
+      # bash: lint.sh needs bash 4 or later (macOS ships 3.2).
+      - name: Tools
+        run: brew install autoconf autoconf-archive automake libtool bash llvm clazy cppcheck clang-format
+
+      - name: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: arm64-osx-selecta
+
+      # The analysers need compile_commands.json and the generated sources only (moc output, Version.h), not a build:
+      # without origin dependencies the global autogen target runs moc alone.
+      - name: Configure
+        run: >-
+          cmake --preset dev -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
+          -DCMAKE_AUTOGEN_ORIGIN_DEPENDS=OFF -DCMAKE_GLOBAL_AUTOGEN_TARGET=ON
+
+      - name: Generated sources
+        run: cmake --build --preset dev --target autogen
 
       - name: Lint
         run: tools/lint.sh
 
-      - name: Static linking check
+      - name: Keep the analyser logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-logs
+          path: |
+            build/dev/clang-tidy.log
+            build/dev/clazy.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  sanitizers:
+    name: macOS · ${{ matrix.preset }}
+    if: github.event_name != 'pull_request'
+    runs-on: macos-26
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [asan, tsan]
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tools
+        run: brew install autoconf autoconf-archive automake libtool ccache
+
+      - name: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: arm64-osx-selecta
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-macos-${{ matrix.preset }}-
+
+      - name: Configure
+        run: >-
+          cmake --preset ${{ matrix.preset }} -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF
+          -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: The live-server switch is off
+        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/${{ matrix.preset }}/CMakeCache.txt
+
+      - name: Build
+        id: build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Save the compiler cache
+        if: always() && steps.build.outcome != 'skipped'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Test
+        timeout-minutes: 60
+        run: ctest --preset ${{ matrix.preset }} --parallel "$(sysctl -n hw.ncpu)" --timeout 900
+
+      - name: Keep the test log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.preset }}-test-log
+          path: build/${{ matrix.preset }}/Testing/Temporary/LastTest*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  linux:
+    name: Linux · build, tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/../ccache
+    steps:
+      - uses: actions/checkout@v7
+
+      # autoconf-archive: libb2 (Qt); nasm: FFmpeg on x86-64; GL and EGL headers: Qt Gui uses the system's OpenGL.
+      - name: Tools
         run: |
-          bad=$(otool -L build/dev/src/app/Selecta.app/Contents/MacOS/Selecta | tail -n +2 | awk '{print $1}' \
-                | grep -v -E '^/System/Library/|^/usr/lib/' || true)
-          if [ -n "$bad" ]; then echo "non-system dynamic libraries: $bad"; exit 1; fi
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache libgl-dev libegl-dev \
+            libglu1-mesa-dev
+
+      - name: vcpkg
+        id: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-linux-selecta
+
+      - name: Restore the compiler cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ccache-linux-
+
+      - name: Configure (builds missing dependencies)
+        id: configure
+        run: >-
+          cmake --preset linux -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Save the vcpkg binary cache
+        if: always() && steps.vcpkg.outcome == 'success'
+        uses: ./.github/actions/vcpkg-save
+        with:
+          key: ${{ steps.vcpkg.outputs.cache-key }}
+          installed: build/linux/vcpkg_installed
+          complete: ${{ steps.configure.outcome == 'success' }}
+
+      - name: The live-server switch is off
+        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/linux/CMakeCache.txt
+
+      - name: Build
+        id: build
+        run: cmake --build --preset linux
+
+      - name: Save the compiler cache
+        if: always() && steps.build.outcome != 'skipped'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # A fresh network namespace has only the loopback interface: a test that tried to reach anything else would fail.
+      # Root brings loopback up, then the tests run as the runner user again (the outer shell expands the variables).
+      - name: Test (loopback only)
+        timeout-minutes: 30
+        run: |
+          sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
+            --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
+            ctest --preset linux --parallel $(nproc) --timeout 300"
+
+      - name: Keep the test log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-test-log
+          path: build/linux/Testing/Temporary/LastTest*.log
+          if-no-files-found: ignore
+          retention-days: 14
