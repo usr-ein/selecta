@@ -3,18 +3,22 @@
 
 #include "audio/Decoder.h"
 #include "audio/detail/Ffmpeg.h"
+#include "audio/detail/SpectrumAnalysis.h"
+#include "audio/detail/ThreadHandOver.h"
 
-extern "C" {
-#include <libavutil/mem.h>
-#include <libavutil/tx.h>
-}
-
-#include <QtMath>
+#include <QThread>
+#include <QThreadPool>
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
-#include <numbers>
+#include <condition_variable>
+#include <functional>
+#include <iterator>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <span>
 #include <utility>
 #include <vector>
@@ -24,12 +28,14 @@ using namespace Qt::StringLiterals;
 namespace selecta::audio {
 namespace {
 
-constexpr int kFftSize = 4096;
-constexpr int kBins = (kFftSize / 2) + 1;
+using detail::kSpectrumFftBins;
+using detail::kSpectrumFftSize;
+
 constexpr qint64 kChunkFrames = 8192;
 constexpr double kMinSeconds = 2.0;
 constexpr int kMinWindows = 16;
 constexpr int kMinRate = 32000;
+constexpr int kMaxSpectrumFrames = 10000;
 // The reference band and the level below it that counts as "no content" (calibrated on LAME encodes of noise and
 // tones: genuine full-band audio stays within it to Nyquist, LAME's lowpass cuts 60 dB and more).
 constexpr double kReferenceLowHz = 14000.0;
@@ -68,105 +74,44 @@ constexpr std::array<LamePoint, 6> kLameLowpass = {{
 }};
 constexpr int kLowpassMatchHz = 800;
 
-struct TxDeleter
+// Per-bin level in dB (relative to a full-scale sine's bin) of a summed power spectrum, averaged over its windows and
+// smoothed over kSmoothingHz.
+std::vector<double> spectrumLevels(const std::vector<double> &power, int windows, int sampleRate)
 {
-    void operator()(AVTXContext *context) const { av_tx_uninit(&context); }
-};
-struct AvFreeDeleter
-{
-    void operator()(void *pointer) const { av_free(pointer); }
-};
-
-// The long-term power spectrum of a mono mix: Hann-windowed FFTs at evenly spaced positions.
-class SpectrumAccumulator
-{
-public:
-    Result<void> init()
-    {
-        AVTXContext *context = nullptr;
-        const float scale = 1.0F;
-        if (av_tx_init(&context, &m_fn, AV_TX_FLOAT_RDFT, 0, kFftSize, &scale, 0) < 0 || context == nullptr) {
-            return makeError(ErrorCode::Internal, u"FFmpeg's FFT couldn't start"_s);
-        }
-        m_tx.reset(context);
-        m_in.reset(static_cast<float *>(av_malloc(sizeof(float) * kFftSize)));
-        m_out.reset(static_cast<AVComplexFloat *>(av_malloc(sizeof(AVComplexFloat) * kBins)));
-        if (!m_in || !m_out) {
-            return makeError(ErrorCode::Internal, u"out of memory"_s);
-        }
-        m_window.resize(kFftSize);
-        for (int i = 0; i < kFftSize; ++i) {
-            m_window[static_cast<std::size_t>(i)] =
-                static_cast<float>(0.5 - (0.5 * std::cos(2.0 * std::numbers::pi * i / (kFftSize - 1))));
-        }
-        m_power.assign(kBins, 0.0);
-        return {};
+    const double binHz = static_cast<double>(sampleRate) / kSpectrumFftSize;
+    const int half = std::max(1, static_cast<int>(std::lround(kSmoothingHz / binHz / 2.0)));
+    std::vector<double> prefix(kSpectrumFftBins + 1, 0.0);
+    for (int k = 0; k < kSpectrumFftBins; ++k) {
+        prefix[static_cast<std::size_t>(k) + 1] =
+            prefix[static_cast<std::size_t>(k)] + power[static_cast<std::size_t>(k)];
     }
-
-    void add(const float *mono)
-    {
-        for (int i = 0; i < kFftSize; ++i) {
-            m_in.get()[i] = mono[i] * m_window[static_cast<std::size_t>(i)];
-        }
-        m_fn(m_tx.get(), m_out.get(), m_in.get(), sizeof(float));
-        for (int k = 0; k < kBins; ++k) {
-            const AVComplexFloat value = m_out.get()[k];
-            m_power[static_cast<std::size_t>(k)] += (double{value.re} * value.re) + (double{value.im} * value.im);
-        }
-        ++m_windows;
+    const double fullScale = detail::PowerSpectrum::fullScalePower();
+    std::vector<double> db(kSpectrumFftBins, kSilenceDb * 2);
+    for (int k = 0; k < kSpectrumFftBins; ++k) {
+        const int from = std::max(0, k - half);
+        const int to = std::min(kSpectrumFftBins - 1, k + half);
+        const double mean = (prefix[static_cast<std::size_t>(to) + 1] - prefix[static_cast<std::size_t>(from)]) /
+                            (to - from + 1) / std::max(1, windows);
+        db[static_cast<std::size_t>(k)] = mean > 0.0 ? 10.0 * std::log10(mean / fullScale) : kSilenceDb * 2;
     }
-
-    int windows() const { return m_windows; }
-
-    // Per-bin level in dB (relative to a full-scale sine's bin), averaged over the windows and smoothed over
-    // kSmoothingHz.
-    std::vector<double> levels(int sampleRate) const
-    {
-        const double binHz = static_cast<double>(sampleRate) / kFftSize;
-        const int half = std::max(1, static_cast<int>(std::lround(kSmoothingHz / binHz / 2.0)));
-        std::vector<double> prefix(kBins + 1, 0.0);
-        for (int k = 0; k < kBins; ++k) {
-            prefix[static_cast<std::size_t>(k) + 1] =
-                prefix[static_cast<std::size_t>(k)] + m_power[static_cast<std::size_t>(k)];
-        }
-        // A full-scale sine through a Hann window peaks at (N/4)² per bin.
-        const double fullScale = (kFftSize / 4.0) * (kFftSize / 4.0);
-        std::vector<double> db(kBins, kSilenceDb * 2);
-        for (int k = 0; k < kBins; ++k) {
-            const int from = std::max(0, k - half);
-            const int to = std::min(kBins - 1, k + half);
-            const double mean = (prefix[static_cast<std::size_t>(to) + 1] - prefix[static_cast<std::size_t>(from)]) /
-                                (to - from + 1) / std::max(1, m_windows);
-            db[static_cast<std::size_t>(k)] = mean > 0.0 ? 10.0 * std::log10(mean / fullScale) : kSilenceDb * 2;
-        }
-        return db;
-    }
-
-private:
-    std::unique_ptr<AVTXContext, TxDeleter> m_tx;
-    av_tx_fn m_fn = nullptr;
-    std::unique_ptr<float, AvFreeDeleter> m_in;
-    std::unique_ptr<AVComplexFloat, AvFreeDeleter> m_out;
-    std::vector<float> m_window;
-    std::vector<double> m_power;
-    int m_windows = 0;
-};
+    return db;
+}
 
 // The loudest smoothed bin between two frequencies.
 double peakLevel(const std::vector<double> &db, int sampleRate, double fromHz, double toHz)
 {
-    const double binHz = static_cast<double>(sampleRate) / kFftSize;
-    const int from = std::clamp(static_cast<int>(std::ceil(fromHz / binHz)), 0, kBins - 1);
-    const int to = std::clamp(static_cast<int>(std::floor(toHz / binHz)), from, kBins - 1);
+    const double binHz = static_cast<double>(sampleRate) / kSpectrumFftSize;
+    const int from = std::clamp(static_cast<int>(std::ceil(fromHz / binHz)), 0, kSpectrumFftBins - 1);
+    const int to = std::clamp(static_cast<int>(std::floor(toHz / binHz)), from, kSpectrumFftBins - 1);
     return *std::max_element(db.begin() + from, db.begin() + to + 1);
 }
 
 // Mean level of the bins between two frequencies.
 double bandLevel(const std::vector<double> &db, int sampleRate, double fromHz, double toHz)
 {
-    const double binHz = static_cast<double>(sampleRate) / kFftSize;
-    const int from = std::clamp(static_cast<int>(std::ceil(fromHz / binHz)), 0, kBins - 1);
-    const int to = std::clamp(static_cast<int>(std::floor(toHz / binHz)), from, kBins - 1);
+    const double binHz = static_cast<double>(sampleRate) / kSpectrumFftSize;
+    const int from = std::clamp(static_cast<int>(std::ceil(fromHz / binHz)), 0, kSpectrumFftBins - 1);
+    const int to = std::clamp(static_cast<int>(std::floor(toHz / binHz)), from, kSpectrumFftBins - 1);
     double power = 0.0;
     for (int k = from; k <= to; ++k) {
         power += std::pow(10.0, db[static_cast<std::size_t>(k)] / 10.0);
@@ -177,9 +122,9 @@ double bandLevel(const std::vector<double> &db, int sampleRate, double fromHz, d
 // The highest frequency whose level is within `dropDb` of `referenceDb`: everything above it stays below.
 int highestWithin(const std::vector<double> &db, int sampleRate, double referenceDb, double dropDb)
 {
-    const double binHz = static_cast<double>(sampleRate) / kFftSize;
+    const double binHz = static_cast<double>(sampleRate) / kSpectrumFftSize;
     const double threshold = referenceDb - dropDb;
-    for (int k = kBins - 1; k > 0; --k) {
+    for (int k = kSpectrumFftBins - 1; k > 0; --k) {
         if (db[static_cast<std::size_t>(k)] >= threshold) {
             return static_cast<int>(std::lround(k * binHz));
         }
@@ -197,34 +142,24 @@ std::optional<int> likelyKbps(int cutoffHz)
     return nearest->kbps;
 }
 
-// Evenly spaced window starts over `length` frames.
-std::vector<qint64> windowPositions(qint64 length, int count)
-{
-    std::vector<qint64> positions;
-    if (length < kFftSize || count <= 0) {
-        return positions;
-    }
-    const int windows = static_cast<int>(std::min<qint64>(count, (length - kFftSize) + 1));
-    positions.reserve(static_cast<std::size_t>(windows));
-    for (int i = 0; i < windows; ++i) {
-        positions.push_back(windows == 1 ? 0 : (i * (length - kFftSize)) / (windows - 1));
-    }
-    return positions;
-}
-
 QString kiloHertz(int hz)
 {
     return u"%1 kHz"_s.arg(hz / 1000.0, 0, 'f', 1);
 }
 
 // The exact word-length check: does every sample of a 20/24-bit or float file sit on the 16-bit grid? A float holds
-// 24-bit samples exactly, so the test is exact; 32-bit integers aren't checked (float rounds them).
+// 24-bit samples exactly, so the test is exact; 32-bit integers aren't checked (float rounds them). Chunks check their
+// parts independently: the file is padded when every part is on the grid and some part isn't silent.
 class GridCheck
 {
 public:
-    explicit GridCheck(const StreamInfo &info)
-        : m_active(info.lossless && (info.floatingPoint || (info.bitsPerSample > 16 && info.bitsPerSample <= 24)))
-        , m_onGrid(m_active)
+    static bool applies(const StreamInfo &info)
+    {
+        return info.lossless && (info.floatingPoint || (info.bitsPerSample > 16 && info.bitsPerSample <= 24));
+    }
+
+    explicit GridCheck(bool active)
+        : m_onGrid(active)
     {}
 
     void add(std::span<const float> samples)
@@ -239,78 +174,21 @@ public:
         }
     }
 
-    // Padded: every sample on the grid, and not all silence (which proves nothing).
-    bool padded() const { return m_active && m_onGrid && m_anyNonZero; }
+    bool onGrid() const { return m_onGrid; }
+    bool anyNonZero() const { return m_anyNonZero; }
 
 private:
-    bool m_active = false;
     bool m_onGrid = false;
     bool m_anyNonZero = false;
 };
 
-// Feeds the spectrum the windows at evenly spaced positions as the decoded audio streams past, keeping only the mono
-// history the next window needs.
-class SpectrumSampler
-{
-public:
-    SpectrumSampler(SpectrumAccumulator &spectrum, std::vector<qint64> positions)
-        : m_spectrum(spectrum)
-        , m_positions(std::move(positions))
-    {}
-
-    void add(std::span<const float> interleaved, int channels)
-    {
-        const auto frames = static_cast<qint64>(interleaved.size() / static_cast<std::size_t>(channels));
-        const qint64 chunkStart = m_seen;
-        m_seen += frames;
-        if (m_next >= m_positions.size()) {
-            return;
-        }
-        // Frames before the next window are never needed: only the windows' frames (about 5 % of a long file) are
-        // mixed and kept.
-        qint64 from = 0;
-        if (m_history.empty()) {
-            const qint64 needed = m_positions[m_next];
-            if (chunkStart + frames <= needed) {
-                return;
-            }
-            from = std::max<qint64>(0, needed - chunkStart);
-            m_historyStart = chunkStart + from;
-        }
-        const auto stride = static_cast<std::size_t>(channels);
-        for (qint64 f = from; f < frames; ++f) {
-            float sum = 0.0F;
-            for (std::size_t c = 0; c < stride; ++c) {
-                sum += interleaved[(static_cast<std::size_t>(f) * stride) + c];
-            }
-            m_history.push_back(sum / static_cast<float>(channels));
-        }
-        const qint64 historyEnd = m_historyStart + static_cast<qint64>(m_history.size());
-        while (m_next < m_positions.size() && m_positions[m_next] + kFftSize <= historyEnd) {
-            m_spectrum.add(m_history.data() + (m_positions[m_next] - m_historyStart));
-            ++m_next;
-        }
-        const qint64 keepFrom = m_next < m_positions.size() ? std::min(m_positions[m_next], historyEnd) : historyEnd;
-        m_history.erase(m_history.begin(), m_history.begin() + static_cast<std::ptrdiff_t>(keepFrom - m_historyStart));
-        m_historyStart = keepFrom;
-    }
-
-private:
-    SpectrumAccumulator &m_spectrum;
-    std::vector<qint64> m_positions;
-    std::size_t m_next = 0;
-    std::vector<float> m_history; // mono, from frame m_historyStart
-    qint64 m_historyStart = 0;
-    qint64 m_seen = 0; // frames received so far
-};
-
 // The cut-off and, above 48 kHz, the content bandwidth, when the spectrum has enough windows and a reference band.
-void measureSpectrum(const SpectrumAccumulator &spectrum, int sampleRate, QualityReport &report)
+void measureSpectrum(const std::vector<double> &power, int windows, int sampleRate, QualityReport &report)
 {
-    if (spectrum.windows() < kMinWindows) {
+    if (windows < kMinWindows) {
         return;
     }
-    const std::vector<double> db = spectrum.levels(sampleRate);
+    const std::vector<double> db = spectrumLevels(power, windows, sampleRate);
     const double reference = bandLevel(db, sampleRate, kReferenceLowHz, kReferenceHighHz);
     const double peak = peakLevel(db, sampleRate, 20.0, kReferenceLowHz);
     if (reference <= kSilenceDb || reference < peak - kReferenceMinusPeakDb) {
@@ -356,6 +234,234 @@ void addFindings(const StreamInfo &info, bool padded, QualityReport &report)
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The decoding pass
+
+// What every chunk of one pass shares.
+struct PassSetup
+{
+    bool gridCheck = false;
+    bool spectrogram = false;
+    int rows = 0;
+    detail::SlotGeometry geometry;
+    qint64 slotCap = 0;
+};
+
+// One chunk: decodes from `decodeFrom` (a window before the frames it owns, so its first windows have their audio)
+// until it has every window it owns and has passed `ownedEnd` (-1: the last chunk, to the end of the stream).
+// Chunk boundaries depend only on the length and the chunk count, never on the spectrogram, so the long-term
+// spectrum and the grid check come out the same with and without one.
+struct ChunkPlan
+{
+    qint64 decodeFrom = 0;
+    qint64 ownedEnd = -1;
+    std::vector<qint64> spectrumStarts; // the long-term windows it owns (those starting in its frames)
+    qint64 firstSlot = 0;               // the spectrogram slots it owns (those starting in its frames)
+    qint64 endSlot = -1;
+};
+
+struct ChunkResult
+{
+    bool onGrid = true;
+    bool anyNonZero = false;
+    std::vector<double> spectrumSums;
+    int spectrumWindows = 0;
+    std::vector<detail::SpectrogramSlot> slots;
+    std::optional<qint64> endOfStream; // where the stream ended, when this chunk reached the end
+    std::optional<Error> error;
+};
+
+void runChunk(Decoder &decoder, detail::PowerSpectrum &fft, const PassSetup &setup, const ChunkPlan &plan,
+              const std::function<bool()> &stopped, ChunkResult &result)
+{
+    if (plan.decodeFrom > 0 && decoder.seek(plan.decodeFrom) != DecodeStatus::Ok) {
+        result.error = decoder.error();
+        return;
+    }
+    GridCheck grid(setup.gridCheck);
+    detail::SpectrumSampler sampler(plan.spectrumStarts);
+    std::optional<detail::SpectrogramBuilder> builder;
+    if (setup.spectrogram) {
+        builder.emplace(setup.rows, setup.geometry, plan.firstSlot, plan.endSlot, setup.slotCap);
+    }
+    const auto neededFrom = [&sampler, &builder]() -> std::optional<qint64> {
+        std::optional<qint64> needed = sampler.neededFrom();
+        if (builder) {
+            if (const std::optional<qint64> slots = builder->neededFrom()) {
+                needed = needed ? std::min(*needed, *slots) : slots;
+            }
+        }
+        return needed;
+    };
+    const int channels = decoder.channels();
+    detail::MonoHistory history;
+    std::vector<float> buffer(static_cast<std::size_t>(kChunkFrames * channels));
+    qint64 position = plan.decodeFrom;
+    while (true) {
+        if (stopped()) {
+            result.error = makeError(ErrorCode::Cancelled, u"cancelled"_s);
+            return;
+        }
+        std::optional<qint64> needed = neededFrom();
+        if (plan.ownedEnd >= 0 && position >= plan.ownedEnd && !needed) {
+            break; // the next chunk takes it from here
+        }
+        const ReadResult read = decoder.read(buffer.data(), kChunkFrames);
+        const std::span<const float> samples(buffer.data(), static_cast<std::size_t>(read.frames * channels));
+        grid.add(samples);
+        // Only the frames some window needs are mixed and kept: without a spectrogram, about 5 % of a long file.
+        if (needed) {
+            history.appendMix(samples, channels, position, *needed);
+            sampler.process(history, fft);
+            if (builder) {
+                builder->process(history, fft);
+            }
+            needed = neededFrom();
+            history.dropBefore(needed ? *needed : history.end());
+        }
+        position += read.frames;
+        if (read.status == DecodeStatus::EndOfStream) {
+            if (builder) {
+                builder->finish(history, position, fft);
+            }
+            result.endOfStream = position;
+            break;
+        }
+        if (read.status == DecodeStatus::Error) {
+            result.error = decoder.error();
+            return;
+        }
+        if (read.status == DecodeStatus::NeedMoreData) {
+            result.error = makeError(ErrorCode::Internal, u"the decoder wants more of a complete file"_s);
+            return;
+        }
+    }
+    result.onGrid = grid.onGrid();
+    result.anyNonZero = grid.anyNonZero();
+    result.spectrumSums = sampler.sums();
+    result.spectrumWindows = sampler.windows();
+    if (builder) {
+        result.slots = builder->takeSlots();
+    }
+}
+
+// The chunks of one pass, shared by the calling thread and the pool tasks.
+struct PassWork
+{
+    PassSetup setup;
+    std::vector<ChunkPlan> plans;
+    std::vector<ChunkResult> results;
+    std::atomic<std::size_t> next{0};
+    CancellationFlag failed; // set by the first chunk that fails, so the others stop early
+    const CancellationFlag *cancel = nullptr;
+    std::mutex mutex;
+    std::condition_variable allDone;
+    std::size_t done = 0;
+
+    // Takes chunks until none is left. Called by the caller and by every pool task; a task that starts after the
+    // pass is over finds nothing left and touches nothing else (`cancel` belongs to the caller).
+    void work(const Decoder &prototype)
+    {
+        std::unique_ptr<Decoder> decoder;
+        std::unique_ptr<detail::PowerSpectrum> fft;
+        const auto stopped = [this] { return failed.isCancelled() || (cancel != nullptr && cancel->isCancelled()); };
+        for (std::size_t k = next.fetch_add(1); k < plans.size(); k = next.fetch_add(1)) {
+            ChunkResult &result = results[k];
+            if (!decoder) {
+                Result<std::unique_ptr<Decoder>> clone = prototype.clone(decoderOptions());
+                if (clone.ok()) {
+                    decoder = clone.takeValue();
+                } else {
+                    result.error = clone.error();
+                }
+            }
+            if (!fft && !result.error) {
+                fft = std::make_unique<detail::PowerSpectrum>();
+                if (const Result<void> ready = fft->init(); !ready.ok()) {
+                    result.error = ready.error();
+                    fft.reset();
+                }
+            }
+            if (!result.error) {
+                runChunk(*decoder, *fft, setup, plans[k], stopped, result);
+            }
+            if (result.error) {
+                failed.cancel();
+            }
+            const std::scoped_lock lock(mutex);
+            ++done;
+            if (done == plans.size()) {
+                allDone.notify_all();
+            }
+        }
+    }
+
+    // The error to report: a real failure rather than the cancellations it caused in other chunks.
+    std::optional<Error> firstError() const
+    {
+        std::optional<Error> cancelled;
+        for (const ChunkResult &result : results) {
+            if (result.error && result.error->code != ErrorCode::Cancelled) {
+                return result.error;
+            }
+            if (result.error && !cancelled) {
+                cancelled = result.error;
+            }
+        }
+        return cancelled;
+    }
+
+    static DecoderOptions decoderOptions()
+    {
+        DecoderOptions options;
+        options.channels = 0; // the source layout: the grid check needs the samples as stored
+        return options;
+    }
+};
+
+// Splits [0, length) into `count` chunks (count ≥ 1; one open-ended chunk when the length is unknown).
+std::vector<ChunkPlan> planChunks(qint64 length, int count, const std::vector<qint64> &spectrumStarts,
+                                  const detail::SlotGeometry &geometry)
+{
+    std::vector<ChunkPlan> plans(static_cast<std::size_t>(count));
+    const auto beginOf = [length, count](qint64 k) { return (k * length) / count; };
+    for (int k = 0; k < count; ++k) {
+        ChunkPlan &plan = plans[static_cast<std::size_t>(k)];
+        const bool last = k == count - 1;
+        const qint64 begin = beginOf(k);
+        const qint64 end = last ? -1 : beginOf(k + 1);
+        plan.decodeFrom = std::max<qint64>(0, begin - kSpectrumFftSize);
+        plan.ownedEnd = end;
+        for (const qint64 start : spectrumStarts) {
+            if (start >= begin && (last || start < end)) {
+                plan.spectrumStarts.push_back(start);
+            }
+        }
+        plan.firstSlot = geometry.firstAtOrAfter(begin);
+        plan.endSlot = last ? -1 : geometry.firstAtOrAfter(end);
+    }
+    return plans;
+}
+
+Result<void> checkOptions(const QualityOptions &options)
+{
+    if (options.spectrumFrames < 1 || options.spectrumFrames > kMaxSpectrumFrames) {
+        return makeError(
+            ErrorCode::InvalidArgument,
+            u"spectrumFrames %1 out of range (1…%2)"_s.arg(options.spectrumFrames).arg(kMaxSpectrumFrames));
+    }
+    const SpectrogramOptions &grid = options.spectrogramOptions;
+    if (options.spectrogram && (grid.columns < 1 || grid.columns > kSpectrogramMaxColumns || grid.bins < 1 ||
+                                grid.bins > kSpectrogramMaxBins)) {
+        return makeError(ErrorCode::InvalidArgument,
+                         u"spectrogram of %1 × %2 out of range (1…%3 × 1…%4)"_s.arg(grid.columns)
+                             .arg(grid.bins)
+                             .arg(kSpectrogramMaxColumns)
+                             .arg(kSpectrogramMaxBins));
+    }
+    return {};
+}
+
 } // namespace
 
 QString describeFinding(QualityFinding finding, const QualityReport &report)
@@ -391,11 +497,12 @@ Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, 
     if (!source || !source->snapshot().isComplete()) {
         return makeError(ErrorCode::InvalidArgument, u"the quality checks need a complete file"_s);
     }
+    if (const Result<void> valid = checkOptions(options); !valid.ok()) {
+        return valid.error();
+    }
     detail::installFfmpegLogging();
-    DecoderOptions decoderOptions;
-    decoderOptions.channels = 0;
     Decoder decoder;
-    switch (decoder.open(source, decoderOptions)) {
+    switch (decoder.open(source, PassWork::decoderOptions())) {
     case Decoder::OpenStatus::Ready:
         break;
     case Decoder::OpenStatus::Failed:
@@ -413,37 +520,83 @@ Result<QualityReport> analyzeQuality(const std::shared_ptr<ByteSource> &source, 
         report.lameLowpassHz = info.lameTag->lowpassHz;
     }
 
-    SpectrumAccumulator spectrum;
-    if (const Result<void> ready = spectrum.init(); !ready.ok()) {
-        return ready.error();
-    }
-    const int channels = decoder.channels();
     const qint64 length = decoder.lengthFrames();
     const bool spectral = info.sampleRate >= kMinRate && length >= static_cast<qint64>(kMinSeconds * info.sampleRate);
-    SpectrumSampler sampler(spectrum, spectral ? windowPositions(length, std::max(1, options.spectrumFrames))
-                                               : std::vector<qint64>{});
-    GridCheck grid(info);
-    std::vector<float> buffer(static_cast<std::size_t>(kChunkFrames * channels));
-    while (true) {
-        if (cancel != nullptr && cancel->isCancelled()) {
-            return makeError(ErrorCode::Cancelled, u"cancelled"_s);
-        }
-        const ReadResult read = decoder.read(buffer.data(), kChunkFrames);
-        const std::span<const float> samples(buffer.data(), static_cast<std::size_t>(read.frames * channels));
-        grid.add(samples);
-        sampler.add(samples, channels);
-        if (read.status == DecodeStatus::EndOfStream) {
-            break;
-        }
-        if (read.status == DecodeStatus::Error) {
-            return decoder.error();
-        }
-        if (read.status == DecodeStatus::NeedMoreData) {
-            return makeError(ErrorCode::Internal, u"the decoder wants more of a complete file"_s);
-        }
+    const std::vector<qint64> spectrumStarts =
+        spectral ? detail::evenWindowStarts(length, options.spectrumFrames) : std::vector<qint64>{};
+
+    auto work = std::make_shared<PassWork>();
+    work->cancel = cancel;
+    PassSetup &setup = work->setup;
+    setup.gridCheck = GridCheck::applies(info);
+    setup.spectrogram = options.spectrogram;
+    setup.rows = options.spectrogramOptions.bins;
+    // One slot per column over the announced length (never more columns than frames); unknown lengths start with
+    // narrow slots that merge as the stream goes on.
+    const int columns = options.spectrogramOptions.columns;
+    setup.geometry = {length, length > 0 ? std::min<qint64>(columns, length) : 0};
+    setup.slotCap = columns;
+
+    const int threads = options.maxThreads > 0 ? options.maxThreads : std::max(1, QThread::idealThreadCount());
+    const qint64 minChunk = qint64{std::max(1, options.minChunkSeconds)} * std::max(1, info.sampleRate);
+    int chunkCount = 1;
+    if (info.exactSeek && length > 0 && threads > 1) {
+        chunkCount = static_cast<int>(std::clamp<qint64>(length / minChunk, 1, threads));
     }
-    measureSpectrum(spectrum, info.sampleRate, report);
-    addFindings(info, grid.padded(), report);
+    work->plans = planChunks(length, chunkCount, spectrumStarts, setup.geometry);
+    work->results.resize(work->plans.size());
+
+    // The prototype is only cloned (a const operation; the frame index of a complete source is immutable), except in
+    // a single-chunk pass, which decodes with it directly.
+    const auto prototype = std::make_shared<Decoder>(std::move(decoder));
+    if (chunkCount == 1) {
+        detail::PowerSpectrum fft;
+        if (const Result<void> ready = fft.init(); !ready.ok()) {
+            return ready.error();
+        }
+        const auto stopped = [cancel] { return cancel != nullptr && cancel->isCancelled(); };
+        runChunk(*prototype, fft, setup, work->plans.front(), stopped, work->results.front());
+    } else {
+        QThreadPool *pool = options.pool != nullptr ? options.pool : QThreadPool::globalInstance();
+        for (int t = 1; t < chunkCount; ++t) {
+            detail::startTask(pool, [work, prototype] { work->work(*prototype); });
+        }
+        work->work(*prototype); // the caller takes chunks too, so a saturated pool can't deadlock it
+        std::unique_lock lock(work->mutex);
+        work->allDone.wait(lock, [&work] { return work->done == work->plans.size(); });
+    }
+    if (const std::optional<Error> error = work->firstError()) {
+        return *error;
+    }
+
+    bool onGrid = true;
+    bool anyNonZero = false;
+    std::vector<double> spectrum(kSpectrumFftBins, 0.0);
+    int windows = 0;
+    std::optional<qint64> end;
+    std::vector<detail::SpectrogramSlot> slots;
+    for (ChunkResult &result : work->results) {
+        onGrid = onGrid && result.onGrid;
+        anyNonZero = anyNonZero || result.anyNonZero;
+        for (std::size_t k = 0; k < spectrum.size(); ++k) {
+            spectrum[k] += result.spectrumSums[k];
+        }
+        windows += result.spectrumWindows;
+        if (result.endOfStream) {
+            end = end ? std::min(*end, *result.endOfStream) : result.endOfStream;
+        }
+        std::ranges::move(result.slots, std::back_inserter(slots));
+    }
+    measureSpectrum(spectrum, windows, info.sampleRate, report);
+    addFindings(info, setup.gridCheck && onGrid && anyNonZero, report);
+    if (options.spectrogram) {
+        Result<Spectrogram> spectrogram =
+            detail::assembleSpectrogram(info.sampleRate, end.value_or(0), columns, setup.rows, std::move(slots));
+        if (!spectrogram.ok()) {
+            return spectrogram.error();
+        }
+        report.spectrogram = spectrogram.takeValue();
+    }
     return report;
 }
 
