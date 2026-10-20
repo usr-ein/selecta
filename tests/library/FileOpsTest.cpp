@@ -226,3 +226,34 @@ TEST_F(FileOpsTest, OnlyInboxFoldersAreFiled)
     EXPECT_FALSE(ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, collection, u"../A"_s).ok);
     EXPECT_FALSE(ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, dir.filePath(u"other"_s), u"A"_s).ok);
 }
+
+TEST_F(FileOpsTest, PublishesAStagedAlbumIntoTheInbox)
+{
+    const QString staged = incoming + u"/album-7"_s;
+    ASSERT_TRUE(writeFile(staged + u"/01 - One.mp3"_s, "one"));
+    ASSERT_TRUE(writeFile(staged + u"/cover.jpg"_s, "cover"));
+    const auto result = ops().publishFolderIntoInbox(staged, u"Albums/Mr. Oizo - Analog Worms Attack (1999)"_s);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(readFile(inbox + u"/Albums/Mr. Oizo - Analog Worms Attack (1999)/01 - One.mp3"_s), "one");
+    EXPECT_FALSE(QFileInfo::exists(staged));
+
+    // The same name again: a number at the end, never inside the name's dots.
+    ASSERT_TRUE(writeFile(staged + u"/01 - One.mp3"_s, "again"));
+    const auto second = ops().publishFolderIntoInbox(staged, u"Albums/Mr. Oizo - Analog Worms Attack (1999)"_s);
+    ASSERT_TRUE(second.ok) << second.error.toStdString();
+    EXPECT_TRUE(second.path.endsWith(u"Albums/Mr. Oizo - Analog Worms Attack (1999) (2)"_s))
+        << second.path.toStdString();
+}
+
+TEST_F(FileOpsTest, PublishingAnAlbumAcrossVolumesCopiesAndVerifies)
+{
+    FileOps fileOps = ops();
+    fileOps.setForceCopy(true);
+    const QString staged = incoming + u"/album-8"_s;
+    ASSERT_TRUE(writeFile(staged + u"/01 - One.mp3"_s, "one"));
+    const auto result = fileOps.publishFolderIntoInbox(staged, u"Albums/Artist - Album"_s);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(readFile(inbox + u"/Albums/Artist - Album/01 - One.mp3"_s), "one");
+    EXPECT_FALSE(QFileInfo::exists(staged));
+    EXPECT_FALSE(fileOps.publishFolderIntoInbox(staged, u"../outside"_s).ok);
+}

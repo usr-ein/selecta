@@ -2,6 +2,7 @@
 #pragma once
 
 #include "core/ActivityLog.h"
+#include "core/AlbumService.h"
 #include "core/ArrivalService.h"
 #include "core/ClipPreviews.h"
 #include "core/CollectionService.h"
@@ -152,6 +153,7 @@ public:
     SearchCacheStore &searchCache() { return *m_searchCache; }
     TransferService &transfers() { return *m_transfers; }
     ArrivalService &arrival() { return *m_arrival; }
+    AlbumService &albums() { return *m_albums; }
     CollectionService &collection() { return *m_collection; }
     ShareService &shares() { return *m_shares; }
     storage::Database &database() { return *m_db; }
@@ -191,6 +193,9 @@ Q_SIGNALS:
     void ytDlpChecked(bool ok, const QString &description);
     // Release candidates for an Inbox item (findInboxReleases()), or why there are none.
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
+    // Album downloads (AlbumService's signals, forwarded).
+    void albumChanged(const selecta::core::AlbumDownload &album);
+    void superseded(const selecta::core::SupersedeReport &report);
 
 private:
     // What a preview can play from: the release (YouTube, the clip) and the peer's file.
@@ -229,6 +234,7 @@ private:
     std::unique_ptr<ManualSearchService> m_manualSearch;
     std::unique_ptr<TransferService> m_transfers;
     std::unique_ptr<ArrivalService> m_arrival;
+    std::unique_ptr<AlbumService> m_albums;
     std::unique_ptr<CollectionService> m_collection;
     std::unique_ptr<ShareService> m_shares;
     std::unique_ptr<YouTubePreviews> m_youtube;

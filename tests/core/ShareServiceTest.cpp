@@ -24,7 +24,6 @@
 
 using namespace Qt::StringLiterals;
 using namespace std::chrono_literals;
-using selecta::core::NetworkService;
 using selecta::core::ShareService;
 using selecta::slsk::RemotePath;
 using selecta::slsk::testing::FakePeer;
@@ -60,7 +59,7 @@ protected:
         writeFile(root + u"/Kel Varo/Kel Varo - Amber Engine.flac"_s, flac);
         writeFile(root + u"/Kel Varo/Kel Varo - Night Ferry.mp3"_s, synth::makeMp3(synth::sine(330.0, 1.0)));
 
-        network = std::make_unique<NetworkService>(governor, log, tokens, [] { return kNow; });
+        network = std::make_unique<selecta::core::NetworkService>(governor, log, tokens, [] { return kNow; });
         selecta::core::NetworkConfig config;
         config.host = server.address().toString();
         config.port = server.port();
@@ -114,7 +113,7 @@ protected:
     QString root;
     QByteArray flac;
     quint16 listenPort = 0;
-    std::unique_ptr<NetworkService> network;
+    std::unique_ptr<selecta::core::NetworkService> network;
     std::unique_ptr<ShareService> service;
 };
 
@@ -126,10 +125,17 @@ TEST_F(ShareServiceTest, SharesTheCollectionFoldersAndSaysSo)
     EXPECT_EQ(service->status().roots, QStringList{root});
     EXPECT_FALSE(service->status().building);
     // The server hears what we share.
-    ASSERT_TRUE(waitFor([&] {
-        const auto counts = server.receivedOf<selecta::slsk::toserver::SharedFoldersFiles>(u"selecta_test"_s);
-        return !counts.isEmpty() && counts.constLast().files == 2; // clazy:exclude=missing-typeinfo
-    }));
+    const auto told = [&] {
+        quint32 files = 0; // the latest counts
+        const QList<selecta::slsk::ToServerMessage> sent = server.received(u"selecta_test"_s);
+        for (const selecta::slsk::ToServerMessage &message : sent) {
+            if (const auto *counts = std::get_if<selecta::slsk::toserver::SharedFoldersFiles>(&message)) {
+                files = counts->files;
+            }
+        }
+        return files == 2;
+    };
+    ASSERT_TRUE(waitFor(told));
 }
 
 TEST_F(ShareServiceTest, AnswersSearchesThatReachIt)

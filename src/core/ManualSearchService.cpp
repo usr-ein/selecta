@@ -532,31 +532,74 @@ int ManualSearchService::download(qint64 id, const QList<int> &indexes)
             startDownload(result, *chosen);
             continue;
         }
-        if (!m_resolve || (result.parsed.title.value.isEmpty() && result.parsed.artist.value.isEmpty())) {
-            startDownload(result, std::nullopt);
-            continue;
-        }
         // Not the chosen release: look this file's own track up, so it's tagged from its release too (D29).
-        meta::ResolveQuery query;
-        query.artist = result.parsed.artist.value;
-        query.title = result.parsed.title.value;
-        if (result.durationSec() > 0) {
-            query.durationMs = qint64{result.durationSec()} * 1000;
-        }
-        m_resolve(query).then(this, [self = QPointer<ManualSearchService>(this),
-                                     result](const meta::Result<meta::Resolution> &resolution) {
-            if (!self) {
-                return;
-            }
-            std::optional<meta::Release> release;
-            if (resolution.ok() && !resolution.value().candidates.isEmpty() &&
-                resolution.value().confidence >= meta::Confidence::Likely) {
-                release = resolution.value().candidates.constFirst().release;
-            }
-            self->startDownload(result, release);
-        });
+        lookUpOwnRelease(
+            result, [this, result](const std::optional<meta::Release> &release) { startDownload(result, release); });
     }
     return accepted;
+}
+
+bool ManualSearchService::downloadFolder(qint64 id, int index)
+{
+    const Session *session = find(id);
+    if (!session || !m_enqueueAlbum || index < 0 || index >= session->results.size()) {
+        return false;
+    }
+    const SearchResult &result = session->results.at(index);
+    if (!result.isAudio()) {
+        return false;
+    }
+    const QString peer = result.hit.peer;
+    const qsizetype separator = result.hit.path.lastIndexOf('\\');
+    if (separator <= 0) {
+        return false;
+    }
+    const QByteArray folder = result.hit.path.left(separator);
+    const QByteArray prefix = result.hit.path.left(separator + 1);
+    // The folder's files this search found: what the album is made of if the peer doesn't list the folder.
+    QList<SearchHit> known;
+    for (const SearchResult &other : session->results) {
+        if (other.hit.peer == peer && other.hit.path.startsWith(prefix)) {
+            known.append(other.hit);
+        }
+    }
+    const meta::Release *chosen = session->search.chosenRelease();
+    if (chosen && result.fitsRelease()) {
+        return m_enqueueAlbum(peer, folder, known, *chosen);
+    }
+    lookUpOwnRelease(result, [this, peer, folder, known](const std::optional<meta::Release> &release) {
+        if (m_enqueueAlbum && !m_enqueueAlbum(peer, folder, known, release)) {
+            qCWarning(lcManualSearch) << "couldn't download the folder" << QString::fromUtf8(folder) << "from" << peer;
+        }
+    });
+    return true;
+}
+
+void ManualSearchService::lookUpOwnRelease(const SearchResult &result,
+                                           std::function<void(const std::optional<meta::Release> &release)> then)
+{
+    if (!m_resolve || (result.parsed.title.value.isEmpty() && result.parsed.artist.value.isEmpty())) {
+        then(std::nullopt);
+        return;
+    }
+    meta::ResolveQuery query;
+    query.artist = result.parsed.artist.value;
+    query.title = result.parsed.title.value;
+    if (result.durationSec() > 0) {
+        query.durationMs = qint64{result.durationSec()} * 1000;
+    }
+    m_resolve(query).then(this, [self = QPointer<ManualSearchService>(this),
+                                 then = std::move(then)](const meta::Result<meta::Resolution> &resolution) {
+        if (!self) {
+            return;
+        }
+        std::optional<meta::Release> release;
+        if (resolution.ok() && !resolution.value().candidates.isEmpty() &&
+            resolution.value().confidence >= meta::Confidence::Likely) {
+            release = resolution.value().candidates.constFirst().release;
+        }
+        then(release);
+    });
 }
 
 void ManualSearchService::startDownload(const SearchResult &result, const std::optional<meta::Release> &release)

@@ -155,6 +155,38 @@ TEST_F(InboxServiceTest, TrashesAndRecordsIt)
     EXPECT_EQ(whereabouts(), HistoryEntry::Whereabouts::Trashed);
 }
 
+TEST_F(InboxServiceTest, ATrashedItemCanBePutBack)
+{
+    const qint64 id = arrive(u"Albums/Okuma Drift - Night Signals"_s, InboxItem::Kind::Album);
+    const QSignalSpy trashed(service.get(), &InboxService::trashed);
+    service->trash({id});
+    service->waitForIdle();
+    ASSERT_EQ(trashed.size(), 1);
+    const auto item = trashed.at(0).at(0).value<selecta::core::TrashedItem>();
+    EXPECT_EQ(item.item.id, id);
+    EXPECT_EQ(item.trashedPath, dir.filePath(u"Trash/Okuma Drift - Night Signals"_s));
+    EXPECT_EQ(item.history.size(), 1);
+
+    // Undo: the folder is back under its name, listed again, and its history says so.
+    const QSignalSpy finished(service.get(), &InboxService::finished);
+    service->restore(item);
+    service->waitForIdle();
+    ASSERT_EQ(finished.size(), 1);
+    EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
+    EXPECT_TRUE(QFileInfo::exists(config.inboxRoot + u"/Albums/Okuma Drift - Night Signals/01 - One.mp3"_s));
+    ASSERT_EQ(inbox.count(), 1);
+    const qint64 restored = finished.at(0).at(0).toLongLong();
+    EXPECT_EQ(inbox.find(restored)->relativePath, u"Albums/Okuma Drift - Night Signals"_s);
+    EXPECT_EQ(whereabouts(), HistoryEntry::Whereabouts::Inbox);
+    EXPECT_EQ(history.recent(1).constFirst().inboxItem, restored);
+
+    // Once it's gone from the Trash, there's nothing to put back.
+    service->restore(item);
+    service->waitForIdle();
+    EXPECT_EQ(finished.size(), 2);
+    EXPECT_FALSE(finished.at(1).at(1).toBool());
+}
+
 TEST_F(InboxServiceTest, ABusyItemIsNotStartedTwice)
 {
     const qint64 id = arrive(u"Singles/Song.mp3"_s);

@@ -54,6 +54,11 @@ public:
     // changed, or -1 on failure.
     int setWhereaboutsForInboxItem(qint64 inboxItem, HistoryEntry::Whereabouts whereabouts,
                                    const QString &filedPath = {});
+    // The entries that arrived as this Inbox item.
+    QList<qint64> idsForInboxItem(qint64 inboxItem);
+    // These entries are in the Inbox again, as `inboxItem` (an Undo of a move to the Trash). Returns how many changed,
+    // or -1 on failure.
+    int returnToInbox(const QList<qint64> &ids, qint64 inboxItem);
 
     std::optional<HistoryEntry> find(qint64 id);
     // A session's downloads, oldest first.

@@ -5,6 +5,7 @@
 #include "core/Engine.h"
 
 #include <QHash>
+#include <QMap>
 #include <QObject>
 #include <QPointer>
 #include <QThread>
@@ -89,6 +90,8 @@ public:
     void refreshSearch(qint64 searchId);
     void widenSearch(qint64 searchId);
     void downloadResults(qint64 searchId, const QList<int> &indexes);
+    // Downloads the remote folder of this result whole, as one Inbox album (DL-1, DL-12).
+    void downloadFolder(qint64 searchId, int index);
     void previewResult(qint64 searchId, int index, PreviewSource source = PreviewSource::Automatic);
     // Open searches and their results, as last reported.
     QList<ManualSearch> searches() const { return m_searches; }
@@ -98,6 +101,13 @@ public:
     // --- the collection ---
     void scanCollection();
     CollectionStatus collectionStatus() const { return m_collectionStatus; }
+    // --- album downloads (DL-1, DL-3, DL-7, DL-8) ---
+    void cancelAlbum(qint64 albumId);
+    // Puts back the Inbox singles an album sent to the Trash.
+    void undoSupersede(qint64 albumId);
+    // Album downloads of this run, and unfinished ones, as last reported.
+    QList<AlbumDownload> albums() const { return m_albums.values(); }
+
     // --- sharing (SHARE-1…5, FAIR-3) ---
     ShareStatus shareStatus() const { return m_shareStatus; }
     QList<UploadEntry> uploads() const { return m_uploads; }
@@ -152,6 +162,8 @@ Q_SIGNALS:
     void searchResultsAdded(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsReset(qint64 searchId, const QList<selecta::core::SearchResult> &results);
     void searchResultsChanged(qint64 searchId, const QList<selecta::core::SearchResult> &results);
+    void albumChanged(const selecta::core::AlbumDownload &album);
+    void superseded(const selecta::core::SupersedeReport &report);
 
 private:
     EngineOptions m_options;
@@ -166,7 +178,8 @@ private:
     CollectionStatus m_collectionStatus;
     ShareStatus m_shareStatus;
     QList<UploadEntry> m_uploads;
-    QList<ManualSearch> m_searches; // in opening order
+    QMap<qint64, AlbumDownload> m_albums; // by id: oldest first
+    QList<ManualSearch> m_searches;       // in opening order
     QHash<qint64, QList<SearchResult>> m_searchResults;
     quint64 m_nextSearchRequest = 1;
 };

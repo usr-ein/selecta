@@ -18,7 +18,7 @@ constexpr std::array kStates{State::Waiting, State::Queued, State::Transferring,
                              State::Arrived, State::Failed, State::Cancelled};
 
 const QString kColumns = u"id, peer, remote_path, size, file_json, release_json, get_line, state, message, attempts, "
-                         "retry_at, received, local_path, inbox_item, created_at, updated_at"_s;
+                         "retry_at, received, local_path, inbox_item, created_at, updated_at, album"_s;
 
 State stateFrom(const QString &name)
 {
@@ -48,7 +48,7 @@ void bindOptionalText(Statement &statement, int index, const QByteArray &text)
     }
 }
 
-// Binds every column but id, from parameter 1 (peer) to 15 (updated_at).
+// Binds every column but id, from parameter 1 (peer) to 16 (album).
 void bindDownload(Statement &statement, const Download &download)
 {
     statement.bind(1, download.peer).bind(2, download.remotePath).bind(3, download.size);
@@ -60,6 +60,7 @@ void bindDownload(Statement &statement, const Download &download)
     statement.bind(11, download.received).bind(12, download.localPath);
     bindOptional(statement, 13, download.inboxItem);
     statement.bind(14, download.createdAt).bind(15, download.updatedAt);
+    bindOptional(statement, 16, download.album);
 }
 
 std::optional<qint64> optionalInt(const Statement &row, int column)
@@ -86,6 +87,7 @@ Download readDownload(const Statement &row)
     download.inboxItem = optionalInt(row, 13);
     download.createdAt = row.int64(14);
     download.updatedAt = row.int64(15);
+    download.album = optionalInt(row, 16);
     return download;
 }
 
@@ -123,8 +125,8 @@ std::optional<qint64> DownloadStore::add(const Download &download)
 {
     Statement insert = m_db.prepare(
         u"INSERT INTO downloads (peer, remote_path, size, file_json, release_json, get_line, state, message, attempts, "
-        "retry_at, received, local_path, inbox_item, created_at, updated_at) "
-        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15);");
+        "retry_at, received, local_path, inbox_item, created_at, updated_at, album) "
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16);");
     if (!insert.isValid()) {
         return std::nullopt;
     }
@@ -140,12 +142,12 @@ bool DownloadStore::update(const Download &download)
     Statement update = m_db.prepare(
         u"UPDATE downloads SET peer = ?1, remote_path = ?2, size = ?3, file_json = ?4, release_json = ?5, "
         "get_line = ?6, state = ?7, message = ?8, attempts = ?9, retry_at = ?10, received = ?11, local_path = ?12, "
-        "inbox_item = ?13, created_at = ?14, updated_at = ?15 WHERE id = ?16;");
+        "inbox_item = ?13, created_at = ?14, updated_at = ?15, album = ?16 WHERE id = ?17;");
     if (!update.isValid()) {
         return false;
     }
     bindDownload(update, download);
-    update.bind(16, download.id);
+    update.bind(17, download.id);
     return update.run() && m_db.changes() == 1;
 }
 
@@ -186,6 +188,20 @@ QList<Download> DownloadStore::forLine(qint64 lineId)
         m_db.prepare(u"SELECT %1 FROM downloads WHERE get_line = ?1 ORDER BY created_at, id;"_s.arg(kColumns));
     if (query.isValid()) {
         query.bind(1, lineId);
+        while (query.step() == Statement::Step::Row) {
+            downloads.append(readDownload(query));
+        }
+    }
+    return downloads;
+}
+
+QList<Download> DownloadStore::forAlbum(qint64 albumId)
+{
+    QList<Download> downloads;
+    Statement query =
+        m_db.prepare(u"SELECT %1 FROM downloads WHERE album = ?1 ORDER BY created_at, id;"_s.arg(kColumns));
+    if (query.isValid()) {
+        query.bind(1, albumId);
         while (query.step() == Statement::Step::Row) {
             downloads.append(readDownload(query));
         }

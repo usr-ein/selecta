@@ -38,6 +38,7 @@ struct Download
     std::optional<FileChoice> file;       // the facts the file was chosen on: quality, length
     std::optional<meta::Release> release; // what to tag it from
     std::optional<qint64> getLine;        // the Get tracks line it is for
+    std::optional<qint64> album;          // the album download it is part of (its files arrive together)
     State state = State::Waiting;
     QString message; // what is happening or what went wrong, in words
     int attempts = 0;
@@ -76,6 +77,8 @@ public:
     QList<Download> unfinished();
     // A Get tracks line's downloads, oldest first.
     QList<Download> forLine(qint64 lineId);
+    // An album download's files, oldest first.
+    QList<Download> forAlbum(qint64 albumId);
     // Forgets finished downloads last changed before `beforeMs` (they live on in the history). Returns how many went,
     // or -1 on failure.
     int pruneFinished(qint64 beforeMs);

@@ -204,6 +204,24 @@ constexpr std::array kMigrations{
         ) STRICT;
         CREATE INDEX uploads_ended ON uploads (ended_ms);
     )sql"},
+    // Album downloads (PRD DL-1, DL-3, DL-12): a remote folder downloaded whole, its files arriving together as one
+    // Inbox album.
+    Migration{8, R"sql(
+        CREATE TABLE album_downloads (
+            id           INTEGER PRIMARY KEY,
+            peer         TEXT NOT NULL,
+            folder       BLOB NOT NULL,             -- the remote folder, as the peer spells it
+            release_json TEXT,                      -- a release on the album: its album finds the track list
+            state        TEXT NOT NULL CHECK (state IN ('listing', 'downloading', 'converting', 'arrived', 'partial',
+                                                        'failed', 'cancelled')),
+            message      TEXT NOT NULL DEFAULT '',
+            inbox_item   INTEGER REFERENCES inbox_items(id) ON DELETE SET NULL,
+            created_at   INTEGER NOT NULL,          -- Unix time, ms
+            updated_at   INTEGER NOT NULL
+        ) STRICT;
+        ALTER TABLE downloads ADD COLUMN album INTEGER REFERENCES album_downloads(id) ON DELETE SET NULL;
+        CREATE INDEX downloads_by_album ON downloads(album);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

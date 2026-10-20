@@ -63,6 +63,8 @@ if(SELECTA_WITH_MEDIA)
     selecta_add_test_suite(selecta_core_tests
         SOURCES
             core/ActivityLogTest.cpp
+            core/AlbumArrivalTest.cpp
+            core/AlbumServiceTest.cpp
             core/ArrivalServiceTest.cpp
             core/CollectionServiceTest.cpp
             core/DownloadsTest.cpp

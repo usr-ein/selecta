@@ -349,6 +349,50 @@ FileResult FileOps::trashFromInbox(const QString &path) const
     return FileResult::success(trashed);
 }
 
+FileResult FileOps::publishFolderIntoInbox(const QString &sourceFolder, const QString &relativeFolder) const
+{
+    if (relativeFolder.isEmpty() || QDir::isAbsolutePath(relativeFolder)) {
+        return FileResult::failure(u"the Inbox path must be relative: %1"_s.arg(relativeFolder));
+    }
+    const QString target = QDir::cleanPath(m_inboxRoot + u'/' + relativeFolder);
+    if (!isInside(target, m_inboxRoot) || target == QDir::cleanPath(m_inboxRoot)) {
+        return FileResult::failure(u"refusing to write outside the Inbox: %1"_s.arg(relativeFolder));
+    }
+    const QFileInfo source(sourceFolder);
+    if (!source.isDir() || source.isSymLink()) {
+        return FileResult::failure(u"nothing to publish at %1"_s.arg(sourceFolder));
+    }
+    if (!QDir().mkpath(QFileInfo(target).absolutePath())) {
+        return FileResult::failure(u"can't create the folder for %1"_s.arg(target));
+    }
+    for (int n = 1; n <= kMaxNameVariants; ++n) {
+        // Folder names may hold dots ("Mr. Oizo - Analog Worms Attack"): the number goes at the end.
+        const QString candidate = n == 1 ? target : u"%1 (%2)"_s.arg(target).arg(n);
+        if (QFileInfo::exists(candidate)) {
+            continue;
+        }
+        if (!m_forceCopy) {
+            const int code = renameExclusive(sourceFolder, candidate);
+            if (code == 0) {
+                return FileResult::success(candidate);
+            }
+            if (code == EEXIST) {
+                continue; // appeared meanwhile
+            }
+            if (code != EXDEV) {
+                return FileResult::failure(
+                    u"can't move %1 to %2: %3"_s.arg(sourceFolder, candidate, describeErrno(code)));
+            }
+        }
+        FileResult copied = copyFolderVerified(sourceFolder, candidate);
+        if (copied.ok) {
+            QDir(sourceFolder).removeRecursively();
+        }
+        return copied;
+    }
+    return FileResult::failure(u"too many folders named like %1 in the Inbox"_s.arg(target));
+}
+
 FileResult FileOps::replaceInInbox(const QString &newFile, const QString &inboxFile) const
 {
     if (!isInside(newFile, m_inboxRoot) || !isInside(inboxFile, m_inboxRoot)) {

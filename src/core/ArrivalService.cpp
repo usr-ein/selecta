@@ -7,6 +7,7 @@
 #include "convert/TagReader.h"
 #include "convert/Transcoder.h"
 #include "core/ActivityLog.h"
+#include "core/InboxConversion.h"
 #include "core/InboxService.h"
 #include "core/MetaServices.h"
 #include "core/ReleaseJson.h"
@@ -41,23 +42,6 @@ QString numberOfTotal(std::optional<int> number, std::optional<int> total)
         return {};
     }
     return total && *total >= *number ? u"%1/%2"_s.arg(*number).arg(*total) : QString::number(*number);
-}
-
-// "FLAC 16/44.1", "MP3 320", "MP3 VBR 245".
-QString qualityText(const convert::SourceQuality &quality)
-{
-    QString codec = audio::codecName(quality.codec);
-    if (quality.codec == audio::Codec::Pcm) {
-        codec = audio::containerName(quality.container); // "WAV", "AIFF"
-    }
-    if (quality.lossless && quality.bitDepth > 0 && quality.sampleRate > 0) {
-        return u"%1 %2/%3"_s.arg(codec).arg(quality.bitDepth).arg(quality.sampleRate / 1000.0, 0, 'g', 3);
-    }
-    if (quality.bitrateKbps > 0) {
-        return quality.constantBitrate ? u"%1 %2"_s.arg(codec).arg(quality.bitrateKbps)
-                                       : u"%1 VBR %2"_s.arg(codec).arg(quality.bitrateKbps);
-    }
-    return codec;
 }
 
 } // namespace
@@ -312,12 +296,9 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
         return outcome;
     }
     const convert::SourceQuality quality = probed.takeValue();
-    outcome.sourceQuality = qualityText(quality);
-    const convert::EncodeSettings target; // the Inbox format: MP3 320 CBR
-    const convert::Advice advice = convert::advise(quality, target, convert::AdviceContext::Filing);
-    convert::EncodeSettings settings = target;
-    if (advice.action != convert::Action::Convert) {
-        settings.format = convert::OutputFormat::KeepAudio;
+    outcome.sourceQuality = sourceQualityText(quality);
+    const InboxFormat format = inboxFormatFor(quality, QFileInfo(source).suffix());
+    if (format.kept) {
         outcome.warning = tr("Kept as %1: converting it to MP3 320 can't improve it.").arg(outcome.sourceQuality);
     }
 
@@ -329,27 +310,15 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     if (job.release) {
         tags.overrideFrom(tagsFromRelease(*job.release));
     }
-    QByteArray cover = job.cover;
-    Provenance coverProvenance = Provenance::Release;
-    if (const std::optional<convert::Picture> embedded = tags.frontCover(); cover.isEmpty() && embedded) {
-        cover = embedded->data;
-        coverProvenance = Provenance::Embedded;
-    }
-    tags.clearPictures();
-    if (!cover.isEmpty()) {
-        if (convert::Result<convert::ProcessedArtwork> artwork = convert::processArtwork(cover); artwork) {
-            tags.setFrontCover(artwork.value().toPicture(coverProvenance));
-        } else {
-            qCInfo(lcArrival).noquote() << "cover not used:" << artwork.error().message;
-        }
+    QString coverProblem;
+    attachCover(tags, job.cover, &coverProblem);
+    if (!coverProblem.isEmpty()) {
+        qCInfo(lcArrival).noquote() << "cover not used:" << coverProblem;
     }
 
     // The name it will have in the Inbox (DL-13).
-    const QString extension = settings.format == convert::OutputFormat::KeepAudio
-                                  ? QFileInfo(source).suffix().toLower()
-                                  : convert::fileExtension(settings.format);
     const QString name = library::naming::componentName(job.library.templates.single, namingFieldsOf(tags),
-                                                        job.library.cleaner, extension);
+                                                        job.library.cleaner, format.extension);
     cleanUp();
     if (!QDir().mkpath(stagingFolder)) {
         outcome.error = tr("Selecta can't write to %1.").arg(QDir::toNativeSeparators(stagingFolder));
@@ -358,16 +327,8 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     const QString staged = QDir(stagingFolder).filePath(name);
 
     // Convert (or copy) and verify.
-    convert::TranscodeRequest request;
-    request.sourcePath = source;
-    request.outputPath = staged;
-    request.settings = settings;
-    request.tags = tags;
-    request.policy.encodedBy = job.encodedBy;
-    if (settings.format == convert::OutputFormat::Mp3) {
-        request.policy.encoderSettings = convert::lameSettingsString(settings.mp3);
-    }
-    const convert::Result<convert::TranscodeReport> report = convert::transcode(request, &job.cancel);
+    const convert::Result<convert::TranscodeReport> report =
+        writeInboxFile(source, staged, format, tags, job.encodedBy, &job.cancel);
     if (!report || job.cancel.isCancelled()) {
         cleanUp();
         outcome.cancelled = job.cancel.isCancelled();
@@ -386,7 +347,7 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     }
 
     // The original: a converted lossless file goes to the Trash (D11); anything else was copied, so it can go.
-    if (quality.lossless && settings.format != convert::OutputFormat::KeepAudio) {
+    if (quality.lossless && !format.kept) {
         QString trashed;
         if (!job.trash(source, &trashed)) {
             outcome.warning = tr("The original FLAC couldn't be moved to the Trash; it is still in %1.")
@@ -415,16 +376,8 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     }
     const double seconds = done.source.durationSeconds();
     item.durationMs = seconds > 0 ? static_cast<qint64>(seconds * 1000.0) : 0;
-    if (settings.format == convert::OutputFormat::KeepAudio) {
-        item.format = audio::codecName(quality.codec) == u"PCM"_s ? audio::containerName(quality.container)
-                                                                  : audio::codecName(quality.codec);
-        if (!quality.lossless && quality.bitrateKbps > 0) {
-            item.bitrate = quality.bitrateKbps;
-        }
-    } else {
-        item.format = u"MP3"_s;
-        item.bitrate = settings.mp3.bitrateKbps;
-    }
+    item.format = format.format;
+    item.bitrate = format.bitrate;
     item.sizeBytes = QFileInfo(published.path).size();
     item.sourceFormat = outcome.sourceQuality;
     item.tagSource = tagSourceOf(job.release);

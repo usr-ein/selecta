@@ -171,6 +171,38 @@ int HistoryStore::setWhereaboutsForInboxItem(qint64 inboxItem, Whereabouts where
     return update.bind(3, inboxItem).run() ? m_db.changes() : -1;
 }
 
+QList<qint64> HistoryStore::idsForInboxItem(qint64 inboxItem)
+{
+    QList<qint64> ids;
+    Statement query = m_db.prepare(u"SELECT id FROM history WHERE inbox_item = ?1 ORDER BY id;"_s);
+    if (query.isValid()) {
+        query.bind(1, inboxItem);
+        while (query.step() == Statement::Step::Row) {
+            ids.append(query.int64(0));
+        }
+    }
+    return ids;
+}
+
+int HistoryStore::returnToInbox(const QList<qint64> &ids, qint64 inboxItem)
+{
+    Statement update =
+        m_db.prepare(u"UPDATE history SET whereabouts = ?1, filed_path = NULL, inbox_item = ?2 WHERE id = ?3;"_s);
+    if (!update.isValid()) {
+        return -1;
+    }
+    int changed = 0;
+    for (const qint64 id : ids) {
+        update.reset();
+        update.bind(1, whereaboutsName(Whereabouts::Inbox)).bind(2, inboxItem).bind(3, id);
+        if (!update.run()) {
+            return -1;
+        }
+        changed += m_db.changes();
+    }
+    return changed;
+}
+
 std::optional<HistoryEntry> HistoryStore::find(qint64 id)
 {
     Statement query = m_db.prepare(u"SELECT %1 FROM history WHERE id = ?1;"_s.arg(kColumns));

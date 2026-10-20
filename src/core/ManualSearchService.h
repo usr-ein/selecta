@@ -80,6 +80,11 @@ public:
     using Annotate = std::function<void(QList<SearchResult> &results)>;
     // Queues a download (the TransferService in the app); false when it couldn't.
     using Enqueue = std::function<bool(const DownloadSpec &spec)>;
+    // Downloads a peer's folder whole as an album (the AlbumService in the app): the folder's files the search found,
+    // and a track of the album to tag from. False when it couldn't.
+    using EnqueueAlbum =
+        std::function<bool(const QString &peer, const QByteArray &folder, const QList<SearchHit> &known,
+                           const std::optional<meta::Release> &release)>;
 
     static constexpr int kMaxOpen = 20;
     // How long a search waits for its release before it is sent as typed (the release still ranks the results).
@@ -96,6 +101,7 @@ public:
     void setResolver(ResolveFunction resolve) { m_resolve = std::move(resolve); }
     void setExcludedPhrases(std::function<QStringList()> phrases) { m_excludedPhrases = std::move(phrases); }
     void setDownloads(Enqueue enqueue) { m_enqueue = std::move(enqueue); }
+    void setAlbumDownloads(EnqueueAlbum enqueue) { m_enqueueAlbum = std::move(enqueue); }
     // How long a search waits for its release before it goes as typed (tests shorten it).
     void setLookupWait(std::chrono::milliseconds wait) { m_lookupWait = wait; }
     void setAnnotate(Annotate annotate) { m_annotate = std::move(annotate); }
@@ -118,6 +124,10 @@ public:
     // Downloads these results into the Inbox (DL-3): a result that fits the chosen release is tagged from it; any other
     // is looked up on its own first. Returns how many were accepted.
     int download(qint64 id, const QList<int> &indexes);
+    // Downloads the whole remote folder of this result as one Inbox album (DL-1, DL-12), tagged from the chosen
+    // release when the result fits it, else from the result's own track, looked up first. False when the result isn't
+    // there or isn't audio.
+    bool downloadFolder(qint64 id, int index);
 
     QList<ManualSearch> searches() const;
     std::optional<ManualSearch> search(qint64 id) const;
@@ -183,11 +193,15 @@ private:
     std::optional<match::ReleaseReference> reference(const Session &session) const;
     QStringList excludedPhrases() const;
     void startDownload(const SearchResult &result, const std::optional<meta::Release> &release);
+    // A result's own track, looked up (D29): `then` gets the release, or nothing when it isn't known well enough.
+    void lookUpOwnRelease(const SearchResult &result,
+                          std::function<void(const std::optional<meta::Release> &release)> then);
 
     SearchService &m_search;
     ResolveFunction m_resolve;
     std::function<QStringList()> m_excludedPhrases;
     Enqueue m_enqueue;
+    EnqueueAlbum m_enqueueAlbum;
     Annotate m_annotate;
     std::chrono::milliseconds m_lookupWait = kLookupWait;
     std::shared_ptr<const match::MatchIndex> m_index;

@@ -156,7 +156,25 @@ bool Engine::start()
     m_arrival = std::make_unique<ArrivalService>(*m_db, *m_inbox, *m_activity, m_options.trash,
                                                  std::move(arrivalOptions), m_options.wallClock);
     m_arrival->setMeta(m_meta.get());
-    connect(m_transfers.get(), &TransferService::completed, m_arrival.get(), &ArrivalService::start);
+    AlbumService::Options albumOptions;
+    albumOptions.stagingDir = m_options.stagingDir;
+    albumOptions.encodedBy = u"Selecta "_s + QString(base::kVersion);
+    albumOptions.session = m_options.session;
+    m_albums = std::make_unique<AlbumService>(*m_db, *m_governor, *m_network, *m_transfers, *m_inbox, *m_activity,
+                                              m_options.trash, std::move(albumOptions), m_options.wallClock);
+    m_albums->setMeta(m_meta.get());
+    // A file of an album waits for the album's other files; any other file arrives on its own.
+    connect(m_transfers.get(), &TransferService::completed, this, [this](const Download &download) {
+        if (download.album && m_albums) {
+            m_albums->fileCompleted(download);
+        } else if (!download.album && m_arrival) {
+            m_arrival->start(download);
+        }
+    });
+    connect(m_transfers.get(), &TransferService::changed, m_albums.get(), &AlbumService::downloadChanged);
+    connect(m_inbox.get(), &InboxService::trashed, m_albums.get(), &AlbumService::inboxItemTrashed);
+    connect(m_albums.get(), &AlbumService::albumChanged, this, &Engine::albumChanged);
+    connect(m_albums.get(), &AlbumService::superseded, this, &Engine::superseded);
     connect(m_transfers.get(), &TransferService::changed, m_arrival.get(),
             [arrival = m_arrival.get()](const Download &d) {
                 if (d.state == Download::State::Cancelled) {
@@ -180,6 +198,11 @@ bool Engine::start()
     m_manualSearch->setExcludedPhrases([this] { return m_governor->excludedPhrases(); });
     m_manualSearch->setDownloads(
         [transfers = m_transfers.get()](const DownloadSpec &spec) { return transfers->enqueue(spec).has_value(); });
+    m_manualSearch->setAlbumDownloads([albums = m_albums.get()](const QString &peer, const QByteArray &folder,
+                                                                const QList<SearchHit> &known,
+                                                                const std::optional<meta::Release> &release) {
+        return albums->download(peer, folder, known, release).has_value();
+    });
     m_manualSearch->setAnnotate([this](QList<SearchResult> &results) { annotate(results); });
     connect(m_manualSearch.get(), &ManualSearchService::searchChanged, this, &Engine::manualSearchChanged);
     connect(m_manualSearch.get(), &ManualSearchService::searchClosed, this, &Engine::manualSearchClosed);
@@ -224,6 +247,12 @@ bool Engine::start()
                     m_collection->setHistory(library::HistoryStore(*m_db).downloads());
                 }
             });
+    connect(m_albums.get(), &AlbumService::albumChanged, this, [this](const AlbumDownload &album) {
+        if (album.state == AlbumDownload::State::Arrived || album.state == AlbumDownload::State::Partial) {
+            m_shares->refreshTotals();
+            m_collection->setHistory(library::HistoryStore(*m_db).downloads());
+        }
+    });
     connect(m_transfers.get(), &TransferService::changed, m_getTracks.get(), &GetTracksService::downloadChanged);
     connect(m_transfers.get(), &TransferService::progress, m_getTracks.get(), &GetTracksService::downloadProgress);
     connect(m_transfers.get(), &TransferService::previewChanged, this, &Engine::previewChanged);
@@ -257,6 +286,7 @@ bool Engine::start()
     }
     m_network->start(m_options.network);
     m_transfers->load();
+    m_albums->restore();
     m_getTracks->downloadsRestored(m_transfers->unfinished());
     Q_EMIT getLinesReset(m_getTracks->lines());
     qCInfo(lcEngine) << "engine started";
@@ -277,6 +307,7 @@ void Engine::stop()
     m_getTracks.reset();
     m_shares.reset();     // stops uploads under way (their downloaders queue again later)
     m_collection.reset(); // cancels a scan in flight; what it read is read again next time
+    m_albums.reset();     // cancels albums being made (they are made again at the next launch)
     m_arrival.reset();    // cancels conversions in flight (they run again at the next launch) and records finished ones
     m_search.reset();
     m_searchCache.reset();

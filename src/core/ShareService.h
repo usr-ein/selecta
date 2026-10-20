@@ -207,8 +207,8 @@ private:
     ShareStatus m_status;
     Shares m_shares{*this};
     Info m_info{*this};
-    QTimer *m_rebuildTimer;
-    QTimer *m_tick; // tries the queue again now and then, and keeps the totals fresh
+    QTimer *m_rebuildTimer = nullptr;
+    QTimer *m_tick = nullptr; // tries the queue again now and then, and keeps the totals fresh
     QThreadPool m_pool;
     std::shared_ptr<audio::CancellationFlag> m_cancel; // the build in flight
     quint64 m_generation = 0;

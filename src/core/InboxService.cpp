@@ -69,6 +69,7 @@ InboxService::InboxService(storage::Database &db, LibraryConfig config, library:
     , m_history(db)
 {
     qRegisterMetaType<InboxEntry>();
+    qRegisterMetaType<TrashedItem>();
     m_pool.setMaxThreadCount(kFileWorkers);
     m_pool.setObjectName(u"selecta-files"_s);
     rebuildFileOps();
@@ -185,6 +186,54 @@ void InboxService::trash(const QList<qint64> &ids)
     publish();
 }
 
+void InboxService::restore(const TrashedItem &trashed)
+{
+    if (trashed.trashedPath.isEmpty() || !QFileInfo::exists(trashed.trashedPath)) {
+        Q_EMIT finished(trashed.item.id, false,
+                        tr("%1 is no longer in the Trash.").arg(QFileInfo(trashed.item.relativePath).fileName()));
+        return;
+    }
+    const bool album = trashed.item.kind == InboxItem::Kind::Album;
+    m_pool.start([this, trashed, album, ops = m_fileOps] {
+        post(Outcome{.id = trashed.item.id,
+                     .work = Work::Restore,
+                     .result = album ? ops->publishFolderIntoInbox(trashed.trashedPath, trashed.item.relativePath)
+                                     : ops->publishIntoInbox(trashed.trashedPath, trashed.item.relativePath),
+                     .retag = {},
+                     .tagSource = {},
+                     .releaseJson = {},
+                     .restored = trashed});
+    });
+}
+
+void InboxService::restored(const Outcome &outcome)
+{
+    const QString name = QFileInfo(outcome.restored.item.relativePath).fileName();
+    if (!outcome.result.ok) {
+        qCWarning(lcInbox).noquote() << "couldn't put" << name << "back:" << outcome.result.error;
+        Q_EMIT finished(outcome.id, false, outcome.result.error);
+        return;
+    }
+    InboxItem item = outcome.restored.item;
+    const QString inboxRoot = QFileInfo(m_config.inboxRoot).canonicalFilePath();
+    item.relativePath = QDir(inboxRoot.isEmpty() ? m_config.inboxRoot : inboxRoot)
+                            .relativeFilePath(QFileInfo(outcome.result.path).canonicalFilePath());
+    item.id = 0;
+    const std::optional<qint64> id = m_inbox.add(item);
+    if (!id) {
+        // The file is back; the next reconcile() can't know it, but the user sees it in the Inbox folder.
+        qCWarning(lcInbox) << "put" << item.relativePath << "back but couldn't record it:" << m_db.lastError();
+        Q_EMIT finished(outcome.id, false,
+                        tr("%1 is back in your Inbox folder, but Selecta couldn't list it.").arg(name));
+        return;
+    }
+    if (m_history.returnToInbox(outcome.restored.history, *id) < 0) {
+        qCWarning(lcInbox) << "couldn't update the history of" << item.relativePath << ':' << m_db.lastError();
+    }
+    qCInfo(lcInbox).noquote() << "put back" << item.relativePath << "from the Trash";
+    Q_EMIT finished(*id, true, tr("%1 is back in your Inbox").arg(name));
+}
+
 void InboxService::retag(qint64 id, const convert::MetadataModel &changes, const QStringList &cleared,
                          const QString &tagSource, const QString &releaseJson)
 {
@@ -214,7 +263,8 @@ void InboxService::retag(qint64 id, const convert::MetadataModel &changes, const
                      .result = {},
                      .retag = retagInboxFile(request, *ops),
                      .tagSource = tagSource,
-                     .releaseJson = releaseJson});
+                     .releaseJson = releaseJson,
+                     .restored = {}});
     });
     publish();
 }
@@ -223,7 +273,8 @@ void InboxService::start(qint64 id, Work work, std::function<FileResult()> job)
 {
     m_busy.insert(id);
     m_pool.start([this, id, work, job = std::move(job)] {
-        post(Outcome{.id = id, .work = work, .result = job(), .retag = {}, .tagSource = {}, .releaseJson = {}});
+        post(Outcome{
+            .id = id, .work = work, .result = job(), .retag = {}, .tagSource = {}, .releaseJson = {}, .restored = {}});
     });
 }
 
@@ -288,6 +339,10 @@ void InboxService::drain()
             retagged(outcome);
             continue;
         }
+        if (outcome.work == Work::Restore) {
+            restored(outcome);
+            continue;
+        }
         const auto item = m_inbox.find(outcome.id);
         const QString name = item ? item->relativePath : QString::number(outcome.id);
         if (!outcome.result.ok) {
@@ -297,6 +352,7 @@ void InboxService::drain()
             continue;
         }
         const bool filed = outcome.work == Work::File;
+        const QList<qint64> history = filed ? QList<qint64>() : m_history.idsForInboxItem(outcome.id);
         const int recorded = m_history.setWhereaboutsForInboxItem(
             outcome.id, filed ? Whereabouts::Filed : Whereabouts::Trashed, filed ? outcome.result.path : QString());
         if (recorded < 0 || !m_inbox.remove(outcome.id)) {
@@ -306,6 +362,9 @@ void InboxService::drain()
         qCInfo(lcInbox).noquote() << (filed ? "filed" : "trashed") << name << "→" << outcome.result.path;
         Q_EMIT finished(outcome.id, true,
                         filed ? tr("Filed to %1").arg(outcome.result.path) : tr("Moved %1 to the Trash").arg(name));
+        if (!filed && item) {
+            Q_EMIT trashed(TrashedItem{.item = *item, .trashedPath = outcome.result.path, .history = history});
+        }
     }
     publish();
 }

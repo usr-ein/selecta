@@ -40,6 +40,7 @@ struct DownloadSpec
     std::optional<FileChoice> file;
     std::optional<meta::Release> release;
     std::optional<qint64> getLine;
+    std::optional<qint64> album; // part of an album download: it arrives with the album's other files
 };
 
 // A preview (PRD PREV-1, PREV-6, PREV-7): a file downloaded like any other, but into the preview cache, readable while

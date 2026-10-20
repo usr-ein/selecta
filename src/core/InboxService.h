@@ -48,6 +48,14 @@ struct InboxEntry
     bool busy = false; // being filed or trashed right now
 };
 
+// An Inbox item Selecta moved to the Trash, with what it takes to put it back (Undo).
+struct TrashedItem
+{
+    library::InboxItem item;
+    QString trashedPath;   // where it is in the Trash
+    QList<qint64> history; // its history entries
+};
+
 // The Inbox (PRD DL-3 to DL-9) on the engine thread: lists what's waiting, files items into the collection and moves
 // them to the Trash. File work runs on a small pool of its own (copies across volumes can take minutes); each result
 // comes back to this thread, which then updates the Inbox and the history. Items Selecta didn't put in the Inbox are
@@ -78,8 +86,11 @@ public:
     // Files these items into the first collection folder: singles into the Singles folder, albums into the Albums
     // folder, keeping the names they got on arrival. Busy, unknown or still-processing items are skipped.
     void file(const QList<qint64> &ids);
-    // Moves these items to the macOS Trash.
+    // Moves these items to the macOS Trash. trashed() reports each one that went.
     void trash(const QList<qint64> &ids);
+    // Puts an item trashed() reported back into the Inbox (Undo), under its old name when it's free. finished()
+    // reports the outcome, with the item's new id.
+    void restore(const selecta::core::TrashedItem &trashed);
     // New tags for a single (DL-4, META-4): `changes` written over its own tags (a front cover in them replaces the
     // embedded one), `cleared` fields removed, then the file is renamed after its new artist and title. `tagSource`
     // and `releaseJson`, when given, say where the tags came from now. finished() reports the outcome.
@@ -97,9 +108,11 @@ Q_SIGNALS:
     void changed(const QList<selecta::core::InboxEntry> &entries);
     // One item's filing or trashing ended. `message` says where it went, or why it didn't.
     void finished(qint64 id, bool ok, const QString &message);
+    // An item went to the Trash.
+    void trashed(const selecta::core::TrashedItem &trashed);
 
 private:
-    enum class Work { File, Trash, Retag };
+    enum class Work { File, Trash, Retag, Restore };
     struct Outcome
     {
         qint64 id = 0;
@@ -108,12 +121,14 @@ private:
         RetagResult retag; // Work::Retag
         QString tagSource;
         QString releaseJson;
+        TrashedItem restored; // Work::Restore
     };
 
     void start(qint64 id, Work work, std::function<library::FileResult()> job);
     void post(Outcome outcome);
     void drain();
     void retagged(const Outcome &outcome);
+    void restored(const Outcome &outcome);
     void publish();
     void rebuildFileOps();
 
@@ -132,3 +147,4 @@ private:
 } // namespace selecta::core
 
 Q_DECLARE_METATYPE(selecta::core::InboxEntry)
+Q_DECLARE_METATYPE(selecta::core::TrashedItem)

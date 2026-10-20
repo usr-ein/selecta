@@ -2,6 +2,9 @@
 # core/: services on the engine thread; wires the governor, storage and the libraries together (head implementer).
 qt_add_library(selecta_core STATIC
     ActivityLog.h ActivityLog.cpp
+    AlbumArrival.h AlbumArrival.cpp
+    AlbumService.h AlbumService.cpp
+    Albums.h Albums.cpp
     ArrivalService.h ArrivalService.cpp
     ClipPreviews.h ClipPreviews.cpp
     CollectionService.h CollectionService.cpp
@@ -14,6 +17,7 @@ qt_add_library(selecta_core STATIC
     GetTracksService.h GetTracksService.cpp
     GovernorPacer.h GovernorPacer.cpp
     GovernorStore.h GovernorStore.cpp
+    InboxConversion.h InboxConversion.cpp
     InboxRetag.h InboxRetag.cpp
     InboxService.h InboxService.cpp
     ManualSearchService.h ManualSearchService.cpp

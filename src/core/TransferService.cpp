@@ -309,6 +309,7 @@ std::optional<qint64> TransferService::enqueue(const DownloadSpec &spec)
     download.file = spec.file;
     download.release = spec.release;
     download.getLine = spec.getLine;
+    download.album = spec.album;
     download.state = State::Waiting;
     download.createdAt = m_now();
     download.updatedAt = download.createdAt;
@@ -1030,6 +1031,7 @@ std::optional<Download> TransferService::reusePreview(const DownloadSpec &spec)
     download.file = spec.file;
     download.release = spec.release;
     download.getLine = spec.getLine;
+    download.album = spec.album;
     download.state = State::Converting;
     download.message = tr("Converting");
     download.createdAt = m_now();
@@ -1086,6 +1088,7 @@ std::optional<qint64> TransferService::keepPreview(const DownloadSpec &spec)
         download.file = spec.file;
         download.release = spec.release;
         download.getLine = spec.getLine;
+        download.album = spec.album;
         download.state = State::Waiting;
         download.message = tr("Finishing the preview");
         download.createdAt = m_now();

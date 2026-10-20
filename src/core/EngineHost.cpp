@@ -37,6 +37,8 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<QList<meta::Candidate>>();
     qRegisterMetaType<SearchResult>();
     qRegisterMetaType<QList<SearchResult>>();
+    qRegisterMetaType<AlbumDownload>();
+    qRegisterMetaType<SupersedeReport>();
     m_thread.setObjectName(u"selecta-engine"_s);
 }
 
@@ -127,6 +129,11 @@ void EngineHost::start()
         m_uploads = uploads;
         Q_EMIT uploadsChanged(uploads);
     });
+    connect(engine, &Engine::albumChanged, this, [this](const AlbumDownload &album) {
+        m_albums.insert(album.id, album);
+        Q_EMIT albumChanged(album);
+    });
+    connect(engine, &Engine::superseded, this, &EngineHost::superseded);
     connect(engine, &Engine::networkStatusChanged, this, [this](const NetworkStatus &status) {
         m_networkStatus = status;
         Q_EMIT networkStatusChanged(status);
@@ -369,6 +376,33 @@ void EngineHost::downloadResults(qint64 searchId, const QList<int> &indexes)
     post([searchId, indexes](Engine &engine) {
         if (engine.isStarted()) {
             engine.manualSearch().download(searchId, indexes);
+        }
+    });
+}
+
+void EngineHost::downloadFolder(qint64 searchId, int index)
+{
+    post([searchId, index](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.manualSearch().downloadFolder(searchId, index);
+        }
+    });
+}
+
+void EngineHost::cancelAlbum(qint64 albumId)
+{
+    post([albumId](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.albums().cancel(albumId);
+        }
+    });
+}
+
+void EngineHost::undoSupersede(qint64 albumId)
+{
+    post([albumId](Engine &engine) {
+        if (engine.isStarted()) {
+            engine.albums().undoSupersede(albumId);
         }
     });
 }

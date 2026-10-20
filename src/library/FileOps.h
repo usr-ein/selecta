@@ -58,6 +58,12 @@ public:
     // Moves a file or folder inside the Inbox to the Trash. Anything outside the Inbox is refused.
     FileResult trashFromInbox(const QString &path) const;
 
+    // Moves `sourceFolder` (a staged album, outside the Inbox) to `relativeFolder` inside the Inbox, with everything in
+    // it: renamed on one volume, else copied and verified into a hidden folder next to the target that is then renamed
+    // into place. A name already taken gets " (2)", " (3)"… Creates parent folders. The staged folder goes once the
+    // album is in place.
+    FileResult publishFolderIntoInbox(const QString &sourceFolder, const QString &relativeFolder) const;
+
     // Puts `newFile` (a verified copy, next to it) in the place of `inboxFile` in one atomic rename, so the name only
     // ever holds the old file or the new one (re-tagging, DL-4). Both must be inside the Inbox, on one volume.
     FileResult replaceInInbox(const QString &newFile, const QString &inboxFile) const;
