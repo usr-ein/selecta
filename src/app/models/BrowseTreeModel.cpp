@@ -31,13 +31,40 @@ core::SearchFilter browseFilter(core::SearchFilter filter)
 
 const QCollator &collator()
 {
-    static const QCollator instance = [] {
-        QCollator c;
-        c.setNumericMode(true); // "Track 2" before "Track 10", as the Finder sorts
-        c.setCaseSensitivity(Qt::CaseInsensitive);
-        return c;
-    }();
+    static const QCollator instance; // the user's locale; its numeric mode isn't on every platform: see naturalKey()
     return instance;
+}
+
+// A name as it sorts naturally on every platform ("Track 2" before "Track 10", as the Finder sorts): case-folded,
+// with every run of digits zero-padded to kDigits (leading zeros dropped first), so the collator needs no numeric
+// mode, which Qt offers only with ICU. Runs longer than kDigits keep their length and still sort after shorter ones.
+QString naturalKey(const QString &name)
+{
+    constexpr qsizetype kDigits = 20;
+    const QString folded = name.toCaseFolded();
+    QString key;
+    key.reserve(folded.size() + kDigits);
+    for (qsizetype i = 0; i < folded.size();) {
+        if (!folded.at(i).isDigit()) {
+            key.append(folded.at(i++));
+            continue;
+        }
+        qsizetype end = i;
+        while (end < folded.size() && folded.at(end).isDigit()) {
+            ++end;
+        }
+        qsizetype start = i;
+        while (start + 1 < end && folded.at(start) == u'0') {
+            ++start;
+        }
+        const qsizetype length = end - start;
+        if (length < kDigits) {
+            key.append(QString(kDigits - length, u'0'));
+        }
+        key.append(QStringView(folded).sliced(start, length));
+        i = end;
+    }
+    return key;
 }
 
 } // namespace
@@ -137,7 +164,7 @@ void BrowseTreeModel::rebuild()
     m_sortKeys.clear();
     m_sortKeys.reserve(m_nodes.size());
     for (const Node &node : std::as_const(m_nodes)) {
-        m_sortKeys.append(collator().sortKey(node.name));
+        m_sortKeys.append(collator().sortKey(naturalKey(node.name)));
     }
     restyle();
     sortChildren(kRoot);
