@@ -12,10 +12,12 @@
 #include "app/views/InboxView.h"
 #include "convert/TagWriter.h"
 #include "core/EngineHost.h"
-#include "storage/Database.h"
 
 #include <QAccessible>
 #include <QBuffer>
+#include <QGuiApplication>
+#include <QLinearGradient>
+#include <QStyleHints>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDir>
@@ -33,6 +35,7 @@
 #include <QTreeView>
 
 #include <gtest/gtest.h>
+#include <tuple>
 
 using namespace Qt::StringLiterals;
 using selecta::app::CollectionAlbumView;
@@ -592,8 +595,7 @@ class CollectionViewTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        ASSERT_TRUE(db.open(u":memory:"_s));
-        view = std::make_unique<CollectionView>(engine, db);
+        view = std::make_unique<CollectionView>(engine);
         view->setAttribute(Qt::WA_DontShowOnScreen);
         view->resize(1100, 800);
         view->show();
@@ -615,7 +617,6 @@ protected:
     }
 
     selecta::core::EngineHost engine{selecta::core::EngineOptions{}};
-    selecta::storage::Database db;
     std::unique_ptr<CollectionView> view;
 };
 
@@ -773,4 +774,93 @@ TEST(InboxUpgrades, TheInspectorSaysWhatAnUpgradeReplaces)
     inspector.showItem(item, dir.path());
     inspector.setAlsoOn({});
     EXPECT_TRUE(notes->text().contains(u"(M4A, not MP3)"_s)) << notes->text().toStdString();
+}
+
+// --- Screenshots -----------------------------------------------------------------------------------------------------
+
+namespace {
+
+// A made-up cover: a gradient with rings, as the screenshots' collection has.
+QByteArray paintedCover(QColor from, QColor to)
+{
+    QImage image(640, 640, QImage::Format_RGB32);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QLinearGradient gradient(0, 0, 640, 640);
+    gradient.setColorAt(0, from);
+    gradient.setColorAt(1, to);
+    painter.fillRect(image.rect(), gradient);
+    painter.setPen(QPen(QColor(255, 255, 255, 220), 9));
+    for (int radius = 60; radius < 900; radius += 70) {
+        painter.drawEllipse(QPointF(420, 250), radius, radius);
+    }
+    painter.end();
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "JPEG", 92);
+    return bytes;
+}
+
+} // namespace
+
+// Not a check: draws an album's page, in light and dark, for the pull request's screenshots (P-010), from made-up
+// files. Runs only when SELECTA_SCREENS_DIR names the folder to save them in, and on the native platform for real
+// fonts: SELECTA_SCREENS_DIR=docs/screens QT_QPA_PLATFORM=cocoa selecta_ui_tests --gtest_filter='*Screenshots*'.
+TEST(CollectionScreenshots, AnAlbumsPage)
+{
+    const QString folder = qEnvironmentVariable("SELECTA_SCREENS_DIR");
+    if (folder.isEmpty()) {
+        GTEST_SKIP() << "set SELECTA_SCREENS_DIR to draw the screenshots";
+    }
+    QTemporaryDir dir;
+    const QString first = dir.filePath(u"01 Dusk.mp3"_s);
+    ASSERT_TRUE(writeTrackWithCover(first, paintedCover(QColor(0xff, 0x51, 0x2f), QColor(0xdd, 0x24, 0x76))));
+    CollectionListing listing;
+    listing.albums.append(CollectionAlbum{.id = 7,
+                                          .folder = u"/Users/you/Music/Albums/Okuma Drift - Nightfall (2024)"_s,
+                                          .title = u"Nightfall"_s,
+                                          .artist = u"Okuma Drift"_s,
+                                          .year = 2024,
+                                          .variousArtists = false});
+    const QList<std::tuple<QString, QualityTier, AudioQuality, qint64>> tracks{
+        {u"Dusk"_s, QualityTier::Lossless, mp3(320), 412'000},
+        {u"Neon Rain (Extended Mix)"_s, QualityTier::Top, mp3(320), 372'000},
+        {u"Blue Static"_s, QualityTier::From192, mp3(192), 344'000},
+        {u"Night Signals"_s, QualityTier::Below192, mp3(128), 401'000},
+        {u"Dawn"_s, QualityTier::Top, AudioQuality{.codec = Codec::Mp3, .bitrateKbps = 245, .vbr = true}, 298'000},
+    };
+    int number = 0;
+    for (const auto &[title, tier, quality, length] : tracks) {
+        CollectionTrack track;
+        track.id = ++number;
+        track.path = number == 1 ? first : dir.filePath(u"%1.mp3"_s.arg(number));
+        track.artist = u"Okuma Drift"_s;
+        track.title = title;
+        track.tier = tier;
+        track.quality = quality;
+        track.durationMs = length;
+        track.albumId = 7;
+        track.trackNumber = number;
+        listing.tracks.append(track);
+    }
+    const auto shared = std::make_shared<const CollectionListing>(listing);
+    for (const auto &[scheme, name] :
+         {std::pair{Qt::ColorScheme::Light, u"light"_s}, std::pair{Qt::ColorScheme::Dark, u"dark"_s}}) {
+        QGuiApplication::styleHints()->setColorScheme(scheme);
+        QCoreApplication::processEvents();
+        CollectionCovers covers;
+        CollectionAlbumView view(covers);
+        view.resize(860, 520);
+        view.setAttribute(Qt::WA_DontShowOnScreen);
+        view.show();
+        QSignalSpy ready(&covers, &CollectionCovers::ready);
+        ASSERT_TRUE(view.showAlbum(shared, 7));
+        ASSERT_TRUE(ready.wait(5000));
+        view.trackList()->selectionModel()->select(view.trackList()->model()->index(3, 0),
+                                                   QItemSelectionModel::Select | QItemSelectionModel::Rows);
+        QCoreApplication::processEvents();
+        EXPECT_TRUE(view.grab().save(QDir(folder).filePath(u"P-010-album-%1.png"_s.arg(name))));
+    }
+    QGuiApplication::styleHints()->unsetColorScheme();
 }

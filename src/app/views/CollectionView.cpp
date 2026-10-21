@@ -53,7 +53,7 @@ QString tracksText(int count)
 
 } // namespace
 
-CollectionView::CollectionView(core::EngineHost &engine, storage::Database & /*db*/, QWidget *parent)
+CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     : QWidget(parent)
     , m_engine(engine)
     , m_listing(std::make_shared<const core::CollectionListing>())
@@ -247,6 +247,7 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database & /*d
     line->setForegroundRole(QPalette::Mid);
     auto *bar = new QHBoxLayout;
     bar->setContentsMargins(24, 8, 24, 12);
+    bar->setSpacing(16);
     bar->addWidget(m_result, 1);
     bar->addWidget(m_selection);
     bar->addWidget(m_betterQuality);

@@ -446,7 +446,7 @@ void MainWindow::createViews()
     connect(wishlistView, &WishlistView::searchRequested, this,
             [this](const QString &text) { m_searchRequest = m_services.engine.openSearch(text); });
     m_navModel->setCount(u"wishlist"_s, wishlistView->foundCount());
-    auto *collectionView = new CollectionView(m_services.engine, m_services.database, m_stack);
+    auto *collectionView = new CollectionView(m_services.engine, m_stack);
     addView(u"collection"_s, collectionView, [collectionView] { return collectionView->summary(); });
     connect(collectionView, &CollectionView::summaryChanged, this, [this] {
         if (m_currentId == u"collection"_s) {

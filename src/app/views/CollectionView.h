@@ -20,9 +20,6 @@ class QStackedWidget;
 namespace selecta::core {
 class EngineHost;
 }
-namespace selecta::storage {
-class Database;
-}
 
 namespace selecta::app {
 
@@ -39,13 +36,13 @@ class CollectionWallModel;
 // Inbox marks as an upgrade and filing puts in its place (EngineHost::searchForBetterQuality()).
 //
 // Selecta never changes these files but on the user's word: an upgrade filed from the Inbox. Covers come from the
-// files (CollectionCovers). Main thread. `db` is unused: the listing comes from the engine.
+// files (CollectionCovers). Main thread.
 class CollectionView : public QWidget
 {
     Q_OBJECT
 
 public:
-    CollectionView(core::EngineHost &engine, storage::Database &db, QWidget *parent = nullptr);
+    explicit CollectionView(core::EngineHost &engine, QWidget *parent = nullptr);
     ~CollectionView() override;
     CollectionView(const CollectionView &) = delete;
     CollectionView &operator=(const CollectionView &) = delete;
