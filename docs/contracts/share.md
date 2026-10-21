@@ -105,4 +105,4 @@ thread-safe: one owner thread.
 - The share list and folder contents decode with slsk's own decoders to exactly what was indexed.
 - Upload order: slots, one per user, privileged first, round-robin, FIFO per user, limits and their strings,
   repeats, removal, place in queue.
-- Lint clean (`tools/lint.sh src/share tests/share`), tests green under `dev` and `asan`.
+- Lint clean (`tools/lint.sh src/share tests/share`), tests green under `dev`.

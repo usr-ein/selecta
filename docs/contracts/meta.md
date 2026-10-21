@@ -109,7 +109,7 @@ prints secrets or tokens.
 
 ## Acceptance
 
-- Unit tests with fakes cover every component and error path; dev and asan are clean; lint is clean.
+- Unit tests with fakes cover every component and error path; dev is clean; lint is clean.
 - A manual smoke run resolves 10 real lines with sensible results. Note the results in `DESIGN.md`, without personal
   data.
 - `DESIGN.md` describes the classes, threading, the permit points, cache TTLs (search 24 h, track and album 30 days,
