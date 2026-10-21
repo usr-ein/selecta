@@ -293,6 +293,7 @@ TEST_F(MainWindowTest, InboxListsItemsAndFilesTheSelection)
     auto *file = window->findChild<QPushButton *>(u"inbox.file"_s);
     ASSERT_NE(file, nullptr);
     ASSERT_TRUE(file->isEnabled());
+    EXPECT_EQ(file->text(), u"Save to collection"_s); // "File" read as a menu, not an action (beta notes)
 
     QSignalSpy finished(engine.get(), &selecta::core::EngineHost::inboxOperationFinished);
     file->click();
