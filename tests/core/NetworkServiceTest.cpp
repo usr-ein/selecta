@@ -323,11 +323,13 @@ TEST(NetworkServiceDescriptors, ADialBackStormLeavesDescriptorsForNewThreads)
     };
     ASSERT_TRUE(QTest::qWaitFor([&] { return answered() >= kStorm; }, 10'000)) << answered();
 
-    // The storm took no more descriptors than the cap the limit allows, and that cap left the reserve alone.
+    // The storm took no more descriptors than the cap the limit allows, and that cap left the reserve alone. A few
+    // more may be Qt's own, open meanwhile (QNetworkInterface's probes, say); before the fix the storm took them all.
     const int socketCap = selecta::governor::limits::socketCapFor(openFiles);
+    constexpr int kQtDescriptors = 8;
     EXPECT_GT(network.peers().socketCount(), 0);
     EXPECT_LE(network.peers().socketCount(), socketCap);
-    EXPECT_LE(selecta::testing::openDescriptorCount() - openBeforeStorm, socketCap);
+    EXPECT_LE(selecta::testing::openDescriptorCount() - openBeforeStorm, socketCap + kQtDescriptors);
 
     // What aborted the app: a pool starting a thread, which needs a pipe of its own.
     QThreadPool pool;

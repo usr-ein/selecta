@@ -77,9 +77,8 @@ qint64 raiseOpenFileLimit(qint64 wanted)
     if (raised) {
         rlimit next = limit;
         next.rlim_cur = toRlimit(*raised);
-        if (setrlimit(RLIMIT_NOFILE, &next) != 0) {
-            // Refused (a sandbox, say): the old limit stays in force, and the caller sizes itself to it.
-        }
+        // If it's refused (a sandbox, say), the old limit stays in force and the caller sizes itself to it.
+        (void)setrlimit(RLIMIT_NOFILE, &next);
     }
     return openFileLimit();
 #else

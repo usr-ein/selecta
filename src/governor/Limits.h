@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
 
 // The governor's numbers (ADR-006; rationale and sources in docs/RESEARCH-SYNTHESIS.md §3).
 //
@@ -93,6 +94,7 @@ constexpr int socketCapFor(qint64 openFiles)
     return static_cast<int>(std::clamp<qint64>(openFiles - reservedDescriptors(openFiles), 1, kSocketsMax));
 }
 static_assert(socketCapFor(kWantedOpenFiles) == kSocketsMax);
+static_assert(socketCapFor(std::numeric_limits<qint64>::max()) == kSocketsMax); // no limit: still the ceiling
 static_assert(socketCapFor(256) == 64); // macOS's default leaves 192 descriptors for the rest
 
 // --- Downloads (FAIR-2, DL-2) ---------------------------------------------------------------------------------------
