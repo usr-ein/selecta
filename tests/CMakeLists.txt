@@ -131,6 +131,8 @@ if(SELECTA_WITH_MEDIA)
             app/SearchResultsModelTest.cpp
             app/SpectrogramViewTest.cpp
             app/SpotifyTermsTest.cpp
+            app/StatusTest.cpp
+            app/StyleTest.cpp
             app/TickDelegateTest.cpp
             app/TransfersModelTest.cpp
             app/WaveformViewTest.cpp
