@@ -93,6 +93,12 @@ QByteArray makeM4a(const Pcm &pcm, M4aOptions options = {});
 // FLAC in an Ogg container: a format Selecta's own demuxers don't read, so it takes the FFmpeg path.
 QByteArray makeOggFlac(const Pcm &pcm);
 
+// Opus in an Ogg container (`.opus`), with FFmpeg's own encoder at `bitrateKbps`; Opus runs at 48 kHz, so `pcm` must
+// be.
+QByteArray makeOpus(const Pcm &pcm, int bitrateKbps = 160);
+// Ogg Vorbis (`.ogg`), with FFmpeg's own encoder at about `bitrateKbps`.
+QByteArray makeOggVorbis(const Pcm &pcm, int bitrateKbps = 192);
+
 // Deterministic pseudo-random bytes.
 QByteArray randomBytes(int count, unsigned seed);
 

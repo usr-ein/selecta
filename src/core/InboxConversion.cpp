@@ -2,6 +2,7 @@
 #include "core/InboxConversion.h"
 
 #include "convert/ArtworkProcessor.h"
+#include "convert/TagWriter.h"
 
 #include <QCoreApplication>
 
@@ -29,7 +30,9 @@ InboxFormat inboxFormatFor(const convert::SourceQuality &quality, const QString 
 {
     InboxFormat format;
     const convert::Advice advice = convert::advise(quality, format.settings, convert::AdviceContext::Filing);
-    if (advice.action != convert::Action::Convert) {
+    // A file is kept only in a format Selecta can tag: anything else (an Ogg, a WMA, an APE the advisor would ask
+    // about) becomes MP3, the one way it can reach the Inbox tagged (P-025).
+    if (advice.action != convert::Action::Convert && convert::canWriteTags(quality.container)) {
         format.settings.format = convert::OutputFormat::KeepAudio;
         format.kept = true;
         // An MP3 320 (or V0-class) file is only tagged: it already is what the Inbox promises.

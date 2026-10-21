@@ -171,9 +171,11 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
   inside, tray, booklet, label); otherwise the only plausible image or the largest roughly square one is offered as
   "guessed".
 - **Advice.** `advise()` follows the matrix of conversion §6.2 with `resolveOutput()` deciding the columns, so the
-  advice describes exactly what `transcode()` will do. In the filing context, lossy audio is never re-encoded: MP3s
-  at the target are kept, others kept with "below target" (judged on the bitrate the checks say a suspect MP3 really
-  delivers) and AAC with "format differs"; Ogg/Opus/WMA are asked about (D-5). Lossy to a higher rate or depth is
+  advice describes exactly what `transcode()` will do. In the filing context, an MP3 is never re-encoded: at the
+  target it is kept, below it kept with "below target" (judged on the bitrate the checks say a suspect MP3 really
+  delivers). Every other lossy format (AAC, Vorbis, Opus, WMA, MP2…) filed to an MP3 target is converted to it
+  (P-025), with the Generation notice, NotPlayable when rekordbox can't play the source, and Upsample when MP3 can't
+  store its rate; the converter (manual context) still asks about each (D-5). Lossy to a higher rate or depth is
   refused. Warnings are listed before information. `describeNotice()` fills §6.3's texts with the real numbers.
 - **MP3 rates.** Raising the rate asks first for MP3 targets too (W-UPSAMPLE): a chosen rate above the source's, or
   a source below 44.1 kHz that MP3 doesn't store (22.05 kHz goes to 44.1 kHz). An MP3 at the target's bitrate is kept
@@ -204,7 +206,9 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
 1. `probeSourceQuality(path, /*runChecks=*/true)` → `advise(quality, inboxSettings, AdviceContext::Filing)`, and
    `judgeQuality(quality)` for the inspector (fake-320 detection; 0.3–0.4 s for a 6-minute file: one decode).
 2. `Convert` → `TranscodeJob({source, stagingOutput, settings, releaseTags})`; `KeepAsIs` → the same job with
-   `OutputFormat::KeepAudio` (tags rewritten on a copy, audio verified identical) plus the badge; `Ask` → the user.
+   `OutputFormat::KeepAudio` (tags rewritten on a copy, audio verified identical) plus the badge; `Ask` → kept the
+   same way. A file is kept only when `canWriteTags()` accepts its container: otherwise it is converted whatever the
+   advice (P-025), since kept it could never be tagged.
 3. On `finished`, FileOps publishes `stagingOutput` into the Inbox and trashes a lossless original (D11).
 4. The cover: `processArtwork(bytes)` → `tags.setFrontCover(result.toPicture(Provenance::Release))`.
 5. `transcode()` applies the tag policy itself: `policy.transcoding` follows the format (false for KeepAudio), and an
@@ -233,7 +237,8 @@ A conversion keeps one core busy, so the worker pool (CONV-8) can run about one 
 | MD5 for the PCM digest | Not adversarial (both sides are computed by Selecta); fast enough next to LAME. |
 | Dither skips samples already on the target grid | Padded 16-bit audio and digital silence stay exact; for genuine deeper audio the skipped samples are a random 1/256 with zero error, so the noise stays signal-independent. |
 | A truncated JPEG cover is refused | libjpeg decodes it with grey filling the missing part; embedding that would be worse than no cover. |
-| Filing never re-encodes lossy audio (except formats rekordbox can't play, after asking) | CONV-2: a re-encode can't improve it, only lose more. |
+| Filing never re-encodes an MP3; every other lossy format becomes the target MP3 (P-025, replacing "lossy audio is kept, formats rekordbox can't play asked about") | CONV-2: a re-encode can't improve an MP3, only lose more. The maintainer wants one Inbox format, tagged: an Opus kept as it was couldn't be tagged at all, and an AAC was a second format to handle. |
+| Filing a non-MP3 lossy file below 32 kHz raises it to 44.1 kHz | The one exception to "never upsample automatically": MP3 can't store the source's rate, and the file has no other way into the Inbox tagged; the Upsample notice says nothing is gained. |
 | The verdict extends the MP3 cut-off rule to AAC/Vorbis/Opus at ≥ 256 kbps | Core asked for fake-high-bitrate detection on every download; the rule is as safe for them as for MP3. |
 | A lossless source below 44.1 kHz (other than 32 kHz) asks before becoming MP3, so filing keeps it as it is | Never upsample automatically (contract): the MP3 would claim 44.1 kHz and hold nothing above half the source's rate. |
 | A chosen MP3 rate other than an MP3's own: manual asks, filing keeps the file with "format differs" | CONV-2 keeps an MP3 at the target as it is, but not by ignoring an explicit choice; filing still never re-encodes lossy audio. |

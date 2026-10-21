@@ -79,6 +79,7 @@ if(SELECTA_WITH_MEDIA)
             core/GetTracksServiceTest.cpp
             core/GovernorPacerTest.cpp
             core/GovernorStoreTest.cpp
+            core/InboxConversionTest.cpp
             core/InboxRetagTest.cpp
             core/InboxServiceTest.cpp
             core/ManualSearchServiceTest.cpp

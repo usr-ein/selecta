@@ -243,12 +243,19 @@ TEST(Advisor, Mp3Sources)
 TEST(Advisor, AacAndUnplayableLossy)
 {
     const SourceQuality aac = lossy(Codec::Aac, 256, false, Container::Mp4);
-    for (const EncodeSettings &target : {mp3(), output(OutputFormat::Aiff)}) {
-        const Advice advice = filing(aac, target);
+    // P-025: filing makes every lossy format but MP3 an MP3 at the target, whatever its bitrate.
+    for (const int kbps : {96, 256, 320}) {
+        const Advice advice = filing(lossy(Codec::Aac, kbps, false, Container::Mp4), mp3());
         EXPECT_EQ(advice.sourceClass, SourceClass::Aac);
-        EXPECT_EQ(advice.action, Action::KeepAsIs); // D-9: rekordbox plays it
-        EXPECT_EQ(advice.badge, Badge::FormatDiffers);
+        EXPECT_EQ(advice.action, Action::Convert) << kbps;
+        EXPECT_EQ(advice.badge, Badge::None);
+        EXPECT_EQ(advice.notices, QList<Notice>{Notice::Generation}); // rekordbox plays AAC: no NotPlayable
+        EXPECT_EQ(advice.outputSampleRate, 44100);
     }
+    // To a lossless filing target nothing changed: kept, marked (D-9: rekordbox plays it).
+    const Advice aacToAiff = filing(aac, output(OutputFormat::Aiff));
+    EXPECT_EQ(aacToAiff.action, Action::KeepAsIs);
+    EXPECT_EQ(aacToAiff.badge, Badge::FormatDiffers);
     EXPECT_EQ(manual(aac, mp3()).notices, QList<Notice>{Notice::Generation});
     EXPECT_EQ(manual(aac, output(OutputFormat::Flac)).notices, QList<Notice>{Notice::LossyToLossless});
     EXPECT_EQ(manual(aac, output(OutputFormat::Flac, 24)).action, Action::Refuse);
@@ -256,8 +263,11 @@ TEST(Advisor, AacAndUnplayableLossy)
     const SourceQuality vorbis = lossy(Codec::Vorbis, 192, false, Container::Ogg);
     const Advice toMp3 = filing(vorbis, mp3());
     EXPECT_EQ(toMp3.sourceClass, SourceClass::LossyUnplayable);
-    EXPECT_EQ(toMp3.action, Action::Ask); // D-5: ask each time
+    EXPECT_EQ(toMp3.action, Action::Convert); // P-025: filed as MP3, never asked
     EXPECT_EQ(toMp3.notices, (QList<Notice>{Notice::NotPlayable, Notice::Generation}));
+    const Advice asked = manual(vorbis, mp3());
+    EXPECT_EQ(asked.action, Action::Ask); // D-5: the converter asks each time
+    EXPECT_EQ(asked.notices, (QList<Notice>{Notice::NotPlayable, Notice::Generation}));
     EXPECT_EQ(describeNotice(Notice::NotPlayable, vorbis, mp3(), toMp3).shortText,
               u"rekordbox can't play Ogg Vorbis"_s);
     const Advice toAiff = filing(vorbis, output(OutputFormat::Aiff));
@@ -270,9 +280,21 @@ TEST(Advisor, AacAndUnplayableLossy)
     wma.codecName = u"wmav2"_s;
     EXPECT_EQ(describeNotice(Notice::NotPlayable, wma, mp3(), filing(wma, mp3())).shortText,
               u"rekordbox can't play WMA"_s);
+    EXPECT_EQ(filing(wma, mp3()).action, Action::Convert);
     SourceQuality opus = lossy(Codec::Opus, 160, false, Container::Ogg);
     opus.sampleRate = 48000;
-    EXPECT_FALSE(filing(opus, mp3()).hasNotice(Notice::Resample)); // 48 kHz is an MP3 rate
+    const Advice opusToMp3 = filing(opus, mp3());
+    EXPECT_EQ(opusToMp3.action, Action::Convert);
+    EXPECT_FALSE(opusToMp3.hasNotice(Notice::Resample)); // 48 kHz is an MP3 rate
+    EXPECT_EQ(opusToMp3.outputSampleRate, 48000);
+    EXPECT_EQ(manual(opus, mp3()).action, Action::Ask);
+    // A rate MP3 can't store: still filed as MP3, at 44.1 kHz, and the notice says nothing is gained by it.
+    const Advice lowRate = filing(at(vorbis, 22050), mp3());
+    EXPECT_EQ(lowRate.action, Action::Convert);
+    EXPECT_EQ(lowRate.outputSampleRate, 44100);
+    EXPECT_TRUE(lowRate.hasNotice(Notice::Upsample));
+    // MP2 isn't MP3: converted too.
+    EXPECT_EQ(filing(lossy(Codec::Mp2, 256), mp3()).action, Action::Convert);
 }
 
 TEST(Advisor, OtherLosslessAndKeep)
@@ -394,8 +416,9 @@ TEST(Advisor, Mp3AboveTheSourceRateAsks)
     EXPECT_EQ(manual(at(lossy(Codec::Mp3, 160), 24000), mp3(128)).notices,
               (QList<Notice>{Notice::Generation, Notice::Upsample}));
     const Advice vorbis = filing(at(lossy(Codec::Vorbis, 96, false, Container::Ogg), 22050), mp3());
-    EXPECT_EQ(vorbis.action, Action::Ask);
+    EXPECT_EQ(vorbis.action, Action::Convert); // P-025: filed as MP3 anyway, the raised rate said
     EXPECT_EQ(vorbis.notices, (QList<Notice>{Notice::NotPlayable, Notice::Generation, Notice::Upsample}));
+    EXPECT_EQ(manual(at(lossy(Codec::Vorbis, 96, false, Container::Ogg), 22050), mp3()).action, Action::Ask);
     const SourceQuality aac = lossy(Codec::Aac, 256, false, Container::Mp4);
     EXPECT_EQ(manual(aac, mp3At(48000)).notices, (QList<Notice>{Notice::Generation, Notice::Upsample}));
     EXPECT_EQ(manual(aac, mp3At(32000)).notices, (QList<Notice>{Notice::Generation, Notice::Resample}));
@@ -448,7 +471,8 @@ TEST(Advisor, Mp3KeptOnlyAtTheTargetRate)
     EXPECT_EQ(keptAsMp3.outputSampleRate, 44100);
     EXPECT_EQ(keptAsMp3.outputBitDepth, 0);
     EXPECT_DOUBLE_EQ(keptAsMp3.sizeFactor, 1.0);
-    const Advice keptAac = filing(at(lossy(Codec::Aac, 256, false, Container::Mp4), 48000), mp3());
+    const Advice keptAac = filing(at(lossy(Codec::Aac, 256, false, Container::Mp4), 48000), output(OutputFormat::Aiff));
+    EXPECT_EQ(keptAac.action, Action::KeepAsIs);
     EXPECT_EQ(keptAac.outputSampleRate, 48000);
     EXPECT_DOUBLE_EQ(keptAac.sizeFactor, 1.0);
     const Advice keptFlac = filing(lossless(24, 96000), output(OutputFormat::KeepAudio));
