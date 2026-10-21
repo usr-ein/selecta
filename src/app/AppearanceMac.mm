@@ -9,7 +9,7 @@ namespace {
 
 // How far toward the system's highlight (white) the accent goes on Dark Aqua. controlAccentColor is the same in both
 // appearances, and thin symbols drawn in it on a dark sidebar read as too dark a blue (beta notes, 2026-10-20).
-constexpr CGFloat kDarkHighlightLevel = 0.2;
+constexpr CGFloat kDarkHighlightLevel = 0.3;
 
 } // namespace
 
