@@ -2,6 +2,7 @@
 #include "app/models/ConverterModel.h"
 
 #include "app/Format.h"
+
 #include <QColor>
 #include <QFileInfo>
 #include <QGuiApplication>
