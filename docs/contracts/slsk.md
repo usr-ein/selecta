@@ -140,7 +140,7 @@ implementer for the real `Governor` API when you get there.
 
 ## Acceptance
 
-1. All unit tests and fuzz smoke runs (60 s per target) pass; dev and asan are clean; lint is clean.
+1. All unit tests and fuzz smoke runs (60 s per target) pass; dev is clean; lint is clean.
 2. Against `FakeServer`/`FakePeer`:
    - login, search out and in, distributed search forwarding, browse both ways, folder contents and user info;
    - download with resume after a kill, cancel mid-transfer, upload with limits, denial strings;

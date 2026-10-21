@@ -137,15 +137,15 @@ MetaError unsupported()
     return makeError(Service::Keychain, ErrorCode::NotConfigured, u"The Keychain exists only on macOS."_s);
 }
 
-Result<std::optional<QByteArray>> readItem(const QString &, const QString &)
+Result<std::optional<QByteArray>> readItem(const QString & /*service*/, const QString & /*account*/)
 {
     return unsupported();
 }
-Result<void> writeItem(const QString &, const QString &, const QByteArray &)
+Result<void> writeItem(const QString & /*service*/, const QString & /*account*/, const QByteArray & /*secret*/)
 {
     return unsupported();
 }
-Result<void> removeItem(const QString &, const QString &)
+Result<void> removeItem(const QString & /*service*/, const QString & /*account*/)
 {
     return unsupported();
 }
