@@ -72,14 +72,18 @@ bool FrameReader::checkHeader()
         return true;
     }
     const auto codeBytes = static_cast<qsizetype>(m_width);
-    if (buffered() < kLengthBytes + codeBytes) {
+    if (buffered() < kLengthBytes) {
         return true;
     }
+    // A length shorter than the code is wrong whatever follows: no need to wait for more bytes.
     const char *p = m_buffer.constData() + m_offset;
     const auto length = qFromLittleEndian<quint32>(p);
     if (std::cmp_less(length, codeBytes)) {
         m_error = Error::TooShort;
         return false;
+    }
+    if (buffered() < kLengthBytes + codeBytes) {
+        return true;
     }
     const quint32 code = m_width == CodeWidth::Byte ? static_cast<quint8>(p[kLengthBytes])
                                                     : qFromLittleEndian<quint32>(p + kLengthBytes);
