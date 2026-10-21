@@ -53,9 +53,9 @@ QByteArray flac(int bits);
 // What the collection would report for `path` (its current size and modification time) with these facts.
 collection::ScannedFile scanned(const QString &path, const match::AudioQuality &quality, qint64 durationMs);
 
-// build() over one tree's root, aliased "Music".
+// build() over one tree's root, aliased "Music": an albums folder unless told otherwise.
 BuildResult buildTree(const Tree &tree, const QHash<QString, collection::ScannedFile> &knownAudio = {},
-                      const BuildOptions &options = {});
+                      const BuildOptions &options = {}, Layout layout = Layout::Albums);
 
 // The share list through slsk::peer::SharedFileListResponse::decode().
 slsk::SharedFileList decodedList(const ShareIndex &index);

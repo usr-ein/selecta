@@ -5,6 +5,7 @@ selecta_add_test_suite(selecta_share_tests
     SOURCES
         ShareTestSupport.h ShareTestSupport.cpp
         BuildTest.cpp
+        CliTest.cpp
         ConcurrencyTest.cpp
         LookupTest.cpp
         OpenTest.cpp
@@ -16,6 +17,9 @@ selecta_add_test_suite(selecta_share_tests
 # GoogleTest's headers before vcpkg's include root (see tests/audio/CMakeLists.txt).
 target_include_directories(selecta_share_tests SYSTEM BEFORE PRIVATE
     $<TARGET_PROPERTY:GTest::gtest,INTERFACE_INCLUDE_DIRECTORIES>)
+# CliTest runs selecta-cli's share index command over temporary folders.
+target_compile_definitions(selecta_share_tests PRIVATE SELECTA_CLI_PATH="$<TARGET_FILE:selecta-cli>")
+add_dependencies(selecta_share_tests selecta-cli)
 
 # Build, search and lookup speed and the index's memory (contract: 20 k files built in under ~3 s with knownAudio
 # complete; under ~60 MB and under ~1 ms per typical query at 100 k files). Run it from an optimised build for real

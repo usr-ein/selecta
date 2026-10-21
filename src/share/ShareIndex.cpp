@@ -320,14 +320,15 @@ BuildResult build(const QList<ShareRoot> &roots, const QHash<QString, collection
     for (qsizetype i = 0; i < roots.size(); ++i) {
         const QString &path = roots.at(i).path;
         // A relative path would be resolved against whatever folder the process runs in: never share that.
+        const Layout layout = roots.at(i).layout;
         if (!QDir::isAbsolutePath(path)) {
-            built.append({path, unique.at(i)});
+            built.append({path, unique.at(i), layout});
             result.unreadable.append({path, u"not an absolute path"_s});
             continue;
         }
         const QString cleaned = QDir::cleanPath(path);
-        built.append({cleaned, unique.at(i)});
-        walked.append({cleaned, unique.at(i)});
+        built.append({cleaned, unique.at(i), layout});
+        walked.append({cleaned, unique.at(i), layout});
     }
     detail::AttributeSource attributes(knownAudio);
     detail::Walk walk = detail::walk(walked, options.excludedFolders, attributes, cancel);

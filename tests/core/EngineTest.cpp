@@ -3,8 +3,14 @@
 
 #include "base/Clock.h"
 #include "core/EngineHost.h"
+#include "core/InboxService.h"
+#include "core/ShareService.h"
+#include "slsk/PeerMessages.h"
 #include "storage/Database.h"
 
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -261,4 +267,39 @@ TEST_F(EngineTest, HostForwardsCovers)
     ASSERT_TRUE(QTest::qWaitFor([&] { return !fetched.isEmpty(); }, 5000));
     EXPECT_EQ(fetched.at(0).at(0).toString(), u"get:host"_s);
     EXPECT_TRUE(fetched.at(0).at(1).toByteArray().isEmpty());
+}
+
+// PRD SHARE-1: the engine shares the collection's two folders by their roles, and never Selecta's Inbox.
+TEST_F(EngineTest, SharesTheCollectionsTracksByTheirFoldersRolesAndNeverTheInbox)
+{
+    for (const QString &relative :
+         {u"Tracks/Loose.mp3"_s, u"Tracks/Sub/Deeper.mp3"_s, u"Tracks/cover.jpg"_s, u"Albums/Loose.mp3"_s,
+          u"Albums/Okuma Drift - Neon Rain/01 Neon Rain.mp3"_s, u"Albums/Okuma Drift - Neon Rain/CD2/01 Bonus.mp3"_s,
+          u"Albums/Okuma Drift - Neon Rain/cover.jpg"_s, u"Inbox/Singles/Waiting.mp3"_s,
+          u"Inbox/Albums/Kel Varo - Amber Engine/01 Waiting.mp3"_s}) {
+        ASSERT_TRUE(QDir().mkpath(QFileInfo(dir.filePath(relative)).path()));
+        QFile file(dir.filePath(relative));
+        ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+        ASSERT_EQ(file.write("bytes"), 5);
+    }
+    Engine engine(options());
+    ASSERT_TRUE(engine.start()) << engine.error().toStdString();
+    selecta::core::LibraryConfig config;
+    config.inboxRoot = dir.filePath(u"Inbox"_s);
+    config.tracksRoot = dir.filePath(u"Tracks"_s);
+    config.albumsRoot = dir.filePath(u"Albums"_s);
+    ASSERT_TRUE(selecta::core::checkLibraryConfig(config).isEmpty());
+    engine.setLibraryConfig(config);
+    engine.shares().waitForIdle();
+
+    const auto decoded = selecta::slsk::peer::SharedFileListResponse::decode(engine.shares().index()->sharedFileList());
+    ASSERT_TRUE(decoded.has_value());
+    QStringList shared;
+    for (const selecta::slsk::SharedDirectory &directory : decoded->list.directories) {
+        for (const selecta::slsk::FileEntry &file : directory.files) {
+            shared.append(directory.path.display() + u'\\' + file.name.display());
+        }
+    }
+    EXPECT_EQ(shared, QStringList({u"Tracks\\Loose.mp3"_s, u"Albums\\Okuma Drift - Neon Rain\\01 Neon Rain.mp3"_s}));
+    EXPECT_EQ(engine.shares().status().roots, QStringList({config.tracksRoot, config.albumsRoot}));
 }

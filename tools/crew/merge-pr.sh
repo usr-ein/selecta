@@ -28,8 +28,9 @@ if [[ ",$labels," != *",review:approved,"* ]]; then
     echo "PR #$pr isn't approved (labels: ${labels:-none})"
     exit 1
 fi
-# CI: every job but the experimental ones (Windows, and TSan, which reports without failing) must have passed.
-checks=$(gh pr checks "$pr" --json name,bucket --jq '.[] | select(.name | test("Windows|tsan"; "i") | not) | "\(.bucket) \(.name)"' || true)
+# CI: only the Linux jobs gate a PR; macOS and Windows are for main (maintainer, 2026-10-21: "I only want linux
+# runners blocking the PR. Other platforms are for main").
+checks=$(gh pr checks "$pr" --json name,bucket --jq '.[] | select(.name | test("^Linux"; "i")) | "\(.bucket) \(.name)"' || true)
 if [[ -z "$checks" ]]; then
     echo "PR #$pr has no CI checks yet"
     exit 1
