@@ -32,6 +32,14 @@ QByteArray readFile(const QString &path)
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
+// Whether a folder without write permission refuses this user's writes: not on Windows, where the read-only attribute
+// doesn't apply to folders.
+#ifdef Q_OS_WIN
+constexpr bool kReadOnlyFoldersStopWrites = false;
+#else
+constexpr bool kReadOnlyFoldersStopWrites = true;
+#endif
+
 // Makes `link` a symbolic link to the folder `target`. On Windows QFile::link makes a shortcut (.lnk), which is no link
 // at all, and only an administrator or Developer Mode may make a real one: there a test without one skips.
 #ifdef Q_OS_WIN
@@ -142,6 +150,23 @@ TEST_F(FileOpsTest, NeverOverwritesACollectionFile)
     const auto result = ops().fileIntoCollection(inbox + u"/Song.mp3"_s, collection, u"Singles/Song.mp3"_s);
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(readFile(collection + u"/Singles/Song.mp3"_s), "precious");
+    EXPECT_TRUE(QFileInfo::exists(inbox + u"/Song.mp3"_s));
+}
+
+TEST_F(FileOpsTest, AFailedMoveSaysWhyInWords)
+{
+    if (!kReadOnlyFoldersStopWrites || selecta::testing::runningAsRoot()) {
+        GTEST_SKIP() << "needs a folder that refuses this user's writes";
+    }
+    ASSERT_TRUE(writeFile(inbox + u"/Song.mp3"_s, "new"));
+    const QString singles = collection + u"/Singles"_s;
+    ASSERT_TRUE(QDir().mkpath(singles));
+    ASSERT_TRUE(QFile::setPermissions(singles, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    const auto result = ops().fileIntoCollection(inbox + u"/Song.mp3"_s, collection, u"Singles/Song.mp3"_s);
+    QFile::setPermissions(singles, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    EXPECT_FALSE(result.ok);
+    // The system's words for EACCES, on Linux too (glibc's strerror_r returns its message rather than filling ours).
+    EXPECT_TRUE(result.error.contains(u"Permission denied"_s)) << result.error.toStdString();
     EXPECT_TRUE(QFileInfo::exists(inbox + u"/Song.mp3"_s));
 }
 
