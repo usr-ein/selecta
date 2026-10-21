@@ -1,11 +1,14 @@
 # P-028 experiment only (CMAKE_PROJECT_INCLUDE): precompiled standard, Qt and gtest headers for each of Selecta's own
-# C++ targets, to time it against plain builds. Not for merging.
+# C++ targets (or only those in P028_PCH_TARGETS), to time it against plain builds. Not for merging.
 function(_p028_pch dir)
     get_property(targets DIRECTORY "${dir}" PROPERTY BUILDSYSTEM_TARGETS)
     foreach(target IN LISTS targets)
         get_target_property(type ${target} TYPE)
         get_target_property(source_dir ${target} SOURCE_DIR)
         if(NOT type MATCHES "^(STATIC_LIBRARY|EXECUTABLE|OBJECT_LIBRARY)$" OR NOT source_dir MATCHES "/(src|tests|tools)(/|$)")
+            continue()
+        endif()
+        if(P028_PCH_TARGETS AND NOT target IN_LIST P028_PCH_TARGETS)
             continue()
         endif()
         get_target_property(sources ${target} SOURCES)

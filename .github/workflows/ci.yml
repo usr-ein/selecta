@@ -15,7 +15,7 @@ on:
         type: string
         default: ''
       replay:
-        description: Compilers to replay with (JSON list of gcc, gcc-g0, gcc-pch, clang, clang-22)
+        description: Compilers to replay with (JSON list of gcc, gcc-g0, gcc-pch, gcc-pch8, clang, clang-22)
         type: string
         default: '["gcc", "clang"]'
 
@@ -228,6 +228,12 @@ jobs:
                      flags=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD
                             "-DCMAKE_PROJECT_INCLUDE=$RUNNER_TEMP/pch.cmake" -DCMAKE_CXX_FLAGS=-fpch-preprocess)
                      export CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime ;;
+            # The eight targets that take two thirds of a cold build.
+            gcc-pch8) cp .github/experiments/pch.cmake "$RUNNER_TEMP/pch.cmake"
+                      flags=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD
+                             "-DCMAKE_PROJECT_INCLUDE=$RUNNER_TEMP/pch.cmake" -DCMAKE_CXX_FLAGS=-fpch-preprocess
+                             "-DP028_PCH_TARGETS=selecta_app;selecta_core;selecta_core_tests;selecta_ui_tests;selecta_meta;selecta_meta_tests;selecta_slsk_tests;selecta-cli")
+                      export CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime ;;
             clang-22) flags=(-DCMAKE_C_COMPILER=clang-22 -DCMAKE_CXX_COMPILER=clang++-22 -DCMAKE_LINKER_TYPE=LLD "$nodfi") ;;
           esac
           for commit in 31c7e94 22bba78 d7a1a2a; do
