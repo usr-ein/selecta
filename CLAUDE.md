@@ -34,7 +34,7 @@ Selecta is a GPLv3 Soulseek client in C++/Qt 6, macOS-first. Start here:
 ```sh
 export VCPKG_ROOT="$HOME/vcpkg"             # vcpkg clone; every dependency is a static library (ADR-004)
 cmake --workflow --preset dev              # configure + build + test (build/dev)
-cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # likewise: tsan
+cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # ASan + UBSan; CI runs it nightly on main
 tools/lint.sh [paths…]                     # clang-format check, clang-tidy, clazy, cppcheck; must be clean
 tools/dev/run-headless.sh                  # start Selecta with a throwaway data folder and the debug socket
 tools/dev/app.sh state | tree | screenshot path=/abs.png | navigate view=<id> | click name=<objectName> | log
@@ -62,5 +62,6 @@ tools/dev/app.sh state | tree | screenshot path=/abs.png | navigate view=<id> | 
 - Input from the network or from files is bounded and treated as untrusted.
 - No half-built features: a view or control that can't work yet isn't shown, or says plainly that it isn't built.
   No fake data in the app (the mock is the only place for that).
-- Warning-free with `-Werror`; `tools/lint.sh` clean; tests pass under `dev`, `asan` and `tsan`.
+- Warning-free with `-Werror`; `tools/lint.sh` clean; tests pass under `dev`. ASan + UBSan runs nightly on main
+  (`Linux · asan`), not before a pull request.
 - Commit early, in small steps, with explicit paths; grep for secrets before committing.
