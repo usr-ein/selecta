@@ -24,6 +24,7 @@
 #include "support/FakeNotificationSink.h"
 
 #include <QAbstractItemView>
+#include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QBuffer>
@@ -43,6 +44,7 @@
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStackedWidget>
 #include <QTemporaryDir>
 #include <QTest>
@@ -1336,6 +1338,65 @@ TEST_F(MainWindowTest, AClickBringsTheWindowForwardUnlessItIsKeptOffTheScreen)
     EXPECT_FALSE(window->notifier()->isAway());
     EXPECT_EQ(window->notifier()->arrivalsWhileAway(), 0);
     EXPECT_EQ(window->notifier()->badge(), 0);
+}
+
+// The search's Download and Add to Wishlist stay on screen however the window is split (beta notes, 2026-10-20: after
+// the sidebar was dragged, the Download button at the top right was off the screen). The filter bar's left side gives
+// way first: the actions keep their full size as long as the view has room for them alone.
+TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
+{
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    auto *field = window->findChild<QLineEdit *>(u"sidebar.search"_s);
+    ASSERT_NE(field, nullptr);
+    field->setText(u"Okuma Drift"_s);
+    QTest::keyClick(field, Qt::Key_Return);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->currentViewId().startsWith(u"search:"_s); }, 5000));
+    auto *view = window->findChild<QWidget *>(u"view.search"_s);
+    auto *splitter = window->findChild<QSplitter *>(u"mainSplitter"_s);
+    auto *sidebar = window->findChild<QWidget *>(u"sidebar"_s);
+    auto *inspector = window->findChild<QWidget *>(u"inspector"_s);
+    ASSERT_NE(view, nullptr);
+    ASSERT_NE(splitter, nullptr);
+    ASSERT_NE(sidebar, nullptr);
+    ASSERT_NE(inspector, nullptr);
+    const QStringList actions{u"search.filters"_s, u"search.wishlist"_s, u"search.download"_s};
+    int actionsWidth = 16 + 16; // the bar's side margins
+    for (const QString &name : actions) {
+        const auto *button = window->findChild<QAbstractButton *>(name);
+        ASSERT_NE(button, nullptr) << name.toStdString();
+        actionsWidth += button->sizeHint().width() + 12; // and the spacing between them
+    }
+    // Far narrower than the whole bar wants, but wide enough for the actions.
+    const auto *wants = window->findChild<QWidget *>(u"search.wants"_s);
+    ASSERT_NE(wants, nullptr);
+    ASSERT_GT(wants->sizeHint().width(), 100);
+    const int viewWidth = actionsWidth + 40;
+
+    // The sidebar dragged to its narrowest. (The splitter won't widen it here: the views ask for more than the
+    // window has.)
+    const int sidebarWidth = sidebar->minimumWidth();
+    window->resize(std::max(window->minimumWidth(), sidebarWidth + viewWidth + inspector->width() + 10),
+                   window->minimumHeight());
+    QCoreApplication::processEvents();
+    splitter->setSizes({sidebarWidth, window->width() - sidebarWidth});
+    QCoreApplication::processEvents();
+    ASSERT_EQ(sidebar->width(), sidebarWidth);
+    const QRect viewRect(view->mapTo(window.get(), QPoint(0, 0)), view->size());
+    ASSERT_LE(viewRect.right(), window->rect().right());
+    ASSERT_LT(view->width(), view->minimumSizeHint().width()); // the case the beta hit: squeezed by the splitter
+    for (const QString &name : actions) {
+        const auto *button = window->findChild<QAbstractButton *>(name);
+        ASSERT_TRUE(button->isVisible()) << name.toStdString();
+        const QRect shown(button->mapTo(window.get(), QPoint(0, 0)), button->size());
+        EXPECT_TRUE(viewRect.contains(shown)) << name.toStdString() << " with a sidebar of " << sidebarWidth
+                                              << ": its right edge at " << shown.right() << ", the view's at "
+                                              << viewRect.right();
+        EXPECT_GE(button->width(), button->sizeHint().width()) << name.toStdString(); // never squeezed
+    }
+    engine->stop();
 }
 
 TEST_F(MainWindowTest, PresetsAreSharedBySearchGetTracksAndTheWishlist)

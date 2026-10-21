@@ -330,9 +330,18 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
 QWidget *SearchView::createFilterBar()
 {
     auto *bar = new QWidget(this);
-    auto *layout = new QHBoxLayout(bar);
-    layout->setContentsMargins(16, 10, 16, 6);
-    layout->addWidget(fieldLabel(tr("Want"), bar, m_preset));
+    auto *barLayout = new QHBoxLayout(bar);
+    barLayout->setContentsMargins(16, 10, 16, 6);
+    // What you want on the left, what you do on the right. The actions keep their room and stay in sight however
+    // narrow the view gets (beta notes: Download went off screen); the left side gives way: the preset's name elides,
+    // the boxes are cut.
+    auto *wants = new QWidget(bar);
+    wants->setObjectName(u"search.wants"_s);
+    wants->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto *layout = new QHBoxLayout(wants);
+    layout->setContentsMargins(0, 0, 0, 0);
+    barLayout->addWidget(wants, 1);
+    layout->addWidget(fieldLabel(tr("Want"), wants, m_preset));
     m_preset->setObjectName(u"search.preset"_s);
     m_preset->setToolTip(tr("The quality you want: a preset. Get tracks and the Wishlist pick from the same ones."));
     layout->addWidget(m_preset);
@@ -382,7 +391,7 @@ QWidget *SearchView::createFilterBar()
         m_state.filtersShown = shown;
         m_settings.setSearchViewState(m_state);
     });
-    layout->addWidget(m_filtersButton);
+    barLayout->addWidget(m_filtersButton);
     // SRCH-14: watch for this search in the background.
     m_watch->setObjectName(u"search.wishlist"_s);
     m_watch->setToolTip(tr("Run this search again in the background and say when new files turn up"));
@@ -392,11 +401,11 @@ QWidget *SearchView::createFilterBar()
             m_engine.addToWishlist(search->text, presetLabel(), m_state.filter);
         }
     });
-    layout->addWidget(m_watch);
+    barLayout->addWidget(m_watch);
     m_download->setObjectName(u"search.download"_s);
     m_download->setToolTip(tr("Download the selected files to the Inbox, converted and tagged (Return)"));
     connect(m_download, &QPushButton::clicked, this, &SearchView::downloadSelected);
-    layout->addWidget(m_download);
+    barLayout->addWidget(m_download);
     QWidget::setTabOrder(m_watch, m_download); // Tab follows the bar, left to right
     return bar;
 }
