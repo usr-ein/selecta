@@ -325,7 +325,7 @@ TEST(NetworkServiceDescriptors, ADialBackStormLeavesDescriptorsForNewThreads)
     ASSERT_TRUE(QTest::qWaitFor([&] { return answered() >= kStorm; }, 10'000)) << answered();
 
     // The storm took no more descriptors than the cap the limit allows, and that cap left the reserve alone.
-    const int socketCap = selecta::governor::limits::socketsFor(openFiles);
+    const int socketCap = selecta::governor::limits::socketCapFor(openFiles);
     EXPECT_GT(network.peers().socketCount(), 0);
     EXPECT_LE(network.peers().socketCount(), socketCap);
     EXPECT_LE(selecta::testing::openDescriptorCount() - openBeforeStorm, socketCap);

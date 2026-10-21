@@ -88,12 +88,12 @@ constexpr qint64 reservedDescriptors(qint64 openFiles)
 
 // The peer socket cap under a limit of `openFiles` descriptors (the soft RLIMIT_NOFILE): the limit minus the reserve,
 // at least 1, at most kSocketsMax.
-constexpr int socketsFor(qint64 openFiles)
+constexpr int socketCapFor(qint64 openFiles)
 {
     return static_cast<int>(std::clamp<qint64>(openFiles - reservedDescriptors(openFiles), 1, kSocketsMax));
 }
-static_assert(socketsFor(kWantedOpenFiles) == kSocketsMax);
-static_assert(socketsFor(256) == 64); // macOS's default leaves 192 descriptors for the rest
+static_assert(socketCapFor(kWantedOpenFiles) == kSocketsMax);
+static_assert(socketCapFor(256) == 64); // macOS's default leaves 192 descriptors for the rest
 
 // --- Downloads (FAIR-2, DL-2) ---------------------------------------------------------------------------------------
 inline constexpr int kPeerActiveDownloads = 1;
