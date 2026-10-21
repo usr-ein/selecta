@@ -43,44 +43,76 @@ tests/fuzz/slsk/fuzz.sh [seconds] [target…] # libFuzzer on the protocol decode
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on pushes to `main` and to `ci/**` branches, on pull requests, every night at 03:17 UTC
+`.github/workflows/ci.yml` runs on pull requests, on pushes to `main` and to `ci/**` branches, every night at 03:17 UTC
 and on request (`gh workflow run CI --ref <branch>`). A push that only touches `docs/`, `references/`, `mock/` or
-Markdown files doesn't start it. A newer push to the same branch cancels the run in progress, except on `main`.
+Markdown files doesn't start it. A newer run for the same branch and event cancels the one in progress, on `main` too:
+the newer commit covers the older ones. The nightly run is never cancelled by a push.
 
-| Job | Runner | What it checks |
-|---|---|---|
-| macOS · build, tests, static linking | `macos-26` | The `dev` preset with warnings as errors, the whole suite, and that the app and `selecta-cli` load only system libraries |
-| macOS · lint | `macos-26` | `tools/lint.sh` over `src`, `tests` and `tools`. It needs the generated sources only, not a build. About 50 minutes, most of it clang-tidy |
-| macOS · asan, macOS · tsan | `macos-26` | The whole suite under AddressSanitizer + UBSan, and under ThreadSanitizer. Not on pull requests. A tsan failure doesn't fail the run yet: the prebuilt Qt isn't instrumented, so data passed through Qt's event queue or thread pool shows as a race |
-| Linux · build, tests | `ubuntu-26.04` | The `linux` preset with GCC and warnings as errors, then the suite in a network namespace that has only loopback |
-| Windows · build, tests (experimental) | `windows-2025` | The `windows` preset with MSVC, without the media libraries, warnings not fatal. Its failure doesn't fail the run |
+A pull request runs on Linux runners only, and every job gates it. It should finish in about five minutes (P-028). The
+jobs that take longer, or need macOS or Windows, run after the merge on `main`, or at night:
 
-Each job runs the same presets as a local build, so `cmake --workflow --preset dev`, `tools/lint.sh` and the `asan` and
-`tsan` presets reproduce it. GCC leaves `-Wshadow` and `-Wmissing-field-initializers` to Clang
-(`cmake/SelectaWarnings.cmake`), and every other warning is an error on Linux too.
+| Job | Runner | Runs on | What it checks |
+|---|---|---|---|
+| Linux · build, tests | `ubuntu-26.04` | everything | The `linux` preset with Clang and warnings as errors, then the tests in a network namespace that has only loopback: on a pull request, only those whose code or inputs changed; elsewhere the whole suite |
+| Linux · lint 1, 2, 3 | `ubuntu-26.04` | everything | `tools/lint.sh --changed` on the files the pull request (or the push) changes, split in up to three shares of about fifteen files; the whole tree at night and on request |
+| macOS · build, tests, static linking | `macos-26` | `main`, nightly | The `dev` preset with warnings as errors, the whole suite, and that the app and `selecta-cli` load only system libraries |
+| macOS · lint | `macos-26` | `main`, nightly | `tools/lint.sh` over the whole tree, `.mm` files and macOS-only code included. About 50 minutes |
+| Windows · build, tests | `windows-2025` | `main`, nightly | The `windows` preset with MSVC, without the media libraries (so no engine or app), warnings not fatal |
+| Linux · asan | `ubuntu-26.04` | nightly, on request | The `linux-asan` preset: the whole suite under AddressSanitizer + UBSan |
+
+Before its pull request, a minion builds and runs the targeted tests on the Mac (docs/CREW.md): that covers the
+macOS-only code a pull request's CI no longer sees (Objective-C++, Keychain, the Trash, the bundle, Apple Clang's
+warnings). `main`'s run checks all of it after the merge, and a red `main` gets a fix-forward minion at once.
+
+Each job runs the same presets as a local build, so `cmake --workflow --preset dev`, `tools/lint.sh` and the `asan`
+preset reproduce it on the Mac. Linux builds Selecta with Clang (its dependencies keep the system's GCC); upstream Clang
+also flags designated initializers that leave fields to their defaults, which Apple Clang doesn't, so
+`cmake/SelectaWarnings.cmake` turns that one off, and every other warning is an error on Linux too. The Linux test
+step runs four tests per core: most of them wait on timers and sockets, and the suite takes less than half the time of
+one per core.
+
+**Which tests a pull request runs.** `tools/ci/affected-tests.sh` gives each test a fingerprint: its definition in
+ctest, the bytes of its executable, the runtime inputs its compile definitions name (`selecta-cli` for the share and
+slsk tests, the data files of `tests/meta/fixtures` and of the tests' source folders), and the script itself. A build
+is byte-reproducible, so an unchanged executable means unchanged code. `main` saves the fingerprints of the tests that
+passed; a pull request runs only the tests whose fingerprint no passing run on `main` or on that pull request has. A
+change to `src/app` runs the UI tests only; a change to `base` runs them all. When in doubt it runs the test: a missing
+fingerprint file, an input it can't hash, or a test it can't judge (a command outside the checkout).
+
+**What a pull request's lint leaves to `main`.** `tools/lint.sh --changed <ref>` checks the files changed since `<ref>`
+(committed, uncommitted and new): clang-format on all of them; the analysers on the changed sources, and on each changed
+header through one source that includes it. A change can still upset a file it doesn't touch, and a change to
+`.clang-tidy` or `.clang-format` alone lints nothing on the pull request: `main`'s full lint catches both. The Linux
+lint's tools are the Mac's, from Homebrew (llvm, clazy, cppcheck), so both runs agree.
+
+```sh
+tools/lint.sh --changed origin/main        # what a pull request's lint checks, on the Mac
+tools/lint.sh --list --changed origin/main # only the files and translation units it would check
+```
 
 **Network safety.** No job talks to the Soulseek network or to the metadata services. Every job builds with the
 live-server switch off and checks it after configuring. The tests use loopback fakes, and on Linux they can't reach
 anything else. CI has no secrets.
 
-**Caches.** Each job restores vcpkg's binary archives for its triplet and its own ccache folder, both kept in
-`build/cache` (actions/cache refuses paths with `..`). The archive key is a hash of `vcpkg.json`, `cmake/vcpkg-triplets`
-and `cmake/vcpkg-ports`. A change to any of them, or a new compiler on the runner image, rebuilds the dependencies once:
-about 25 minutes on macOS and Linux and 35 on Windows, mostly Qt. The macOS, Linux and Windows build jobs save the new
-archives. Lint and the sanitizer jobs only restore them.
+**Caches.** Each job restores vcpkg's binary archives for its triplet and a compiler cache (ccache), both kept in
+`build/cache` (actions/cache refuses paths with `..`).
+- The archive key is a hash of `vcpkg.json`, `cmake/vcpkg-triplets` and `cmake/vcpkg-ports`. A change to any of them,
+  or a new compiler on the runner image, rebuilds the dependencies once: about 25 minutes on macOS and Linux and 35 on
+  Windows, mostly Qt. A pull request that changes them takes that long once.
+- A build saves only the compiler-cache entries it used, so each saved cache holds one build. `main` saves its own; a
+  pull request starts from `main`'s newest and adds its own previous one, so its second push recompiles only what it
+  changed since.
+- How long a pull request's build takes depends on how many files its changes reach: about two minutes for changes
+  across `src/app`, six for a header that nearly every file includes (`base`, `governor`), and the whole build (about
+  ten) when nothing is cached, as on the first run after a toolchain change.
 
-**Windows (experimental).** vcpkg builds every dependency with MSVC (triplet `x64-windows-selecta`: static
-libraries on the dynamic CRT, about 35 minutes cold), and base, governor, storage, slsk and the devnet tool compile.
-The build stops at two portability bugs:
-- `src/match` (`Lexicon.cpp`, `Normalizer.cpp`) takes a `std::array` iterator for a pointer (`const auto *it`), and
-  MSVC's array iterators aren't pointers;
-- `src/library/FileOps.cpp` calls `strerror_r`.
-
-The build hasn't reached the code that is POSIX-only by design:
-- meta's `ToolProcess` (process groups, `kill`);
-- `unistd.h` in `YtDlpRunner.cpp`;
-- the tests' `/bin/sh` fake yt-dlp;
-- with the media libraries on, the directory walkers in collection and share (`openat`, `fdopendir`).
+**Windows.** vcpkg builds every dependency with MSVC (triplet `x64-windows-selecta`: static libraries on the dynamic
+CRT, about 35 minutes cold). Without the media libraries the job builds base, governor, storage, slsk, meta, match,
+library, `selecta-cli` and the devnet tool, and runs their tests. What is POSIX-only by design stays behind platform
+checks:
+- meta's `ToolProcess` leads a process group on Unix only; on Windows a kill ends the tool alone;
+- the tool tests (`ToolProcessTest`, `YtDlpRunnerTest`) script their tools in `/bin/sh`, so they build on Unix only;
+- with the media libraries on, the directory walkers in collection and share (`openat`, `fdopendir`) don't build yet.
 
 **Reading a failure.** Builds keep going after an error (`ninja -k 0`), so one run lists every compile error.
 
@@ -88,8 +120,8 @@ The build hasn't reached the code that is POSIX-only by design:
 gh run list --branch <branch> --limit 5
 gh run view <run-id>                       # jobs and steps
 gh run view <run-id> --log-failed          # logs of the failed steps, once the whole run has finished
-gh run download <run-id> -n macos-test-log # LastTest.log of a failed test step: also linux-, asan-, tsan-test-log
-gh run download <run-id> -n lint-logs      # clang-tidy.log and clazy.log
+gh run download <run-id> -n linux-test-log # LastTest.log of a failed test step: also macos-, windows-, asan-test-log
+gh run download <run-id> -n lint-logs-1    # clang-tidy.log and clazy.log of lint share 1 (macos-lint-logs: macOS)
 ```
 
 ## Inspecting a running Selecta

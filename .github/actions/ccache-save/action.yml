@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: ccache-save
+description: >-
+  Saves the compiler cache ../ccache-restore restored, keeping only the entries this run's build used, so a saved cache
+  holds one build and doesn't grow with every run. Saved under main's name on main, under the pull request's or the
+  branch's own name elsewhere. Skip it when the build was cancelled: it would keep a partial build.
+inputs:
+  name:
+    description: The build's cache name, as given to ../ccache-restore.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Keep what this build used
+      shell: bash
+      run: |
+        ccache --show-stats
+        ccache --evict-older-than "$(($(date +%s) - CCACHE_RESTORED_AT + 1))s"
+        du -sh "$CCACHE_DIR"
+
+    - name: Save the compiler cache
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-${{ inputs.name }}-${{ env.CCACHE_SCOPE }}-${{ github.run_id }}-${{ github.run_attempt }}
