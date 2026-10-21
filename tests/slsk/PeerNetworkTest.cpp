@@ -768,6 +768,7 @@ TEST_F(PeerNetworkTest, FileConnectionFailuresComeAfterTheCall)
 TEST_F(PeerNetworkTest, DistributedConnectionToACandidate)
 {
     const auto parent = makePeer(u"parent"_s);
+    parent->answerIndirect = false; // the test talks over the connection the parent accepts: the direct half must win
     const QSignalSpy identified(parent.get(), &FakePeer::identified);
     const QSignalSpy connected(&peers, &PeerNetwork::distributedConnected);
     const QSignalSpy messages(&peers, &PeerNetwork::distributedMessageReceived);
