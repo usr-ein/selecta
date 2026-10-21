@@ -2,6 +2,7 @@
 #include "app/views/RoomsView.h"
 
 #include "app/Accessibility.h"
+#include "app/Format.h"
 #include "app/PeerMenu.h"
 #include "core/EngineHost.h"
 
@@ -230,6 +231,7 @@ QWidget *RoomsView::createLeft()
         }
     });
     m_joinProblem->setObjectName(u"rooms.joinProblem"_s);
+    m_joinProblem->setTextFormat(Qt::PlainText); // a room's name, and the server's words
     m_joinProblem->setWordWrap(true);
     m_joinProblem->setForegroundRole(QPalette::PlaceholderText);
     m_joinProblem->hide();
@@ -258,7 +260,9 @@ QWidget *RoomsView::createRoomPage()
     nameFont.setPointSizeF(nameFont.pointSizeF() + 2.0);
     m_name->setFont(nameFont);
     m_name->setObjectName(u"rooms.name"_s);
+    m_name->setTextFormat(Qt::PlainText); // rooms are named by anyone
     m_details->setObjectName(u"rooms.details"_s);
+    m_details->setTextFormat(Qt::PlainText); // may be the server's words
     m_details->setForegroundRole(QPalette::PlaceholderText);
     m_details->setWordWrap(true);
     m_leave->setObjectName(u"rooms.leave"_s);
@@ -292,6 +296,7 @@ QWidget *RoomsView::createRoomPage()
     a11y::addMenuKey(m_members);
 
     m_problem->setObjectName(u"rooms.problem"_s);
+    m_problem->setTextFormat(Qt::PlainText);
     m_problem->setWordWrap(true);
     m_problem->setForegroundRole(QPalette::PlaceholderText);
     m_problem->hide();
@@ -387,7 +392,7 @@ void RoomsView::rebuildJoined()
     for (const core::Room &room : std::as_const(m_rooms)) {
         auto *name = new QStandardItem(room.name);
         name->setData(room.name, kNameRole);
-        name->setToolTip(stateText(room));
+        name->setToolTip(format::plainToolTip(stateText(room)));
         QString count;
         if (room.state == core::Room::State::Joined) {
             count = room.unread > 0 ? QLocale().toString(room.unread) : QString();
@@ -530,6 +535,7 @@ void RoomsView::join(const QString &room)
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setObjectName(u"rooms.createConfirm"_s);
     box->setIcon(QMessageBox::Question);
+    box->setTextFormat(Qt::PlainText); // the name as typed
     box->setText(tr("Create the room “%1”?").arg(room));
     box->setInformativeText(tr("No room by that name is in the server's list. Joining it creates a public room that "
                                "anyone on Soulseek can find and join."));

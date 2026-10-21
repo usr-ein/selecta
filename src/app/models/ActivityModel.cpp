@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/models/ActivityModel.h"
 
+#include "app/Format.h"
+
 #include <QColor>
 #include <QDateTime>
 #include <QGuiApplication>
@@ -117,9 +119,12 @@ QVariant ActivityModel::data(const QModelIndex &index, int role) const
         }
     case Qt::ToolTipRole:
     case Qt::AccessibleDescriptionRole: {
-        // The whole sentence, for a Details cell too narrow to show it.
+        // The whole sentence, for a Details cell too narrow to show it. It names peers and files: as they are.
         const QString sentence = core::ActivityLog::describe(entry);
-        return sentence.isEmpty() ? QVariant() : QVariant(sentence);
+        if (sentence.isEmpty()) {
+            return {};
+        }
+        return role == Qt::ToolTipRole ? format::plainToolTip(sentence) : sentence;
     }
     case Qt::ForegroundRole:
         if (index.column() == Outcome && isWarning(entry.outcome)) {

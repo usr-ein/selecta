@@ -342,20 +342,24 @@ QVariant TransfersModel::data(const QModelIndex &index, int role) const
     if (!index.isValid()) {
         return {};
     }
+    QVariant value;
     if (index.internalId() == kTopLevel) {
-        return index.row() < m_groups.size() ? groupData(m_groups.at(index.row()), index.column(), role) : QVariant();
-    }
-    const auto group = static_cast<qsizetype>(index.internalId() - 1);
-    if (group >= m_groups.size()) {
+        value = index.row() < m_groups.size() ? groupData(m_groups.at(index.row()), index.column(), role) : QVariant();
+    } else if (const auto group = static_cast<qsizetype>(index.internalId() - 1); group >= m_groups.size()) {
         return {};
+    } else if (m_groups.at(group).uploads) {
+        value = index.row() < m_uploads.size() ? uploadData(m_uploads.at(index.row()), index.column(), role)
+                                               : QVariant();
+    } else {
+        const QList<qint64> &members = m_groups.at(group).members;
+        value = index.row() < members.size()
+                    ? downloadData(m_rows.value(members.at(index.row())), index.column(), role)
+                    : QVariant();
     }
-    if (m_groups.at(group).uploads) {
-        return index.row() < m_uploads.size() ? uploadData(m_uploads.at(index.row()), index.column(), role)
-                                              : QVariant();
+    if (role == Qt::ToolTipRole && value.typeId() == QMetaType::QString) {
+        return format::plainToolTip(value.toString()); // peers' names and paths, as they are
     }
-    const QList<qint64> &members = m_groups.at(group).members;
-    return index.row() < members.size() ? downloadData(m_rows.value(members.at(index.row())), index.column(), role)
-                                        : QVariant();
+    return value;
 }
 
 QVariant TransfersModel::downloadData(const Row &row, int column, int role) const

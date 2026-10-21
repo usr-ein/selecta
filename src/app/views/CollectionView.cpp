@@ -78,10 +78,12 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
     headlineFont.setWeight(QFont::DemiBold);
     m_headline->setFont(headlineFont);
     m_details->setObjectName(u"collection.details"_s);
+    m_details->setTextFormat(Qt::PlainText); // folder names
     m_details->setForegroundRole(QPalette::PlaceholderText);
     m_details->setWordWrap(true);
     m_details->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_message->setObjectName(u"collection.message"_s);
+    m_message->setTextFormat(Qt::PlainText); // may name a file or folder
     m_message->setWordWrap(true);
     m_message->hide();
     m_progress->setObjectName(u"collection.progress"_s);
@@ -100,6 +102,7 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
     m_unreadable->setSelectionMode(QAbstractItemView::NoSelection);
     m_unreadable->setFrameShape(QFrame::NoFrame);
     m_formats->setObjectName(u"collection.formats"_s);
+    m_formats->setTextFormat(Qt::PlainText); // the files' types
     m_formats->setWordWrap(true);
     m_inbox->setObjectName(u"collection.inbox"_s);
     m_openInbox->setObjectName(u"collection.openInbox"_s);
@@ -191,7 +194,7 @@ void CollectionView::showInboxAndFiled()
     for (const library::HistoryEntry &entry : filed) {
         const QString name = entry.artist.isEmpty() ? entry.title : entry.artist + u" – "_s + entry.title;
         auto *item = new QListWidgetItem(name.isEmpty() ? QFileInfo(entry.filedPath).fileName() : name, m_filed);
-        item->setToolTip(QDir::toNativeSeparators(entry.filedPath));
+        item->setToolTip(format::plainToolTip(QDir::toNativeSeparators(entry.filedPath)));
     }
     m_filedTitle->setVisible(!filed.isEmpty());
     m_filed->setVisible(!filed.isEmpty());
@@ -207,7 +210,7 @@ void CollectionView::showFlags(const QList<core::SupersedeFlag> &flags)
         auto *item = new QListWidgetItem(tr("⚑ %1 is also on “%2”").arg(flag.single, flag.album), m_flags);
         item->setData(Qt::UserRole, flag.id);
         item->setData(Qt::UserRole + 1, flag.singlePath);
-        item->setToolTip(QDir::toNativeSeparators(flag.singlePath) + u'\n' + flag.summary);
+        item->setToolTip(format::plainToolTip(QDir::toNativeSeparators(flag.singlePath) + u'\n' + flag.summary));
     }
     const int count = m_flags->count();
     m_flagsTitle->setText(count == 1 ? tr("1 single in your collection is also on an album. Selecta never changes "
@@ -256,7 +259,7 @@ void CollectionView::show(const core::CollectionStatus &status)
         folders.append(QDir::toNativeSeparators(root));
     }
     details.append(folders.size() == 1 ? tr("in %1").arg(folders.constFirst())
-                                       : tr("in %1 folders: %2").arg(folders.size()).arg(folders.join(u", "_s)));
+                                       : tr("in %1 folders: %2").arg(QString::number(folders.size()), folders.join(u", "_s)));
     if (status.scanning) {
         details.append(status.total > 0 ? tr("reading %1 of %2 new or changed files")
                                               .arg(locale.toString(status.done), locale.toString(status.total))
@@ -278,7 +281,7 @@ void CollectionView::show(const core::CollectionStatus &status)
     m_unreadable->clear();
     for (const auto &[path, reason] : status.unreadableSample) {
         auto *item = new QListWidgetItem(QDir::toNativeSeparators(path) + u"\n"_s + reason, m_unreadable);
-        item->setToolTip(reason);
+        item->setToolTip(format::plainToolTip(reason));
     }
     m_unreadableTitle->setText(status.unreadable == 1
                                    ? tr("1 file couldn't be read")

@@ -305,7 +305,7 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
             return subtitle(*line);
         }
         if (role == Qt::ToolTipRole) {
-            return QString(line->raw + u'\n' + subtitle(*line));
+            return format::plainToolTip(line->raw + u'\n' + subtitle(*line));
         }
         break;
     case StatusColumn:
@@ -316,7 +316,7 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
             return colourFor(statusKind(*line));
         }
         if ((role == Qt::ToolTipRole || role == Qt::AccessibleDescriptionRole) && !line->message.isEmpty()) {
-            return line->message;
+            return role == Qt::ToolTipRole ? format::plainToolTip(line->message) : line->message; // names a peer
         }
         break;
     case FileColumn:
@@ -331,7 +331,7 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
             return QString(text + u" · "_s + line->best->peer);
         }
         if (role == Qt::ToolTipRole) {
-            return QString::fromUtf8(line->best->remotePath);
+            return format::plainToolTip(QString::fromUtf8(line->best->remotePath));
         }
         break;
     default:
