@@ -291,8 +291,8 @@ TEST_F(TagWriting, FailuresAreReported)
     EXPECT_EQ(writeTags(garbage, model).error().code, ErrorCode::Unsupported);
     // canWriteTags() says the same as writeTags() does, before trying (P-025: the Inbox converts what it can't tag).
     using selecta::audio::Container;
-    for (const auto container : {Container::MpegAudio, Container::Aiff, Container::Wav, Container::Flac,
-                                 Container::Mp4}) {
+    for (const auto container :
+         {Container::MpegAudio, Container::Aiff, Container::Wav, Container::Flac, Container::Mp4}) {
         EXPECT_TRUE(canWriteTags(container));
     }
     for (const auto container : {Container::Ogg, Container::Other, Container::Unknown}) {

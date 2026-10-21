@@ -106,7 +106,8 @@ public:
     // "Get anyway": downloads one of the near misses of a line nothing was found for (`peer`'s file at `remotePath`),
     // below the quality wanted. Its other near misses are the copies tried if it fails. On arrival an MP3 is kept as it
     // is and any other lossy file becomes MP3 320 (P-025), either way with tags and cover, and the Inbox marks it below
-    // the quality wanted (FileChoice::shortfall). A near miss the line doesn't have (the list changed since) is ignored.
+    // the quality wanted (FileChoice::shortfall). A near miss the line doesn't have (the list changed since) is
+    // ignored.
     void getAnyway(qint64 id, const QString &peer, const QByteArray &remotePath);
     // "Try another peer": moves a line whose download still waits for its turn (asked for or queued at the peer, not
     // arriving) to another peer's file, `peer`'s at `remotePath`; an empty `peer` takes the best one. The other peer's
