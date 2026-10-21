@@ -224,7 +224,7 @@ selecta::meta::Release releaseWithMbid()
 TEST_F(EngineTest, ACoverThatCantBeFetchedIsAnsweredWithNone)
 {
     Engine engine(options()); // cover downloads off, as in isolated runs
-    QSignalSpy fetched(&engine, &Engine::coverFetched);
+    const QSignalSpy fetched(&engine, &Engine::coverFetched);
     engine.fetchCover(u"before start"_s, releaseWithMbid());
     ASSERT_EQ(fetched.size(), 1);
     EXPECT_TRUE(fetched.at(0).at(1).toByteArray().isEmpty());

@@ -3,15 +3,20 @@
 
 #include <QBuffer>
 #include <QCoreApplication>
+#include <QDir>
+#include <QGuiApplication>
 #include <QImage>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QPainter>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSignalSpy>
+#include <QStyleHints>
 #include <QTest>
 
 #include <gtest/gtest.h>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 using selecta::app::GetTracksInspector;
@@ -498,5 +503,82 @@ TEST(GetTracksInspector, AHugeCoverIsShownScaledDown)
     ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(1, coverUrl(1))));
     inspector.showCover(coverUrl(1), pngBytes(2400, 1200)); // not square either
     ASSERT_TRUE(QTest::qWaitFor([&] { return cover(inspector)->hasImage(); }, 5000));
-    EXPECT_EQ(cover(inspector)->imageSize(), QSize(GetTracksInspector::kCoverPixels, GetTracksInspector::kCoverPixels / 2));
+    EXPECT_EQ(cover(inspector)->imageSize(),
+              QSize(GetTracksInspector::kCoverPixels, GetTracksInspector::kCoverPixels / 2));
+}
+
+TEST(GetTracksInspector, CoverBytesAreDecodedOnlyWhenSafe)
+{
+    EXPECT_EQ(GetTracksInspector::decodeCover(pngBytes(640, 640)).size(), QSize(640, 640));
+    EXPECT_EQ(GetTracksInspector::decodeCover(pngBytes(1600, 400)).size(), QSize(800, 200)); // scaled down
+    EXPECT_TRUE(GetTracksInspector::decodeCover({}).isNull());
+    EXPECT_TRUE(GetTracksInspector::decodeCover("<html>not found</html>").isNull());
+    EXPECT_TRUE(GetTracksInspector::decodeCover(pngBytes(640, 640).left(60)).isNull()); // cut short
+    // 5000 × 5000: within the cover bounds, but 100 MB once decoded, which a PNG can't avoid.
+    EXPECT_TRUE(GetTracksInspector::decodeCover(pngBytes(5000, 5000, Qt::black)).isNull());
+}
+
+namespace {
+
+// A made-up cover: a gradient and a few rings, nobody's artwork.
+QImage sampleCover(int side)
+{
+    QImage image(side, side, QImage::Format_RGB32);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QLinearGradient ground(0, 0, side, side);
+    ground.setColorAt(0.0, QColor(0x1d, 0x2b, 0x64));
+    ground.setColorAt(1.0, QColor(0xf8, 0x5f, 0x73));
+    painter.fillRect(image.rect(), ground);
+    painter.setPen(QPen(QColor(255, 255, 255, 170), side / 60.0));
+    for (int ring = 1; ring <= 5; ++ring) {
+        const qreal radius = side * 0.08 * ring;
+        painter.drawEllipse(QPointF(side * 0.62, side * 0.4), radius, radius);
+    }
+    return image;
+}
+
+} // namespace
+
+// Not a check: draws the inspector with a cover, in light and dark, for the pull request's screenshots (P-021), with
+// nothing fetched. Runs only when SELECTA_SCREENS_DIR names the folder to save them in, and on the native platform for
+// real fonts: SELECTA_SCREENS_DIR=docs/screens QT_QPA_PLATFORM=cocoa selecta_ui_tests --gtest_filter='*Screenshots*'.
+TEST(GetTracksInspector, ScreenshotsWithACover)
+{
+    const QString folder = qEnvironmentVariable("SELECTA_SCREENS_DIR");
+    if (folder.isEmpty()) {
+        GTEST_SKIP() << "set SELECTA_SCREENS_DIR to draw the screenshots";
+    }
+    GetLine line = withRelease(1, coverUrl(1));
+    line.findState = GetLine::FindState::Ready;
+    line.best = file(u"crate_digger"_s, 320);
+    line.release->releaseDate = u"2024-03-08"_s;
+    line.release->durationMs = 372'000;
+    line.release->trackNumber = 2;
+    line.release->trackTotal = 9;
+    line.release->label = u"Harbour Lights"_s;
+    line.release->isrc = u"XXA012400002"_s; // made up, like the rest
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    sampleCover(640).save(&buffer, "PNG");
+
+    for (const auto &[scheme, name] : {std::pair{Qt::ColorScheme::Light, u"light"_s},
+                                       std::pair{Qt::ColorScheme::Dark, u"dark"_s}}) {
+        QGuiApplication::styleHints()->setColorScheme(scheme);
+        QCoreApplication::processEvents();
+        GetTracksInspector inspector;
+        inspector.setCoverDelay(0);
+        inspector.resize(300, 760);
+        inspector.setAttribute(Qt::WA_DontShowOnScreen);
+        inspector.show();
+        QSignalSpy wanted(&inspector, &GetTracksInspector::coverWanted);
+        ASSERT_TRUE(shownAndAsked(inspector, wanted, line));
+        inspector.showCover(coverUrl(1), bytes);
+        ASSERT_TRUE(QTest::qWaitFor([&] { return cover(inspector)->hasImage(); }, 2000));
+        QCoreApplication::processEvents();
+        const QPixmap shot = inspector.grab();
+        EXPECT_TRUE(shot.save(QDir(folder).filePath(u"P-021-cover-%1.png"_s.arg(name))));
+    }
+    QGuiApplication::styleHints()->unsetColorScheme();
 }

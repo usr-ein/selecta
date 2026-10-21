@@ -121,6 +121,7 @@ bool Engine::start()
     metaOptions.openUrl = m_options.openUrl;
     metaOptions.endpoints = m_options.metaEndpoints;
     metaOptions.spotifyAllowed = m_options.spotifyAllowed;
+    metaOptions.coverCacheDir = m_options.coverCacheDir;
     m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 

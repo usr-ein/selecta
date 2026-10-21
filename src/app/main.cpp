@@ -267,6 +267,7 @@ int runSelecta(int argc, char **argv)
     engineOptions.incomingDir = dataDir + u"/Downloads/Incoming"_s;
     engineOptions.stagingDir = dataDir + u"/Downloads/Converting"_s;
     engineOptions.previewDir = paths::cacheDir() + u"/Previews"_s; // kept across launches, 2 GB at most (PREV-8)
+    engineOptions.coverCacheDir = paths::cacheDir() + u"/Covers"_s; // 30 days, 500 MB at most (P-021)
     engineOptions.analysisCache = analysisCache;
     engineOptions.ytDlpPath = settings.ytDlpPath();
     engineOptions.spotifyAllowed = settings.spotifyTermsAccepted(); // META-4, D30

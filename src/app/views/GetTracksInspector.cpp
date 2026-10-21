@@ -59,41 +59,9 @@ QLabel *quietNote(const QString &objectName, QWidget *parent)
     return note;
 }
 
-// What the image reader may allocate for one cover: a 4096-pixel square, far above what is ever shown. A PNG bigger
-// than that (the reader can't scale those while decoding) is refused rather than decoded.
-constexpr int kCoverAllocationMiB = 64;
-
-// Cover bytes from the network (untrusted): a JPEG or PNG within the cover bounds by its header, decoded at most
-// kCoverPixels a side. Null when they aren't, or don't decode. Any thread.
-QImage decodeCover(const QByteArray &bytes)
-{
-    if (bytes.isEmpty() || bytes.size() > meta::kMaxCoverBytes) {
-        return {};
-    }
-    const meta::Result<meta::CoverImage> checked = meta::CoverFetcher::inspect(bytes, QUrl(), meta::Source::Spotify);
-    if (!checked.ok()) {
-        return {};
-    }
-    QBuffer buffer;
-    buffer.setData(bytes);
-    if (!buffer.open(QIODevice::ReadOnly)) {
-        return {};
-    }
-    const QByteArray format = checked.value().mimeType == u"image/png"_s ? QByteArrayLiteral("png")
-                                                                          : QByteArrayLiteral("jpeg");
-    QImageReader reader(&buffer, format);
-    reader.setDecideFormatFromContent(false); // the header said which
-    reader.setAllocationLimit(kCoverAllocationMiB);
-    const QSize size = reader.size();
-    if (!size.isValid() || size.isEmpty()) {
-        return {};
-    }
-    const int side = GetTracksInspector::kCoverPixels;
-    if (size.width() > side || size.height() > side) {
-        reader.setScaledSize(size.scaled(side, side, Qt::KeepAspectRatio));
-    }
-    return reader.read();
-}
+// What decoding one cover may allocate before it is scaled down: a 4096-pixel square, far above what is ever shown. A
+// PNG bigger than that (the reader can't scale those while decoding, as it does JPEGs) is refused rather than decoded.
+constexpr qint64 kCoverDecodeBytes = qint64{64} * 1024 * 1024;
 
 } // namespace
 
@@ -150,9 +118,9 @@ void CoverArt::paintEvent(QPaintEvent * /*event*/)
         const QRectF source(QPointF((image.width() - shown.width()) / 2.0, (image.height() - shown.height()) / 2.0),
                             shown);
         painter.setClipPath(shape);
-        painter.drawPixmap(square, m_pixmap,
-                           QRectF(source.topLeft() * m_pixmap.devicePixelRatio(),
-                                  source.size() * m_pixmap.devicePixelRatio()));
+        painter.drawPixmap(
+            square, m_pixmap,
+            QRectF(source.topLeft() * m_pixmap.devicePixelRatio(), source.size() * m_pixmap.devicePixelRatio()));
         painter.setClipping(false);
     } else {
         painter.fillPath(shape, blend(0.06));
@@ -529,6 +497,39 @@ void GetTracksInspector::showLineCover(const core::GetLine &line)
     m_covers.erase(cached);
     m_cover->setImage(entry.second);
     m_covers.append(std::move(entry));
+}
+
+QImage GetTracksInspector::decodeCover(const QByteArray &bytes)
+{
+    if (bytes.isEmpty() || bytes.size() > meta::kMaxCoverBytes) {
+        return {};
+    }
+    const meta::Result<meta::CoverImage> checked = meta::CoverFetcher::inspect(bytes, QUrl(), meta::Source::Spotify);
+    if (!checked.ok()) {
+        return {};
+    }
+    QBuffer buffer;
+    buffer.setData(bytes);
+    if (!buffer.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    const QByteArray format =
+        checked.value().mimeType == u"image/png"_s ? QByteArrayLiteral("png") : QByteArrayLiteral("jpeg");
+    QImageReader reader(&buffer, format);
+    reader.setDecideFormatFromContent(false); // the header said which
+    const QSize size = reader.size();
+    if (!size.isValid() || size.isEmpty()) {
+        return {};
+    }
+    if (!reader.supportsOption(QImageIOHandler::ScaledSize) &&
+        qint64{size.width()} * size.height() * 4 > kCoverDecodeBytes) {
+        return {};
+    }
+    const int side = kCoverPixels;
+    if (size.width() > side || size.height() > side) {
+        reader.setScaledSize(size.scaled(side, side, Qt::KeepAspectRatio));
+    }
+    return reader.read();
 }
 
 void GetTracksInspector::setCoverDelay(int ms)

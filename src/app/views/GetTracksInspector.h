@@ -74,17 +74,21 @@ public:
     void showLine(const std::optional<core::GetLine> &line);
     std::optional<qint64> lineId() const;
 
-    // The cover `key` names (coverKey()), as coverWanted() asked for it: its bytes, or empty for none. A cover for a line
-    // no longer shown is kept for when it is shown again.
+    // The cover `key` names (coverKey()), as coverWanted() asked for it: its bytes, or empty for none. A cover for a
+    // line no longer shown is kept for when it is shown again.
     void showCover(const QString &key, const QByteArray &bytes);
     // What names a release's cover: the image it links to, else its MusicBrainz release, else its release group; empty
     // when it has none of them, and no cover can be found.
     static QString coverKey(const meta::Release &release);
 
+    // Cover bytes from the network (untrusted): a JPEG or PNG within the cover bounds by its header, decoded at most
+    // kCoverPixels a side. Null when they aren't one, would take too much memory to decode, or don't decode. Any thread.
+    static QImage decodeCover(const QByteArray &bytes);
+
     static constexpr int kCoverPixels = 800;   // the largest side decoded: a 400-point panel on a Retina screen
     static constexpr int kCoverCacheSize = 12; // covers kept decoded (at most 2.5 MB each)
     static constexpr int kCoverDelayMs = 250;  // how long a line is shown before its cover is asked for
-    void setCoverDelay(int ms); // tests shorten it
+    void setCoverDelay(int ms);                // tests shorten it
 
     bool eventFilter(QObject *watched, QEvent *event) override;
 
@@ -133,7 +137,7 @@ private:
     QTimer *m_coverTimer;
     QString m_coverKey; // the cover shown or awaited; empty: the placeholder, nothing to ask for
     std::optional<meta::Release> m_coverRelease;
-    QSet<QString> m_coversAsked;                  // asked for, no answer yet
+    QSet<QString> m_coversAsked;                // asked for, no answer yet
     QList<std::pair<QString, QImage>> m_covers; // decoded, most recently shown last
     QLabel *m_title;
     QLabel *m_status;

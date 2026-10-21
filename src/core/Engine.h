@@ -78,6 +78,9 @@ struct EngineOptions
     QString incomingDir;
     QString stagingDir;
     QString previewDir; // the preview cache (PREV-8): peer and YouTube previews, kept across launches
+    // The cover cache (P-021): covers fetched for the inspector or an arrival, kept 30 days, 500 MB at most (the cover
+    // fetcher's bounds). Empty: covers are kept in memory only, for the inspector.
+    QString coverCacheDir;
     // The analysis cache the app's waveforms and inspector use (thread-safe): arrivals keep their spectrum checks'
     // reports and spectrograms in it (PREV-9). Null: findings only.
     std::shared_ptr<audio::AnalysisCache> analysisCache;
