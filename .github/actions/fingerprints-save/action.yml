@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: fingerprints-save
+description: >-
+  Saves the fingerprints of the tests that passed in this run's ctest, under the scope ../fingerprints-restore set.
+  Every test either ran (the failed ones are left out) or had a fingerprint known to pass. Run it only when ctest ran
+  to the end.
+runs:
+  using: composite
+  steps:
+    - name: Fingerprints of the passing tests
+      shell: bash
+      # Only this scope's file goes in its cache: main's, restored next to it, has a cache of its own.
+      run: |
+        folder=build/cache/fingerprints-save
+        file="$folder/passed-${FINGERPRINTS_SCOPE//\//-}.txt"
+        mkdir -p "$folder"
+        find "$folder" -type f ! -path "$file" -delete
+        tools/ci/affected-tests.sh fingerprint build/linux --passed > "$file"
+        echo "$(wc -l < "$file") passing"
+
+    - name: Save them
+      uses: actions/cache/save@v6
+      with:
+        path: build/cache/fingerprints-save
+        key: test-fingerprints-linux-${{ env.FINGERPRINTS_SCOPE }}-${{ github.run_id }}-${{ github.run_attempt }}

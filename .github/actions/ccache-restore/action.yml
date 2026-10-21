@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: ccache-restore
+description: >-
+  Restores a build's compiler cache into CCACHE_DIR: main's newest, then, on a pull request or another branch, that
+  pull request's or branch's own newest on top (ccache's files are named by content, so the two add up). ../ccache-save
+  saves it after the build. Needs CCACHE_DIR in the environment.
+inputs:
+  name:
+    description: The build's cache name (linux, linux-asan, macos-dev…).
+    required: true
+outputs:
+  scope:
+    description: Whose cache this run saves (main, pr<number> or the branch's name).
+    value: ${{ steps.scope.outputs.scope }}
+runs:
+  using: composite
+  steps:
+    - name: Cache scope
+      id: scope
+      shell: bash
+      env:
+        EVENT: ${{ github.event_name }}
+        NUMBER: ${{ github.event.number }}
+        REF: ${{ github.ref }}
+        REF_NAME: ${{ github.ref_name }}
+      run: |
+        if [[ "$EVENT" == pull_request ]]; then
+          scope="pr$NUMBER"
+        elif [[ "$REF" == refs/heads/main ]]; then
+          scope=main
+        else
+          scope="branch-$REF_NAME"
+        fi
+        echo "scope=$scope" >> "$GITHUB_OUTPUT"
+        mkdir -p "$CCACHE_DIR"
+
+    # The keys never exist (they name this run): the restore keys pick the newest.
+    - name: Restore main's compiler cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-${{ inputs.name }}-main-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ccache-${{ inputs.name }}-main-
+
+    - name: Restore this branch's compiler cache
+      if: steps.scope.outputs.scope != 'main'
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ env.CCACHE_DIR }}
+        key: ccache-${{ inputs.name }}-${{ steps.scope.outputs.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ccache-${{ inputs.name }}-${{ steps.scope.outputs.scope }}-
+
+    # ccache-save keeps the entries used after this moment: a hit refreshes an entry's time.
+    - name: Mark the start
+      shell: bash
+      run: |
+        echo "CCACHE_RESTORED_AT=$(date +%s)" >> "$GITHUB_ENV"
+        echo "CCACHE_SCOPE=${{ steps.scope.outputs.scope }}" >> "$GITHUB_ENV"
+        ccache --zero-stats > /dev/null

@@ -67,13 +67,21 @@
     {
       "name": "linux",
       "displayName": "Debug on Linux",
-      "description": "Debug with line tables only (-g1), as dev.",
+      "description": "Debug with Clang and line tables only (-g1), as dev. Dependencies keep the system's default compiler.",
       "inherits": [ "base", "vcpkg-static-linux" ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
         "CMAKE_C_FLAGS_DEBUG": "-g1",
         "CMAKE_CXX_FLAGS_DEBUG": "-g1"
       }
+    },
+    {
+      "name": "linux-asan",
+      "displayName": "Debug on Linux with AddressSanitizer and UBSan",
+      "inherits": "linux",
+      "cacheVariables": { "SELECTA_SANITIZE": "address;undefined" }
     },
     {
       "name": "windows",
@@ -136,6 +144,7 @@
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
     { "name": "linux", "configurePreset": "linux" },
+    { "name": "linux-asan", "configurePreset": "linux-asan" },
     { "name": "windows", "configurePreset": "windows" },
     { "name": "asan", "configurePreset": "asan" },
     { "name": "tsan", "configurePreset": "tsan" },
@@ -154,6 +163,7 @@
     },
     { "name": "dev", "inherits": "base", "configurePreset": "dev" },
     { "name": "linux", "inherits": "base", "configurePreset": "linux" },
+    { "name": "linux-asan", "inherits": "base", "configurePreset": "linux-asan" },
     { "name": "windows", "inherits": "base", "configurePreset": "windows" },
     { "name": "asan", "inherits": "base", "configurePreset": "asan" },
     { "name": "tsan", "inherits": "base", "configurePreset": "tsan" },
