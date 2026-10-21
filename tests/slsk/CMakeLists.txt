@@ -39,6 +39,7 @@ selecta_add_test_suite(selecta_slsk_tests
         ClientTest.cpp
         DevnetTest.cpp
         CliTest.cpp
+        TestUtilTest.cpp
     LIBRARIES selecta_slsk_testing selecta_devnet_core)
 # CliTest runs selecta-cli's slsk-* commands against the fakes.
 target_compile_definitions(selecta_slsk_tests PRIVATE SELECTA_CLI_PATH="$<TARGET_FILE:selecta-cli>")

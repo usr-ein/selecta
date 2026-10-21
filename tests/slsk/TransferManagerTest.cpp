@@ -269,9 +269,10 @@ TEST_F(TransferManagerTest, CancelMidTransferIgnoresTheEcho)
     const RemotePath path = RemotePath::fromText(u"Music\\huge.flac"_s);
     alice->files.insert(path.raw, FakePeer::Upload{randomContent(32 * kMiB, 6), -1, false, {}});
     const QSignalSpy changes(&transfers, &TransferManager::downloadChanged);
-    const QSignalSpy progress(&transfers, &TransferManager::downloadProgress);
     const TransferId id = download(u"alice"_s, path);
-    ASSERT_TRUE(waitFor([&] { return !progress.isEmpty(); }));
+    // Cancels once the first bytes are in: the first progress signal comes after kProgressInterval, by which time
+    // loopback may have moved all 32 MiB.
+    ASSERT_TRUE(waitFor([&] { return !storage.contents.value(path.raw).isEmpty(); }));
     transfers.cancelDownload(id);
     ASSERT_TRUE(reached(changes, id, DownloadState::Cancelled));
     const qsizetype changesAtCancel = changes.size();
