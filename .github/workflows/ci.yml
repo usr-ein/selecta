@@ -1,335 +1,387 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# CI (PLAN §5.4, NFR-1, NFR-7), all with static vcpkg dependencies (ADR-004):
-#   macOS     build, tests and the static-linking check; the lint gate (tools/lint.sh) in its own job.
-#   asan/tsan the whole suite under AddressSanitizer + UBSan and under ThreadSanitizer (macOS), on main, CI branches
-#             (ci/**), nightly and on request; not on pull requests.
-#   Linux     build and tests.
+# P-028 experiments, round 1: timings of cold and warm Linux builds (GCC, Clang, mold), the test step's parallelism,
+# Linux ASan + UBSan, a Qt built with ThreadSanitizer on Linux, the lint tools on Linux, and ccache on Windows.
+# Dispatch only (gh workflow run CI --ref crew/P-028-fast-ci); the real CI comes back before the pull request.
 #
-# Network safety (CLAUDE.md): nothing here talks to the Soulseek network or to the metadata services. Tests use
-# loopback fakes only (on Linux they run in a network namespace that has nothing but loopback), and the live-server
-# build switch stays OFF: CMake refuses to build tests with it, and every job checks it after configuring. The only
-# downloads are tools, vcpkg ports and the pinned sources in cmake/SelectaDependencies.cmake.
-#
-# Caches: vcpkg's binary archives and ccache live under build/cache in the workspace (git-ignored), because
-# actions/cache refuses paths that contain '..'. Builds keep going after an error (-k 0), so one run lists them all.
+# Network safety (CLAUDE.md): nothing here talks to the Soulseek network or to the metadata services. Tests run in a
+# network namespace that has nothing but loopback, and the live-server switch stays OFF and is checked.
 name: CI
 
 on:
-  push:
-    branches: [main, 'ci/**']
-    paths-ignore: ['docs/**', 'references/**', 'mock/**', '**/*.md']
-  pull_request:
-    paths-ignore: ['docs/**', 'references/**', 'mock/**', '**/*.md']
-  schedule:
-    - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      only:
+        description: "Jobs to run: any of build, tsan, lint, windows (empty: all)"
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-exp-${{ github.ref }}-${{ inputs.only }}
+  cancel-in-progress: true
 
 env:
-  HOMEBREW_NO_AUTO_UPDATE: 1
-  HOMEBREW_NO_INSTALL_CLEANUP: 1
-  HOMEBREW_NO_ENV_HINTS: 1
   VCPKG_DISABLE_METRICS: 1
-  # vcpkg's own pinned CMake rather than the runner's: its version is part of every package ABI, and runner images
-  # update theirs often, which would rebuild Qt.
   VCPKG_FORCE_DOWNLOADED_BINARIES: 1
-  CCACHE_MAXSIZE: 600M
+  CCACHE_MAXSIZE: 2G
 
 jobs:
-  macos:
-    name: macOS · build, tests, static linking
-    runs-on: macos-26
-    timeout-minutes: 150
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Tools
-        run: brew install autoconf autoconf-archive automake libtool ccache
-
-      - name: vcpkg
-        id: vcpkg
-        uses: ./.github/actions/vcpkg
-        with:
-          triplet: arm64-osx-selecta
-
-      - name: Restore the compiler cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-dev-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: ccache-macos-dev-
-
-      - name: Configure (builds missing dependencies)
-        id: configure
-        run: >-
-          cmake --preset dev -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
-
-      - name: Save the vcpkg binary cache
-        if: always() && steps.vcpkg.outcome == 'success'
-        uses: ./.github/actions/vcpkg-save
-        with:
-          key: ${{ steps.vcpkg.outputs.cache-key }}
-          installed: build/dev/vcpkg_installed
-          complete: ${{ steps.configure.outcome == 'success' }}
-
-      - name: The live-server switch is off
-        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/dev/CMakeCache.txt
-
-      - name: Build
-        id: build
-        run: cmake --build --preset dev -- -k 0
-
-      - name: Save the compiler cache
-        if: always() && steps.build.outcome != 'skipped'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-dev-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Test
-        timeout-minutes: 30
-        run: ctest --preset dev --parallel "$(sysctl -n hw.ncpu)" --timeout 300
-
-      - name: Static linking check
-        run: |
-          # Every dependency is static (ADR-004): only macOS system frameworks and system libraries may be loaded.
-          status=0
-          for binary in build/dev/src/app/Selecta.app/Contents/MacOS/Selecta build/dev/tools/selecta-cli/selecta-cli; do
-            bad="$(otool -L "$binary" | tail -n +2 | awk '{print $1}' | grep -v -E '^/System/Library/|^/usr/lib/' || true)"
-            if [[ -n "$bad" ]]; then
-              echo "::error::$binary loads non-system dynamic libraries: $bad"
-              status=1
-            fi
-          done
-          exit "$status"
-
-      - name: Keep the test log
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos-test-log
-          path: build/dev/Testing/Temporary/LastTest*.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-  lint:
-    name: macOS · lint
-    runs-on: macos-26
-    timeout-minutes: 120
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-    steps:
-      - uses: actions/checkout@v7
-
-      # bash: lint.sh needs bash 4 or later (macOS ships 3.2).
-      - name: Tools
-        run: brew install autoconf autoconf-archive automake libtool bash llvm clazy cppcheck clang-format
-
-      - name: vcpkg
-        uses: ./.github/actions/vcpkg
-        with:
-          triplet: arm64-osx-selecta
-
-      # The analysers need compile_commands.json and the generated sources only (moc output, Version.h), not a build:
-      # without origin dependencies the global autogen target runs moc alone.
-      - name: Configure
-        run: >-
-          cmake --preset dev -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
-          -DCMAKE_AUTOGEN_ORIGIN_DEPENDS=OFF -DCMAKE_GLOBAL_AUTOGEN_TARGET=ON
-
-      - name: Generated sources
-        run: cmake --build --preset dev --target autogen
-
-      - name: Lint
-        run: tools/lint.sh
-
-      - name: Keep the analyser logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: lint-logs
-          path: |
-            build/dev/clang-tidy.log
-            build/dev/clazy.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-  sanitizers:
-    name: macOS · ${{ matrix.preset }}
-    if: github.event_name != 'pull_request'
-    runs-on: macos-26
-    timeout-minutes: 180
-    # The prebuilt Qt isn't instrumented, so ThreadSanitizer can't see the locks in Qt's event queue and thread pool:
-    # every payload of a cross-thread queued call shows as a race. Until Qt is built with TSan, tsan doesn't fail the
-    # run.
-    continue-on-error: ${{ matrix.preset == 'tsan' }}
+  linux-build:
+    name: exp · linux ${{ matrix.name }}
+    if: inputs.only == '' || contains(inputs.only, 'build')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        preset: [asan, tsan]
+        include:
+          - name: gcc-bfd
+            cc: gcc
+            cxx: g++
+            linker: ''
+            sanitize: ''
+            tests: '4 8 16'
+          - name: gcc-mold
+            cc: gcc
+            cxx: g++
+            linker: MOLD
+            sanitize: ''
+            tests: ''
+          - name: clang-lld
+            cc: clang
+            cxx: clang++
+            linker: LLD
+            sanitize: ''
+            tests: '4'
+          - name: gcc-asan
+            cc: gcc
+            cxx: g++
+            linker: MOLD
+            sanitize: 'address;undefined'
+            tests: '4 8'
+          - name: clang-asan
+            cc: clang
+            cxx: clang++
+            linker: LLD
+            sanitize: 'address;undefined'
+            tests: '4 8'
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache-exp
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
       UBSAN_OPTIONS: print_stacktrace=1
     steps:
       - uses: actions/checkout@v7
 
+      - name: Machine
+        run: |
+          nproc; free -g; df -h .; gcc --version | head -1; clang --version | head -1 || true
+          ls /usr/bin | grep -E '^(clang|clang\+\+|ld\.lld|gcc|g\+\+)(-[0-9]+)?$' || true
+
       - name: Tools
-        run: brew install autoconf autoconf-archive automake libtool ccache
+        run: |
+          start=$SECONDS
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache libgl-dev libegl-dev \
+            libglu1-mesa-dev mold lld
+          echo "tools: $((SECONDS - start)) s"
 
       - name: vcpkg
         uses: ./.github/actions/vcpkg
         with:
-          triplet: arm64-osx-selecta
+          triplet: x64-linux-selecta
 
-      - name: Restore the compiler cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: ccache-macos-${{ matrix.preset }}-
+      - name: Configure and build, cold ccache
+        run: |
+          start=$SECONDS
+          cmake --preset linux -B build/exp -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            ${{ matrix.linker && format('-DCMAKE_LINKER_TYPE={0}', matrix.linker) || '' }} \
+            "-DSELECTA_SANITIZE=${{ matrix.sanitize }}" > configure.log 2>&1 || { cat configure.log; exit 1; }
+          echo "configure: $((SECONDS - start)) s"
+          grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/exp/CMakeCache.txt
+          ccache -z
+          start=$SECONDS
+          cmake --build build/exp -- -k 0 > build.log 2>&1 || { tail -100 build.log; exit 1; }
+          echo "cold build: $((SECONDS - start)) s"
+          ccache -s
+          cp build/exp/.ninja_log ninja-cold.log
 
-      - name: Configure
-        run: >-
-          cmake --preset ${{ matrix.preset }} -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF
-          -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+      - name: Build summary
+        run: |
+          python3 - ninja-cold.log <<'EOF'
+          import sys
+          rows = []
+          for line in open(sys.argv[1]):
+              if line.startswith('#'):
+                  continue
+              s, e, _, out, _ = line.rstrip('\n').split('\t')
+              rows.append((int(e) - int(s), int(s), int(e), out))
+          compile = [r for r in rows if r[3].endswith('.o')]
+          link = [r for r in rows if not r[3].endswith('.o')]
+          wall = max(r[2] for r in rows) - min(r[1] for r in rows)
+          print(f"steps {len(rows)}  wall {wall/1000:.0f} s  compile sum {sum(r[0] for r in compile)/1000:.0f} s"
+                f"  other (link, moc, archive) sum {sum(r[0] for r in link)/1000:.0f} s")
+          print("slowest non-compile steps:")
+          for r in sorted(link, reverse=True)[:12]:
+              print(f"  {r[0]/1000:6.1f} s  {r[3]}")
+          print("slowest compiles:")
+          for r in sorted(compile, reverse=True)[:12]:
+              print(f"  {r[0]/1000:6.1f} s  {r[3]}")
+          EOF
 
-      - name: The live-server switch is off
-        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/${{ matrix.preset }}/CMakeCache.txt
+      - name: Build again, warm ccache
+        run: |
+          rm -rf build/exp
+          start=$SECONDS
+          cmake --preset linux -B build/exp -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            ${{ matrix.linker && format('-DCMAKE_LINKER_TYPE={0}', matrix.linker) || '' }} \
+            "-DSELECTA_SANITIZE=${{ matrix.sanitize }}" > configure.log 2>&1 || { cat configure.log; exit 1; }
+          echo "configure: $((SECONDS - start)) s"
+          ccache -z
+          start=$SECONDS
+          cmake --build build/exp -- -k 0 > build.log 2>&1 || { tail -100 build.log; exit 1; }
+          echo "warm build: $((SECONDS - start)) s"
+          ccache -s
+          du -sh "$CCACHE_DIR"
 
-      - name: Build
-        id: build
-        run: cmake --build --preset ${{ matrix.preset }} -- -k 0
+      - name: Tests (loopback only)
+        if: matrix.tests != ''
+        run: |
+          for jobs in ${{ matrix.tests }}; do
+            start=$SECONDS
+            sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
+              --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
+              UBSAN_OPTIONS='$UBSAN_OPTIONS' QT_QPA_PLATFORM=minimal \
+              ctest --test-dir build/exp --output-on-failure --parallel $jobs --timeout 300" > "test-$jobs.log" 2>&1 \
+              || true
+            echo "tests -j$jobs: $((SECONDS - start)) s"
+            tail -5 "test-$jobs.log"
+            grep -E 'Failed|Timeout|\*\*\*' "test-$jobs.log" | head -20 || true
+          done
+          # The 20 slowest tests of the last run
+          sed -n 's/^.*Test *#[0-9]*: \([^ ]*\) [ .]*\(Passed\|Failed\|\*\*\*[A-Za-z]*\) *\([0-9.]*\) sec$/\3 \1 \2/p' \
+            "test-$jobs.log" | sort -rn | head -20 || true
 
-      - name: Save the compiler cache
-        if: always() && steps.build.outcome != 'skipped'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Test
-        timeout-minutes: 60
-        run: ctest --preset ${{ matrix.preset }} --parallel "$(sysctl -n hw.ncpu)" --timeout 900
-
-      - name: Keep the test log
-        if: failure()
+      - name: Keep the logs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.preset }}-test-log
-          path: build/${{ matrix.preset }}/Testing/Temporary/LastTest*.log
+          name: exp-linux-${{ matrix.name }}
+          path: |
+            *.log
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
 
-  linux:
-    name: Linux · build, tests
+  linux-tsan:
+    name: exp · linux tsan-qt
+    if: inputs.only == '' || contains(inputs.only, 'tsan')
     runs-on: ubuntu-26.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache-exp
     steps:
       - uses: actions/checkout@v7
 
-      # autoconf-archive: libb2 (Qt); nasm: FFmpeg on x86-64; GL and EGL headers: Qt Gui uses the system's OpenGL.
       - name: Tools
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache libgl-dev libegl-dev \
-            libglu1-mesa-dev
+            libglu1-mesa-dev mold
+          # ThreadSanitizer's shadow memory needs the classic mmap layout; newer kernels randomise more address bits.
+          sudo sysctl vm.mmap_rnd_bits=28
 
       - name: vcpkg
         id: vcpkg
         uses: ./.github/actions/vcpkg
         with:
-          triplet: x64-linux-selecta
+          triplet: x64-linux-selecta-tsan
 
-      - name: Restore the compiler cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: ccache-linux-
-
-      - name: Configure (builds missing dependencies)
+      - name: Configure (builds the dependencies, Qt with TSan)
         id: configure
-        run: >-
-          cmake --preset linux -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+        run: |
+          start=$SECONDS
+          cmake --preset linux -B build/linux-tsan -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF \
+            -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_LINKER_TYPE=MOLD -DSELECTA_SANITIZE=thread \
+            -DVCPKG_TARGET_TRIPLET=x64-linux-selecta-tsan -DVCPKG_HOST_TRIPLET=x64-linux-selecta-tsan
+          echo "configure (dependencies): $((SECONDS - start)) s"
+          grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/linux-tsan/CMakeCache.txt
 
       - name: Save the vcpkg binary cache
         if: always() && steps.vcpkg.outcome == 'success'
         uses: ./.github/actions/vcpkg-save
         with:
           key: ${{ steps.vcpkg.outputs.cache-key }}
-          installed: build/linux/vcpkg_installed
+          installed: build/linux-tsan/vcpkg_installed
           complete: ${{ steps.configure.outcome == 'success' }}
 
-      - name: The live-server switch is off
-        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/linux/CMakeCache.txt
-
       - name: Build
-        id: build
-        run: cmake --build --preset linux -- -k 0
-
-      - name: Save the compiler cache
-        if: always() && steps.build.outcome != 'skipped'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
-
-      # A fresh network namespace has only the loopback interface: a test that tried to reach anything else would fail.
-      # Root brings loopback up, then the tests run as the runner user again (the outer shell expands the variables).
-      - name: Test (loopback only)
-        timeout-minutes: 30
         run: |
-          sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
-            --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
-            ctest --preset linux --parallel $(nproc) --timeout 300"
+          du -sh "$VCPKG_DEFAULT_BINARY_CACHE"
+          start=$SECONDS
+          cmake --build build/linux-tsan -- -k 0 > build.log 2>&1 || { tail -100 build.log; exit 1; }
+          echo "cold build: $((SECONDS - start)) s"
+          ccache -s
 
-      - name: Keep the test log
-        if: failure()
+      - name: Tests (loopback only)
+        run: |
+          for jobs in 4 8; do
+            start=$SECONDS
+            sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
+              --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
+              QT_QPA_PLATFORM=minimal TSAN_OPTIONS='suppressions=$PWD/tests/tsan-suppressions.txt' \
+              ctest --test-dir build/linux-tsan --output-on-failure --parallel $jobs --timeout 900" \
+              > "test-$jobs.log" 2>&1 || true
+            echo "tests -j$jobs: $((SECONDS - start)) s"
+            tail -5 "test-$jobs.log"
+            grep -E 'Failed|Timeout|\*\*\*' "test-$jobs.log" | head -40 || true
+          done
+
+      - name: Keep the logs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: linux-test-log
-          path: build/linux/Testing/Temporary/LastTest*.log
+          name: exp-linux-tsan-qt
+          path: |
+            *.log
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
 
-  # Experimental: known POSIX-only code doesn't build with MSVC yet, so a failure here doesn't fail the run.
+  lint-tools:
+    name: exp · lint tools ${{ matrix.source }}
+    if: inputs.only == '' || contains(inputs.only, 'lint')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [brew, apt]
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 20
+
+      - name: Build tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm libgl-dev libegl-dev libglu1-mesa-dev
+
+      - name: Lint tools (Homebrew)
+        if: matrix.source == 'brew'
+        run: |
+          start=$SECONDS
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew --version
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_HINTS=1
+          brew install llvm clazy cppcheck clang-format
+          echo "brew install: $((SECONDS - start)) s"
+          brew list --versions llvm clazy cppcheck clang-format
+          du -sh /home/linuxbrew/.linuxbrew
+          echo "/home/linuxbrew/.linuxbrew/bin" >> "$GITHUB_PATH"
+          echo "LLVM_BIN=$(brew --prefix llvm)/bin" >> "$GITHUB_ENV"
+
+      - name: Lint tools (apt)
+        if: matrix.source == 'apt'
+        run: |
+          start=$SECONDS
+          apt-cache policy clang-tidy clazy cppcheck clang-format | grep -E '^[a-z]|Candidate'
+          apt-cache search --names-only '^clang-tidy-[0-9]+$'
+          sudo apt-get install -y -q --no-install-recommends clang-tidy clazy cppcheck clang-format clang-tools
+          echo "apt install: $((SECONDS - start)) s"
+          clang-tidy --version; clazy-standalone --version; cppcheck --version; clang-format --version
+          echo "LLVM_BIN=$(dirname "$(readlink -f "$(command -v clang-tidy)")")" >> "$GITHUB_ENV"
+
+      - name: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-linux-selecta
+
+      - name: Configure and generated sources
+        run: |
+          start=$SECONDS
+          cmake --preset linux -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build \
+            -DCMAKE_AUTOGEN_ORIGIN_DEPENDS=OFF -DCMAKE_GLOBAL_AUTOGEN_TARGET=ON > configure.log 2>&1 \
+            || { cat configure.log; exit 1; }
+          echo "configure: $((SECONDS - start)) s"
+          start=$SECONDS
+          cmake --build --preset linux --target autogen > autogen.log 2>&1 || { tail -50 autogen.log; exit 1; }
+          echo "autogen: $((SECONDS - start)) s"
+
+      - name: Lint the files of the last 3 merges
+        run: |
+          ls "$LLVM_BIN" | grep -E 'clang-tidy|run-clang-tidy|clang-apply' || true
+          root=$PWD
+          resource_dir="$("$LLVM_BIN/clang" -print-resource-dir 2>/dev/null || clang -print-resource-dir)"
+          echo "resource dir: $resource_dir"
+          mapfile -t units < <(git diff --name-only --diff-filter=d HEAD~3 HEAD -- src tests tools | grep -E '\.cpp$' \
+            | while read -r f; do grep -q "\"file\": \"$root/$f\"" build/linux/compile_commands.json && echo "$f"; done)
+          echo "${#units[@]} units: ${units[*]}"
+          start=$SECONDS
+          git diff --name-only --diff-filter=d HEAD~3 HEAD -- src tests tools | grep -E '\.(cpp|h)$' \
+            | xargs clang-format --dry-run --Werror || true
+          echo "clang-format: $((SECONDS - start)) s"
+          start=$SECONDS
+          run_tidy="$(ls "$LLVM_BIN"/run-clang-tidy* 2>/dev/null | head -1)"
+          [[ -n "$run_tidy" ]] || run_tidy="$(command -v run-clang-tidy || ls /usr/bin/run-clang-tidy* | head -1)"
+          "$run_tidy" -quiet -j "$(nproc)" -p build/linux -clang-tidy-binary "$LLVM_BIN/clang-tidy" \
+            "${units[@]/#/$root/}" > tidy.log 2>&1 || true
+          echo "clang-tidy (${#units[@]} units): $((SECONDS - start)) s"
+          grep -E '^/[^:]+:[0-9]+:[0-9]+: (warning|error):' tidy.log | head -30 || true
+          start=$SECONDS
+          printf '%s\0' "${units[@]}" | xargs -0 -n 1 -P "$(nproc)" clazy-standalone -p build/linux/compile_commands.json \
+            --header-filter=".*/(src|tests|tools)/.*" --extra-arg="-resource-dir=$resource_dir" \
+            --extra-arg=-Wno-missing-designated-field-initializers \
+            --checks=level0,level1,level2,no-qstring-allocations,no-non-pod-global-static,no-copyable-polymorphic,no-returning-void-expression \
+            > clazy.log 2>&1 || true
+          echo "clazy (${#units[@]} units): $((SECONDS - start)) s"
+          grep -E 'warning:|error:' clazy.log | head -30 || true
+          start=$SECONDS
+          cppcheck -j "$(nproc)" --project=build/linux/compile_commands.json --library=qt --library=googletest \
+            --enable=warning,performance,portability --inline-suppr --suppress=missingIncludeSystem \
+            --suppress=returnByReference --suppress='*:*/vcpkg_installed/*' --suppress='*:*/_deps/*' \
+            --suppress='*:*_autogen/*' --quiet $(printf -- "--file-filter=$root/%s " "${units[@]}") > cppcheck.log 2>&1 || true
+          echo "cppcheck (${#units[@]} units): $((SECONDS - start)) s"
+          head -30 cppcheck.log
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: exp-lint-${{ matrix.source }}
+          path: |
+            *.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   windows:
-    name: Windows · build, tests (experimental)
+    name: exp · windows ccache
+    if: inputs.only == '' || contains(inputs.only, 'windows')
     runs-on: windows-2025
-    timeout-minutes: 240
-    continue-on-error: true
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache-exp
     steps:
       - uses: actions/checkout@v7
 
-      # Ninja needs the compiler's environment: import what vcvars64.bat sets, except VCPKG_ROOT, which it points at
-      # Visual Studio's own vcpkg.
+      - name: Machine
+        run: nproc || echo "$NUMBER_OF_PROCESSORS"
+
       - name: MSVC developer environment
         shell: pwsh
         run: |
@@ -341,41 +393,61 @@ jobs:
             }
           }
 
+      - name: ccache
+        run: |
+          start=$SECONDS
+          version=4.14.1
+          curl -fsSL -o ccache.zip "https://github.com/ccache/ccache/releases/download/v$version/ccache-$version-windows-x86_64.zip"
+          echo "6219f3865ca59aec41ee4b678df171d5d35855ecb2b6dbbbd20690b3a68af7b4  ccache.zip" | sha256sum -c
+          unzip -q ccache.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/ccache-$version-windows-x86_64" >> "$GITHUB_PATH"
+          echo "ccache download: $((SECONDS - start)) s"
+
       - name: vcpkg
-        id: vcpkg
         uses: ./.github/actions/vcpkg
         with:
           triplet: x64-windows-selecta
 
-      - name: Configure (builds missing dependencies)
-        id: configure
-        run: >-
-          cmake --preset windows -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
-          -DSELECTA_WITH_MEDIA=OFF -DSELECTA_WARNINGS_AS_ERRORS=OFF
+      - name: Configure and build, cold ccache
+        run: |
+          ccache --version | head -1
+          start=$SECONDS
+          cmake --preset windows -B build/exp -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build \
+            -DSELECTA_WITH_MEDIA=OFF -DSELECTA_WARNINGS_AS_ERRORS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache > configure.log 2>&1 || { cat configure.log; exit 1; }
+          echo "configure: $((SECONDS - start)) s"
+          ccache -z
+          start=$SECONDS
+          cmake --build build/exp -- -k 0 > build.log 2>&1 || { tail -60 build.log; }
+          echo "cold build: $((SECONDS - start)) s"
+          ccache -s
 
-      - name: Save the vcpkg binary cache
-        if: always() && steps.vcpkg.outcome == 'success'
-        uses: ./.github/actions/vcpkg-save
-        with:
-          key: ${{ steps.vcpkg.outputs.cache-key }}
-          installed: build/windows/vcpkg_installed
-          complete: ${{ steps.configure.outcome == 'success' }}
+      - name: Build again, warm ccache
+        run: |
+          rm -rf build/exp
+          cmake --preset windows -B build/exp -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF \
+            -DSELECTA_WITH_MEDIA=OFF -DSELECTA_WARNINGS_AS_ERRORS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache > configure.log 2>&1 || { cat configure.log; exit 1; }
+          ccache -z
+          start=$SECONDS
+          cmake --build build/exp -- -k 0 > build.log 2>&1 || { tail -60 build.log; }
+          echo "warm build: $((SECONDS - start)) s"
+          ccache -s
+          du -sh "$CCACHE_DIR"
 
-      - name: The live-server switch is off
-        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/windows/CMakeCache.txt
+      - name: Tests
+        run: |
+          start=$SECONDS
+          QT_QPA_PLATFORM=minimal ctest --test-dir build/exp --output-on-failure --parallel 4 --timeout 300 > test.log 2>&1 || true
+          echo "tests -j4: $((SECONDS - start)) s"
+          tail -5 test.log
 
-      - name: Build
-        run: cmake --build --preset windows -- -k 0
-
-      - name: Test
-        timeout-minutes: 30
-        run: ctest --preset windows --parallel 4 --timeout 300
-
-      - name: Keep the test log
-        if: failure()
+      - name: Keep the logs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: windows-test-log
-          path: build/windows/Testing/Temporary/LastTest*.log
+          name: exp-windows
+          path: |
+            *.log
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 7
