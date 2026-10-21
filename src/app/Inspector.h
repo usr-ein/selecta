@@ -12,7 +12,8 @@ class QStackedWidget;
 namespace selecta::app {
 
 // The right-hand details pane (PRD 8.2). A view registers a panel under its id; the window shows the panel of the
-// current view, or "Nothing selected" for views without one. Panels follow their view's selection themselves.
+// current view, or "Nothing selected" for views without one. Panels follow their view's selection themselves. Its
+// background is quiet, a step off the content's (P-003), and follows light and dark.
 class Inspector : public QWidget
 {
     Q_OBJECT
@@ -32,7 +33,16 @@ public:
     // Call it once the details are built; labels added later aren't covered. UI thread only.
     static void fitToWidth(QScrollArea *scroll);
 
+    // The inspector's quiet background (mock: --panel), one step from the content colour toward the window's, for this
+    // palette.
+    static QColor panelColor(const QPalette &palette);
+
+protected:
+    void changeEvent(QEvent *event) override;
+
 private:
+    void applyPanelPalette();
+
     QStackedWidget *m_stack;
     QLabel *m_empty;
     QHash<QString, QWidget *> m_panels;

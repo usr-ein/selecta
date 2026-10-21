@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/MessagesView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
@@ -195,7 +197,7 @@ QWidget *MessagesView::createConversationsPage()
 
     auto *left = new QWidget(this);
     auto *leftLayout = new QVBoxLayout(left);
-    leftLayout->setContentsMargins(12, 10, 0, 0);
+    leftLayout->setContentsMargins(style::kSpace2, style::kSpace2, 0, 0);
     leftLayout->setSpacing(6);
     leftLayout->addWidget(m_to);
     leftLayout->addWidget(m_list, 1);
@@ -304,17 +306,17 @@ QWidget *MessagesView::createThread()
     nameBox->addWidget(m_peerName);
     nameBox->addWidget(m_peerState);
     auto *top = new QHBoxLayout;
-    top->setContentsMargins(16, 10, 16, 8);
+    top->setContentsMargins(style::kBarMargins);
     top->addLayout(nameBox, 1);
     top->addWidget(m_browse);
     top->addWidget(m_buddy);
     top->addWidget(m_more);
     auto *bottom = new QHBoxLayout;
-    bottom->setContentsMargins(16, 8, 16, 12);
+    bottom->setContentsMargins(style::kSpace5, style::kSpace2, style::kSpace5, style::kSpace4);
     bottom->addWidget(m_input, 1);
     bottom->addWidget(m_send);
     auto *problemBox = new QHBoxLayout;
-    problemBox->setContentsMargins(16, 0, 16, 0);
+    problemBox->setContentsMargins(style::kSpace5, 0, style::kSpace5, 0);
     problemBox->addWidget(m_problem);
 
     auto *thread = new QWidget(this);
@@ -373,12 +375,12 @@ QWidget *MessagesView::createPeoplePage()
     });
 
     auto *bar = new QHBoxLayout;
-    bar->setContentsMargins(16, 10, 16, 4);
+    bar->setContentsMargins(style::kBarMargins);
     bar->addWidget(m_person, 1);
     bar->addWidget(m_listChoice);
     bar->addWidget(add);
     auto *noteBox = new QHBoxLayout;
-    noteBox->setContentsMargins(16, 0, 16, 8);
+    noteBox->setContentsMargins(style::kLineMargins);
     noteBox->addWidget(note);
     auto *page = new QWidget(this);
     auto *layout = new QVBoxLayout(page);

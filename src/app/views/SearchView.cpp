@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SearchView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
@@ -149,7 +151,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     // The release the results are ranked against (SRCH-17).
     m_releaseRow->setObjectName(u"search.releaseRow"_s);
     auto *releaseLayout = new QHBoxLayout(m_releaseRow);
-    releaseLayout->setContentsMargins(16, 4, 16, 4);
+    releaseLayout->setContentsMargins(style::kSpace5, style::kSpace1, style::kSpace5, style::kSpace1);
     releaseLayout->addWidget(fieldLabel(tr("Release"), m_releaseRow, m_release));
     m_release->setObjectName(u"search.release"_s);
     m_release->setSizeAdjustPolicy(QComboBox::AdjustToContents);
@@ -173,7 +175,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
 
     // "N of M match", why the others are hidden, and the search's state (SRCH-9, SRCH-12, SRCH-13).
     auto *summaryRow = new QHBoxLayout;
-    summaryRow->setContentsMargins(16, 6, 16, 6);
+    summaryRow->setContentsMargins(style::kLineMargins);
     m_summary->setObjectName(u"search.summary"_s);
     m_summary->setTextFormat(Qt::RichText);
     m_status->setObjectName(u"search.status"_s);
@@ -332,7 +334,7 @@ QWidget *SearchView::createFilterBar()
 {
     auto *bar = new QWidget(this);
     auto *barLayout = new QHBoxLayout(bar);
-    barLayout->setContentsMargins(16, 10, 16, 6);
+    barLayout->setContentsMargins(style::kBarMargins);
     // What you want on the left, what you do on the right. The actions keep their room and stay in sight however
     // narrow the view gets (beta notes: Download went off screen); the left side gives way (fitWants).
     auto *wants = new QWidget(bar);
@@ -432,7 +434,7 @@ QWidget *SearchView::createFiltersPanel()
     auto *panel = new QWidget(this);
     panel->setObjectName(u"search.filtersPanel"_s);
     auto *grid = new QGridLayout(panel);
-    grid->setContentsMargins(16, 0, 16, 8);
+    grid->setContentsMargins(style::kLineMargins);
     grid->setHorizontalSpacing(10);
     grid->setVerticalSpacing(6);
     const auto row = [grid, panel](int at, const QString &label, QWidget *buddy = nullptr) {

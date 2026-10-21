@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SettingsView.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 #include "governor/ServerGuard.h"
 #include "library/Naming.h"
@@ -124,8 +126,8 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     aboutForm->addRow(tr("Network:"), network);
 
     auto *columnLayout = new QVBoxLayout(column);
-    columnLayout->setContentsMargins(24, 20, 24, 24);
-    columnLayout->setSpacing(16);
+    columnLayout->setContentsMargins(style::kPageMargins);
+    columnLayout->setSpacing(style::kSpace5);
     columnLayout->addWidget(appearanceBox);
     columnLayout->addWidget(createNotificationBox(column));
     columnLayout->addWidget(createLibraryBox(column));

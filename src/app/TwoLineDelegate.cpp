@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/TwoLineDelegate.h"
 
+#include "app/Style.h"
+
 #include <QApplication>
 #include <QPainter>
 
@@ -35,7 +37,8 @@ void TwoLineDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     const QStyle *style = widget ? widget->style() : QApplication::style();
     style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget); // background, selection, focus
 
-    const QRect area = opt.rect.adjusted(kPadding, kPadding / 2, -kPadding, -kPadding / 2);
+    // In line with the table's other cells (Style.h), the two lines centred in the row.
+    const QRect area = style::cellContentRect(opt.rect, opt.viewItemPosition).adjusted(0, kPadding / 2, 0, -kPadding / 2);
     const bool selected = (opt.state & QStyle::State_Selected) != 0;
     const QPalette::ColorGroup group = (opt.state & QStyle::State_Enabled) ? QPalette::Normal : QPalette::Disabled;
     const QColor titleColour = opt.palette.color(group, selected ? QPalette::HighlightedText : QPalette::Text);
@@ -71,7 +74,8 @@ QSize TwoLineDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
     QSize size = QStyledItemDelegate::sizeHint(option, index);
     const QFontMetrics titleMetrics(option.font);
     const QFontMetrics subtitleMetrics(subtitleFont(option.font));
-    size.setHeight(std::max(size.height(), titleMetrics.height() + subtitleMetrics.height() + (kPadding * 2)));
+    size.setHeight(std::max({size.height(), titleMetrics.height() + subtitleMetrics.height() + (kPadding * 2),
+                             style::kTwoLineRowHeight}));
     return size;
 }
 

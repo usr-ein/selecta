@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/HistoryView.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 #include "library/HistoryStore.h"
 #include "storage/SessionLog.h"
@@ -120,7 +122,7 @@ HistoryView::HistoryView(storage::Database &db, int currentSession, QWidget *par
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     auto *summaryBox = new QVBoxLayout;
-    summaryBox->setContentsMargins(16, 10, 16, 10);
+    summaryBox->setContentsMargins(style::kBarMargins);
     summaryBox->addWidget(m_summary);
     layout->addLayout(summaryBox);
     layout->addWidget(m_table, 1);

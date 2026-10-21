@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/WaveformView.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 
 #include <QAccessible>
@@ -196,7 +198,6 @@ WaveformView::WaveformView(QWidget *parent)
     }();
     Q_UNUSED(registered)
     setObjectName(u"player.waveform"_s);
-    setAttribute(Qt::WA_OpaquePaintEvent);
     setMouseTracking(true);
     setFocusPolicy(Qt::TabFocus); // a click leaves focus in the list, whose arrow keys keep choosing tracks
     setAccessibleName(tr("Waveform"));
@@ -485,7 +486,12 @@ void WaveformView::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event)
     QPainter painter(this);
-    painter.fillRect(rect(), QColor(kBackground));
+    // The screen as a squircle (P-003): outside its corners, the player's background shows.
+    const QPainterPath screen = style::squircle(QRectF(rect()), style::kRadiusMedium);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.fillPath(screen, QColor(kBackground));
+    painter.setRenderHint(QPainter::Antialiasing, false);
+    painter.setClipPath(screen);
     const qreal ratio = devicePixelRatioF();
 
     const QRect detail = detailRect();

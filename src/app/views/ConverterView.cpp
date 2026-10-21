@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ConverterView.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 #include "app/TickDelegate.h"
 #include "app/models/ConverterModel.h"
@@ -277,7 +279,7 @@ QWidget *ConverterView::createBar()
     second->addStretch(1);
     second->addWidget(m_status);
     auto *rows = new QVBoxLayout(bar);
-    rows->setContentsMargins(16, 10, 16, 10);
+    rows->setContentsMargins(style::kBarMargins);
     rows->setSpacing(8);
     rows->addLayout(first);
     rows->addLayout(second);

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/RoomsView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
@@ -238,7 +240,7 @@ QWidget *RoomsView::createLeft()
 
     auto *left = new QWidget(this);
     auto *layout = new QVBoxLayout(left);
-    layout->setContentsMargins(12, 10, 0, 8);
+    layout->setContentsMargins(style::kSpace2, style::kSpace2, 0, style::kSpace2);
     layout->setSpacing(6);
     layout->addWidget(heading(tr("Your rooms"), left));
     layout->addWidget(m_joined, 1);
@@ -313,7 +315,7 @@ QWidget *RoomsView::createRoomPage()
     nameBox->addWidget(m_name);
     nameBox->addWidget(m_details);
     auto *top = new QHBoxLayout;
-    top->setContentsMargins(16, 10, 16, 8);
+    top->setContentsMargins(style::kBarMargins);
     top->addLayout(nameBox, 1);
     top->addWidget(m_leave, 0, Qt::AlignTop);
     auto *talk = new QSplitter(Qt::Horizontal, this);
@@ -324,10 +326,10 @@ QWidget *RoomsView::createRoomPage()
     talk->setStretchFactor(0, 1);
     talk->setSizes({520, 160});
     auto *problemBox = new QHBoxLayout;
-    problemBox->setContentsMargins(16, 0, 16, 0);
+    problemBox->setContentsMargins(style::kSpace5, 0, style::kSpace5, 0);
     problemBox->addWidget(m_problem);
     auto *bottom = new QHBoxLayout;
-    bottom->setContentsMargins(16, 8, 16, 12);
+    bottom->setContentsMargins(style::kSpace5, style::kSpace2, style::kSpace5, style::kSpace4);
     bottom->addWidget(m_input, 1);
     bottom->addWidget(m_send);
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ConverterInspector.h"
 
+#include "app/Style.h"
+
 #include "app/Inspector.h"
 
 #include <QFileInfo>
@@ -89,8 +91,8 @@ ConverterInspector::ConverterInspector(QWidget *parent)
 
     auto *details = new QWidget;
     auto *layout = new QVBoxLayout(details);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(10);
+    layout->setContentsMargins(style::kSpace4, style::kSpace4, style::kSpace4, style::kSpace5);
+    layout->setSpacing(style::kSpace3);
     QFont titleFont = m_title->font();
     titleFont.setWeight(QFont::DemiBold);
     titleFont.setPointSizeF(titleFont.pointSizeF() + 1);

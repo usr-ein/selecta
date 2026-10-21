@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/Inspector.h"
 
+#include <QApplication>
+#include <QEvent>
 #include <QLabel>
 #include <QScrollArea>
 #include <QStackedWidget>
@@ -18,7 +20,8 @@ Inspector::Inspector(QWidget *parent)
     setObjectName(u"inspector"_s);
     setMinimumWidth(220);
     setAutoFillBackground(true);
-    setBackgroundRole(QPalette::Base);
+    setBackgroundRole(QPalette::Window);
+    applyPanelPalette();
 
     m_empty->setObjectName(u"inspector.empty"_s);
     m_empty->setAlignment(Qt::AlignCenter);
@@ -29,6 +32,34 @@ Inspector::Inspector(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_stack);
+}
+
+QColor Inspector::panelColor(const QPalette &palette)
+{
+    const QColor base = palette.color(QPalette::Base);
+    const QColor window = palette.color(QPalette::Window);
+    constexpr float kTowardWindow = 0.3F;
+    return QColor::fromRgbF(base.redF() + ((window.redF() - base.redF()) * kTowardWindow),
+                            base.greenF() + ((window.greenF() - base.greenF()) * kTowardWindow),
+                            base.blueF() + ((window.blueF() - base.blueF()) * kTowardWindow));
+}
+
+void Inspector::applyPanelPalette()
+{
+    // From the application's palette, not this widget's own: this one is set here.
+    QPalette panel = QApplication::palette(this);
+    const QColor colour = panelColor(panel);
+    panel.setColor(QPalette::Window, colour);
+    panel.setColor(QPalette::Base, colour); // the panels' scroll areas
+    setPalette(panel);
+}
+
+void Inspector::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::ApplicationPaletteChange || event->type() == QEvent::ThemeChange) {
+        applyPanelPalette(); // light and dark
+    }
 }
 
 void Inspector::addPanel(const QString &viewId, QWidget *panel)

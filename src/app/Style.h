@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <QMargins>
 #include <QPainterPath>
 #include <QProxyStyle>
 #include <QRectF>
@@ -27,6 +28,13 @@ inline constexpr int kTwoLineRowHeight = 44; // a two-line table row
 inline constexpr int kBarHeight = 52;        // the toolbar
 inline constexpr int kRowInset = kSpace2;    // table rows stand this far in from the view's sides
 inline constexpr int kCellPadding = kSpace3; // text in a cell stands this far from the cell's sides
+
+// A view's bar of controls above its table (mock: .viewbar), and a line of text under it (counts, notes: .summary). Their
+// sides are the window margin, so the bars' controls and the table's text line up.
+inline constexpr QMargins kBarMargins{kSpace5, kSpace2, kSpace5, kSpace3};
+inline constexpr QMargins kLineMargins{kSpace5, 0, kSpace5, kSpace2};
+// A page of sections (Settings, Shares): the window margin, more room at the bottom.
+inline constexpr QMargins kPageMargins{kSpace5, kSpace5, kSpace5, kSpace6};
 
 inline constexpr qreal kRadiusSmall = 6.0;   // row selection, thumbnails
 inline constexpr qreal kRadiusMedium = 10.0; // groups, cards, covers

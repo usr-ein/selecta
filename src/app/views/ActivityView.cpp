@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ActivityView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/MeterDelegate.h"
 #include "app/PeerMenu.h"
@@ -90,7 +92,7 @@ ActivityView::ActivityView(core::EngineHost &engine, storage::Database &db, QWid
     resume->setObjectName(u"activity.resume"_s);
     connect(resume, &QPushButton::clicked, this, [this] { m_engine.setPaused(false); });
     auto *bannerLayout = new QHBoxLayout(m_pausedBanner);
-    bannerLayout->setContentsMargins(16, 10, 16, 0);
+    bannerLayout->setContentsMargins(style::kSpace5, style::kSpace2, style::kSpace5, 0);
     bannerLayout->addWidget(bannerText, 1);
     bannerLayout->addWidget(resume);
 
@@ -166,7 +168,7 @@ QWidget *ActivityView::createTransfersPage()
         m_transfersTable->expandAll();
     });
     auto *bar = new QHBoxLayout;
-    bar->setContentsMargins(16, 10, 16, 6);
+    bar->setContentsMargins(style::kBarMargins);
     auto *explanation =
         new QLabel(tr("Each file Selecta wants, from asking the peer to the Inbox. Right-click (or ⌃Return) to cancel "
                       "one or try a failed one again."),
@@ -285,7 +287,7 @@ QWidget *ActivityView::createPeersPage()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     auto *noteBox = new QVBoxLayout;
-    noteBox->setContentsMargins(16, 10, 16, 6);
+    noteBox->setContentsMargins(style::kBarMargins);
     noteBox->addWidget(m_peersNote);
     layout->addLayout(noteBox);
     layout->addWidget(m_peersTable, 1);
@@ -320,7 +322,7 @@ QWidget *ActivityView::createLogPage()
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     auto *budgetBox = new QVBoxLayout;
-    budgetBox->setContentsMargins(16, 10, 16, 10);
+    budgetBox->setContentsMargins(style::kBarMargins);
     budgetBox->addWidget(m_budget);
     layout->addLayout(budgetBox);
     layout->addWidget(m_table, 1);

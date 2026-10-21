@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "app/Status.h"
+
 #include "core/GetTracks.h"
 
 #include <QAbstractTableModel>
@@ -30,6 +32,8 @@ public:
         StatusKindRole, // a StatusKind, for colouring
     };
     enum class StatusKind { Waiting, Working, Good, Check, Bad, Have };
+    // The line's status as shown (P-003): its SF Symbol and the kind that colours it, beside statusText().
+    static status::Status statusSymbol(const core::GetLine &line);
 
     explicit GetTracksModel(QObject *parent = nullptr);
 

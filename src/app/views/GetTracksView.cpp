@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/Icons.h"
 #include "app/Presets.h"
+#include "app/Status.h"
 #include "app/TickDelegate.h"
 #include "app/TwoLineDelegate.h"
 #include "app/models/GetTracksModel.h"
@@ -44,7 +47,6 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     , m_inspector(new GetTracksInspector)
     , m_pages(new QStackedWidget(this))
     , m_table(new QTreeView(this))
-    , m_summary(new QLabel(this))
     , m_note(new QLabel(this))
     , m_add(new QPushButton(tr("Add Tracks…"), this))
     , m_preset(new QComboBox(this))
@@ -115,14 +117,15 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     m_table->setItemDelegateForColumn(GetTracksModel::TickColumn, new TickDelegate(m_table));
     m_table->setItemDelegateForColumn(GetTracksModel::TrackColumn,
                                       new TwoLineDelegate(GetTracksModel::SubtitleRole, m_table));
+    m_table->setItemDelegateForColumn(GetTracksModel::StatusColumn, new status::StatusDelegate(m_table));
     QHeaderView *header = m_table->header();
     header->setStretchLastSection(false);
     header->setSectionResizeMode(GetTracksModel::TickColumn, QHeaderView::Fixed);
     header->setSectionResizeMode(GetTracksModel::TrackColumn, QHeaderView::Stretch);
     header->setSectionResizeMode(GetTracksModel::StatusColumn, QHeaderView::ResizeToContents);
     header->setSectionResizeMode(GetTracksModel::FileColumn, QHeaderView::Interactive);
-    m_table->setColumnWidth(GetTracksModel::TickColumn, 30);
-    m_table->setColumnWidth(GetTracksModel::FileColumn, 240);
+    m_table->setColumnWidth(GetTracksModel::TickColumn, style::kRowInset + 36);
+    m_table->setColumnWidth(GetTracksModel::FileColumn, 140);
     auto *listPage = new QWidget(m_pages);
     auto *listLayout = new QVBoxLayout(listPage);
     listLayout->setContentsMargins(0, 0, 0, 0);
@@ -147,8 +150,6 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     // Bars.
     m_add->setObjectName(u"get.add"_s);
     connect(m_add, &QPushButton::clicked, this, &GetTracksView::addTracks);
-    m_summary->setObjectName(u"get.summary"_s);
-    m_summary->setForegroundRole(QPalette::PlaceholderText);
     m_note->setObjectName(u"get.note"_s);
     m_note->setTextFormat(Qt::PlainText); // a path, or what adding the lines noted (a playlist's words)
     m_note->setWordWrap(true);
@@ -198,33 +199,47 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     });
     connect(&m_engine, &core::EngineHost::networkStatusChanged, this, &GetTracksView::refreshProgress);
 
+    // The mock's bars: what to add and the quality wanted on the left, finding on the right; under the list, where
+    // the tracks go and the one action that sends them there.
     auto *bar = new QHBoxLayout;
-    bar->setContentsMargins(16, 10, 16, 6);
+    bar->setContentsMargins(style::kBarMargins);
+    bar->setSpacing(style::kSpace2);
     bar->addWidget(m_add);
-    bar->addStretch(1);
-    bar->addWidget(m_export);
     bar->addWidget(m_preset);
+    bar->addStretch(1);
+    bar->addWidget(m_progress);
+    bar->addWidget(m_export);
     bar->addWidget(m_find);
-    bar->addWidget(m_get);
-    QWidget::setTabOrder({m_add, m_export, m_preset, m_find, m_get, m_table}); // the bar, left to right, then the list
-    // The counts and the pace on a line of their own, as in the mock: beside the buttons they ran into each other.
-    m_summary->setWordWrap(true);
-    m_progress->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    auto *infoBox = new QHBoxLayout;
-    infoBox->setContentsMargins(16, 0, 16, 6);
-    infoBox->addWidget(m_summary, 1);
-    infoBox->addWidget(m_progress);
     auto *noteBox = new QHBoxLayout;
-    noteBox->setContentsMargins(16, 0, 16, 8);
+    noteBox->setContentsMargins(style::kLineMargins);
     noteBox->addWidget(m_note);
+    auto *where = new QLabel(tr("They arrive in your Inbox as MP3 320, tagged, with their cover."), this);
+    where->setObjectName(u"get.where"_s);
+    where->setForegroundRole(QPalette::PlaceholderText);
+    where->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // elides before the button moves
+    auto *footer = new QWidget(this);
+    footer->setObjectName(u"get.footer"_s);
+    auto *footerLayout = new QHBoxLayout(footer);
+    footerLayout->setContentsMargins(style::kSpace5, style::kSpace3, style::kSpace5, style::kSpace3);
+    footerLayout->addWidget(where, 1);
+    footerLayout->addWidget(m_get);
+    QWidget::setTabOrder({m_add, m_preset, m_export, m_find, m_table, m_get}); // the bar, the list, then Get
+
+    auto *separator = new QFrame(this);
+    separator->setFrameShape(QFrame::HLine);
+    separator->setFrameShadow(QFrame::Plain);
+    separator->setForegroundRole(QPalette::Mid);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addLayout(bar);
-    layout->addLayout(infoBox);
     layout->addLayout(noteBox);
     layout->addWidget(m_pages, 1);
+    layout->addWidget(separator);
+    layout->addWidget(footer);
+    m_footerSeparator = separator;
+    m_footer = footer;
 
     connect(&m_engine, &core::EngineHost::getLinesReset, this, [this](const QList<core::GetLine> &lines) {
         const QList<qint64> keep = selectedIds();
@@ -387,8 +402,8 @@ void GetTracksView::refresh()
 {
     m_pages->setCurrentIndex(m_model->rowCount() == 0 ? 0 : 1);
     m_add->setVisible(m_model->rowCount() > 0); // the empty page has its own button
-    m_summary->setText(m_model->rowCount() > 0 ? summary() : QString());
-    m_summary->setVisible(m_model->rowCount() > 0);
+    m_footer->setVisible(m_model->rowCount() > 0); // the counts are in the toolbar's subtitle (summary())
+    m_footerSeparator->setVisible(m_model->rowCount() > 0);
     refreshProgress();
     Q_EMIT summaryChanged();
 }

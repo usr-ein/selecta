@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/InboxInspector.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 #include "app/Inspector.h"
 #include "app/SpectrogramView.h"
@@ -184,8 +186,8 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
 
     auto *details = new QWidget;
     auto *layout = new QVBoxLayout(details);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(10);
+    layout->setContentsMargins(style::kSpace4, style::kSpace4, style::kSpace4, style::kSpace5);
+    layout->setSpacing(style::kSpace3);
     m_cover->setObjectName(u"inspector.inbox.cover"_s);
     m_cover->setFixedSize(kCoverPoints, kCoverPoints);
     m_cover->setAlignment(Qt::AlignCenter);
@@ -272,7 +274,7 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     m_spectrumText->setTextFormat(Qt::PlainText);
     auto *spectrumLayout = new QVBoxLayout(m_spectrum);
     spectrumLayout->setContentsMargins(0, 0, 0, 0);
-    spectrumLayout->setSpacing(6);
+    spectrumLayout->setSpacing(style::kSpace2);
     spectrumLayout->addWidget(heading(tr("Spectrum"), m_spectrum));
     spectrumLayout->addWidget(m_spectrumText);
     m_spectrogram->setObjectName(u"inspector.inbox.spectrogram"_s);

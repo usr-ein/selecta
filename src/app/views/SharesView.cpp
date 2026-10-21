@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SharesView.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 #include "app/PeerMenu.h"
 #include "core/EngineHost.h"
@@ -58,8 +60,8 @@ SharesView::SharesView(core::EngineHost &engine, QWidget *parent)
     auto *column = new QWidget;
     column->setMaximumWidth(kColumnWidth);
     auto *layout = new QVBoxLayout(column);
-    layout->setContentsMargins(24, 20, 24, 24);
-    layout->setSpacing(16);
+    layout->setContentsMargins(style::kPageMargins);
+    layout->setSpacing(style::kSpace5);
 
     QFont headlineFont = m_headline->font();
     headlineFont.setPointSizeF(headlineFont.pointSizeF() + 3);

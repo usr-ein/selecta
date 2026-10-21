@@ -183,6 +183,58 @@ QString GetTracksModel::statusText(const GetLine &line)
     return {};
 }
 
+status::Status GetTracksModel::statusSymbol(const GetLine &line)
+{
+    using status::Kind;
+    switch (line.downloadState) {
+    case DownloadState::Queued:
+        return line.stuck ? status::Status{u"exclamationmark.triangle.fill"_s, Kind::Check}
+                          : status::Status{u"hourglass"_s, Kind::Waiting};
+    case DownloadState::Transferring:
+        return {u"arrow.down.circle.fill"_s, Kind::Working};
+    case DownloadState::Converting:
+        return {u"arrow.triangle.2.circlepath"_s, Kind::Working};
+    case DownloadState::Arrived:
+        return {u"tray.full.fill"_s, Kind::Inbox};
+    case DownloadState::Failed:
+        return {u"exclamationmark.octagon.fill"_s, Kind::Failed};
+    case DownloadState::None:
+        break;
+    }
+    switch (line.findState) {
+    case FindState::Queued:
+        return {u"clock"_s, Kind::Waiting};
+    case FindState::Searching:
+        return {u"magnifyingglass"_s, Kind::Working};
+    case FindState::Ready:
+        return {u"checkmark.circle.fill"_s, Kind::Ready};
+    case FindState::Check:
+        return {u"exclamationmark.triangle.fill"_s, Kind::Check};
+    case FindState::NotFound:
+        return {u"xmark.circle.fill"_s, Kind::Failed};
+    case FindState::Owned:
+        return {u"checkmark.seal.fill"_s, Kind::Have};
+    case FindState::InInbox:
+        return {u"tray.full.fill"_s, Kind::Inbox};
+    case FindState::Idle:
+        break;
+    }
+    switch (line.releaseState) {
+    case ReleaseState::Pending:
+        return line.resolving ? status::Status{u"magnifyingglass"_s, Kind::Working}
+                              : status::Status{u"clock"_s, Kind::Waiting};
+    case ReleaseState::Resolved:
+        return {u"opticaldisc.fill"_s, Kind::Release};
+    case ReleaseState::Ambiguous:
+        return {u"questionmark.circle.fill"_s, Kind::Check};
+    case ReleaseState::None:
+        return {u"minus.circle.fill"_s, Kind::Waiting};
+    case ReleaseState::Failed:
+        return {u"exclamationmark.octagon.fill"_s, Kind::Failed};
+    }
+    return {u"clock"_s, Kind::Waiting};
+}
+
 GetTracksModel::StatusKind GetTracksModel::statusKind(const GetLine &line)
 {
     switch (line.downloadState) {
@@ -275,6 +327,17 @@ QVariant GetTracksModel::accessibleText(const GetLine &line, int column)
                    ? tr("%1. Release: %2").arg(track, format::release(*line.release))
                    : tr("%1. %2").arg(track, subtitle(line));
     }
+    case FileColumn: {
+        if (!line.best) {
+            return {};
+        }
+        // The cell shows the quality alone; VoiceOver reads its length and peer too.
+        QString text = format::quality(*line.best);
+        if (line.best->durationSec) {
+            text += u" · "_s + format::length(qint64{*line.best->durationSec} * 1000);
+        }
+        return QString(text + u" · "_s + line.best->peer);
+    }
     default:
         return {}; // as shown
     }
@@ -331,6 +394,12 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         if (role == Qt::ForegroundRole) {
             return colourFor(statusKind(*line));
         }
+        if (role == status::kSymbolRole) {
+            return statusSymbol(*line).symbol;
+        }
+        if (role == status::kKindRole) {
+            return static_cast<int>(statusSymbol(*line).kind);
+        }
         if (role == Qt::AccessibleDescriptionRole && !line->message.isEmpty()) {
             return line->message;
         }
@@ -339,13 +408,11 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         if (!line->best) {
             break;
         }
+        // The quality alone (P-003: fewer words); its length and peer are in the inspector, and read out.
         if (role == Qt::DisplayRole) {
-            QString text = format::quality(*line->best);
-            if (line->best->durationSec) {
-                text += u" · "_s + format::length(qint64{*line->best->durationSec} * 1000);
-            }
-            return QString(text + u" · "_s + line->best->peer);
+            return format::quality(*line->best);
         }
+
         break;
     default:
         break;
@@ -384,7 +451,7 @@ QVariant GetTracksModel::headerData(int section, Qt::Orientation orientation, in
     case StatusColumn:
         return tr("Status");
     case FileColumn:
-        return tr("Best file on Soulseek");
+        return tr("File");
     default:
         return {};
     }

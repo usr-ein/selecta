@@ -7,6 +7,7 @@
 #include "app/PlayerBar.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
+#include "app/Style.h"
 #include "app/SpectrogramView.h"
 #include "app/Toasts.h"
 #include "app/devtools/DebugServer.h"
@@ -1370,7 +1371,7 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
     ASSERT_NE(inspector, nullptr);
     ASSERT_NE(wants, nullptr);
     const QStringList actions{u"search.filters"_s, u"search.wishlist"_s, u"search.download"_s};
-    int actionsWidth = 16 + 16; // the bar's side margins
+    int actionsWidth = selecta::app::style::kBarMargins.left() + selecta::app::style::kBarMargins.right();
     for (const QString &name : actions) {
         const auto *button = window->findChild<QAbstractButton *>(name);
         ASSERT_NE(button, nullptr) << name.toStdString();

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/InboxView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/Icons.h"
@@ -263,7 +265,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     m_pages->addWidget(list);
 
     auto *bar = new QHBoxLayout;
-    bar->setContentsMargins(16, 10, 16, 10);
+    bar->setContentsMargins(style::kBarMargins);
     bar->addWidget(m_summary, 1);
     bar->addWidget(m_trash);
     bar->addWidget(m_file);
@@ -276,7 +278,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     note->setWordWrap(true);
     note->setForegroundRole(QPalette::PlaceholderText);
     auto *resultBox = new QVBoxLayout;
-    resultBox->setContentsMargins(16, 6, 16, 10);
+    resultBox->setContentsMargins(style::kLineMargins);
     resultBox->setSpacing(4);
     resultBox->addWidget(m_result);
     resultBox->addWidget(note);

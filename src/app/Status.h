@@ -27,12 +27,12 @@ enum class Kind : quint8 {
     Upgrade, // teal: a better copy of a file you have
 };
 
-// A status as shown. `symbol` is an SF Symbol name (status::kSymbols lists the ones Selecta uses).
+// A status's symbol: an SF Symbol name (kSymbols lists the ones Selecta uses) and the kind that colours it. The words
+// beside it are the model's display text.
 struct Status
 {
     QString symbol;
     Kind kind = Kind::Waiting;
-    QString text;
 };
 
 // The SF Symbols statuses use. Each has a drawn stand-in for platforms without SF Symbols.

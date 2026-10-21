@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksInspector.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 #include "app/Inspector.h"
 #include "app/models/GetTracksModel.h"
@@ -162,8 +164,8 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
 
     auto *details = new QWidget;
     auto *layout = new QVBoxLayout(details);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(10);
+    layout->setContentsMargins(style::kSpace4, style::kSpace4, style::kSpace4, style::kSpace5);
+    layout->setSpacing(style::kSpace3);
 
     // Labels that show what came from the list, a release lookup or the network (a peer's name, a file's path) show
     // it as it is: a name that looks like HTML isn't rendered as rich text.
@@ -192,7 +194,7 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     m_wayOut->setObjectName(u"inspector.get.wayOut"_s);
     auto *wayOut = new QVBoxLayout(m_wayOut);
     wayOut->setContentsMargins(0, 0, 0, 0);
-    wayOut->setSpacing(6);
+    wayOut->setSpacing(style::kSpace2);
     m_tryAnotherPeer->setObjectName(u"inspector.get.tryAnotherPeer"_s);
     m_tryAnotherPeer->setToolTip(tr("Leave this peer's queue and get the file from another peer that has it"));
     connect(m_tryAnotherPeer, &QPushButton::clicked, this, [this] {
@@ -316,12 +318,12 @@ GetTracksInspector::Choices GetTracksInspector::makeChoices(const QString &name,
     choices.box->setObjectName(name);
     auto *layout = new QVBoxLayout(choices.box);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->setSpacing(6);
+    layout->setSpacing(style::kSpace2);
     choices.heading = heading({}, choices.box);
     layout->addWidget(choices.heading);
     choices.rows = new QVBoxLayout;
     choices.rows->setContentsMargins(0, 0, 0, 0);
-    choices.rows->setSpacing(6);
+    choices.rows->setSpacing(style::kSpace2);
     layout->addLayout(choices.rows);
     choices.group = new QButtonGroup(choices.box);
     choices.group->setExclusive(true);
@@ -352,7 +354,7 @@ void GetTracksInspector::setChoices(Choices &choices, const QList<core::FileChoi
         auto *row = new QWidget(choices.box);
         auto *rowLayout = new QHBoxLayout(row);
         rowLayout->setContentsMargins(0, 0, 0, 0);
-        rowLayout->setSpacing(6);
+        rowLayout->setSpacing(style::kSpace2);
         auto *radio = new QRadioButton(row);
         radio->setObjectName(u"%1.%2"_s.arg(name, QString::number(i)));
         radio->setAccessibleName(QString(text).replace(u'\n', u", "_s));

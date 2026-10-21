@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/MeterDelegate.h"
 
+#include "app/Style.h"
+
 #include <QApplication>
 #include <QPainter>
 
@@ -10,7 +12,6 @@ namespace selecta::app {
 namespace {
 
 constexpr qreal kHeight = 5.0;
-constexpr int kMargin = 6;
 
 } // namespace
 
@@ -30,8 +31,9 @@ void MeterDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const QStyle *style = widget ? widget->style() : QApplication::style();
     style->drawControl(QStyle::CE_ItemViewItem, &background, painter, widget);
 
-    const QRectF track(option.rect.left() + kMargin, option.rect.center().y() - (kHeight / 2.0) + 0.5,
-                       std::max(0, option.rect.width() - (2 * kMargin)), kHeight);
+    const QRect content = style::cellContentRect(option.rect, option.viewItemPosition);
+    const QRectF track(content.left(), option.rect.center().y() - (kHeight / 2.0) + 0.5, std::max(0, content.width()),
+                       kHeight);
     QColor empty = option.palette.color(QPalette::PlaceholderText);
     empty.setAlphaF(0.25F);
     QColor filled = option.palette.color(QPalette::Accent);

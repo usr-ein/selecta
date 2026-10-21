@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/WishlistView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/Presets.h"
@@ -118,11 +120,11 @@ WishlistView::WishlistView(core::EngineHost &engine, Presets &presets, QWidget *
     m_pages->addWidget(m_table);
 
     auto *bar = new QHBoxLayout;
-    bar->setContentsMargins(16, 10, 16, 4);
+    bar->setContentsMargins(style::kBarMargins);
     bar->addWidget(m_field, 1);
     bar->addWidget(m_add);
     auto *noteBox = new QHBoxLayout;
-    noteBox->setContentsMargins(16, 0, 16, 8);
+    noteBox->setContentsMargins(style::kLineMargins);
     noteBox->addWidget(note);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

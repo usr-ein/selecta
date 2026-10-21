@@ -83,7 +83,8 @@ private:
     GetTracksInspector *m_inspector;
     QStackedWidget *m_pages;
     QTreeView *m_table;
-    QLabel *m_summary;
+    QWidget *m_footer = nullptr;          // where the tracks go, and Get
+    QWidget *m_footerSeparator = nullptr; // above it
     QLabel *m_note;
     QPushButton *m_add;
     QComboBox *m_preset; // the quality wanted (BATCH-2, SRCH-8)

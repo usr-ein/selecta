@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/TickDelegate.h"
 
+#include "app/Style.h"
+
 #include <QApplication>
 #include <QMouseEvent>
 #include <QPainter>
@@ -34,8 +36,11 @@ void TickDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, 
         return;
     }
     const bool checked = index.data(Qt::CheckStateRole).value<Qt::CheckState>() == Qt::Checked;
-    const QRectF box(option.rect.center().x() - (kBox / 2.0) + 0.5, option.rect.center().y() - (kBox / 2.0) + 0.5, kBox,
-                     kBox);
+    // Centred in the cell, less the inset the row has at the table's sides (Style.h).
+    const bool first = option.viewItemPosition == QStyleOptionViewItem::Beginning ||
+                       option.viewItemPosition == QStyleOptionViewItem::OnlyOne;
+    const QRect area = option.rect.adjusted(first ? style::kRowInset : 0, 0, 0, 0);
+    const QRectF box(area.center().x() - (kBox / 2.0) + 0.5, area.center().y() - (kBox / 2.0) + 0.5, kBox, kBox);
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);
     const QPalette &palette = option.palette;

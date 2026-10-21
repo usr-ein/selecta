@@ -3,6 +3,7 @@
 
 #include "app/Format.h"
 #include "app/Icons.h"
+#include "app/Inspector.h"
 #include "app/Preview.h"
 #include "app/Style.h"
 #include "app/WaveformView.h"
@@ -104,8 +105,7 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     , m_ticker(new QTimer(this))
 {
     setObjectName(u"player"_s);
-    setAutoFillBackground(true);
-    setBackgroundRole(QPalette::Window);
+    setAutoFillBackground(false); // paintEvent: the inspector's quiet colour
 
     m_title->setObjectName(u"player.title"_s);
     QFont titleFont = m_title->font();
@@ -253,6 +253,12 @@ void PlayerBar::tintSpeaker()
     const QIcon speaker = icons::symbol(u"speaker.wave.2.fill"_s, u"audio-volume-medium"_s);
     m_speaker->setPixmap(icons::tinted(speaker, QSize(14, 14), devicePixelRatioF(),
                                        palette().color(QPalette::Active, QPalette::WindowText)));
+}
+
+void PlayerBar::paintEvent(QPaintEvent * /*event*/)
+{
+    QPainter painter(this);
+    painter.fillRect(rect(), Inspector::panelColor(palette()));
 }
 
 void PlayerBar::changeEvent(QEvent *event)

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/EmptyStateView.h"
 
+#include "app/Style.h"
+
 #include "app/Icons.h"
 
 #include <QEvent>
@@ -75,7 +77,7 @@ EmptyStateView::EmptyStateView(QIcon symbol, const QString &title, const QString
     row->addStretch(1);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(32, 32, 32, 32);
+    layout->setContentsMargins(style::kSpace6, style::kSpace6, style::kSpace6, style::kSpace6);
     layout->addStretch(2);
     layout->addLayout(row);
     layout->addStretch(3);

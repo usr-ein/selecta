@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SearchInspector.h"
 
+#include "app/Style.h"
+
 #include "app/Format.h"
 #include "app/Inspector.h"
 #include "app/models/SearchResultsModel.h"
@@ -99,8 +101,8 @@ SearchInspector::SearchInspector(QWidget *parent)
 
     auto *details = new QWidget;
     auto *layout = new QVBoxLayout(details);
-    layout->setContentsMargins(16, 16, 16, 16);
-    layout->setSpacing(10);
+    layout->setContentsMargins(style::kSpace4, style::kSpace4, style::kSpace4, style::kSpace5);
+    layout->setSpacing(style::kSpace3);
     m_title->setObjectName(u"inspector.search.title"_s);
     m_title->setWordWrap(true);
     m_title->setTextInteractionFlags(Qt::TextSelectableByMouse);
