@@ -2,6 +2,7 @@
 #include "app/Format.h"
 
 #include "core/GetTracks.h"
+#include "match/Quality.h"
 #include "meta/Release.h"
 
 #include <QCoreApplication>
@@ -58,6 +59,59 @@ QString quality(const core::FileChoice &file)
         return u"%1 %2"_s.arg(format).arg(*file.bitrate);
     }
     return format;
+}
+
+QString quality(const match::AudioQuality &quality)
+{
+    QString codec;
+    switch (quality.codec) {
+    case match::Codec::Mp3:
+        codec = u"MP3"_s;
+        break;
+    case match::Codec::Aac:
+        codec = u"AAC"_s;
+        break;
+    case match::Codec::Vorbis:
+        codec = u"Vorbis"_s;
+        break;
+    case match::Codec::Opus:
+        codec = u"Opus"_s;
+        break;
+    case match::Codec::Wma:
+        codec = u"WMA"_s;
+        break;
+    case match::Codec::Flac:
+        codec = u"FLAC"_s;
+        break;
+    case match::Codec::Alac:
+        codec = u"ALAC"_s;
+        break;
+    case match::Codec::Wav:
+        codec = u"WAV"_s;
+        break;
+    case match::Codec::Aiff:
+        codec = u"AIFF"_s;
+        break;
+    case match::Codec::Ape:
+        codec = u"APE"_s;
+        break;
+    case match::Codec::WavPack:
+        codec = u"WavPack"_s;
+        break;
+    case match::Codec::Unknown:
+        codec = u"?"_s;
+        break;
+    }
+    if (match::isLossless(quality.codec)) {
+        return quality.bitDepth > 0 && quality.sampleRateHz > 0
+                   ? u"%1 %2/%3"_s.arg(codec).arg(quality.bitDepth).arg(quality.sampleRateHz / 1000.0, 0, 'g', 3)
+                   : codec;
+    }
+    if (quality.bitrateKbps > 0) {
+        return quality.vbr.value_or(false) ? u"%1 VBR %2"_s.arg(codec).arg(quality.bitrateKbps)
+                                           : u"%1 %2"_s.arg(codec).arg(quality.bitrateKbps);
+    }
+    return codec;
 }
 
 QString release(const meta::Release &release)

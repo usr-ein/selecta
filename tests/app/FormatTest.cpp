@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/Format.h"
 
+#include "match/Types.h"
+
 #include <gtest/gtest.h>
 #include <limits>
 
@@ -45,4 +47,20 @@ TEST(FormatTest, AboutRoundsUpToTheMinute)
     EXPECT_EQ(selecta::app::format::about(61'000), u"about 2 min"_s);
     EXPECT_EQ(selecta::app::format::about(3'600'000), u"about 1 h"_s);
     EXPECT_EQ(selecta::app::format::about(4'800'000), u"about 1 h 20 min"_s);
+}
+
+// P-010: the collection's files, as the Collection view words their quality.
+TEST(FormatTest, ALocalFilesQuality)
+{
+    using selecta::match::AudioQuality;
+    using selecta::match::Codec;
+    using format::quality;
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3, .bitrateKbps = 320, .vbr = false}), u"MP3 320"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3, .bitrateKbps = 245, .vbr = true}), u"MP3 VBR 245"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3}), u"MP3"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Aac, .bitrateKbps = 256}), u"AAC 256"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Flac, .sampleRateHz = 44100, .bitDepth = 16}), u"FLAC 16/44.1"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Wav, .sampleRateHz = 96000, .bitDepth = 24}), u"WAV 24/96"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Alac}), u"ALAC"_s);
+    EXPECT_EQ(quality(AudioQuality{}), u"?"_s);
 }
