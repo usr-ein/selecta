@@ -15,12 +15,12 @@ namespace slsk = selecta::slsk;
 
 namespace {
 
-const QString kOneMoreTime = u"Music\\Daft Punk\\Discovery (2001)\\01 - One More Time.mp3"_s;
-const QString kAerodynamic = u"Music\\Daft Punk\\Discovery (2001)\\02 - Aerodynamic.mp3"_s;
-const QString kRobotRock = u"Music\\Daft Punk\\Alive 2007\\01 - Robot Rock (Live).mp3"_s;
-const QString kSoEasy = u"Music\\R\u00f6yksopp\\Melody A.M\\01 - So Easy.flac"_s;
+const QString kOneMoreTime = u"Music\\Daft Punk - Discovery (2001)\\01 - One More Time.mp3"_s;
+const QString kAerodynamic = u"Music\\Daft Punk - Discovery (2001)\\02 - Aerodynamic.mp3"_s;
+const QString kRobotRock = u"Music\\Daft Punk - Alive 2007\\01 - Robot Rock (Live).mp3"_s;
+const QString kSoEasy = u"Music\\R\u00f6yksopp - Melody A.M\\01 - So Easy.flac"_s;
 const QString kFanRemix = u"Music\\Royksopp Fans\\so_easy_remix.mp3"_s;
-const QString kElectronic = u"Music\\Various\\[2019] Techno.Compilation\\01. Artist – Electronic.mp3"_s;
+const QString kElectronic = u"Music\\Various - [2019] Techno.Compilation\\01. Artist – Electronic.mp3"_s;
 const QString kHalo = u"Music\\Various\\Beyonc\u00e9 - Halo.mp3"_s;
 const QString kU2 = u"Music\\Various\\u2 - one.mp3"_s;
 
@@ -36,7 +36,7 @@ protected:
             relative.replace(u'\\', u'/');
             s_tree->file(relative);
         }
-        const QString track = s_tree->path(u"Daft Punk/Discovery (2001)/01 - One More Time.mp3"_s);
+        const QString track = s_tree->path(u"Daft Punk - Discovery (2001)/01 - One More Time.mp3"_s);
         const collection::ScannedFile facts =
             selecta::share::test::scanned(track, {selecta::match::Codec::Mp3, 320, false, 44100, 0}, 320'000);
         s_index =

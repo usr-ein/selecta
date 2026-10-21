@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// selecta-cli share index <root>…: build the share index of folders the way core does, read-only, and print counts,
-// timings, the files that can't be shared, and the answers peers would get: searches, the browse list, folder
-// listings and upload lookups. Touches no network and writes nothing anywhere.
+// selecta-cli share index --tracks <folder> --albums <folder>: build the share index of the collection's folders the
+// way core does, by their roles (a tracks folder shares the tracks lying in it, an albums folder the tracks of each
+// album, PRD SHARE-1), read-only, and print counts, timings, the files that can't be shared, and the answers peers
+// would get: searches, the browse list, folder listings and upload lookups. Touches no network and writes nothing.
 //
-//   selecta-cli share index ~/Music --search "daft punk -live" --browse --show 40
-//   ... --exclude ~/Music/Inbox --phrase "banned words" --folder "Music\Artist\Album" --lookup "Music\Artist\x.mp3"
+//   selecta-cli share index --tracks ~/Music/Tracks --albums ~/Music/Albums --search "daft punk -live" --browse
+//   ... --exclude ~/Music/Albums/Old --phrase "banned words" --folder "Albums\Album" --lookup "Tracks\x.mp3"
 //
 // Without a collection scan to take attributes from, every audio file's header is probed (core passes the collection's
 // facts instead), so the first build of a large folder takes longer here than in the app.
@@ -14,6 +15,7 @@
 #include "share/Open.h"
 #include "slsk/PeerMessages.h"
 
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
 
@@ -30,7 +32,7 @@ constexpr int kDefaultShown = 25;
 
 struct Options
 {
-    QStringList roots;
+    QList<share::ShareRoot> roots; // in the order given; aliases filled in later
     QStringList aliases;
     QStringList excluded;
     QStringList searches;
@@ -44,9 +46,25 @@ struct Options
 
 QString usage()
 {
-    return u"usage: selecta-cli share index <root>… [--alias <name>]… [--exclude <folder>]… [--search <query>]… "
+    return u"usage: selecta-cli share index [--tracks <folder>]… [--albums <folder>]… [--alias <name>]… "
+           "[--exclude <folder>]… [--search <query>]… "
            "[--phrase <excluded phrase>]… [--cap <n>] [--browse] [--folder <virtual path>]… "
            "[--lookup <virtual path>]… [--show <n>]"_s;
+}
+
+// A folder given in both roles is one root holding loose tracks and albums side by side, as in core.
+void addRoot(Options &options, const QString &folder, share::Layout layout)
+{
+    const QString path = QDir::cleanPath(QFileInfo(folder).absoluteFilePath());
+    for (share::ShareRoot &root : options.roots) {
+        if (root.path == path) {
+            if (root.layout != layout) {
+                root.layout = share::Layout::TracksAndAlbums;
+            }
+            return;
+        }
+    }
+    options.roots.append({path, QString(), layout});
 }
 
 bool parse(const QStringList &arguments, Options &options, QString &error)
@@ -59,7 +77,11 @@ bool parse(const QStringList &arguments, Options &options, QString &error)
         const QString &argument = arguments.at(i);
         const bool hasValue = i + 1 < arguments.size();
         bool ok = true;
-        if (argument == u"--alias"_s && hasValue) {
+        if (argument == u"--tracks"_s && hasValue) {
+            addRoot(options, arguments.at(++i), share::Layout::Tracks);
+        } else if (argument == u"--albums"_s && hasValue) {
+            addRoot(options, arguments.at(++i), share::Layout::Albums);
+        } else if (argument == u"--alias"_s && hasValue) {
             options.aliases.append(arguments.at(++i));
         } else if (argument == u"--exclude"_s && hasValue) {
             options.excluded.append(QFileInfo(arguments.at(++i)).absoluteFilePath());
@@ -77,10 +99,8 @@ bool parse(const QStringList &arguments, Options &options, QString &error)
             options.shown = arguments.at(++i).toInt(&ok);
         } else if (argument == u"--browse"_s) {
             options.browse = true;
-        } else if (argument.startsWith(u"--"_s)) {
-            ok = false;
         } else {
-            options.roots.append(QFileInfo(argument).absoluteFilePath());
+            ok = false; // a bare folder too: say which role it has
         }
         if (!ok) {
             error = u"bad argument: %1\n%2"_s.arg(argument, usage());
@@ -92,6 +112,19 @@ bool parse(const QStringList &arguments, Options &options, QString &error)
         return false;
     }
     return true;
+}
+
+QString roleName(share::Layout layout)
+{
+    switch (layout) {
+    case share::Layout::Tracks:
+        return u"tracks"_s;
+    case share::Layout::Albums:
+        return u"albums"_s;
+    case share::Layout::TracksAndAlbums:
+        return u"tracks and albums"_s;
+    }
+    return {};
 }
 
 QString megabytes(qint64 bytes)
@@ -202,10 +235,9 @@ int run(const QStringList &arguments, const selecta::cli::Context & /*context*/)
         printLine(stderr, error);
         return selecta::cli::kExitUsage;
     }
-    QList<share::ShareRoot> roots;
-    for (qsizetype i = 0; i < options.roots.size(); ++i) {
-        const QString &root = options.roots.at(i);
-        roots.append({root, i < options.aliases.size() ? options.aliases.at(i) : QFileInfo(root).fileName()});
+    QList<share::ShareRoot> roots = options.roots;
+    for (qsizetype i = 0; i < roots.size(); ++i) {
+        roots[i].alias = i < options.aliases.size() ? options.aliases.at(i) : QFileInfo(roots.at(i).path).fileName();
     }
     share::BuildOptions buildOptions;
     buildOptions.excludedFolders = options.excluded;
@@ -219,7 +251,7 @@ int run(const QStringList &arguments, const selecta::cli::Context & /*context*/)
     QStringList shared;
     const QList<share::ShareRoot> built = index.roots();
     for (const share::ShareRoot &root : built) {
-        shared.append(u"%1 → %2"_s.arg(root.path, root.alias));
+        shared.append(u"%1 → %2 (%3)"_s.arg(root.path, root.alias, roleName(root.layout)));
     }
     printLine(stdout, u"roots      %1 (read-only)"_s.arg(shared.join(u", "_s)));
     const share::ShareIndex::Counts counts = index.counts();
@@ -245,8 +277,10 @@ int run(const QStringList &arguments, const selecta::cli::Context & /*context*/)
 
 const selecta::cli::CommandRegistration registration{
     u"share",
-    u"index <root>… [--alias <name>]… [--exclude <folder>]… [--search <query>]… [--phrase <text>]… [--cap <n>] "
-    u"[--browse] [--folder <virtual path>]… [--lookup <virtual path>]… [--show <n>]",
-    u"Build the share index of folders read-only; print counts, timings, unshareable files and peers' answers.", &run};
+    u"index [--tracks <folder>]… [--albums <folder>]… [--alias <name>]… [--exclude <folder>]… [--search <query>]… "
+    u"[--phrase <text>]… [--cap <n>] [--browse] [--folder <virtual path>]… [--lookup <virtual path>]… [--show <n>]",
+    u"Build the share index of a tracks and an albums folder read-only, by their roles; print counts, timings, "
+    u"unshareable files and peers' answers.",
+    &run};
 
 } // namespace

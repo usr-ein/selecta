@@ -131,9 +131,9 @@ collection::ScannedFile scanned(const QString &path, const match::AudioQuality &
 }
 
 BuildResult buildTree(const Tree &tree, const QHash<QString, collection::ScannedFile> &knownAudio,
-                      const BuildOptions &options)
+                      const BuildOptions &options, Layout layout)
 {
-    return build({{tree.root(), u"Music"_s}}, knownAudio, options);
+    return build({{tree.root(), u"Music"_s, layout}}, knownAudio, options);
 }
 
 slsk::SharedFileList decodedList(const ShareIndex &index)

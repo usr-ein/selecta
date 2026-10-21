@@ -37,9 +37,9 @@ class ShareLookup : public ::testing::Test
 protected:
     void SetUp() override
     {
-        m_track = m_tree.file(u"Artist/Album/01 Track.mp3"_s, QByteArrayLiteral("track bytes"));
-        m_tree.file(u"Artist/Album/cover.jpg"_s, QByteArrayLiteral("jpg"));
-        m_tree.file(u"Artist/Other/02.flac"_s);
+        m_track = m_tree.file(u"Album/01 Track.mp3"_s, QByteArrayLiteral("track bytes"));
+        m_tree.file(u"Album/02 Track.mp3"_s, QByteArrayLiteral("mp3"));
+        m_tree.file(u"Other/02.flac"_s);
         m_result = buildTree(m_tree);
     }
 
@@ -54,13 +54,13 @@ protected:
 
 TEST_F(ShareLookup, FindsAFileByItsExactVirtualPath)
 {
-    const std::optional<SharedFile> file = index().lookup(remote(u"Music\\Artist\\Album\\01 Track.mp3"_s));
+    const std::optional<SharedFile> file = index().lookup(remote(u"Music\\Album\\01 Track.mp3"_s));
     ASSERT_TRUE(file.has_value());
     EXPECT_EQ(QDir::cleanPath(file->localPath), QDir::cleanPath(m_track));
     EXPECT_EQ(file->size, 11U);
     EXPECT_EQ(file->inode, inodeOf(m_track));
     EXPECT_NE(file->device, 0U);
-    EXPECT_EQ(file->entry.name.display(), u"Music\\Artist\\Album\\01 Track.mp3"_s);
+    EXPECT_EQ(file->entry.name.display(), u"Music\\Album\\01 Track.mp3"_s);
     EXPECT_EQ(file->entry.size, 11U);
     EXPECT_EQ(file->entry.extension, u"mp3"_s);
 }
@@ -68,19 +68,18 @@ TEST_F(ShareLookup, FindsAFileByItsExactVirtualPath)
 TEST_F(ShareLookup, FallsBackToIgnoringCase)
 {
     // Soulseek NS lower-cases whole paths.
-    const std::optional<SharedFile> file = index().lookup(remote(u"music\\artist\\album\\01 track.mp3"_s));
+    const std::optional<SharedFile> file = index().lookup(remote(u"music\\album\\01 track.mp3"_s));
     ASSERT_TRUE(file.has_value());
-    EXPECT_EQ(file->entry.name.display(), u"Music\\Artist\\Album\\01 Track.mp3"_s);
-    EXPECT_TRUE(index().lookup(remote(u"MUSIC\\ARTIST\\OTHER\\02.FLAC"_s)).has_value());
+    EXPECT_EQ(file->entry.name.display(), u"Music\\Album\\01 Track.mp3"_s);
+    EXPECT_TRUE(index().lookup(remote(u"MUSIC\\OTHER\\02.FLAC"_s)).has_value());
 }
 
 TEST_F(ShareLookup, FindsNothingElse)
 {
     for (const QString &path :
-         {u"Music\\Artist\\Album\\missing.mp3"_s, u"Music\\Artist\\Album"_s, u"Music\\Artist\\Album\\"_s, u"Music"_s,
-          u"\\Music\\Artist\\Album\\01 Track.mp3"_s, u"Music/Artist/Album/01 Track.mp3"_s,
-          u"Music\\Artist\\..\\Artist\\Album\\01 Track.mp3"_s, u"Other\\Artist\\Album\\01 Track.mp3"_s, m_track,
-          u"01 Track.mp3"_s, QString()}) {
+         {u"Music\\Album\\missing.mp3"_s, u"Music\\Album"_s, u"Music\\Album\\"_s, u"Music"_s,
+          u"\\Music\\Album\\01 Track.mp3"_s, u"Music/Album/01 Track.mp3"_s, u"Music\\Album\\..\\Album\\01 Track.mp3"_s,
+          u"Other\\Album\\01 Track.mp3"_s, m_track, u"01 Track.mp3"_s, QString()}) {
         EXPECT_FALSE(index().lookup(remote(path)).has_value()) << path.toStdString();
     }
 }
@@ -88,7 +87,7 @@ TEST_F(ShareLookup, FindsNothingElse)
 TEST_F(ShareLookup, PathsOverTheLimitFindNothing)
 {
     const QString padding(selecta::share::kMaxRequestPathBytes, u'x');
-    EXPECT_FALSE(index().lookup(remote(u"Music\\Artist\\Album\\"_s + padding)).has_value());
+    EXPECT_FALSE(index().lookup(remote(u"Music\\Album\\"_s + padding)).has_value());
     EXPECT_TRUE(index().folderContents(remote(u"Music\\"_s + padding)).isEmpty());
 }
 
@@ -115,7 +114,7 @@ TEST(ShareLookupNames, AReplacedBackslashIsFoundUnderItsVirtualName)
 {
     Tree tree;
     const QString local = tree.file(u"AC\\DC.mp3"_s);
-    const BuildResult result = buildTree(tree);
+    const BuildResult result = buildTree(tree, {}, {}, selecta::share::Layout::Tracks);
     const std::optional<SharedFile> file = result.index->lookup(remote(u"Music\\AC\uff3cDC.mp3"_s));
     ASSERT_TRUE(file.has_value());
     EXPECT_EQ(QDir::cleanPath(file->localPath), QDir::cleanPath(local));
@@ -143,44 +142,44 @@ TEST(ShareLookupNames, AliasesThatDifferOnlyInCaseStayApart)
 
 TEST_F(ShareLookup, ListsOneFolderWithoutSubfolders)
 {
-    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"Music\\Artist\\Album"_s));
+    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"Music\\Album"_s));
     ASSERT_EQ(folders.size(), 1);
-    EXPECT_EQ(folders.at(0).path.display(), u"Music\\Artist\\Album"_s);
+    EXPECT_EQ(folders.at(0).path.display(), u"Music\\Album"_s);
     ASSERT_EQ(folders.at(0).files.size(), 2);
     EXPECT_EQ(folders.at(0).files.at(0).name.display(), u"01 Track.mp3"_s); // bare names
     EXPECT_EQ(folders.at(0).files.at(0).size, 11U);
-    EXPECT_EQ(folders.at(0).files.at(1).name.display(), u"cover.jpg"_s);
+    EXPECT_EQ(folders.at(0).files.at(1).name.display(), u"02 Track.mp3"_s);
 }
 
 TEST_F(ShareLookup, AFolderWithOnlySubfoldersIsListedEmpty)
 {
-    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"Music\\Artist"_s));
+    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"Music"_s));
     ASSERT_EQ(folders.size(), 1);
-    EXPECT_EQ(folders.at(0).path.display(), u"Music\\Artist"_s);
+    EXPECT_EQ(folders.at(0).path.display(), u"Music"_s);
     EXPECT_TRUE(folders.at(0).files.isEmpty());
 }
 
 TEST_F(ShareLookup, FolderPathsIgnoreCaseAndAnswerWithTheIndexsSpelling)
 {
-    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"MUSIC\\artist\\ALBUM"_s));
+    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"MUSIC\\ALBUM"_s));
     ASSERT_EQ(folders.size(), 1);
-    EXPECT_EQ(folders.at(0).path.display(), u"Music\\Artist\\Album"_s);
+    EXPECT_EQ(folders.at(0).path.display(), u"Music\\Album"_s);
 }
 
 TEST_F(ShareLookup, UnknownFoldersListNothing)
 {
-    for (const QString &path : {u"Music\\Artist\\Nope"_s, u"Music\\Artist\\Album\\"_s,
-                                u"Music\\Artist\\Album\\01 Track.mp3"_s, u"Nope"_s, QString(), m_tree.root()}) {
+    for (const QString &path : {u"Music\\Nope"_s, u"Music\\Album\\"_s, u"Music\\Album\\01 Track.mp3"_s, u"Nope"_s,
+                                QString(), m_tree.root()}) {
         EXPECT_TRUE(index().folderContents(remote(path)).isEmpty()) << path.toStdString();
     }
 }
 
 TEST_F(ShareLookup, FolderContentsSurviveSlsksOwnEncoding)
 {
-    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"Music\\Artist\\Album"_s));
+    const QList<slsk::SharedDirectory> folders = index().folderContents(remote(u"Music\\Album"_s));
     slsk::peer::FolderContentsResponse response;
     response.token = 7;
-    response.folder = remote(u"Music\\Artist\\Album"_s);
+    response.folder = remote(u"Music\\Album"_s);
     response.directories = folders;
     const std::optional<slsk::peer::FolderContentsResponse> decoded =
         slsk::peer::FolderContentsResponse::decode(response.encode());

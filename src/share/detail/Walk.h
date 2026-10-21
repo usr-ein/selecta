@@ -41,6 +41,7 @@ struct WalkRoot
 {
     QString path;  // cleaned absolute path
     QString alias; // as peers will see it
+    Layout layout = Layout::Tracks;
 };
 
 struct Walk
@@ -60,7 +61,6 @@ inline constexpr qsizetype kMaxPoolBytes = qsizetype{1024} * 1024 * 1024;
 struct WalkOptions
 {
     qsizetype maxFiles = kMaxFiles;
-    int maxDepth = kMaxDepth;
     qsizetype maxPoolBytes = kMaxPoolBytes;
     qsizetype maxVirtualPathBytes = kMaxVirtualPathBytes;
     // Called after every successful lstat with the entry's local path; may change what the walk sees. Tests use it to
@@ -68,8 +68,8 @@ struct WalkOptions
     std::function<void(const QByteArray &nativePath, struct stat &status)> afterStat;
 };
 
-// Walks `roots` with build()'s skip rules; audio files get their attributes from `attributes`. Threading: reentrant
-// with one AttributeSource per call.
+// Walks `roots` with build()'s rules (their layouts, audio files only, the skip rules); audio files get their
+// attributes from `attributes`. Threading: reentrant with one AttributeSource per call.
 Walk walk(const QList<WalkRoot> &roots, const QStringList &excludedFolders, AttributeSource &attributes,
           const audio::CancellationFlag *cancel, const WalkOptions &options = {});
 

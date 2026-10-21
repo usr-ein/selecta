@@ -664,7 +664,7 @@ void Engine::setLibraryConfig(const LibraryConfig &config)
     }
     const collection::FolderRoles folders = config.folderRoles();
     m_collection->setFolders(folders, excluded);
-    m_shares->setRoots(folders.roots(), excluded); // shared whole, whatever their roles
+    m_shares->setFolders(folders, excluded); // by their roles: only the collection's tracks are shared
 }
 
 namespace {

@@ -1,6 +1,6 @@
 # `share/` — the share index and the upload queue
 
-What Selecta shares (PRD D12: the whole collection, read-only) as peers see it, and the order of uploads. Contract:
+What Selecta shares (PRD D12, D40: the collection's tracks, read-only, by the folders' roles) as peers see it, and the order of uploads. Contract:
 `docs/contracts/share.md`. Spec: `references/sharing-and-uploads.md` §3–§9, ADR-012, ADR-009. Depends on `slsk/`
 (wire types and the share-list encoder), `match/` (responder word splitting), `audio/` (header probe, cancellation)
 and `collection/` (`ScannedFile`, the attributes core already has). No database, no settings, no network, no timers.
@@ -10,7 +10,7 @@ and `collection/` (`ScannedFile`, the attributes core already has). No database,
 ```
 ShareIndex.h  build(): walk (stat only) → attributes → virtual tree → word index → lookups → share list
               ShareIndex: immutable; sharedFileList, folderContents, search, lookup, counts
-              ├─ detail/Walk         the folder walk: skip rules, (device, inode) visited set, virtual names
+              ├─ detail/Walk         the folder walk: layouts, skip rules, (device, inode) visited set, virtual names
               ├─ detail/Attributes   knownAudio entries, else audio::probeStreamInfo() on an O_NOFOLLOW descriptor
               ├─ detail/Text         word splitting and folding, virtual names, aliases, file kinds
               ├─ detail/IndexData    the snapshot's arrays (records, string pool, dictionary, postings, lookups)
@@ -41,7 +41,8 @@ UploadQueue.h UploadQueue: per-user FIFOs, turns between users, slots, limits, p
 4. **"At least one plain word of 3 or more characters"** is read literally (code points of the folded word): a
    query made only of short words ("u2", "ac dc") gets no answer, which also keeps the huge postings of short words
    out of every query.
-5. **What isn't shared** (beyond the contract's list): empty files (a size of 0 means "over 2 GiB" to some
+5. **What isn't shared** (beyond the contract's list; the layouts already leave out everything but tracks lying in a
+   tracks folder or in an album, PRD D40): empty files (a size of 0 means "over 2 GiB" to some
    downloaders), system junk folders that hold deleted or NAS-internal files (`$RECYCLE.BIN`, `System Volume
    Information`, `@eaDir`, `#recycle`, `#snapshot`, `Network Trash Folder`, `Temporary Items`), names with control
    characters or invalid UTF-8, and a second file or folder whose virtual name equals a sibling's.
@@ -77,16 +78,23 @@ UploadQueue.h UploadQueue: per-user FIFOs, turns between users, slots, limits, p
     them, and the share list is written one folder at a time with slsk's own `Writer`, `SharedDirectory::encode()`
     and `zlib::deflate()` at slsk's level (a test checks the bytes equal `SharedFileListResponse::encode()`'s), so the
     whole list never exists as objects. The finished snapshot gives back its spare capacity.
-15. **A test seam in the walk.** `detail::walk()` takes `WalkOptions`: limits (files, depth, string bytes, virtual path
+15. **A test seam in the walk.** `detail::walk()` takes `WalkOptions`: limits (files, string bytes, virtual path
     bytes) and an `afterStat` hook. build() uses the defaults; tests use small limits, mark a file as an iCloud
     placeholder (no test can make a real one) and cancel at a chosen file. The 4 KB virtual path limit can't be reached
     on macOS through build(): PATH_MAX (1 KB) stops local paths first, so it is tested through the seam.
 
+16. **Layouts, not depth limits** (P-016). A root's `Layout` decides what the walk lists: a tracks folder's own files,
+    an albums folder's subfolders and their own files. Nothing deeper is ever listed (so it can't be reported either),
+    which replaced the 64-folder depth limit. Another root met as a subfolder (the tracks folder inside the albums
+    folder, which Settings refuses) is skipped there, by (device, inode), and shared as its own root: its tracks are
+    loose tracks, never an album's, whatever the order of the roots.
+
 ## Integration points
 
 - **Building:** core calls `build(roots, knownAudio, {excludedFolders})` on a worker whenever the collection or the
-  shared folders change, with `roots` = the collection roots and their base names, `knownAudio` = the collection's
-  files keyed by `ScannedFile::file.path` (what `CollectionStore` already holds), `excludedFolders` = Selecta's Inbox,
+  shared folders change, with `roots` = the collection's two folders, their base names and their roles
+  (`ShareService::setFolders`, from `collection::FolderRoles`), `knownAudio` = the collection's
+  files keyed by `ScannedFile::file.path` (what `CollectionStore` already holds), `excludedFolders` = Selecta's Inbox (in its data folder, so normally outside both),
   preview cache, incoming and staging folders. It swaps its `std::shared_ptr<const ShareIndex>` on its own thread
   and sends `SharedFoldersFiles` with `counts()` when they changed. A cancelled build is discarded.
 - **Answering:** `slsk::ShareProvider::sharedFileList()` → `index->sharedFileList()` (banned users: an empty
@@ -100,6 +108,10 @@ UploadQueue.h UploadQueue: per-user FIFOs, turns between users, slots, limits, p
   report `queue.slotFree()`, `queue.queued()` and `options().uploadSlots`.
 
 ## Benchmark
+
+Measured before P-016, when the tree was shared whole (artist folders of albums, covers shared); the benchmark now
+shares an albums folder of the same albums without the artist level, and covers are walked but not shared, so the
+build does less than measured here.
 
 `selecta_share_bench` (Release, Apple M-series, performance cores, other agents' builds sometimes running; trees in the
 temporary folder, warm cache). Synthetic trees: artist folders of album folders of 10 tracks (every fifth a FLAC) and
