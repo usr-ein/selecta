@@ -1414,6 +1414,8 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
         QLayout *wantsLayout = wants->layout();
         ASSERT_NE(wantsLayout, nullptr);
         const QRect wantsRect(QPoint(0, 0), wants->size());
+        // Too narrow even for one word of each checked box: everything else has given way.
+        const bool fits = wantsLayout->minimumSize().width() <= wants->width();
         for (int i = 0; i < wantsLayout->count(); ++i) {
             const QLayoutItem *item = wantsLayout->itemAt(i);
             QWidget *control = item->widget();
@@ -1421,7 +1423,10 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
                 continue;
             }
             const std::string name = control->metaObject()->className() + (" " + control->objectName().toStdString());
-            if (view->width() >= actionsWidth) {
+            if (!fits) {
+                const auto *box = qobject_cast<QCheckBox *>(control);
+                EXPECT_TRUE(box && box->isChecked()) << name << " still shown, " << at;
+            } else if (view->width() >= actionsWidth) {
                 EXPECT_TRUE(wantsRect.contains(item->geometry()))
                     << name << " at " << item->geometry().x() << "+" << item->geometry().width() << " in "
                     << wants->width() << ", " << at;
@@ -1441,6 +1446,46 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
             EXPECT_TRUE(fullBoxTexts.contains(window->findChild<QCheckBox *>(u"search.grouped"_s)->text()));
         }
     }
+
+    // A checked box is a filter in use: it is never hidden, however narrow the view (round 2's review). At the
+    // smallest window the unchecked boxes are gone; checking one brings it back, and the other gives way first.
+    window->resize(window->minimumSize());
+    QCoreApplication::processEvents();
+    QCoreApplication::processEvents();
+    auto *onlyRelease = window->findChild<QCheckBox *>(u"search.onlyRelease"_s);
+    auto *grouped = window->findChild<QCheckBox *>(u"search.grouped"_s);
+    ASSERT_NE(onlyRelease, nullptr);
+    ASSERT_NE(grouped, nullptr);
+    const bool releaseWasChecked = onlyRelease->isChecked(); // the default filter checks it
+    onlyRelease->setChecked(false);
+    grouped->setChecked(false);
+    const auto refit = [&] { // a new width fits the bar again
+        window->resize(4000, window->minimumHeight());
+        QCoreApplication::processEvents();
+        window->resize(window->minimumSize());
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+    };
+    refit();
+    ASSERT_TRUE(onlyRelease->isHidden()); // the case: no room for an unchecked box
+    for (QCheckBox *box : {onlyRelease, grouped}) {
+        box->setChecked(true); // as a preset or a saved search state does it
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        EXPECT_TRUE(box->isVisible()) << box->objectName().toStdString();
+        EXPECT_TRUE(fullBoxTexts.contains(box->text()) || box->text().endsWith(u'…')) << box->text().toStdString();
+    }
+    for (const int width : {window->minimumWidth() + 50, window->minimumWidth()}) { // and on resizing
+        window->resize(width, window->minimumHeight());
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents();
+        EXPECT_TRUE(onlyRelease->isVisible() && grouped->isVisible()) << "at a window " << width << " wide";
+    }
+    grouped->setChecked(false);
+    refit();
+    EXPECT_TRUE(onlyRelease->isVisible());
+    EXPECT_TRUE(grouped->isHidden()); // unchecked, it gives way first
+    onlyRelease->setChecked(releaseWasChecked);
     engine->stop();
 }
 

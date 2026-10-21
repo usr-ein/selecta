@@ -86,9 +86,9 @@ private:
     // "Not What I Have" and "Same as What I Have" for the selected results matched with an owned track (LIB-6).
     void addCorrections(QMenu &menu, const QList<int> &selected);
     QWidget *createFilterBar();
-    // Fits the bar's left side (what you want) into the width it has: the boxes' labels elide, last first, and a box
-    // with no room left for a word is hidden; then the preset's name shortens; then Presets, "Want" and the preset
-    // are hidden. No control is ever cut by the bar's edge.
+    // Fits the bar's left side (what you want) into the width it has: the boxes' labels elide, unchecked and last
+    // first, and an unchecked box with no room left for a word is hidden (a checked one keeps a word); then the
+    // preset's name shortens; then Presets, "Want" and the preset are hidden. No control is ever cut by the bar's edge.
     void fitWants();
     void giveWay(); // fitWants' choices, before the layout
     QWidget *createFiltersPanel();

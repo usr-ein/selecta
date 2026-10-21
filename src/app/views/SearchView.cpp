@@ -392,6 +392,12 @@ QWidget *SearchView::createFilterBar()
         // Laid out by its whole rect: macOS's layout rect for a box stops short of its label's last letters, which
         // the bar's edge would then cut.
         box->setAttribute(Qt::WA_LayoutUsesWidgetRect);
+        // Checked while hidden (a preset, a saved state): fit again, so it shows.
+        connect(box, &QCheckBox::toggled, this, [this, box](bool checked) {
+            if (checked && box->isHidden()) {
+                fitWants();
+            }
+        });
     }
     m_filtersButton->setObjectName(u"search.filters"_s);
     m_filtersButton->setText(tr("Filters"));
@@ -1213,9 +1219,11 @@ void SearchView::giveWay()
         layout->invalidate();
         return layout->minimumSize().width();
     };
-    // Start whole, then give way: the last box's label first.
-    const QList<QCheckBox *> boxes{m_grouped, m_onlyRelease};
-    for (QCheckBox *box : boxes) {
+    // Start whole, then give way: an unchecked box before a checked one (a filter in use must stay in sight), and
+    // the last box before the first.
+    QList<QCheckBox *> boxes{m_grouped, m_onlyRelease};
+    std::ranges::stable_partition(boxes, [](const QCheckBox *box) { return !box->isChecked(); });
+    for (QCheckBox *box : std::as_const(boxes)) {
         box->setText(box->property("fullText").toString());
         box->setToolTip(box->property("fullToolTip").toString());
         box->setVisible(true);
@@ -1224,17 +1232,21 @@ void SearchView::giveWay()
     m_wantLabel->setVisible(true);
     m_preset->setVisible(true);
     m_preset->setMinimumWidth(0); // its whole name (the layout takes its size hint)
-    for (QCheckBox *box : boxes) {
+    for (QCheckBox *box : std::as_const(boxes)) {
         const int over = needed() - available;
         if (over <= 0) {
             return;
         }
         const QString full = box->property("fullText").toString();
         const QFontMetrics metrics(box->font());
-        const int room = metrics.horizontalAdvance(full) - over;
-        if (room < metrics.horizontalAdvance(u"Only…"_s)) {
-            box->setVisible(false); // not even a word: a box with "O…" would say nothing
-            continue;
+        const int shortest = metrics.horizontalAdvance(u"Only…"_s); // a word: "O…" would say nothing
+        int room = metrics.horizontalAdvance(full) - over;
+        if (room < shortest) {
+            if (!box->isChecked()) {
+                box->setVisible(false);
+                continue;
+            }
+            room = shortest; // a checked box is never hidden: it keeps a word, and the rest gives way
         }
         box->setText(metrics.elidedText(full, Qt::ElideRight, room));
         box->setToolTip(full + u'\n' + box->property("fullToolTip").toString());
