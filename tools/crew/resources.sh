@@ -5,11 +5,11 @@
 #
 #   tools/crew/resources.sh
 #
-# Environment: CREW_DISK_BUDGET_GB (default 10): the repo's size limit, worktrees and build folders included.
+# Environment: CREW_DISK_BUDGET_GB (default 12): the repo's size limit, worktrees and build folders included.
 set -uo pipefail
 root="$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)"
 root="${root%/.git}"
-budget_gb="${CREW_DISK_BUDGET_GB:-10}"
+budget_gb="${CREW_DISK_BUDGET_GB:-12}"
 warns=()
 
 # --- Disk: the repo with its worktrees and build folders, and the volume.

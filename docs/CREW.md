@@ -31,7 +31,8 @@ Effort: the nightman always runs at `max`, bitches at `high`. A minion runs at `
 4. **Built.** The minion works in its worktree:
    - a test for each requirement;
    - its own `build/dev`, compiling through the ccache that every worktree shares;
-   - the targeted tests, then the full suite once, then `tools/lint.sh` on the directories it touched.
+   - the targeted tests, then `tools/lint.sh` on the directories it touched. CI runs the full suite on the PR
+     (maintainer, 2026-10-21); a local full suite runs only when the nightman asks.
    - if it changes the UI: the changed screens driven in the headless app (`tools/dev/run-headless.sh`, `tools/dev/app.sh`), and screenshots committed as `docs/screens/P-NNN-<what>.png` and shown in the PR. No screenshot when the UI doesn't change.
 5. **Pull request.** The minion merges `origin/main` once, then pushes the branch and opens the PR:
    `gh pr create --base main --label review:needed`. The body says what changed, the test and lint results, the
@@ -68,7 +69,7 @@ Effort: the nightman always runs at `max`, bitches at `high`. A minion runs at `
 The nightman gets a check-in reminder while any minion or bitch is running. On each check-in it:
 
 - runs `tools/crew/resources.sh` and acts on any WARN:
-  - **disk:** the repo, worktrees included, stays under 10 GB; a minion's `build/dev` is about 1.5 GB;
+  - **disk:** the repo, worktrees included, stays under 12 GB; a minion's `build/dev` is about 1.5 GB;
   - **memory:** pressure and swap;
   - **CPU:** at most three full builds at once;
   - **network safety:** only the maintainer's beta may be on the live Soulseek network.

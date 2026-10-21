@@ -38,7 +38,7 @@ re-read them rather than trusting your memory.
   morning.
 - **Splitting.** One minion per pitch, unless the pitch has parts that touch different files (its "Areas"). Then
   give one minion each part, never two minions on the same files.
-- **Limits.** At most 3 minions at once: each builds in its own 1.5 GB worktree and loads the CPU. Queue the rest
+- **Limits.** At most 5 minions at once (maintainer, 2026-10-21): each builds in its own 1.5 GB worktree and loads the CPU. Queue the rest
   in the board's "Next".
 - **Effort.** You always run at `max`. You pick each minion's effort, from `medium` to `max` (the script refuses anything else), and ask the maintainer with AskUserQuestion when in doubt:
   - `medium`: small, contained changes: wording, a label, one view's layout, docs;
