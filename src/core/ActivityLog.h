@@ -35,7 +35,9 @@ struct ActivityEntry
 // Each line about a peer says who started it and why (describe()): "You looked up X's address to send them your
 // search results…", "X is downloading … from you". Peer lookups carry their purpose (recordPeerLookup()); a lookup
 // for one of our own requests is named after the request we made of that peer just before (browse, queue a
-// download…), which the governor reported to recordDecision() moments earlier in the same call chain.
+// download…), which the governor reported to recordDecision() moments earlier in the same call chain. A lookup to
+// carry on a file transfer names its direction after the download or upload lines for that peer recorded within
+// kTransferMemoryMs: your download from them, their download from you, or both; with none, it says either may be.
 //
 // Threading: lives on the engine thread with that thread's Database. recent() and describe() are static so the UI
 // thread can read with its own connection; it then follows new lines through recorded(), keyed by id to drop a line
@@ -79,6 +81,12 @@ public:
     // At most this many peers are remembered. A new peer when full first drops the expired ones; if all are still
     // recent (a burst), the whole memory is cleared.
     static constexpr int kRequestMemoryPeers = 256;
+    // How long a download or upload line names the direction of a transfer lookup for that peer. A transfer's
+    // lookups follow its lines within seconds (an upload starts, then we open the file connection); a download
+    // queued long ago at the peer's end is past knowing, and its lookup keeps the wording that names both.
+    static constexpr qint64 kTransferMemoryMs = qint64{10} * 60 * 1000;
+    // At most this many peers' transfers are remembered, dropped the same way as the requests.
+    static constexpr int kTransferMemoryPeers = 256;
 
 Q_SIGNALS:
     void recorded(const selecta::core::ActivityEntry &entry);
@@ -89,11 +97,19 @@ private:
         governor::Operation operation = governor::Operation::Browse;
         qint64 atMs = 0;
     };
+    // The transfer lines seen for one peer, newest per direction (0: none).
+    struct TransfersWith
+    {
+        qint64 downloadAtMs = 0;
+        qint64 uploadAtMs = 0;
+    };
     void remember(const QString &peer, governor::Operation operation);
+    void rememberTransfer(const QString &peer, bool download);
 
     storage::Database &m_db;
     WallClock m_now;
     QHash<QString, AskedOf> m_lastAsked; // per peer: our latest allowed request, for the lookup that follows it
+    QHash<QString, TransfersWith> m_lastTransfers; // per peer: the latest download and upload lines
 };
 
 } // namespace selecta::core
