@@ -263,7 +263,7 @@ std::optional<UserInfoResponse> UserInfoResponse::decode(QByteArrayView payload)
     return parse<UserInfoResponse>(payload, [](Reader &r, UserInfoResponse &m) {
         m.description = readText(r);
         if (r.boolean()) {
-            m.picture = r.string();
+            m.picture = r.string(protocol::kUserInfoFrameMax); // an image, not a name: its frame bounds it
         }
         m.totalUploads = r.u32();
         m.queueSize = r.u32();

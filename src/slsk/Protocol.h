@@ -202,6 +202,12 @@ inline constexpr qsizetype kDistribFrameMax = 16 * kKiB;
 // Usernames read from peers (PeerInit, DistribBranchRoot, search results): the server allows 30 characters; the
 // extra room follows Nicotine+.
 inline constexpr qsizetype kUsernameMaxBytes = 256;
+// Every length-prefixed string read from the network (Reader::string()): names, paths and free text alike. Real ones
+// stay far below it (a Windows long path is 32,767 UTF-16 units; chat lines and profile texts are a few KiB), so a
+// longer one is hostile and makes its message malformed. Without it, a name could take a whole frame (up to 1 GiB
+// once a share list inflates) and be copied once per file downstream. The user-info picture is binary, not a string,
+// and is bounded by its frame instead (kUserInfoFrameMax).
+inline constexpr qsizetype kStringMaxBytes = 64 * kKiB;
 // Decode-time sanity caps for counts that the server controls (protocol §12.7).
 inline constexpr qsizetype kRoomMembersMax = 50'000;
 inline constexpr qsizetype kRoomListMax = 100'000;

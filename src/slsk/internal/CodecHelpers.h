@@ -40,7 +40,8 @@ inline QString readText(Reader &reader)
 }
 
 // An optional trailing field: read only if bytes remain, and only kept if it parses. Bytes that don't parse as the
-// field are extra trailing bytes, which are ignored rather than failing the message (protocol §6.2).
+// field are extra trailing bytes, which are ignored rather than failing the message (protocol §6.2). A string over its
+// cap is not junk: it fails the message like anywhere else (Reader::oversize()).
 template <typename T, typename Read>
 std::optional<T> readOptional(Reader &reader, Read &&read)
 {
@@ -49,6 +50,10 @@ std::optional<T> readOptional(Reader &reader, Read &&read)
     }
     Reader probe = reader; // NOLINT(misc-const-correctness): read() advances it
     T value = std::forward<Read>(read)(probe);
+    if (probe.oversize()) {
+        reader = probe;
+        return std::nullopt;
+    }
     if (!probe.ok()) {
         return std::nullopt;
     }

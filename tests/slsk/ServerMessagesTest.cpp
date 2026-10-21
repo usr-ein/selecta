@@ -401,3 +401,32 @@ TEST(ServerMessages, UnknownStatusValuesAreKept)
     ASSERT_TRUE(update.has_value());
     EXPECT_EQ(static_cast<quint32>(update->status), 7U);
 }
+
+TEST(ServerMessages, StringsAreCappedLikePeerOnes)
+{
+    const QString atCap(protocol::kStringMaxBytes, u'm');
+    const FromServerMessage fits = fromserver::RoomMessage{u"room"_s, u"user"_s, atCap};
+    EXPECT_EQ(decodeFromServer(codeOf(fits), payloadOf(fits)).status, DecodeStatus::Decoded);
+    const FromServerMessage over = fromserver::RoomMessage{u"room"_s, u"user"_s, atCap + u'm'};
+    EXPECT_EQ(decodeFromServer(codeOf(over), payloadOf(over)).status, DecodeStatus::Malformed);
+}
+
+TEST(ServerMessages, AnOversizeOptionalFieldFailsTheMessage)
+{
+    fromserver::LoginReply reply;
+    reply.success = true;
+    reply.greeting = u"hi"_s;
+    reply.passwordHash = QByteArray(protocol::kStringMaxBytes, 'h');
+    EXPECT_TRUE(fromserver::LoginReply::decode(reply.encode()).has_value());
+    reply.passwordHash.append('h');
+    EXPECT_FALSE(fromserver::LoginReply::decode(reply.encode()).has_value());
+    // Junk after the greeting that only claims a long string is still ignored (protocol §6.2).
+    Writer w;
+    w.boolean(true);
+    w.string(u"hi"_s);
+    w.u32(1);
+    w.u32(0xFFFF'FFFFU);
+    const std::optional<fromserver::LoginReply> junk = fromserver::LoginReply::decode(w.data());
+    ASSERT_TRUE(junk.has_value());
+    EXPECT_TRUE(junk->passwordHash.isEmpty());
+}

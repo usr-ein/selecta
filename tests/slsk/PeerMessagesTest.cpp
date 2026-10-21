@@ -317,6 +317,132 @@ TEST(PeerMessages, UserInfoPictureLongerThanThePayloadIsMalformed)
     EXPECT_FALSE(peer::UserInfoResponse::decode(w.data()).has_value());
 }
 
+// --- string caps (protocol::kStringMaxBytes) ---------------------------------------------------------------------
+
+namespace {
+
+const QByteArray kNameAtCap(protocol::kStringMaxBytes, 'n');
+const QByteArray kNameOverCap(protocol::kStringMaxBytes + 1, 'n');
+
+// A search response with one public and one private result, named as given.
+QByteArray searchResponseNaming(QByteArrayView publicName, QByteArrayView privateName)
+{
+    Writer body;
+    body.string(QByteArrayView("responder"));
+    body.u32(1);
+    body.u32(1);
+    writeEntry(body, publicName, 1, "mp3", {});
+    body.boolean(true);
+    body.u32(0);
+    body.u32(0);
+    body.u32(0);
+    body.u32(1);
+    writeEntry(body, privateName, 1, "mp3", {});
+    return zlib::deflate(body.data());
+}
+
+// A share list of `files` files in one folder, then one private folder; the names are as given.
+QByteArray shareListNaming(QByteArrayView folder, QByteArrayView lastFile, QByteArrayView privateFolder,
+                           int files = 1)
+{
+    Writer body;
+    body.u32(1);
+    body.string(folder);
+    body.u32(static_cast<quint32>(files));
+    for (int i = 0; i < files - 1; ++i) {
+        writeEntry(body, "x.mp3", 1, "", {});
+    }
+    writeEntry(body, lastFile, 1, "", {});
+    body.u32(0);
+    body.u32(1);
+    body.string(privateFolder);
+    body.u32(0);
+    return zlib::deflate(body.data());
+}
+
+} // namespace
+
+TEST(PeerMessages, SearchResponseWithNamesAtTheCapDecodes)
+{
+    const std::optional<peer::FileSearchResponse> response =
+        peer::FileSearchResponse::decode(searchResponseNaming(kNameAtCap, kNameAtCap));
+    ASSERT_TRUE(response.has_value());
+    ASSERT_EQ(response->results.size(), 1);
+    EXPECT_EQ(response->results[0].name.raw, kNameAtCap);
+    ASSERT_EQ(response->privateResults.size(), 1);
+}
+
+TEST(PeerMessages, SearchResponseWithAnOversizeNameIsMalformed)
+{
+    EXPECT_FALSE(peer::FileSearchResponse::decode(searchResponseNaming(kNameOverCap, "a.mp3")).has_value());
+    // In the optional private section too: an oversize name isn't junk to skip, it fails the whole message.
+    EXPECT_FALSE(peer::FileSearchResponse::decode(searchResponseNaming("a.mp3", kNameOverCap)).has_value());
+    // Any string of the entry: its extension as well.
+    Writer body;
+    body.string(QByteArrayView("responder"));
+    body.u32(1);
+    body.u32(1);
+    writeEntry(body, "a.mp3", 1, kNameOverCap, {});
+    const QByteArray payload = zlib::deflate(body.data());
+    EXPECT_FALSE(peer::FileSearchResponse::decode(payload).has_value());
+    EXPECT_EQ(decodePeer(static_cast<quint32>(PeerCode::FileSearchResponse), payload).status, DecodeStatus::Malformed);
+}
+
+TEST(PeerMessages, ShareListWithNamesAtTheCapDecodes)
+{
+    const std::optional<peer::SharedFileListResponse> response =
+        peer::SharedFileListResponse::decode(shareListNaming(kNameAtCap, kNameAtCap, kNameAtCap));
+    ASSERT_TRUE(response.has_value());
+    EXPECT_EQ(response->list.directories[0].path.raw, kNameAtCap);
+    EXPECT_EQ(response->list.directories[0].files[0].name.raw, kNameAtCap);
+    EXPECT_EQ(response->list.privateDirectories[0].path.raw, kNameAtCap);
+}
+
+TEST(PeerMessages, ShareListWithAnOversizeNameIsMalformedNotTooLarge)
+{
+    // The case P-005's review found: one huge folder path over many files, which a reader would copy into each.
+    for (const QByteArray &payload : {shareListNaming(kNameOverCap, "a.mp3", "p", 100'000),
+                                      shareListNaming("Music", kNameOverCap, "p", 100'000),
+                                      shareListNaming("Music", "a.mp3", kNameOverCap)}) {
+        bool tooLarge = true;
+        EXPECT_FALSE(
+            peer::SharedFileListResponse::decode(payload, protocol::kShareListInflatedMax, &tooLarge).has_value());
+        EXPECT_FALSE(tooLarge);
+    }
+}
+
+TEST(PeerMessages, FolderAndTransferMessagesWithAnOversizePathAreMalformed)
+{
+    const RemotePath oversize{kNameOverCap};
+    const QList<PeerMessage> messages{
+        peer::FolderContentsRequest{1, oversize},
+        peer::FolderContentsResponse{1, oversize, {}},
+        peer::TransferRequest{TransferDirection::Download, 1, oversize, std::nullopt},
+        peer::QueueUpload{oversize},
+        peer::UploadFailed{oversize},
+        peer::PlaceInQueueRequest{oversize},
+        peer::PlaceInQueueResponse{oversize, 1},
+        peer::UploadDenied{oversize, u"Banned"_s},
+    };
+    for (const PeerMessage &message : messages) {
+        EXPECT_EQ(decodePeer(codeOf(message), payloadOf(message)).status, DecodeStatus::Malformed)
+            << "code " << codeOf(message);
+    }
+}
+
+TEST(PeerMessages, UserInfoPictureMayExceedTheStringCap)
+{
+    peer::UserInfoResponse info;
+    info.description = QString(protocol::kStringMaxBytes, u'd');
+    info.picture = QByteArray(protocol::kStringMaxBytes * 4, 'p');
+    const std::optional<peer::UserInfoResponse> decoded = peer::UserInfoResponse::decode(info.encode());
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_EQ(*decoded, info);
+
+    info.description.append(u'd');
+    EXPECT_FALSE(peer::UserInfoResponse::decode(info.encode()).has_value());
+}
+
 TEST(PeerMessages, GetShareFileListAcceptsAnOptionalTicket)
 {
     EXPECT_TRUE(peer::GetShareFileList::decode({}).has_value());

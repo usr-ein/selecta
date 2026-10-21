@@ -87,6 +87,61 @@ TEST(Codec, StringLongerThanTheMessageFailsWithoutAllocating)
     EXPECT_FALSE(r.ok());
 }
 
+TEST(Codec, LengthPastTheEndIsCutShortNotOversize)
+{
+    // Junk trailing bytes can claim any length: that's a short message, which optional fields may ignore.
+    const QByteArray bytes = QByteArray::fromHex("ff ff ff ff 61 62");
+    Reader r(bytes);
+    EXPECT_TRUE(r.string().isEmpty());
+    EXPECT_FALSE(r.ok());
+    EXPECT_FALSE(r.oversize());
+}
+
+TEST(Codec, StringAtTheCapIsRead)
+{
+    const QByteArray name(selecta::slsk::protocol::kStringMaxBytes, 'n');
+    Writer w;
+    w.string(QByteArrayView(name));
+    w.u32(7);
+    Reader r(w.data());
+    EXPECT_EQ(r.string(), name);
+    EXPECT_EQ(r.u32(), 7U);
+    EXPECT_TRUE(r.ok());
+    EXPECT_FALSE(r.oversize());
+}
+
+TEST(Codec, StringOneByteOverTheCapIsRejected)
+{
+    Writer w;
+    w.string(QByteArrayView(QByteArray(selecta::slsk::protocol::kStringMaxBytes + 1, 'n')));
+    w.u32(7);
+    Reader r(w.data());
+    EXPECT_TRUE(r.string().isEmpty());
+    EXPECT_FALSE(r.ok());
+    EXPECT_TRUE(r.oversize());
+    // Sticky, like every other failure.
+    EXPECT_EQ(r.u32(), 0U);
+    EXPECT_EQ(r.remaining(), 0);
+}
+
+TEST(Codec, AFieldCanSetItsOwnCap)
+{
+    Writer w;
+    w.string(QByteArrayView("abcd"));
+    w.string(QByteArrayView("abcde"));
+    Reader r(w.data());
+    EXPECT_EQ(r.string(4), QByteArray("abcd"));
+    EXPECT_TRUE(r.string(4).isEmpty());
+    EXPECT_TRUE(r.oversize());
+
+    const QByteArray picture(selecta::slsk::protocol::kStringMaxBytes * 2, 'p');
+    Writer big;
+    big.string(QByteArrayView(picture));
+    Reader bigReader(big.data());
+    EXPECT_EQ(bigReader.string(picture.size()), picture);
+    EXPECT_TRUE(bigReader.ok());
+}
+
 TEST(Codec, StringExactlyFillingTheRestIsFine)
 {
     const QByteArray bytes = QByteArray::fromHex("02 00 00 00 61 62");

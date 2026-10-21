@@ -68,12 +68,21 @@ bool Reader::boolean() noexcept
     return u8() != 0;
 }
 
-QByteArray Reader::string()
+QByteArray Reader::string(qsizetype maxBytes)
 {
     const quint32 length = u32();
-    // Compared as unsigned 64-bit so a length near 2^32 can't wrap on any platform.
-    if (m_failed || std::cmp_greater(length, remaining())) {
+    if (m_failed) {
+        return {};
+    }
+    // Compared with std::cmp_* so a length near 2^32 can't wrap on any platform. A length past the end is a cut-short
+    // message (or junk trailing bytes); only a string whose bytes are all there and over the cap is oversize.
+    if (std::cmp_greater(length, remaining())) {
         m_failed = true;
+        return {};
+    }
+    if (std::cmp_greater(length, maxBytes)) {
+        m_failed = true;
+        m_oversize = true;
         return {};
     }
     return bytes(static_cast<qsizetype>(length));

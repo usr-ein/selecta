@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "slsk/Protocol.h"
+
 #include <QByteArray>
 #include <QByteArrayView>
 #include <QString>
@@ -51,8 +53,9 @@ public:
     quint64 u64() noexcept;
     bool boolean() noexcept; // one byte; any non-zero value is true
     // A `uint32` length and that many raw bytes, kept as they are (no text decoding). Fails if the length exceeds
-    // the bytes that remain, so a hostile length never allocates more than the message holds.
-    QByteArray string();
+    // the bytes that remain, so a hostile length never allocates more than the message holds. Also fails if the bytes
+    // are there but exceed `maxBytes` (protocol::kStringMaxBytes unless a field says otherwise): that sets oversize().
+    QByteArray string(qsizetype maxBytes = kDefaultStringMaxBytes);
     // `count` raw bytes.
     QByteArray bytes(qsizetype count);
     // A `uint32` list count, checked against the bytes that remain: each item takes at least `minItemBytes`, so a
@@ -65,7 +68,12 @@ public:
     qsizetype remaining() const noexcept { return m_failed ? 0 : m_data.size() - m_pos; }
     bool atEnd() const noexcept { return remaining() == 0; }
     bool ok() const noexcept { return !m_failed; }
+    // True when the failure was a string longer than its cap: the message is hostile, not merely cut short or followed
+    // by junk, so even an optional trailing field that holds one fails the whole message (internal::readOptional).
+    bool oversize() const noexcept { return m_oversize; }
     void fail() noexcept { m_failed = true; }
+
+    static constexpr qsizetype kDefaultStringMaxBytes = protocol::kStringMaxBytes;
 
 private:
     bool take(qsizetype count, const char **out) noexcept;
@@ -73,6 +81,7 @@ private:
     QByteArrayView m_data;
     qsizetype m_pos = 0;
     bool m_failed = false;
+    bool m_oversize = false;
 };
 
 // Little-endian writer into a growing QByteArray.
