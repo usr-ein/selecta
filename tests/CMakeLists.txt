@@ -30,6 +30,7 @@ selecta_add_test_suite(selecta_unit_tests
     SOURCES
         base/ClockTest.cpp
         base/LoggingTest.cpp
+        base/OpenFilesTest.cpp
         base/PathsTest.cpp
         governor/GovernorTest.cpp
         governor/LimitsTest.cpp

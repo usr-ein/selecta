@@ -4,6 +4,7 @@ configure_file(Version.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/base/Version.
 qt_add_library(selecta_base STATIC
     Clock.h Clock.cpp
     Logging.h Logging.cpp
+    OpenFiles.h OpenFiles.cpp
     Paths.h Paths.cpp)
 add_library(Selecta::Base ALIAS selecta_base)
 target_include_directories(selecta_base PUBLIC
