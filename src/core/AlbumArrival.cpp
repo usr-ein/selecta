@@ -444,7 +444,7 @@ AlbumArrivalResult arriveAlbum(const AlbumArrivalJob &job, const audio::Cancella
     // Into the Inbox, in one move, every file quarantined.
     const library::FileOps fileOps(job.library.inboxRoot, {}, job.trash);
     const library::FileResult published =
-        fileOps.publishFolderIntoInbox(staging, QDir(job.library.albumsFolder).filePath(folderName));
+        fileOps.publishFolderIntoInbox(staging, QDir(kInboxAlbumsFolder.toString()).filePath(folderName));
     cleanUp();
     if (!published.ok) {
         result.error = translated("Couldn't put the album in your Inbox: %1").arg(published.error);

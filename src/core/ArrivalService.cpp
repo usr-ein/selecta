@@ -395,7 +395,7 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
     // Into the Inbox, quarantined.
     const library::FileOps fileOps(job.library.inboxRoot, {}, job.trash);
     const library::FileResult published =
-        fileOps.publishIntoInbox(staged, QDir(job.library.singlesFolder).filePath(name));
+        fileOps.publishIntoInbox(staged, QDir(kInboxSinglesFolder.toString()).filePath(name));
     if (!published.ok) {
         cleanUp();
         outcome.error = tr("Couldn't put the file in your Inbox: %1").arg(published.error);

@@ -203,7 +203,8 @@ public:
     void clearSearchCache();
     void clearPreviewCache();
 
-    // Settings → Library: the Inbox and the collection folders (the collection is scanned again when they change).
+    // Settings → Library and File names: the tracks and albums folders (the collection is scanned again when they
+    // change), the naming templates; and Selecta's own Inbox.
     void setLibraryConfig(const LibraryConfig &config);
 
     // "Pause network activity" (SAFE-5): no new Soulseek operations until resumed.

@@ -23,12 +23,12 @@ using library::FileResult;
 using library::InboxItem;
 using Whereabouts = library::HistoryEntry::Whereabouts;
 
-// Whether one of the two folders is the other or inside it.
+// Whether one of the two folders is the other or inside it (compared as the scanner compares paths: NFC).
 bool overlap(const QString &first, const QString &second)
 {
-    const QString a = QDir::cleanPath(first);
-    const QString b = QDir::cleanPath(second);
-    return a == b || a.startsWith(b + u'/') || b.startsWith(a + u'/');
+    const QString a = collection::comparisonKey(first);
+    const QString b = collection::comparisonKey(second);
+    return a == b || a.startsWith(b.endsWith(u'/') ? b : b + u'/') || b.startsWith(a.endsWith(u'/') ? a : a + u'/');
 }
 
 } // namespace
@@ -36,26 +36,25 @@ bool overlap(const QString &first, const QString &second)
 QString checkLibraryConfig(const LibraryConfig &config)
 {
     if (config.inboxRoot.isEmpty() || !QDir::isAbsolutePath(config.inboxRoot)) {
-        return InboxService::tr("Choose a folder for the Inbox.");
+        return InboxService::tr("Selecta's Inbox needs a full folder path.");
     }
-    for (qsizetype i = 0; i < config.collectionRoots.size(); ++i) {
-        const QString &root = config.collectionRoots.at(i);
-        if (root.isEmpty() || !QDir::isAbsolutePath(root)) {
-            return InboxService::tr("%1 isn't a full folder path.").arg(root);
+    for (const QString &folder : {config.tracksRoot, config.albumsRoot}) {
+        if (folder.isEmpty()) {
+            continue; // not chosen yet
         }
-        if (overlap(config.inboxRoot, root)) {
-            return InboxService::tr("The Inbox and the collection folder %1 can't be inside one another.").arg(root);
+        if (!QDir::isAbsolutePath(folder)) {
+            return InboxService::tr("%1 isn't a full folder path.").arg(folder);
         }
-        for (qsizetype j = i + 1; j < config.collectionRoots.size(); ++j) {
-            const QString &other = config.collectionRoots.at(j);
-            if (overlap(root, other)) {
-                return InboxService::tr("The collection folders %1 and %2 overlap.").arg(root, other);
-            }
+        // Filing moves files out of the Inbox: a collection folder in it, or around it, would mix the two.
+        if (overlap(folder, config.inboxRoot)) {
+            return InboxService::tr("%1 holds Selecta's own Inbox, or is inside it. Choose another folder.")
+                .arg(QDir::toNativeSeparators(folder));
         }
     }
-    if (config.singlesFolder.isEmpty() || config.albumsFolder.isEmpty() || config.singlesFolder.contains(u'/') ||
-        config.albumsFolder.contains(u'/')) {
-        return InboxService::tr("The Singles and Albums folders need plain names.");
+    if (!config.tracksRoot.isEmpty() && !config.albumsRoot.isEmpty() && overlap(config.tracksRoot, config.albumsRoot)) {
+        return collection::comparisonKey(config.tracksRoot) == collection::comparisonKey(config.albumsRoot)
+                   ? InboxService::tr("The tracks folder and the albums folder must be two different folders.")
+                   : InboxService::tr("The tracks folder and the albums folder can't be inside one another.");
     }
     return {};
 }
@@ -97,7 +96,7 @@ void InboxService::setConfig(const LibraryConfig &config)
 void InboxService::rebuildFileOps()
 {
     // Work already running keeps the FileOps it started with; the shared pointer keeps it alive.
-    m_fileOps = std::make_shared<const library::FileOps>(m_config.inboxRoot, m_config.collectionRoots, m_trash);
+    m_fileOps = std::make_shared<const library::FileOps>(m_config.inboxRoot, m_config.folderRoles().roots(), m_trash);
 }
 
 QString InboxService::absolutePath(const InboxItem &item) const
@@ -164,18 +163,19 @@ void InboxService::file(const QList<qint64> &ids)
             Q_EMIT finished(id, false, tr("%1 is still being converted.").arg(item->relativePath));
             continue;
         }
-        if (m_config.collectionRoots.isEmpty()) {
-            Q_EMIT finished(id, false, tr("Choose your collection folder in Settings first."));
+        const bool album = item->kind == InboxItem::Kind::Album;
+        const QString root = album ? m_config.albumsRoot : m_config.tracksRoot;
+        if (root.isEmpty()) {
+            Q_EMIT finished(id, false,
+                            album ? tr("Choose your albums folder in Settings first.")
+                                  : tr("Choose your tracks folder in Settings first."));
             continue;
         }
-        const QString root = m_config.collectionRoots.first();
         const QString source = absolutePath(*item);
         const QString name = QFileInfo(item->relativePath).fileName();
-        const bool album = item->kind == InboxItem::Kind::Album;
-        const QString relative = (album ? m_config.albumsFolder : m_config.singlesFolder) + u'/' + name;
-        start(id, Work::File, [ops = m_fileOps, source, root, relative, album] {
-            return album ? ops->fileFolderIntoCollection(source, root, relative)
-                         : ops->fileIntoCollection(source, root, relative);
+        start(id, Work::File, [ops = m_fileOps, source, root, name, album] {
+            return album ? ops->fileFolderIntoCollection(source, root, name)
+                         : ops->fileIntoCollection(source, root, name);
         });
     }
     publish();

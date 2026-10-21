@@ -107,6 +107,16 @@ public:
                 m_excluded.append(comparisonKey(folder));
             }
         }
+        for (const QString &folder : options.tracksFolders) {
+            if (!folder.isEmpty()) {
+                m_tracksFolders.insert(comparisonKey(folder));
+            }
+        }
+        for (const QString &folder : options.albumsFolders) {
+            if (!folder.isEmpty()) {
+                m_albumsFolders.insert(comparisonKey(folder));
+            }
+        }
     }
 
     Walk run(const QStringList &roots)
@@ -200,18 +210,40 @@ private:
         std::ranges::sort(names);
         const auto index = static_cast<qsizetype>(m_walk.folders.size());
         m_walk.folders.push_back({folder.path, folder.root, {}});
+        const Scope scope = scopeOf(folder.path);
         const int descriptor = ::dirfd(directory);
         for (const std::string &name : names) {
             if (stopped()) {
                 break;
             }
-            visitEntry(descriptor, folder, index, name, children);
+            visitEntry(descriptor, folder, index, name, scope, children);
         }
         ::closedir(directory);
         return children;
     }
 
-    void visitEntry(int descriptor, const Pending &folder, qsizetype index, const std::string &name,
+    // What the folder roles let the walk take from a folder.
+    enum class Scope {
+        Everything,
+        FilesOnly,      // a tracks folder: the files lying in it, not its subfolders
+        SubfoldersOnly, // an albums folder: its subfolders, not the files lying in it
+    };
+
+    Scope scopeOf(const QString &path) const
+    {
+        if (m_tracksFolders.isEmpty() && m_albumsFolders.isEmpty()) {
+            return Scope::Everything;
+        }
+        const QString key = comparisonKey(path);
+        const bool tracks = m_tracksFolders.contains(key);
+        const bool albums = m_albumsFolders.contains(key);
+        if (tracks == albums) {
+            return Scope::Everything; // neither, or both (loose tracks and album folders side by side)
+        }
+        return tracks ? Scope::FilesOnly : Scope::SubfoldersOnly;
+    }
+
+    void visitEntry(int descriptor, const Pending &folder, qsizetype index, const std::string &name, Scope scope,
                     std::vector<Pending> &children)
     {
         const QString childName = QFile::decodeName(name.c_str());
@@ -234,9 +266,13 @@ private:
             }
         }
         if (S_ISDIR(status.st_mode)) {
-            visitFolder(folder, childPath, status, children);
+            if (scope != Scope::FilesOnly) {
+                visitFolder(folder, childPath, status, children);
+            }
         } else if (S_ISREG(status.st_mode)) {
-            visitFile(index, childName, childPath, status);
+            if (scope != Scope::SubfoldersOnly) {
+                visitFile(index, childName, childPath, status);
+            }
         }
         // Anything else (FIFOs, sockets, devices) is never a track.
     }
@@ -284,6 +320,8 @@ private:
     const ScanOptions &m_options;
     const audio::CancellationFlag *m_cancel = nullptr;
     QStringList m_excluded;
+    QSet<QString> m_tracksFolders; // comparison keys
+    QSet<QString> m_albumsFolders;
     QStringList m_realRoots;
     std::unordered_set<NodeId, NodeIdHash> m_visitedFolders;
     std::unordered_set<NodeId, NodeIdHash> m_visitedFiles;

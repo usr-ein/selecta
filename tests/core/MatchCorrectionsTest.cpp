@@ -252,7 +252,7 @@ protected:
         collection = std::make_unique<selecta::core::CollectionService>(
             *db, selecta::core::CollectionService::Options{.readers = 2, .watch = false, .rebuildDelayMs = 10},
             [] { return qint64{1'800'000'000'000}; });
-        collection->setRoots({root}, {});
+        collection->setFolders(selecta::collection::FolderRoles(root + u"/Singles"_s, root + u"/Albums"_s), {});
         collection->waitForIdle();
         ASSERT_NE(collection->index(), nullptr);
     }

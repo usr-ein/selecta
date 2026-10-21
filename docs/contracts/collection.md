@@ -11,7 +11,8 @@
 
 Core needs to know what the user already owns. The scanner reads the user's music folders, **read-only**, and
 produces what `match::MatchIndex::build` needs: one `ScannedFile` per audio file (tags, stream facts, identity) and
-the album folders among them.
+the albums among them. The collection is two folders with roles (PRD LIB-1, D39): a tracks folder of loose files and
+an albums folder with one album per subfolder.
 
 Core does the rest: the database table, scheduling scans on the engine's pool, applying Watcher events, building
 MatchIndex snapshots, the UI. The scanner has no database, no settings and no network access.
@@ -41,20 +42,28 @@ MatchIndex snapshots, the UI. The scanner has no database, no settings and no ne
    - Cancelled: `added` and `changed` hold the files read so far, `removed` is empty unless the walk finished.
 5. Skipped: hidden files and folders (dot names and the macOS hidden flag), AppleDouble `._*` files, `*.selecta-part`
    and other temporary files, non-audio extensions, folders listed in `ScanOptions::excludedFolders` (Selecta's own
-   Inbox and caches when they live under a root), and symlinks that point outside the roots. Loops are never followed:
+   Inbox and caches when they live under a root), what the folder roles leave out (`ScanOptions::tracksFolders`: no
+   subfolders; `ScanOptions::albumsFolders`: no files lying in the folder itself), and symlinks that point outside the
+   roots. Loops are never followed:
    folders and files are visited once by (device, inode). iCloud placeholders whose data isn't on disk are reported as
    unreadable and never opened (opening one starts a download).
 6. Read-only, always: tags through `convert::readTags` (TagLib on a read-only stream) with `TagReadOptions` bounds
    (no pictures), stream facts through `audio::FileSource` (read-only). Corrupt files are reported as unreadable, never
    crash the scan. Nothing is ever written under the roots.
-7. `QList<match::LibraryAlbum> groupAlbums(const QList<ScannedFile> &files, QHash<QString, quint64> *albumIdOfPath)`
-   - Album folders: at least 3 tracks sharing an album tag, or folder naming that says so.
-   - Disc folders ("CD1", "Disc 2") merge into their parent.
-   - Various-artists albums are marked.
-   - Album ids are stable across scans (derived from the album folder's path).
+7. `class FolderRoles { FolderRoles(tracks, albums); roots(); applyTo(ScanOptions &); rescanFor(folder);
+   roleOf(path, &albumFolder); }`: the two folders (either may be unset) and what each holds. A file lying in the
+   tracks folder is a track; a file under a subfolder of the albums folder is a track of that album; anything else
+   isn't part of the collection.
+   - `QList<match::LibraryAlbum> albumsOf(const QList<ScannedFile> &files, const FolderRoles &folders,
+     QHash<QString, quint64> *albumIdOfPath)`: one album per subfolder of the albums folder, with every file under it
+     whatever its tags say; an empty albums folder has none, loose tracks are never one. Title, artist and year from
+     the tags, else the folder's name. Various-artists albums are marked. Ids are stable across scans (derived from
+     the album folder's path).
+   - `groupAlbums(files, albumIdOfPath)` guesses album folders from tags and names (at least 3 tracks sharing an album
+     tag, or folder naming that says so; disc folders merged), for folders without a role (selecta-cli).
 8. `class Watcher : public QObject` covering the roots: FSEvents on macOS (CoreServices), `QFileSystemWatcher`
-   elsewhere. Changes are coalesced with about 2 s latency and reported as `changed(QStringList folders)`: rescan each
-   folder (recursively). Dropped events report the roots.
+   elsewhere. Changes are coalesced with about 2 s latency and reported as `changed(QStringList folders)`: rescan the
+   folders `FolderRoles::rescanFor(folder)` gives. Dropped events report the roots.
 9. Performance: a first scan of 20 k files under about 60 s on an M-series Mac (I/O bound); a rescan with nothing
    changed under about 2 s for 20 k files (stat only). Google Benchmark in `tests/collection/bench/`.
 10. Unicode: macOS paths may come back in NFD. Signatures are compared with paths normalised to NFC; results report the
@@ -64,13 +73,15 @@ MatchIndex snapshots, the UI. The scanner has no database, no settings and no ne
 
 ## Threading
 
-`scan()` and `groupAlbums()` are reentrant: call them from a worker, any number at once. `Watcher` lives on the thread
+`scan()`, `albumsOf()` and `groupAlbums()` are reentrant, and `FolderRoles` is a value type: call them from a worker,
+any number at once. `Watcher` lives on the thread
 that created it, which must run an event loop; `changed` is emitted there.
 
 ## Tests and acceptance
 
 - Synthetic test audio only (`tests/audio/support`), in temporary folders; tests never touch anything else.
-- Every skip rule, NFC/NFD signatures, removed and offline roots, symlinks inside and outside the roots and loops,
-  corrupt and empty files, files without tags, every format's stream facts, album grouping (tags, folder names, disc
-  folders, various artists), cancellation and progress, the Watcher on create, modify and delete.
+- Every skip rule, the folder roles, NFC/NFD signatures, removed and offline roots, symlinks inside and outside the
+  roots and loops, corrupt and empty files, files without tags, every format's stream facts, albums by folder role
+  and album grouping (tags, folder names, disc folders, various artists), cancellation and progress, the Watcher on
+  create, modify and delete.
 - Lint clean (`tools/lint.sh src/collection tests/collection`), tests green under `dev`, `asan` and `tsan`.

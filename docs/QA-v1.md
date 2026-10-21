@@ -10,7 +10,7 @@ or log line is kept in `local/qa/`. Any failure is a bug to fix before step 4.
       Dock and Finder.
 - [ ] Settings → Soulseek: user, password, server = the devnet; Connect → "Online as …". The port-mapping line shows
       its state; isolated runs say it's off.
-- [ ] Settings → Library: an Inbox and one collection folder; the scan finishes; Collection shows the numbers.
+- [ ] Settings → Library: a tracks folder and an albums folder; the scan finishes; Collection shows the numbers.
 
 ## 1. The main flow (D27)
 - [ ] Get tracks: paste 10 lines from the devnet tracklist → each resolves to a release with a length (the devnet has
@@ -38,8 +38,8 @@ or log line is kept in `local/qa/`. Any failure is a bug to fix before step 4.
 
 ## 3. Inbox, Collection, History
 - [ ] The inspector shows the tags, cover, provenance and spectrum. Edit tags; choose another release; Convert….
-- [ ] File: singles and albums go to the collection with the naming templates; the source is gone from the Inbox; the
-      collection file is never touched again.
+- [ ] File: singles go to the tracks folder and albums to the albums folder, with the naming templates; the source is
+      gone from the Inbox; the collection file is never touched again. Collection counts one album per album folder.
 - [ ] Move to Trash, then Undo. An album that holds an Inbox single trashes the single, with Undo. A filed single only
       gets the "also on" flag.
 - [ ] Match corrections (LIB-6): "Not What I Have" removes a badge, and it survives a relaunch and a rescan.

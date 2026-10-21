@@ -332,6 +332,13 @@ constexpr std::array kMigrations{
     Migration{18, R"sql(
         ALTER TABLE inbox_items ADD COLUMN below_wanted TEXT NOT NULL DEFAULT '';
     )sql"},
+    // P-001 (PRD D39): the Inbox is Selecta's own, in its data folder, and starts empty, so the Inbox items of earlier
+    // builds go. History keeps what it says about them. The foreign keys do the rest, as when any Inbox item goes:
+    // History, downloads and album downloads lose their links to the items, and the flags of the items' singles go
+    // with them. Its version is kInboxMovedVersion.
+    Migration{19, R"sql(
+        DELETE FROM inbox_items;
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

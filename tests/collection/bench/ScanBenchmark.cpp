@@ -13,6 +13,7 @@
 // file's header and tags (tens of KB), so a cold SSD adds little.
 #include "SyntheticAudio.h"
 #include "collection/Albums.h"
+#include "collection/FolderRoles.h"
 #include "collection/Scanner.h"
 #include "convert/TagWriter.h"
 
@@ -230,6 +231,27 @@ void BM_GroupAlbums(benchmark::State &state)
     }
 }
 BENCHMARK(BM_GroupAlbums)->Unit(benchmark::kMillisecond)->Iterations(3);
+
+// The app's grouping (PRD LIB-1): one album per subfolder of the albums folder, here the tree's artist folders.
+void BM_AlbumsOf(benchmark::State &state)
+{
+    const QString root = tree();
+    if (root.isEmpty()) {
+        state.SkipWithError("can't build the benchmark tree");
+        return;
+    }
+    const ScanResult scanned = selecta::collection::scan({root}, {});
+    const selecta::collection::FolderRoles roles({}, root);
+    qsizetype albumCount = 0;
+    while (state.KeepRunning()) {
+        QHash<QString, quint64> ids;
+        auto albums = selecta::collection::albumsOf(scanned.added, roles, &ids);
+        albumCount = albums.size();
+        benchmark::DoNotOptimize(albums);
+    }
+    state.counters["albums"] = static_cast<double>(albumCount);
+}
+BENCHMARK(BM_AlbumsOf)->Unit(benchmark::kMillisecond)->Iterations(3);
 
 } // namespace
 

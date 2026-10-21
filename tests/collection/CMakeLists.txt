@@ -14,6 +14,7 @@ target_include_directories(selecta_collection_test_support SYSTEM BEFORE PRIVATE
 selecta_add_test_suite(selecta_collection_tests
     SOURCES
         AlbumsTest.cpp
+        FolderRolesTest.cpp
         ScannerTest.cpp
         WatcherTest.cpp
     LIBRARIES selecta_collection selecta_collection_test_support)

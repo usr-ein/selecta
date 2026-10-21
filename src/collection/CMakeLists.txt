@@ -5,6 +5,7 @@
 qt_add_library(selecta_collection STATIC
     Scanner.h Scanner.cpp
     Albums.h Albums.cpp
+    FolderRoles.h FolderRoles.cpp
     Watcher.h Watcher.cpp
     detail/FileReader.h detail/FileReader.cpp
     detail/Walk.h detail/Walk.cpp)

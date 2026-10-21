@@ -213,6 +213,52 @@ bool artistsVary(const QList<qsizetype> &members, const QList<ScannedFile> &file
            static_cast<double>(artists.distinct()) > kVariousArtistsDistinct * total;
 }
 
+// The album's title, artist and year from its members' tags, else from what its folder's name says (`naming`), else
+// the folder's name (the title). `albums`: the members' album tags.
+match::LibraryAlbum describe(const Group &group, const QList<qsizetype> &members, const QList<ScannedFile> &files,
+                             const Tally &albums, const FolderNaming &naming)
+{
+    Tally albumArtists;
+    Tally artists;
+    QHash<int, qsizetype> years;
+    for (const qsizetype i : members) {
+        const ScannedFile &file = files.at(i);
+        albumArtists.add(file.albumArtist, artistKeyOf(file.albumArtist));
+        artists.add(file.artist, artistKeyOf(file.artist));
+        if (file.year > 0) {
+            ++years[file.year];
+        }
+    }
+    match::LibraryAlbum album;
+    album.source = match::Source::Collection;
+    album.title = albums.bestCount() > 0 ? albums.best() : naming.title;
+    if (album.title.isEmpty()) {
+        album.title = nameOf(group.folder);
+    }
+    album.variousArtists = isVariousArtistsName(albumArtists.best()) || naming.variousArtists ||
+                           (albumArtists.total() == 0 && artistsVary(members, files));
+    if (album.variousArtists) {
+        album.artist = u"Various Artists"_s;
+    } else if (albumArtists.total() > 0) {
+        album.artist = albumArtists.best();
+    } else if (artists.total() > 0) {
+        album.artist = artists.best();
+    } else {
+        album.artist = naming.artist;
+    }
+    qsizetype yearVotes = 0;
+    for (auto it = years.cbegin(); it != years.cend(); ++it) {
+        if (it.value() > yearVotes || (it.value() == yearVotes && it.key() < album.year)) {
+            album.year = it.key();
+            yearVotes = it.value();
+        }
+    }
+    if (album.year == 0) {
+        album.year = naming.year;
+    }
+    return album;
+}
+
 std::optional<AlbumFacts> albumOf(const Group &group, const QList<ScannedFile> &files)
 {
     Tally albums;
@@ -240,45 +286,39 @@ std::optional<AlbumFacts> albumOf(const Group &group, const QList<ScannedFile> &
             return std::nullopt;
         }
     }
-    Tally albumArtists;
-    Tally artists;
-    QHash<int, qsizetype> years;
-    for (const qsizetype i : std::as_const(facts.members)) {
-        const ScannedFile &file = files.at(i);
-        albumArtists.add(file.albumArtist, artistKeyOf(file.albumArtist));
-        artists.add(file.artist, artistKeyOf(file.artist));
-        if (file.year > 0) {
-            ++years[file.year];
-        }
-    }
-    match::LibraryAlbum &album = facts.album;
-    album.source = match::Source::Collection;
-    album.title = albums.bestCount() > 0 ? albums.best() : naming.title;
-    if (album.title.isEmpty()) {
-        album.title = nameOf(group.folder);
-    }
-    album.variousArtists = isVariousArtistsName(albumArtists.best()) || naming.variousArtists ||
-                           (albumArtists.total() == 0 && artistsVary(facts.members, files));
-    if (album.variousArtists) {
-        album.artist = u"Various Artists"_s;
-    } else if (albumArtists.total() > 0) {
-        album.artist = albumArtists.best();
-    } else if (artists.total() > 0) {
-        album.artist = artists.best();
-    } else {
-        album.artist = naming.artist;
-    }
-    qsizetype yearVotes = 0;
-    for (auto it = years.cbegin(); it != years.cend(); ++it) {
-        if (it.value() > yearVotes || (it.value() == yearVotes && it.key() < album.year)) {
-            album.year = it.key();
-            yearVotes = it.value();
-        }
-    }
-    if (album.year == 0) {
-        album.year = naming.year;
-    }
+    facts.album = describe(group, facts.members, files, albums, naming);
     return facts;
+}
+
+// An album folder of the albums folder: every file under it is a member, whatever its tags say.
+AlbumFacts albumOfFolder(const Group &group, const QList<ScannedFile> &files)
+{
+    Tally albums;
+    for (const qsizetype i : group.files) {
+        albums.add(files.at(i).album, albumKeyOf(files.at(i).album));
+    }
+    AlbumFacts facts;
+    facts.members = group.files;
+    facts.album = describe(group, facts.members, files, albums, folderNaming(group, files));
+    return facts;
+}
+
+// Gives each album its stable id (unique within `albums`) and appends it, recording its members' ids.
+void addAlbum(AlbumFacts &facts, const QString &folderKey, const QList<ScannedFile> &files, QSet<quint64> &used,
+              QList<match::LibraryAlbum> &albums, QHash<QString, quint64> *albumIdOfPath)
+{
+    quint64 id = stableId(folderKey);
+    while (used.contains(id)) {
+        id = (id % kIdMask) + 1; // a collision within this scan: the next free id
+    }
+    used.insert(id);
+    facts.album.id = id;
+    albums.append(facts.album);
+    if (albumIdOfPath != nullptr) {
+        for (const qsizetype i : std::as_const(facts.members)) {
+            albumIdOfPath->insert(files.at(i).file.path, id);
+        }
+    }
 }
 
 } // namespace
@@ -305,21 +345,34 @@ QList<match::LibraryAlbum> groupAlbums(const QList<ScannedFile> &files, QHash<QS
     QSet<quint64> used;
     for (auto it = groups.cbegin(); it != groups.cend(); ++it) {
         std::optional<AlbumFacts> facts = albumOf(it.value(), files);
-        if (!facts) {
+        if (facts) {
+            addAlbum(*facts, it.key(), files, used, albums, albumIdOfPath);
+        }
+    }
+    return albums;
+}
+
+QList<match::LibraryAlbum> albumsOf(const QList<ScannedFile> &files, const FolderRoles &folders,
+                                    QHash<QString, quint64> *albumIdOfPath)
+{
+    // Album folders by comparison key (sorted): the subfolder of the albums folder that holds each file.
+    QMap<QString, Group> groups;
+    for (qsizetype i = 0; i < files.size(); ++i) {
+        QString folder;
+        if (folders.roleOf(files.at(i).file.path, &folder) != FolderRoles::Role::Album) {
             continue;
         }
-        quint64 id = stableId(it.key());
-        while (used.contains(id)) {
-            id = (id % kIdMask) + 1; // a collision within this scan: the next free id
+        Group &group = groups[comparisonKey(folder)];
+        if (group.folder.isEmpty()) {
+            group.folder = folder;
         }
-        used.insert(id);
-        facts->album.id = id;
-        albums.append(facts->album);
-        if (albumIdOfPath != nullptr) {
-            for (const qsizetype i : std::as_const(facts->members)) {
-                albumIdOfPath->insert(files.at(i).file.path, id);
-            }
-        }
+        group.files.append(i);
+    }
+    QList<match::LibraryAlbum> albums;
+    QSet<quint64> used;
+    for (auto it = groups.cbegin(); it != groups.cend(); ++it) {
+        AlbumFacts facts = albumOfFolder(it.value(), files);
+        addAlbum(facts, it.key(), files, used, albums, albumIdOfPath);
     }
     return albums;
 }

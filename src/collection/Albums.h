@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "collection/FolderRoles.h"
 #include "collection/Scanner.h"
 #include "match/MatchIndex.h"
 
@@ -14,7 +15,22 @@ inline constexpr int kAlbumMinTracks = 3;               // tracks sharing an alb
 inline constexpr double kVariousArtistsTopShare = 0.25; // the most common artist below this share: various artists
 inline constexpr double kVariousArtistsDistinct = 0.75; // or more than this share of the tracks have distinct artists
 
-// The album folders among scanned files (note §8 step 1, PRD LIB-1, DL-11 "already on an album you own").
+// The albums of the collection (PRD LIB-1, DL-11 "already on an album you own"): one per subfolder of the albums
+// folder, with every file under it (disc folders included) whatever its tags say. Loose tracks and files lying in the
+// albums folder itself are never albums (FolderRoles::roleOf), so an empty albums folder has none.
+//
+// The album takes the most common album tag (else what the folder's name says, else the folder's name), album artist
+// (else the most common track artist, "Various Artists" for a compilation, as groupAlbums() decides) and year (else
+// the folder name's); source is Collection. Ids are stable across scans: a hash of the album folder's NFC path, unique
+// within the result. `albumIdOfPath`, when given, receives the album id of every file of an album (keyed by the file's
+// path as given). Albums are sorted by folder.
+//
+// Threading: pure; any thread. Failure modes: none.
+QList<match::LibraryAlbum> albumsOf(const QList<ScannedFile> &files, const FolderRoles &folders,
+                                    QHash<QString, quint64> *albumIdOfPath);
+
+// The album folders among scanned files, guessed from their tags and names (note §8 step 1), for folders whose role
+// isn't known: selecta-cli's `collection scan` of any folder. The app knows its folders' roles and uses albumsOf().
 //
 // A folder is an album when at least kAlbumMinTracks of its tracks share an album tag, or when its name says so
 // ("Artist - Album", "Artist - Album (2019)", "[CAT001] Artist - Album", "Album (2019)") and its tracks are numbered

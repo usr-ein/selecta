@@ -97,21 +97,22 @@ function pickVariant(r) { let x = r() * VARIANT_W; for (const v of VARIANTS) { x
 
 /* The maintainer's collection (read-only for Selecta) */
 const COLLECTION = {
-  root: '~/Music/Collection', singlesDir: 'Singles', albumsDir: 'Albums',
+  // Two folders, chosen separately in Settings (PRD LIB-1, D39): loose tracks, and one album per subfolder.
+  root: '~/Music', tracksDir: 'Tracks', albumsDir: 'Albums',
   stats: { tracks: 8412, bytes: 214e9, singles: 2931, albums: 412 },
   formats: [['MP3', 6021], ['FLAC', 1512], ['AIFF', 640], ['WAV', 239]],
   tracks: [
-    { artist: 'Kassia Moreau', title: 'Paper Lanterns', version: '', fmt: 'MP3', br: 320, path: 'Singles/Kassia Moreau - Paper Lanterns.mp3' },
-    { artist: 'Marlo Vance', title: 'Tidal Memory', version: 'Original Mix', fmt: 'MP3', br: 192, path: 'Singles/Marlo Vance - Tidal Memory (Original Mix).mp3' },
-    { artist: 'Halden & Rue', title: 'Tidewater', version: '', fmt: 'MP3', br: 320, path: 'Singles/Halden & Rue - Tidewater.mp3' },
-    { artist: 'Pale Monarch', title: 'Kestrel', version: '', fmt: 'MP3', br: 256, path: 'Singles/Pale Monarch - Kestrel.mp3' },
-    { artist: 'Ines Varga', title: 'Hollow Bells', version: 'Edit', fmt: 'MP3', br: 320, path: 'Singles/Ines Varga - Hollow Bells (Edit).mp3' },
-    { artist: 'Juno Ashgrove', title: 'Velvet Machine', version: 'Club Mix', fmt: 'AIFF', sr: 44100, bd: 16, path: 'Singles/Juno Ashgrove - Velvet Machine (Club Mix).aiff' },
+    { artist: 'Kassia Moreau', title: 'Paper Lanterns', version: '', fmt: 'MP3', br: 320, path: 'Tracks/Kassia Moreau - Paper Lanterns.mp3' },
+    { artist: 'Marlo Vance', title: 'Tidal Memory', version: 'Original Mix', fmt: 'MP3', br: 192, path: 'Tracks/Marlo Vance - Tidal Memory (Original Mix).mp3' },
+    { artist: 'Halden & Rue', title: 'Tidewater', version: '', fmt: 'MP3', br: 320, path: 'Tracks/Halden & Rue - Tidewater.mp3' },
+    { artist: 'Pale Monarch', title: 'Kestrel', version: '', fmt: 'MP3', br: 256, path: 'Tracks/Pale Monarch - Kestrel.mp3' },
+    { artist: 'Ines Varga', title: 'Hollow Bells', version: 'Edit', fmt: 'MP3', br: 320, path: 'Tracks/Ines Varga - Hollow Bells (Edit).mp3' },
+    { artist: 'Juno Ashgrove', title: 'Velvet Machine', version: 'Club Mix', fmt: 'AIFF', sr: 44100, bd: 16, path: 'Tracks/Juno Ashgrove - Velvet Machine (Club Mix).aiff' },
     ...CATALOG[5].tracks.map((t, i) => ({ artist: 'Teodor Lumen', title: t[0], version: '', fmt: 'MP3', br: 320, album: 'Copper Season', path: `Albums/Teodor Lumen - Copper Season (2020)/${String(i + 1).padStart(2, '0')} - ${t[0]}.mp3` })),
   ],
   singleAlbumPairs: [
-    { single: 'Singles/Halden & Rue - Tidewater.mp3', album: 'Halden & Rue — Salt Flats (2022)', where: 'Inbox' },
-    { single: 'Singles/Pale Monarch - Kestrel.mp3', album: 'Pale Monarch — Thermals (2019)', where: 'Albums' },
+    { single: 'Tracks/Halden & Rue - Tidewater.mp3', album: 'Halden & Rue — Salt Flats (2022)', where: 'Inbox' },
+    { single: 'Tracks/Pale Monarch - Kestrel.mp3', album: 'Pale Monarch — Thermals (2019)', where: 'Albums' },
   ],
 };
 
@@ -562,7 +563,7 @@ function groupRow(g) {
     if (L.albumOwned) flag = `<span class="gflag acc">${icon('check-c')}In your collection</span>`;
     else if (L.albumInInbox) flag = `<span class="gflag acc">${icon('tray')}In your Inbox</span>`;
     else if (L.inInbox.length) flag = `<span class="gflag acc" title="Downloading this album moves that single to the Trash">${icon('tray')}“${esc(L.inInbox[0].title)}” single in Inbox</span>`;
-    else if (L.inColl.length) flag = `<span class="gflag" title="Flag only: your collection file stays where it is">${icon('flag')}“${esc(L.inColl[0].title)}” in your Singles</span>`;
+    else if (L.inColl.length) flag = `<span class="gflag" title="Flag only: your collection file stays where it is">${icon('flag')}“${esc(L.inColl[0].title)}” in your tracks folder</span>`;
   }
   return `<tr class="g${sel ? ' sel' : ''}${col ? ' collapsed' : ''}" data-act="sel" data-id="${g.id}" aria-selected="${sel}">
     <td colspan="8"><div class="gwrap">
@@ -671,7 +672,7 @@ function inspectorGroup(g) {
   const rel = g.rel, p = g.peer, L = g.album ? albumLinks(rel) : null;
   const notes = [];
   if (L && L.inInbox.length) notes.push(`<div class="note acc">${icon('tray')}<div><b>“${esc(L.inInbox[0].title)}” is in your Inbox as a single.</b> When this album finishes, Selecta moves that single to the Trash. You can undo.</div></div>`);
-  if (L && L.inColl.length) notes.push(`<div class="note warn">${icon('flag')}<div><b>“${esc(L.inColl[0].title)}” is already in your Singles.</b> Selecta flags the pair and never touches your collection file.</div></div>`);
+  if (L && L.inColl.length) notes.push(`<div class="note warn">${icon('flag')}<div><b>“${esc(L.inColl[0].title)}” is already in your tracks folder.</b> Selecta flags the pair and never touches your collection file.</div></div>`);
   if (g.album) notes.push(`<div class="note">${icon('info')}<div>An album download goes to <span class="mono">Inbox/Albums/${esc(albumDir(rel))}/</span> with every file in the folder.</div></div>`);
   return `<div class="insp">
     <div style="display:flex;gap:12px;align-items:center"><span class="art" style="width:56px;height:56px;background:${artGradient(hashStr(rel.artist + rel.album))}"></span><div style="min-width:0"><div class="insp-title">${esc(g.album ? rel.album : 'Loose files')}</div><div class="insp-sub">${esc(rel.artist)}${g.album ? ` · ${rel.year} · ${esc(rel.genre)}` : ''}</div></div></div>
@@ -733,7 +734,7 @@ function confirmAlbum(key) {
   const rel = g.rel, p = g.peer, L = albumLinks(rel), n = rel.tracks.length;
   const notes = [];
   if (L.inInbox.length) notes.push(`<div class="note acc">${icon('tray')}<div><b>“${esc(L.inInbox[0].title)}” is in your Inbox as a single.</b> When the album finishes, Selecta moves that single to the Trash. You can undo.</div></div>`);
-  if (L.inColl.length) notes.push(`<div class="note warn">${icon('flag')}<div><b>“${esc(L.inColl[0].title)}” is already in your Singles.</b> Selecta flags the pair and leaves your collection file where rekordbox expects it.</div></div>`);
+  if (L.inColl.length) notes.push(`<div class="note warn">${icon('flag')}<div><b>“${esc(L.inColl[0].title)}” is already in your tracks folder.</b> Selecta flags the pair and leaves your collection file where rekordbox expects it.</div></div>`);
   if (p.today + n >= LIMITS.peerSoft) notes.push(`<div class="note ${p.today + n >= LIMITS.peerHard ? 'bad' : 'warn'}">${icon('peers')}<div>This takes you to <b>${p.today + n} files from ${esc(p.name)} today</b> (warning at ${LIMITS.peerSoft}, stop at ${LIMITS.peerHard}).</div></div>`);
   sheet({
     title: `Download “${rel.album}” as an album?`,
@@ -836,7 +837,7 @@ function filingPlan(it) {
 function inboxFlags(it) {
   if (it.kind === 'album') {
     const L = albumLinks(it.rel);
-    return L.inColl.length ? ` · <span class="gflag" title="Flag only: your collection file stays where it is">${icon('flag')}“${esc(L.inColl[0].title)}” is also in your Singles</span>` : '';
+    return L.inColl.length ? ` · <span class="gflag" title="Flag only: your collection file stays where it is">${icon('flag')}“${esc(L.inColl[0].title)}” is also in your tracks folder</span>` : '';
   }
   const lower = COLLECTION.tracks.find(c => norm(c.artist) === norm(it.artist) && norm(c.title) === norm(it.title) && versionRel(c.version, it.version) === 'same' && qrank(c) < qrank(it));
   return lower ? ` · <span class="gflag acc" title="The old file stays where rekordbox expects it">${icon('up-c')}Upgrades your ${esc(qualLong(lower))} copy</span>` : '';
@@ -915,7 +916,7 @@ function completeFiling(f) {
     COLLECTION.tracks.push({ artist: it.artist, title: it.title, version: it.version, fmt: out.fmt, br: out.br, vbr: out.vbr, sr: out.sr, bd: out.bd, path });
     COLLECTION.stats.tracks++; COLLECTION.stats.singles++;
     COLLECTION.recent.unshift({ name: `${it.artist} — ${fullTitle(it.title, it.version)}`, path, q, when: 'Just now' });
-    const h = S.history.find(x => !x.album && norm(x.artist) === norm(it.artist) && norm(x.title) === norm(it.title)); if (h) h.where = `Filed · ${COLLECTION.singlesDir}/`;
+    const h = S.history.find(x => !x.album && norm(x.artist) === norm(it.artist) && norm(x.title) === norm(it.title)); if (h) h.where = `Filed · ${COLLECTION.tracksDir}/`;
     toast('Filed to your collection', `<span class="mono">${esc(path)}</span> · ${esc(q)}`, { kind: 'good', icon: 'check-c' });
   }
 }
@@ -1097,9 +1098,9 @@ function renderCollection() {
   const colors = ['var(--c1)', 'var(--c2)', 'var(--c3)', 'var(--c4)'];
   const pairs = [];
   for (const it of S.inbox.filter(i => i.kind === 'album')) for (const x of albumLinks(it.rel).inColl) pairs.push({ single: x.track.path, album: `${it.artist} — ${it.album} (${it.year})`, where: 'in your Inbox' });
-  pairs.push({ single: 'Singles/Pale Monarch - Kestrel.mp3', album: 'Pale Monarch — Thermals (2019)', where: 'in Albums' });
+  pairs.push({ single: 'Tracks/Pale Monarch - Kestrel.mp3', album: 'Pale Monarch — Thermals (2019)', where: 'in Albums' });
   $('#content').innerHTML = `<div class="scroll"><div class="pane">
-    <div class="tiles">${tile('Tracks', fmtInt(st.tracks), esc(COLLECTION.root))}${tile('Size on disk', fmtSize(st.bytes), 'Scanned 2 min ago, watching for changes')}${tile('Singles', fmtInt(st.singles), `${COLLECTION.singlesDir}/, one flat folder`)}${tile('Albums', fmtInt(st.albums), `${COLLECTION.albumsDir}/, one folder each`)}</div>
+    <div class="tiles">${tile('Tracks', fmtInt(st.tracks), esc(COLLECTION.root))}${tile('Size on disk', fmtSize(st.bytes), 'Scanned 2 min ago, watching for changes')}${tile('Loose tracks', fmtInt(st.singles), `${COLLECTION.tracksDir}/, the files in it`)}${tile('Albums', fmtInt(st.albums), `${COLLECTION.albumsDir}/, one per subfolder`)}</div>
     <section><div class="sec-h"><h3>Formats</h3><span>${fmtInt(total)} audio files</span></div>
       <div class="group" style="padding:12px 14px">
         <div class="stack" role="img" aria-label="${COLLECTION.formats.map(f => `${f[0]} ${f[1]}`).join(', ')}">${COLLECTION.formats.map((f, i) => `<i style="width:${(f[1] / total) * 100}%;background:${colors[i]}" title="${f[0]}: ${fmtInt(f[1])} files (${Math.round((f[1] / total) * 100)}%)"></i>`).join('')}</div>
@@ -1107,10 +1108,9 @@ function renderCollection() {
       </div></section>
     <section><div class="sec-h"><h3>Folders</h3><span>Read-only. Selecta never moves, renames, re-tags or deletes files here.</span></div>
       <div class="group">
-        <div class="grow">${icon('folder')}<div class="gl"><span class="mono">${esc(COLLECTION.root)}</span><div class="gd">Collection root · ${fmtInt(st.tracks)} tracks</div></div><span class="bdg good">${icon('check-c')}Indexed</span></div>
-        <div class="grow">${icon('folder')}<div class="gl"><span class="mono">${esc(COLLECTION.root)}/${COLLECTION.singlesDir}/</span><div class="gd">Singles · ${fmtInt(st.singles)} files</div></div></div>
-        <div class="grow">${icon('folder')}<div class="gl"><span class="mono">${esc(COLLECTION.root)}/${COLLECTION.albumsDir}/</span><div class="gd">Albums · ${fmtInt(st.albums)} folders</div></div></div>
-        <div class="grow">${icon('inbox')}<div class="gl"><span class="mono">~/Music/Selecta/Inbox/</span><div class="gd">Downloads wait here until you file them · ${plural(S.inbox.length, 'item')}</div></div><button class="btn sm" data-act="nav" data-v="inbox">Open Inbox</button></div>
+        <div class="grow">${icon('folder')}<div class="gl"><span class="mono">${esc(COLLECTION.root)}/${COLLECTION.tracksDir}/</span><div class="gd">Tracks folder · ${fmtInt(st.singles)} loose files; its subfolders are left out</div></div><span class="bdg good">${icon('check-c')}Indexed</span></div>
+        <div class="grow">${icon('folder')}<div class="gl"><span class="mono">${esc(COLLECTION.root)}/${COLLECTION.albumsDir}/</span><div class="gd">Albums folder · ${fmtInt(st.albums)} albums, one per subfolder</div></div><span class="bdg good">${icon('check-c')}Indexed</span></div>
+        <div class="grow">${icon('inbox')}<div class="gl">Inbox<div class="gd">Selecta’s own. Downloads wait here until you file them · ${plural(S.inbox.length, 'item')}</div></div><button class="btn sm" data-act="nav" data-v="inbox">Open Inbox</button></div>
       </div></section>
     <section><div class="sec-h"><h3>Singles that are also on an album</h3><span>Flagged only. Remove the single in rekordbox and Finder yourself if you want to.</span></div>
       <div class="group">${pairs.map(p => `<div class="grow">${icon('flag')}<div class="gl"><span class="mono">${esc(p.single)}</span><div class="gd">Also on ${esc(p.album)}, ${esc(p.where)}</div></div></div>`).join('')}</div></section>
@@ -1178,7 +1178,7 @@ function renderMessages() {
 function renderShares() {
   $('#content').innerHTML = `<div class="scroll"><div class="pane">
     <section><div class="sec-h"><h3>Shared folders</h3><span>Other users can browse and search these</span></div><div class="group">
-      <div class="grow">${icon('folder')}<div class="gl"><span class="mono">${esc(COLLECTION.root)}</span><div class="gd">${fmtInt(COLLECTION.stats.tracks)} files · ${fmtSize(COLLECTION.stats.bytes)} · shown to peers as <span class="mono">Collection\\…</span>, never your full path</div></div><select aria-label="Who can see this folder"><option>Everyone</option><option>Buddies only</option></select></div>
+      ${[COLLECTION.tracksDir, COLLECTION.albumsDir].map(d => `<div class="grow">${icon('folder')}<div class="gl"><span class="mono">${esc(COLLECTION.root)}/${d}</span><div class="gd">Shown to peers as <span class="mono">${d}\\…</span>, never your full path</div></div><select aria-label="Who can see this folder"><option>Everyone</option><option>Buddies only</option></select></div>`).join('')}
       <div class="grow" style="justify-content:flex-end"><button class="btn sm">${icon('plus')} Add folder…</button></div></div></section>
     <section><div class="sec-h"><h3>Never shared</h3></div><div class="group"><div class="grow">${icon('lock')}<div class="gl">Inbox and preview cache<div class="gd">Unfiled downloads and previews stay private until you file them.</div></div></div></div></section>
     <section><div class="sec-h"><h3>Uploads</h3></div><div class="group">
@@ -1198,9 +1198,9 @@ function renderWishlist() {
 const CONV_FILES = [
   { id: 'c1', name: 'Halden & Rue — Salt Flats', n: 8, src: { fmt: 'FLAC', sr: 44100, bd: 16 }, where: 'Inbox/Albums/Halden & Rue - Salt Flats (2022)/', tags: { TITLE: 'Salt Flats', ARTIST: 'Halden & Rue', ALBUM: 'Salt Flats', ALBUMARTIST: 'Halden & Rue', TRACK: '1/8', DISC: '1/1', DATE: '2022', GENRE: 'Deep House', BPM: '118', KEY: '8A', LABEL: 'Saltwater Audio', ISRC: 'GB-SWA-22-00101' }, art: { from: 'folder', file: 'cover.jpg', w: 1400 } },
   { id: 'c2', name: 'Okuma Drift — Sodium', n: 1, src: { fmt: 'FLAC', sr: 44100, bd: 16 }, where: 'Inbox/Singles/', tags: { TITLE: 'Sodium', ARTIST: 'Okuma Drift', ALBUM: '', ALBUMARTIST: '', TRACK: '', DISC: '', DATE: '2024', GENRE: 'Progressive House', BPM: '122', KEY: '5A', LABEL: '', ISRC: '' }, art: { from: 'embedded', w: 600 }, supplement: { ALBUM: 'Sodium', ALBUMARTIST: 'Okuma Drift', TRACK: '1/1' } },
-  { id: 'c3', name: 'Marlo Vance — Tidal Memory (Original Mix)', n: 1, src: { fmt: 'MP3', br: 192 }, where: 'Collection/Singles/', tags: { TITLE: 'Tidal Memory (Original Mix)', ARTIST: 'Marlo Vance', ALBUM: 'Tidal Memory', ALBUMARTIST: 'Marlo Vance', TRACK: '1/2', DISC: '', DATE: '2021', GENRE: 'Techno', BPM: '126', KEY: '', LABEL: 'Undertow Records', ISRC: '' }, art: null },
+  { id: 'c3', name: 'Marlo Vance — Tidal Memory (Original Mix)', n: 1, src: { fmt: 'MP3', br: 192 }, where: 'Tracks/', tags: { TITLE: 'Tidal Memory (Original Mix)', ARTIST: 'Marlo Vance', ALBUM: 'Tidal Memory', ALBUMARTIST: 'Marlo Vance', TRACK: '1/2', DISC: '', DATE: '2021', GENRE: 'Techno', BPM: '126', KEY: '', LABEL: 'Undertow Records', ISRC: '' }, art: null },
   { id: 'c4', name: 'Ines Varga — Vesper', n: 1, src: { fmt: 'FLAC', sr: 96000, bd: 24 }, where: 'Inbox/Singles/', tags: { TITLE: 'Vesper', ARTIST: 'Ines Varga', ALBUM: 'Glass Choir', ALBUMARTIST: 'Ines Varga', TRACK: '2/3', DISC: '1/1', DATE: '2025', GENRE: 'Melodic Techno', BPM: '125', KEY: '11A', LABEL: 'Vitrail', ISRC: 'DE-VTR-25-00002' }, art: { from: 'folder', file: 'folder.jpg', w: 3000 } },
-  { id: 'c5', name: 'Pale Monarch — Kestrel', n: 1, src: { fmt: 'MP3', br: 256 }, where: 'Collection/Singles/', tags: { TITLE: 'Kestrel', ARTIST: 'Pale Monarch', ALBUM: 'Thermals', ALBUMARTIST: 'Pale Monarch', TRACK: '3/5', DISC: '', DATE: '2019', GENRE: 'Minimal', BPM: '123', KEY: '', LABEL: '', ISRC: '' }, art: { from: 'embedded', w: 500 } },
+  { id: 'c5', name: 'Pale Monarch — Kestrel', n: 1, src: { fmt: 'MP3', br: 256 }, where: 'Tracks/', tags: { TITLE: 'Kestrel', ARTIST: 'Pale Monarch', ALBUM: 'Thermals', ALBUMARTIST: 'Pale Monarch', TRACK: '3/5', DISC: '', DATE: '2019', GENRE: 'Minimal', BPM: '123', KEY: '', LABEL: '', ISRC: '' }, art: { from: 'embedded', w: 500 } },
 ];
 function convVerdict(src, tg) {
   const sl = LOSSY.has(src.fmt);
@@ -1286,10 +1286,8 @@ function renderSettings() {
       ${row('Daily limit per peer', 'Warn, then stop until tomorrow', `<span class="muted">Warn at ${LIMITS.peerSoft} · stop at ${LIMITS.peerHard}</span>`)}
       ${row('Reconnect', 'Waits longer after each failed login', '<span class="muted">30 s, doubling up to 10 min</span>')}</div></section>
     <section><div class="sec-h"><h3>Library</h3></div><div class="group">
-      ${row('Collection folder', 'Read-only. Add more folders if your music lives in several places', `<span class="mono">${esc(COLLECTION.root)}</span> <button class="btn sm">Change…</button>`)}
-      ${row('Singles folder', 'Inside the collection', `<input class="field" style="width:120px" value="${COLLECTION.singlesDir}" aria-label="Singles folder name">`)}
-      ${row('Albums folder', 'One folder per album', `<input class="field" style="width:120px" value="${COLLECTION.albumsDir}" aria-label="Albums folder name">`)}
-      ${row('Inbox', 'Where downloads wait until you file them', '<span class="mono">~/Music/Selecta/Inbox</span> <button class="btn sm">Change…</button>')}</div></section>
+      ${row('Tracks folder', 'Loose tracks: the files in this folder. Its subfolders are left out. Filed singles go here', `<span class="mono">${esc(COLLECTION.root)}/${COLLECTION.tracksDir}</span> <button class="btn sm">Choose…</button>`)}
+      ${row('Albums folder', 'One album per subfolder, whatever the tags say. Files lying in it are left out. Filed albums go here', `<span class="mono">${esc(COLLECTION.root)}/${COLLECTION.albumsDir}</span> <button class="btn sm">Choose…</button>`)}</div></section>
     <section><div class="sec-h"><h3>Filing</h3><span>How files are named when they go into your collection</span></div><div class="group">
       ${row('Inbox format', 'Downloads are converted to this and tagged as they arrive', `<select data-ch="filingTarget" aria-label="Inbox format">${Object.entries(TARGETS).map(([k, t]) => `<option value="${k}"${k === S.filingTarget ? ' selected' : ''}>${t.label}</option>`).join('')}</select>`)}
       ${row('Tags', 'ID3v2.3 reads best on CDJs and in rekordbox', '<select aria-label="Tag version"><option selected>ID3v2.3</option><option>ID3v2.4</option></select>')}
@@ -1340,12 +1338,12 @@ function fakeResult(relIdx, ti, peerName, vIdx) {
 }
 function seedData() {
   const rel = album => CATALOG.find(r => r.album === album);
-  COLLECTION.tracks.push({ artist: 'Pale Monarch', title: 'Cloud Street', version: '', fmt: 'MP3', br: 320, path: 'Singles/Pale Monarch - Cloud Street.mp3' });
+  COLLECTION.tracks.push({ artist: 'Pale Monarch', title: 'Cloud Street', version: '', fmt: 'MP3', br: 320, path: 'Tracks/Pale Monarch - Cloud Street.mp3' });
   COLLECTION.recent = [
-    { name: 'Pale Monarch — Cloud Street', path: 'Singles/Pale Monarch - Cloud Street.mp3', q: 'MP3 320', when: 'Fri 17 Oct' },
-    { name: 'Ines Varga — Hollow Bells (Edit)', path: 'Singles/Ines Varga - Hollow Bells (Edit).mp3', q: 'MP3 320', when: 'Sun 12 Oct' },
+    { name: 'Pale Monarch — Cloud Street', path: 'Tracks/Pale Monarch - Cloud Street.mp3', q: 'MP3 320', when: 'Fri 17 Oct' },
+    { name: 'Ines Varga — Hollow Bells (Edit)', path: 'Tracks/Ines Varga - Hollow Bells (Edit).mp3', q: 'MP3 320', when: 'Sun 12 Oct' },
     { name: 'Teodor Lumen — Copper Season (6 tracks)', path: 'Albums/Teodor Lumen - Copper Season (2020)/', q: 'FLAC → MP3 320', when: 'Sun 5 Oct' },
-    { name: 'Kassia Moreau — Paper Lanterns', path: 'Singles/Kassia Moreau - Paper Lanterns.mp3', q: 'MP3 320', when: 'Tue 2 Sep' },
+    { name: 'Kassia Moreau — Paper Lanterns', path: 'Tracks/Kassia Moreau - Paper Lanterns.mp3', q: 'MP3 320', when: 'Tue 2 Sep' },
   ];
   const single = (artist, title, version, q, more) => ({ id: 'ib' + S.nextId++, kind: 'single', artist, title, version, br: null, vbr: false, sr: null, bd: null, ...q, ...more });
   S.inbox = [
@@ -1363,8 +1361,8 @@ function seedData() {
     { session: 15, artist: 'Marlo Vance', title: 'Tidal Memory', version: 'Original Mix', q: 'MP3 320', peer: 'selector_k', where: 'Inbox', time: '20:01' },
     { session: 14, artist: 'Halden & Rue', title: 'Salt Flats', version: '', album: true, n: 8, q: 'FLAC 16/44.1', peer: 'basement.tapes', where: 'Inbox', time: '23:20' },
     { session: 14, artist: 'Okuma Drift', title: 'Sodium', version: '', q: 'FLAC 16/44.1', peer: 'flac_archivist', where: 'Inbox', time: '22:58' },
-    { session: 14, artist: 'Pale Monarch', title: 'Cloud Street', version: '', q: 'MP3 320', peer: 'cratedigger_77', where: 'Filed · Singles/', time: '22:31' },
-    { session: 13, artist: 'Ines Varga', title: 'Hollow Bells', version: 'Edit', q: 'MP3 320', peer: 'cratedigger_77', where: 'Filed · Singles/', time: '15:40' },
+    { session: 14, artist: 'Pale Monarch', title: 'Cloud Street', version: '', q: 'MP3 320', peer: 'cratedigger_77', where: 'Filed · Tracks/', time: '22:31' },
+    { session: 13, artist: 'Ines Varga', title: 'Hollow Bells', version: 'Edit', q: 'MP3 320', peer: 'cratedigger_77', where: 'Filed · Tracks/', time: '15:40' },
     { session: 13, artist: 'Ravel Ortiz', title: 'Room 404', version: 'Dub', q: 'MP3 320', peer: 'lowend_theory', where: 'Trash', time: '15:12' },
     { session: 12, artist: 'Teodor Lumen', title: 'Copper Season', version: '', album: true, n: 6, q: 'FLAC → MP3 320', peer: 'subharmonic', where: 'Filed · Albums/Teodor Lumen - Copper Season (2020)/', time: '21:02' },
   ];
@@ -1406,7 +1404,7 @@ const VIEWS = {
     render: renderInbox,
     title: () => { const a = S.inbox.filter(i => i.kind === 'album').length, n = S.inbox.length - a; return ['Inbox', S.inbox.length ? `${plural(a, 'album')} · ${plural(n, 'single')} waiting to be filed` : 'Nothing waiting']; },
   },
-  collection: { render: renderCollection, title: () => ['Collection', `${COLLECTION.root} · ${fmtInt(COLLECTION.stats.tracks)} tracks`] },
+  collection: { render: renderCollection, title: () => ['Collection', `${fmtInt(COLLECTION.stats.tracks)} tracks`] },
   history: { render: renderHistory, title: () => ['History', `Session ${SESSIONS[0].n} started at 19:58`] },
   transfers: {
     render: renderTransfers,
@@ -2382,7 +2380,7 @@ function nameFor(kind, f) {
 function filedPath(it) {
   const out = filingPlan(it).kind === 'convert' ? TARGETS[S.filingTarget] : it;
   if (it.kind === 'album') return `${COLLECTION.albumsDir}/${nameFor('albumDir', { albumartist: it.artist, artist: it.artist, album: it.album, year: it.year })}/`;
-  return `${COLLECTION.singlesDir}/${nameFor('single', { artist: it.artist, title: fullTitle(it.title, it.version), album: it.rel ? it.rel.album : '', year: it.rel ? it.rel.year : '' })}.${EXT[out.fmt] || EXT[it.fmt]}`;
+  return `${COLLECTION.tracksDir}/${nameFor('single', { artist: it.artist, title: fullTitle(it.title, it.version), album: it.rel ? it.rel.album : '', year: it.rel ? it.rel.year : '' })}.${EXT[out.fmt] || EXT[it.fmt]}`;
 }
 const NAMING_SAMPLES = [
   ['single', { artist: 'Halden & Rue', title: 'Tidewater (Original Mix)' }, '.mp3'],
