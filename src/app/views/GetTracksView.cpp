@@ -150,6 +150,7 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
     m_summary->setObjectName(u"get.summary"_s);
     m_summary->setForegroundRole(QPalette::PlaceholderText);
     m_note->setObjectName(u"get.note"_s);
+    m_note->setTextFormat(Qt::PlainText); // a path, or what adding the lines noted (a playlist's words)
     m_note->setWordWrap(true);
     m_note->hide();
     // The quality wanted: a preset, as in Search and the Wishlist (BATCH-2, SRCH-8).
@@ -577,9 +578,10 @@ void GetTracksView::exportUnresolved()
             m_note->show();
             return;
         }
-        m_note->setText(lines.size() == 1
-                            ? tr("Saved 1 line to %1.").arg(QDir::toNativeSeparators(path))
-                            : tr("Saved %1 lines to %2.").arg(lines.size()).arg(QDir::toNativeSeparators(path)));
+        m_note->setText(
+            lines.size() == 1
+                ? tr("Saved 1 line to %1.").arg(QDir::toNativeSeparators(path))
+                : tr("Saved %1 lines to %2.").arg(QString::number(lines.size()), QDir::toNativeSeparators(path)));
         m_note->show();
     });
     dialog->open();

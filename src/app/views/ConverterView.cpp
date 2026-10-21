@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ConverterView.h"
 
+#include "app/Format.h"
 #include "app/TickDelegate.h"
 #include "app/models/ConverterModel.h"
 #include "app/views/ConverterInspector.h"
@@ -211,7 +212,7 @@ QWidget *ConverterView::createBar()
     m_destination->addItem(m_outputFolder.isEmpty() ? tr("In a Folder…")
                                                     : tr("In %1").arg(QDir(m_outputFolder).dirName()));
     m_destination->setCurrentIndex(m_outputFolder.isEmpty() ? 0 : 1);
-    m_destination->setToolTip(m_outputFolder);
+    m_destination->setToolTip(format::plainToolTip(m_outputFolder));
 
     m_add->setObjectName(u"converter.add"_s);
     m_convert->setObjectName(u"converter.convert"_s);
@@ -389,7 +390,7 @@ void ConverterView::chooseFolder()
     connect(dialog, &QFileDialog::fileSelected, this, [this](const QString &folder) {
         m_outputFolder = folder;
         m_destination->setItemText(1, tr("In %1").arg(QDir(folder).dirName()));
-        m_destination->setToolTip(folder);
+        m_destination->setToolTip(format::plainToolTip(folder));
         optionsEdited();
     });
     connect(dialog, &QFileDialog::rejected, this,

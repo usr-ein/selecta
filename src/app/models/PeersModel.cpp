@@ -130,14 +130,13 @@ QVariant PeersModel::data(const QModelIndex &index, int role) const
         return display(peer, index.column());
     case Qt::ToolTipRole:
         if (index.column() == LimitColumn || index.column() == TodayColumn) {
-            return tr("%1 files from %2 today, previews included. Selecta warns at %3 files (or %4) a day from one "
-                      "peer and stops at %5 (or %6).")
-                .arg(peer.todayFiles)
-                .arg(peer.peer)
-                .arg(limits::kPeerDailyWarnFiles)
-                .arg(format::size(limits::kPeerDailyWarnBytes))
-                .arg(limits::kPeerDailyStopFiles)
-                .arg(format::size(limits::kPeerDailyStopBytes));
+            // One arg() for all: a "%3" in the peer's name stays as it is.
+            return format::plainToolTip(
+                tr("%1 files from %2 today, previews included. Selecta warns at %3 files (or %4) a day from one "
+                   "peer and stops at %5 (or %6).")
+                    .arg(QString::number(peer.todayFiles), peer.peer, QString::number(limits::kPeerDailyWarnFiles),
+                         format::size(limits::kPeerDailyWarnBytes), QString::number(limits::kPeerDailyStopFiles),
+                         format::size(limits::kPeerDailyStopBytes)));
         }
         return {};
     case Qt::TextAlignmentRole:

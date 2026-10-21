@@ -189,7 +189,7 @@ void SearchInspector::showResult(const std::optional<core::SearchResult> &result
     m_downloadFolder->setEnabled(result->isAudio() && !result->folder.isEmpty());
 
     m_ownership->setText(ownershipNote(*result));
-    m_ownership->setToolTip(result->ownershipDetail);
+    m_ownership->setToolTip(format::plainToolTip(result->ownershipDetail)); // names files
 
     QStringList checks;
     if (releaseDurationMs > 0 && result->durationSec() > 0) {

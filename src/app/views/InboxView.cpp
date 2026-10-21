@@ -2,6 +2,7 @@
 #include "app/views/InboxView.h"
 
 #include "app/Accessibility.h"
+#include "app/Format.h"
 #include "app/Icons.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/InboxInspector.h"
@@ -145,7 +146,7 @@ QStandardItem *cell(const QString &text, qint64 id, const QString &toolTip = {})
     item->setData(id, kIdRole);
     item->setEditable(false);
     if (!toolTip.isEmpty()) {
-        item->setToolTip(toolTip);
+        item->setToolTip(format::plainToolTip(toolTip)); // names from tags, files and peers
         item->setData(toolTip, Qt::AccessibleDescriptionRole);
     }
     return item;
@@ -169,6 +170,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     m_summary->setObjectName(u"inbox.summary"_s);
     m_summary->setForegroundRole(QPalette::PlaceholderText);
     m_result->setObjectName(u"inbox.result"_s);
+    m_result->setTextFormat(Qt::PlainText); // what filing said, which names files
     m_result->setWordWrap(true);
     m_result->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_result->hide();
@@ -485,7 +487,7 @@ void InboxView::refreshActions()
     } else {
         tip = tr("Move singles into your tracks folder and albums into your albums folder");
     }
-    m_file->setToolTip(tip);
+    m_file->setToolTip(format::plainToolTip(tip)); // folder names
     m_trash->setEnabled(!selected.isEmpty());
     if (selected.isEmpty()) {
         m_summary->setText(summary());

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/NavModel.h"
 
+#include "app/Format.h"
 #include "app/Icons.h"
 
 #include <QLocale>
@@ -61,8 +62,9 @@ QVariant NavModel::data(const QModelIndex &index, int role) const
     const Item &entry = m_items.at(index.row());
     switch (role) {
     case Qt::DisplayRole:
-    case Qt::ToolTipRole:
         return entry.title;
+    case Qt::ToolTipRole:
+        return format::plainToolTip(entry.title); // a search as typed, a peer's shares
     case Qt::AccessibleTextRole:
         return accessibleText(entry);
     case Qt::AccessibleDescriptionRole:

@@ -155,6 +155,7 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     m_release->setToolTip(tr("Files are ranked and checked against this release: length first, then names"));
     releaseLayout->addWidget(m_release);
     m_releaseNote->setObjectName(u"search.releaseNote"_s);
+    m_releaseNote->setTextFormat(Qt::PlainText); // the query, maybe as a release spells it
     m_releaseNote->setForegroundRole(QPalette::PlaceholderText);
     releaseLayout->addWidget(m_releaseNote, 1);
     layout->addWidget(m_releaseRow);
@@ -668,7 +669,7 @@ void SearchView::presetsMenu()
                 applyFilter(m_state.filter, false);
                 loadFilterControls();
             } else {
-                m_status->setText(tr("“%1” is one of Selecta's presets: pick another name.").arg(name));
+                m_status->setText(tr("“%1” is one of Selecta's presets: pick another name.").arg(name.toHtmlEscaped()));
             }
         });
         ask->open();
@@ -998,12 +999,12 @@ void SearchView::downloadSelected()
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setObjectName(u"search.albumOffer"_s);
     box->setIcon(QMessageBox::Question);
+    box->setTextFormat(Qt::PlainText); // a peer's folder and name
     box->setText(tr("Download the whole folder as an album?"));
     box->setInformativeText(
         tr("These %1 tracks are all in “%2” from %3. As an album, the folder arrives in one piece "
            "in Inbox/Albums/, with its cover, and singles of it already in your Inbox are replaced.")
-            .arg(selected.size())
-            .arg(core::remoteNameOf(first->folder), first->hit.peer));
+            .arg(QString::number(selected.size()), core::remoteNameOf(first->folder), first->hit.peer));
     QPushButton *album = box->addButton(tr("Download Folder"), QMessageBox::AcceptRole);
     album->setObjectName(u"search.albumOffer.folder"_s);
     QPushButton *files = box->addButton(tr("Just These %1").arg(selected.size()), QMessageBox::ActionRole);
@@ -1102,15 +1103,15 @@ void SearchView::downloadFolder()
     }
     if (first->peerFilesToday + count >= governor::limits::kPeerDailyWarnFiles) {
         lines.append(tr("This takes you to %1 files from %2 today (Selecta warns at %3 and stops at %4).")
-                         .arg(first->peerFilesToday + count)
-                         .arg(first->hit.peer)
-                         .arg(governor::limits::kPeerDailyWarnFiles)
-                         .arg(governor::limits::kPeerDailyStopFiles));
+                         .arg(QString::number(first->peerFilesToday + count), first->hit.peer,
+                              QString::number(governor::limits::kPeerDailyWarnFiles),
+                              QString::number(governor::limits::kPeerDailyStopFiles)));
     }
     auto *box = new QMessageBox(this);
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setObjectName(u"search.albumConfirm"_s);
     box->setIcon(QMessageBox::Question);
+    box->setTextFormat(Qt::PlainText); // a peer's folder, name and files
     box->setText(tr("Download “%1” as an album?").arg(core::remoteNameOf(first->folder)));
     box->setInformativeText(lines.join(u"\n\n"_s));
     QPushButton *download = box->addButton(tr("Download Album"), QMessageBox::AcceptRole);
@@ -1143,6 +1144,7 @@ void SearchView::downloadFiles(const QList<int> &selected)
     auto *box = new QMessageBox(this);
     box->setAttribute(Qt::WA_DeleteOnClose);
     box->setIcon(QMessageBox::Question);
+    box->setTextFormat(Qt::PlainText); // what is owned names files
     const int owned = static_cast<int>(selected.size() - fresh.size());
     box->setText(selected.size() == 1 ? tr("You already have this track.")
                                       : tr("You already have %1 of these tracks.").arg(owned));
