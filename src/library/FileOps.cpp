@@ -97,13 +97,30 @@ int renameExclusive(const QString &from, const QString &to)
 #endif
 }
 
+// The message strerror_r or strerror_s left: the XSI and Windows ones return 0 and fill the buffer, glibc's GNU
+// strerror_r returns the message itself. Null when there is none.
+[[maybe_unused]] const char *errorMessage(int result, const char *buffer)
+{
+    return result == 0 ? buffer : nullptr;
+}
+
+[[maybe_unused]] const char *errorMessage(const char *result, const char * /*buffer*/)
+{
+    return result;
+}
+
 QString describeErrno(int code)
 {
     std::array<char, 256> buffer{};
-    if (strerror_r(code, buffer.data(), buffer.size()) != 0) {
+#ifdef Q_OS_WIN
+    const char *message = errorMessage(strerror_s(buffer.data(), buffer.size(), code), buffer.data());
+#else
+    const char *message = errorMessage(strerror_r(code, buffer.data(), buffer.size()), buffer.data());
+#endif
+    if (message == nullptr || *message == '\0') {
         return u"error %1"_s.arg(code);
     }
-    return QString::fromLocal8Bit(buffer.data());
+    return QString::fromLocal8Bit(message);
 }
 
 // Everything in the Inbox came from a peer (D20), so it carries the quarantine attribute before it appears there

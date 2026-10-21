@@ -38,9 +38,9 @@ struct ToolOutcome
 };
 
 // One run of an external tool (yt-dlp): an argument list and no shell; the environment given, never the caller's;
-// stdin closed; descriptors above stderr closed and signal handlers reset in the child; its own session, so a kill
-// reaches everything the tool started. Output is split into lines within byte budgets, and an idle and a total
-// timeout end a stuck run.
+// stdin closed; on Unix, descriptors above stderr closed and signal handlers reset in the child, and its own session,
+// so a kill reaches everything the tool started (elsewhere a kill ends the tool alone). Output is split into lines
+// within byte budgets, and an idle and a total timeout end a stuck run.
 //
 // Lines arrive through lineReady() as the tool prints them (when Spec::streamLines is set; a last unterminated line
 // too); finished() follows exactly once, from the event loop, after the process has exited or failed to start, with

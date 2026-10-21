@@ -95,6 +95,13 @@ protected:
         return window;
     }
 
+    // The engine has the Client ID and no sign-in: it reads the stored one first (Restoring), so both are awaited.
+    bool signedOutWith(const QString &id) const
+    {
+        const auto status = engine->spotifyStatus();
+        return status.clientId == id && status.state == State::SignedOut;
+    }
+
     // The notice on screen, if any.
     static QMessageBox *notice(const MainWindow &window)
     {
@@ -172,8 +179,7 @@ TEST_F(SpotifyTermsTest, TheNoticeComesBeforeSpotifyIsUsedAndOnlyOnce)
     ASSERT_NO_FATAL_FAILURE(answer(*box, true));
     EXPECT_TRUE(settings->spotifyTermsAccepted());
     EXPECT_TRUE(AppSettings(dir.filePath(u"settings.ini"_s)).spotifyTermsAccepted()); // on disk
-    ASSERT_TRUE(QTest::qWaitFor([this] { return engine->spotifyStatus().clientId == kClientId; }, 5000));
-    EXPECT_EQ(engine->spotifyStatus().state, State::SignedOut);
+    ASSERT_TRUE(QTest::qWaitFor([this] { return signedOutWith(kClientId); }, 5000));
 
     // Never again: not on the next Save, nor in a new window.
     save->click();
@@ -191,8 +197,7 @@ TEST_F(SpotifyTermsTest, CredentialsSavedBeforeTheNoticeWaitForAnAnswer)
 {
     // A Client ID saved before the notice existed: read and shown, but never signed in with.
     ASSERT_NO_FATAL_FAILURE(startEngine(kClientId));
-    ASSERT_TRUE(QTest::qWaitFor([this] { return engine->spotifyStatus().clientId == kClientId; }, 5000));
-    EXPECT_EQ(engine->spotifyStatus().state, State::SignedOut);
+    ASSERT_TRUE(QTest::qWaitFor([this] { return signedOutWith(kClientId); }, 5000));
     auto window = makeWindow();
     ASSERT_TRUE(window->navigateTo(u"settings"_s));
     auto *state = window->findChild<QLabel *>(u"settings.spotify.state"_s);

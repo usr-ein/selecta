@@ -96,5 +96,5 @@ File operations stay with `core/`.
   - no typo budget makes 3-letter words fuzzy.
 - Google Benchmark on a synthetic 200 k-track library: build time, memory, µs per result, p95 < 100 µs. Record the
   numbers in `DESIGN.md`.
-- dev, asan and tsan are clean; lint is clean.
+- dev and asan are clean; lint is clean.
 - `DESIGN.md`: API overview, thresholds, the integration points for `library/` and `meta/`.
