@@ -103,7 +103,9 @@ flowchart LR
 - `trashFromInbox(path)` / `trashFromCache(path)` — macOS Trash with Undo support; refuses any path outside the Inbox or caches.
 - Free writes inside the Inbox and caches.
 
-There is no API to modify, move or delete a file inside a collection root. Tests assert it.
+There is no API to modify, move or delete a file inside a collection root, but one the user asks for: an upgrade saved
+to the collection takes its file's exact place, the old file going to the Trash (`replaceInCollection`, PRD LIB-9, D41).
+Tests assert both.
 
 ### 2.5 Default locations
 
