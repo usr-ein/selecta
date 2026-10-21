@@ -1,17 +1,32 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-# CI (PLAN §5.4, NFR-1, NFR-7), all with static vcpkg dependencies (ADR-004):
-#   macOS     build, tests and the static-linking check; the lint gate (tools/lint.sh) in its own job.
-#   asan/tsan the whole suite under AddressSanitizer + UBSan and under ThreadSanitizer (macOS), on main, CI branches
-#             (ci/**), nightly and on request; not on pull requests.
-#   Linux     build and tests.
+# CI (PLAN §5.4, NFR-1, NFR-7, P-028), all with static vcpkg dependencies (ADR-004). Which jobs run depends on the event:
+#
+#   pull request       Linux · build, tests   the linux preset (Clang, warnings as errors), then the tests whose code
+#   (Linux only, all                          or inputs changed since they last passed (tools/ci/affected-tests.sh)
+#   gate, ~5 minutes)  Linux · lint 1, 2, 3   tools/lint.sh --changed: the files the pull request changes, in up to
+#                                             three shares
+#   push to main       the pull request's jobs, with the whole suite (lint: the files the push changes), and
+#   or ci/**           macOS · build, tests, static linking
+#                      macOS · lint           tools/lint.sh over the whole tree, .mm files and macOS-only code included
+#                      Windows · build, tests
+#   nightly, and       all of the above (Linux lint: the whole tree, in three shares), and
+#   on request         Linux · asan           the whole suite under AddressSanitizer + UBSan
+#
+# Pull requests run on Linux only (maintainer, 2026-10-21): macOS and Windows run on main, ASan at night, and a red
+# main gets a fix-forward minion (docs/CREW.md). Before its pull request, a minion builds and runs the targeted tests on
+# the Mac, which covers the macOS-only code. ThreadSanitizer doesn't run (maintainer, 2026-10-21).
 #
 # Network safety (CLAUDE.md): nothing here talks to the Soulseek network or to the metadata services. Tests use
 # loopback fakes only (on Linux they run in a network namespace that has nothing but loopback), and the live-server
-# build switch stays OFF: CMake refuses to build tests with it, and every job checks it after configuring. The only
+# build switch stays OFF: CMake refuses to build tests with it, and every build checks it after configuring. The only
 # downloads are tools, vcpkg ports and the pinned sources in cmake/SelectaDependencies.cmake.
 #
-# Caches: vcpkg's binary archives and ccache live under build/cache in the workspace (git-ignored), because
-# actions/cache refuses paths that contain '..'. Builds keep going after an error (-k 0), so one run lists them all.
+# Caches, all under build/cache in the workspace (git-ignored; actions/cache refuses paths that contain '..'):
+#   - vcpkg's binary archives, one cache per triplet (../actions/vcpkg);
+#   - ccache, one per build (../actions/ccache-restore, ../actions/ccache-save): a run saves only the entries its build
+#     used. A pull request starts from main's newest and its own previous one;
+#   - the fingerprints of the Linux tests that passed, saved the same way: a pull request runs the others only.
+# Builds keep going after an error (-k 0), so one run lists them all.
 name: CI
 
 on:
@@ -27,9 +42,11 @@ on:
 permissions:
   contents: read
 
+# A newer run for the same event and branch cancels the one it supersedes, on main too: the newer commit covers the
+# older ones. The nightly run has a group of its own, so pushes never cancel it.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 env:
   HOMEBREW_NO_AUTO_UPDATE: 1
@@ -42,8 +59,233 @@ env:
   CCACHE_MAXSIZE: 600M
 
 jobs:
+  linux:
+    name: Linux · build, tests
+    runs-on: ubuntu-26.04
+    # Minutes on a warm cache; a cold vcpkg cache builds every dependency first.
+    timeout-minutes: 180
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
+    steps:
+      - uses: actions/checkout@v7
+
+      # autoconf-archive: libb2 (Qt); nasm: FFmpeg on x86-64; GL and EGL headers: Qt Gui uses the system's OpenGL.
+      # mold links the test executables faster than ld.
+      - name: Tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache mold libgl-dev libegl-dev \
+            libglu1-mesa-dev
+
+      - name: vcpkg
+        id: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-linux-selecta
+
+      - name: Restore main's compiler cache
+        uses: ./.github/actions/ccache-restore
+        with:
+          name: linux
+
+      - name: Configure (builds missing dependencies)
+        id: configure
+        run: >-
+          cmake --preset linux -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_LINKER_TYPE=MOLD
+
+      - name: Save the vcpkg binary cache
+        if: always() && steps.vcpkg.outcome == 'success'
+        uses: ./.github/actions/vcpkg-save
+        with:
+          key: ${{ steps.vcpkg.outputs.cache-key }}
+          installed: build/linux/vcpkg_installed
+          complete: ${{ steps.configure.outcome == 'success' }}
+
+      - name: The live-server switch is off
+        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/linux/CMakeCache.txt
+
+      - name: Build
+        id: build
+        run: cmake --build --preset linux -- -k 0
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        uses: ./.github/actions/ccache-save
+        with:
+          name: linux
+
+      # The CI scripts' own tests: test selection and lint's file selection.
+      - name: Tests of the CI scripts
+        run: |
+          tests/tools/affected-tests-test.sh
+          tests/tools/lint-test.sh
+
+      - name: Restore the passing tests' fingerprints
+        uses: ./.github/actions/fingerprints-restore
+
+      # A pull request runs the tests whose fingerprint (executable, runtime inputs, definition) no passing run on main
+      # or on this pull request has; main, the nightly run and runs on request run them all. Listing the tests runs each
+      # test executable with --gtest_list_tests only, which runs no test.
+      - name: Select the tests
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          tools/ci/affected-tests.sh fingerprint build/linux > "$RUNNER_TEMP/fingerprints.txt"
+          if [[ "$EVENT" == pull_request ]]; then
+            tools/ci/affected-tests.sh select "$FINGERPRINTS_KNOWN" "$RUNNER_TEMP/fingerprints.txt" \
+              > "$RUNNER_TEMP/selected.txt"
+          else
+            cut -f1 "$RUNNER_TEMP/fingerprints.txt" > "$RUNNER_TEMP/selected.txt"
+          fi
+          echo "$(wc -l < "$RUNNER_TEMP/selected.txt") of $(wc -l < "$RUNNER_TEMP/fingerprints.txt") tests to run"
+
+      # A fresh network namespace has only the loopback interface: a test that tried to reach anything else would fail.
+      # Root brings loopback up, then the tests run as the runner user again (the outer shell expands the variables).
+      # Most tests wait on timers and sockets, so four per core finish in less than half the time of one per core.
+      # "finished" says ctest ran to the end, so its failures are known.
+      - name: Test (loopback only)
+        id: test
+        timeout-minutes: 30
+        run: |
+          if [[ -s "$RUNNER_TEMP/selected.txt" ]]; then
+            status=0
+            sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
+              --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
+              ctest --preset linux --parallel $(($(nproc) * 4)) --timeout 300 \
+                --tests-from-file '$RUNNER_TEMP/selected.txt'" || status=$?
+          else
+            echo "No test's code or inputs changed: nothing to run."
+            status=0
+          fi
+          echo "finished=true" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Save the passing tests' fingerprints
+        if: ${{ !cancelled() && steps.test.outputs.finished == 'true' }}
+        uses: ./.github/actions/fingerprints-save
+
+      - name: Keep the test log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-test-log
+          path: build/linux/Testing/Temporary/LastTest*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # tools/lint.sh in up to three shares on Linux runners: the files a pull request or a push changes, or the whole
+  # tree at night and on request. The analysers need compile_commands.json and the generated sources only (moc output,
+  # Version.h), not a build. Their tools are the Mac's (Homebrew's llvm, clazy, cppcheck), installed while the build
+  # configures.
+  lint:
+    name: Linux · lint ${{ matrix.share }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        share: [1, 2, 3]
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+      SELECTA_BUILD: ${{ github.workspace }}/build/linux
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # A pull request's merge commit is compared with its first parent, the base branch; a push with the commit
+      # before it. About fifteen changed files per share, up to three; a share with nothing to check stops here.
+      - name: What to check
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHARE: ${{ matrix.share }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$(git rev-parse HEAD^1)" ;;
+            push) base="$BEFORE" ;;
+            *) base="" ;;
+          esac
+          # A new branch's push has no commit before it (all zeros): the whole tree.
+          if [[ -n "$base" ]] && ! git cat-file -e "$base^{commit}" 2>/dev/null; then base=""; fi
+          if [[ -n "$base" ]]; then
+            changed=$(git diff --name-only --diff-filter=d "$base" HEAD -- src tests tools | grep -cE '\.(cpp|h|mm)$' || true)
+            shares=$(( (changed + 14) / 15 ))
+            (( shares >= 1 )) || shares=1
+            (( shares <= 3 )) || shares=3
+            args="--changed $base --shard $SHARE/$shares"
+          else
+            changed=all
+            shares=3
+            args="--shard $SHARE/$shares"
+          fi
+          run=false
+          if [[ "$changed" != 0 ]] && (( SHARE <= shares )); then run=true; fi
+          echo "C++ files changed: $changed; shares: $shares; this is share $SHARE: run=$run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+
+      - name: Lint tools, in the background
+        if: steps.plan.outputs.run == 'true'
+        run: |
+          nohup bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+            brew install llvm clazy cppcheck > "$RUNNER_TEMP/brew.log" 2>&1
+            echo $? > "$RUNNER_TEMP/brew.status"' > /dev/null 2>&1 &
+
+      - name: Headers for configuring
+        if: steps.plan.outputs.run == 'true'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends libgl-dev libegl-dev libglu1-mesa-dev
+
+      - name: vcpkg
+        if: steps.plan.outputs.run == 'true'
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-linux-selecta
+
+      # Without origin dependencies the global autogen target runs moc alone.
+      - name: Configure, and the generated sources
+        if: steps.plan.outputs.run == 'true'
+        run: |
+          cmake --preset linux -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build \
+            -DCMAKE_AUTOGEN_ORIGIN_DEPENDS=OFF -DCMAKE_GLOBAL_AUTOGEN_TARGET=ON
+          cmake --build --preset linux --target autogen
+
+      - name: Lint
+        if: steps.plan.outputs.run == 'true'
+        timeout-minutes: 45
+        env:
+          ARGS: ${{ steps.plan.outputs.args }}
+        run: |
+          until [[ -f "$RUNNER_TEMP/brew.status" ]]; do sleep 2; done
+          if [[ "$(cat "$RUNNER_TEMP/brew.status")" != 0 ]]; then cat "$RUNNER_TEMP/brew.log"; exit 1; fi
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          # llvm is keg-only: its clang-format is the clang-format formula's version.
+          PATH="$(brew --prefix llvm)/bin:$PATH"
+          brew list --versions llvm clazy cppcheck
+          # shellcheck disable=SC2086 # ARGS is a list of options
+          tools/lint.sh $ARGS
+
+      - name: Keep the analyser logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-logs-${{ matrix.share }}
+          path: |
+            build/linux/clang-tidy.log
+            build/linux/clazy.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   macos:
     name: macOS · build, tests, static linking
+    if: github.event_name != 'pull_request'
     runs-on: macos-26
     timeout-minutes: 150
     env:
@@ -63,11 +305,9 @@ jobs:
           triplet: arm64-osx-selecta
 
       - name: Restore the compiler cache
-        uses: actions/cache/restore@v6
+        uses: ./.github/actions/ccache-restore
         with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-dev-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: ccache-macos-dev-
+          name: macos-dev
 
       - name: Configure (builds missing dependencies)
         id: configure
@@ -92,11 +332,10 @@ jobs:
         run: cmake --build --preset dev -- -k 0
 
       - name: Save the compiler cache
-        if: always() && steps.build.outcome != 'skipped'
-        uses: actions/cache/save@v6
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        uses: ./.github/actions/ccache-save
         with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-dev-${{ github.run_id }}-${{ github.run_attempt }}
+          name: macos-dev
 
       - name: Test
         timeout-minutes: 30
@@ -124,8 +363,9 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  lint:
+  macos-lint:
     name: macOS · lint
+    if: github.event_name != 'pull_request'
     runs-on: macos-26
     timeout-minutes: 120
     env:
@@ -143,8 +383,6 @@ jobs:
         with:
           triplet: arm64-osx-selecta
 
-      # The analysers need compile_commands.json and the generated sources only (moc output, Version.h), not a build:
-      # without origin dependencies the global autogen target runs moc alone.
       - name: Configure
         run: >-
           cmake --preset dev -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
@@ -160,171 +398,25 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: lint-logs
+          name: macos-lint-logs
           path: |
             build/dev/clang-tidy.log
             build/dev/clazy.log
           if-no-files-found: ignore
           retention-days: 14
 
-  sanitizers:
-    name: macOS · ${{ matrix.preset }}
-    if: github.event_name != 'pull_request'
-    runs-on: macos-26
-    timeout-minutes: 180
-    # The prebuilt Qt isn't instrumented, so ThreadSanitizer can't see the locks in Qt's event queue and thread pool:
-    # every payload of a cross-thread queued call shows as a race. Until Qt is built with TSan, tsan doesn't fail the
-    # run.
-    continue-on-error: ${{ matrix.preset == 'tsan' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [asan, tsan]
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
-      UBSAN_OPTIONS: print_stacktrace=1
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Tools
-        run: brew install autoconf autoconf-archive automake libtool ccache
-
-      - name: vcpkg
-        uses: ./.github/actions/vcpkg
-        with:
-          triplet: arm64-osx-selecta
-
-      - name: Restore the compiler cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: ccache-macos-${{ matrix.preset }}-
-
-      - name: Configure
-        run: >-
-          cmake --preset ${{ matrix.preset }} -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF
-          -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
-
-      - name: The live-server switch is off
-        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/${{ matrix.preset }}/CMakeCache.txt
-
-      - name: Build
-        id: build
-        run: cmake --build --preset ${{ matrix.preset }} -- -k 0
-
-      - name: Save the compiler cache
-        if: always() && steps.build.outcome != 'skipped'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Test
-        timeout-minutes: 60
-        run: ctest --preset ${{ matrix.preset }} --parallel "$(sysctl -n hw.ncpu)" --timeout 900
-
-      - name: Keep the test log
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.preset }}-test-log
-          path: build/${{ matrix.preset }}/Testing/Temporary/LastTest*.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-  linux:
-    name: Linux · build, tests
-    runs-on: ubuntu-26.04
-    timeout-minutes: 180
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
-    steps:
-      - uses: actions/checkout@v7
-
-      # autoconf-archive: libb2 (Qt); nasm: FFmpeg on x86-64; GL and EGL headers: Qt Gui uses the system's OpenGL.
-      - name: Tools
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache libgl-dev libegl-dev \
-            libglu1-mesa-dev
-
-      - name: vcpkg
-        id: vcpkg
-        uses: ./.github/actions/vcpkg
-        with:
-          triplet: x64-linux-selecta
-
-      - name: Restore the compiler cache
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: ccache-linux-
-
-      - name: Configure (builds missing dependencies)
-        id: configure
-        run: >-
-          cmake --preset linux -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
-          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-      - name: Save the vcpkg binary cache
-        if: always() && steps.vcpkg.outcome == 'success'
-        uses: ./.github/actions/vcpkg-save
-        with:
-          key: ${{ steps.vcpkg.outputs.cache-key }}
-          installed: build/linux/vcpkg_installed
-          complete: ${{ steps.configure.outcome == 'success' }}
-
-      - name: The live-server switch is off
-        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/linux/CMakeCache.txt
-
-      - name: Build
-        id: build
-        run: cmake --build --preset linux -- -k 0
-
-      - name: Save the compiler cache
-        if: always() && steps.build.outcome != 'skipped'
-        uses: actions/cache/save@v6
-        with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-linux-${{ github.run_id }}-${{ github.run_attempt }}
-
-      # A fresh network namespace has only the loopback interface: a test that tried to reach anything else would fail.
-      # Root brings loopback up, then the tests run as the runner user again (the outer shell expands the variables).
-      - name: Test (loopback only)
-        timeout-minutes: 30
-        run: |
-          sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
-            --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
-            ctest --preset linux --parallel $(nproc) --timeout 300"
-
-      - name: Keep the test log
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: linux-test-log
-          path: build/linux/Testing/Temporary/LastTest*.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-  # Experimental: known POSIX-only code doesn't build with MSVC yet, so a failure here doesn't fail the run.
   windows:
-    name: Windows · build, tests (experimental)
+    name: Windows · build, tests
+    if: github.event_name != 'pull_request'
     runs-on: windows-2025
     timeout-minutes: 240
-    continue-on-error: true
     defaults:
       run:
         shell: bash
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
     steps:
       - uses: actions/checkout@v7
 
@@ -341,17 +433,36 @@ jobs:
             }
           }
 
+      # ccache's own release, checked against its published size and hash. MSVC objects are cacheable because the
+      # windows preset embeds debug information in them (/Z7).
+      - name: ccache
+        env:
+          VERSION: 4.14.1
+          SHA256: 6219f3865ca59aec41ee4b678df171d5d35855ecb2b6dbbbd20690b3a68af7b4
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/ccache.zip" \
+            "https://github.com/ccache/ccache/releases/download/v$VERSION/ccache-$VERSION-windows-x86_64.zip"
+          echo "$SHA256  $RUNNER_TEMP/ccache.zip" | sha256sum -c
+          unzip -q "$RUNNER_TEMP/ccache.zip" -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/ccache-$VERSION-windows-x86_64" >> "$GITHUB_PATH"
+
       - name: vcpkg
         id: vcpkg
         uses: ./.github/actions/vcpkg
         with:
           triplet: x64-windows-selecta
 
+      - name: Restore the compiler cache
+        uses: ./.github/actions/ccache-restore
+        with:
+          name: windows
+
       - name: Configure (builds missing dependencies)
         id: configure
         run: >-
           cmake --preset windows -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
-          -DSELECTA_WITH_MEDIA=OFF -DSELECTA_WARNINGS_AS_ERRORS=OFF
+          -DSELECTA_WITH_MEDIA=OFF -DSELECTA_WARNINGS_AS_ERRORS=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Save the vcpkg binary cache
         if: always() && steps.vcpkg.outcome == 'success'
@@ -365,7 +476,14 @@ jobs:
         run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/windows/CMakeCache.txt
 
       - name: Build
+        id: build
         run: cmake --build --preset windows -- -k 0
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        uses: ./.github/actions/ccache-save
+        with:
+          name: windows
 
       - name: Test
         timeout-minutes: 30
@@ -377,5 +495,81 @@ jobs:
         with:
           name: windows-test-log
           path: build/windows/Testing/Temporary/LastTest*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # AddressSanitizer + UBSan runs at night and on request only (maintainer, 2026-10-21): the whole suite takes about
+  # five minutes under it, after a build of its own. ThreadSanitizer doesn't run (maintainer, 2026-10-21).
+  asan:
+    name: Linux · asan
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 180
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache mold libgl-dev libegl-dev \
+            libglu1-mesa-dev
+
+      - name: vcpkg
+        id: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-linux-selecta
+
+      - name: Restore the compiler cache
+        uses: ./.github/actions/ccache-restore
+        with:
+          name: linux-asan
+
+      - name: Configure (builds missing dependencies)
+        id: configure
+        run: >-
+          cmake --preset linux-asan -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_LINKER_TYPE=MOLD
+
+      - name: Save the vcpkg binary cache
+        if: always() && steps.vcpkg.outcome == 'success'
+        uses: ./.github/actions/vcpkg-save
+        with:
+          key: ${{ steps.vcpkg.outputs.cache-key }}
+          installed: build/linux-asan/vcpkg_installed
+          complete: ${{ steps.configure.outcome == 'success' }}
+
+      - name: The live-server switch is off
+        run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/linux-asan/CMakeCache.txt
+
+      - name: Build
+        id: build
+        run: cmake --build --preset linux-asan -- -k 0
+
+      - name: Save the compiler cache
+        if: ${{ !cancelled() && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        uses: ./.github/actions/ccache-save
+        with:
+          name: linux-asan
+
+      # Under ASan the tests use more of the CPU: two per core.
+      - name: Test (loopback only)
+        timeout-minutes: 60
+        run: |
+          sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
+            --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
+            UBSAN_OPTIONS='$UBSAN_OPTIONS' ctest --preset linux-asan --parallel $(($(nproc) * 2)) --timeout 900"
+
+      - name: Keep the test log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: asan-test-log
+          path: build/linux-asan/Testing/Temporary/LastTest*.log
           if-no-files-found: ignore
           retention-days: 14
