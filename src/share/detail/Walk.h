@@ -68,8 +68,8 @@ struct WalkOptions
     std::function<void(const QByteArray &nativePath, struct stat &status)> afterStat;
 };
 
-// Walks `roots` with build()'s rules (their layouts, audio files only, the skip rules); audio files get their attributes from `attributes`. Threading: reentrant
-// with one AttributeSource per call.
+// Walks `roots` with build()'s rules (their layouts, audio files only, the skip rules); audio files get their
+// attributes from `attributes`. Threading: reentrant with one AttributeSource per call.
 Walk walk(const QList<WalkRoot> &roots, const QStringList &excludedFolders, AttributeSource &attributes,
           const audio::CancellationFlag *cancel, const WalkOptions &options = {});
 

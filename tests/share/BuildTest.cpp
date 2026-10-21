@@ -95,10 +95,9 @@ TEST(ShareBuild, TheAlbumsFolderSharesTheTracksOfEachAlbumAndNothingLooseOrDeepe
     tree.folder(u"Empty Album"_s);
     tree.file(u"Only Subfolders/CD1/01.mp3"_s);
     const BuildResult result = buildTree(tree, {}, {}, Layout::Albums);
-    EXPECT_EQ(listedFiles(*result.index),
-              QStringList({u"Music\\Kel Varo - Amber Engine\\01 Amber Engine.flac"_s,
-                           u"Music\\Kel Varo - Amber Engine\\02 Night Ferry.flac"_s,
-                           u"Music\\Okuma Drift - Neon Rain\\01 Neon Rain.mp3"_s}));
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Kel Varo - Amber Engine\\01 Amber Engine.flac"_s,
+                                                       u"Music\\Kel Varo - Amber Engine\\02 Night Ferry.flac"_s,
+                                                       u"Music\\Okuma Drift - Neon Rain\\01 Neon Rain.mp3"_s}));
     EXPECT_EQ(listedFolders(*result.index),
               QStringList({u"Music"_s, u"Music\\Kel Varo - Amber Engine"_s, u"Music\\Okuma Drift - Neon Rain"_s}));
     EXPECT_EQ(result.index->counts(), (ShareIndex::Counts{3, 3}));
@@ -126,15 +125,15 @@ TEST(ShareBuild, OnlyTracksAreSharedInBothFolders)
 {
     Tree tracks;
     Tree albums;
-    const QStringList others{u"cover.jpg"_s, u"back.jpeg"_s, u"cd.png"_s,      u"album.cue"_s, u"rip.log"_s,
-                             u"info.nfo"_s,  u"notes.txt"_s, u"booklet.pdf"_s, u"setup.exe"_s, u"list.m3u"_s,
-                             u"list.m3u8"_s, u"archive.zip"_s, u"anim.gif"_s,  u"README"_s,    u".DS_Store"_s};
+    const QStringList others{u"cover.jpg"_s, u"back.jpeg"_s,   u"cd.png"_s,      u"album.cue"_s, u"rip.log"_s,
+                             u"info.nfo"_s,  u"notes.txt"_s,   u"booklet.pdf"_s, u"setup.exe"_s, u"list.m3u"_s,
+                             u"list.m3u8"_s, u"archive.zip"_s, u"anim.gif"_s,    u"README"_s,    u".DS_Store"_s};
     for (const QString &name : others) {
         tracks.file(name);
         albums.file(u"Album/"_s + name);
     }
-    for (const QString &name : {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s,
-                                u"07.opus"_s}) {
+    for (const QString &name :
+         {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s, u"07.opus"_s}) {
         tracks.file(name);
         albums.file(u"Album/"_s + name);
     }
@@ -142,12 +141,12 @@ TEST(ShareBuild, OnlyTracksAreSharedInBothFolders)
         build({{tracks.root(), u"Tracks"_s, Layout::Tracks}, {albums.root(), u"Albums"_s, Layout::Albums}}, {});
     EXPECT_TRUE(result.unreadable.isEmpty());
     QStringList expected;
-    for (const QString &name : {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s,
-                                u"07.opus"_s}) {
+    for (const QString &name :
+         {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s, u"07.opus"_s}) {
         expected.append(u"Tracks\\"_s + name);
     }
-    for (const QString &name : {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s,
-                                u"07.opus"_s}) {
+    for (const QString &name :
+         {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s, u"07.opus"_s}) {
         expected.append(u"Albums\\Album\\"_s + name);
     }
     EXPECT_EQ(listedFiles(*result.index), expected);

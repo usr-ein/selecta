@@ -11,7 +11,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -273,11 +272,11 @@ TEST_F(EngineTest, HostForwardsCovers)
 // PRD SHARE-1: the engine shares the collection's two folders by their roles, and never Selecta's Inbox.
 TEST_F(EngineTest, SharesTheCollectionsTracksByTheirFoldersRolesAndNeverTheInbox)
 {
-    for (const QString &relative : {u"Tracks/Loose.mp3"_s, u"Tracks/Sub/Deeper.mp3"_s, u"Tracks/cover.jpg"_s,
-                                    u"Albums/Loose.mp3"_s, u"Albums/Okuma Drift - Neon Rain/01 Neon Rain.mp3"_s,
-                                    u"Albums/Okuma Drift - Neon Rain/CD2/01 Bonus.mp3"_s,
-                                    u"Albums/Okuma Drift - Neon Rain/cover.jpg"_s, u"Inbox/Singles/Waiting.mp3"_s,
-                                    u"Inbox/Albums/Kel Varo - Amber Engine/01 Waiting.mp3"_s}) {
+    for (const QString &relative :
+         {u"Tracks/Loose.mp3"_s, u"Tracks/Sub/Deeper.mp3"_s, u"Tracks/cover.jpg"_s, u"Albums/Loose.mp3"_s,
+          u"Albums/Okuma Drift - Neon Rain/01 Neon Rain.mp3"_s, u"Albums/Okuma Drift - Neon Rain/CD2/01 Bonus.mp3"_s,
+          u"Albums/Okuma Drift - Neon Rain/cover.jpg"_s, u"Inbox/Singles/Waiting.mp3"_s,
+          u"Inbox/Albums/Kel Varo - Amber Engine/01 Waiting.mp3"_s}) {
         ASSERT_TRUE(QDir().mkpath(QFileInfo(dir.filePath(relative)).path()));
         QFile file(dir.filePath(relative));
         ASSERT_TRUE(file.open(QIODevice::WriteOnly));
@@ -301,7 +300,6 @@ TEST_F(EngineTest, SharesTheCollectionsTracksByTheirFoldersRolesAndNeverTheInbox
             shared.append(directory.path.display() + u'\\' + file.name.display());
         }
     }
-    EXPECT_EQ(shared,
-              QStringList({u"Tracks\\Loose.mp3"_s, u"Albums\\Okuma Drift - Neon Rain\\01 Neon Rain.mp3"_s}));
+    EXPECT_EQ(shared, QStringList({u"Tracks\\Loose.mp3"_s, u"Albums\\Okuma Drift - Neon Rain\\01 Neon Rain.mp3"_s}));
     EXPECT_EQ(engine.shares().status().roots, QStringList({config.tracksRoot, config.albumsRoot}));
 }

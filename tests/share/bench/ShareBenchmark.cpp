@@ -11,9 +11,9 @@
 // process footprint (an independent check); build_peak_MB how far the footprint rose while building the first.
 //
 // The trees are synthetic albums folders: album folders ("Artist 12 - Album 345 (2019)") of 10 tracks
-// ("07 - Artist 12 - Title 3456.mp3", every fifth a FLAC) and a cover.jpg each (walked, never shared). Files hold one byte: build() only
-// stats them, and knownAudio (built here as the collection would report it) gives every track its attributes. Trees
-// are written once into the temporary folder and reused by later runs (delete them to rebuild).
+// ("07 - Artist 12 - Title 3456.mp3", every fifth a FLAC) and a cover.jpg each (walked, never shared). Files hold one
+// byte: build() only stats them, and knownAudio (built here as the collection would report it) gives every track its
+// attributes. Trees are written once into the temporary folder and reused by later runs (delete them to rebuild).
 #include "share/ShareIndex.h"
 
 #include <QCoreApplication>

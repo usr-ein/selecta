@@ -192,13 +192,13 @@ void ShareService::setFolders(const collection::FolderRoles &folders, const QStr
     m_roots.clear();
     m_status.roots = folders.roots();
     for (const QString &root : std::as_const(m_status.roots)) {
-        const bool tracks = root == folders.tracks();
         // roots() lists a folder in both roles once, as the tracks folder.
-        const bool albums = !folders.albums().isEmpty() &&
-                            collection::comparisonKey(root) == collection::comparisonKey(folders.albums());
-        const share::Layout layout = tracks && albums ? share::Layout::TracksAndAlbums
-                                     : tracks         ? share::Layout::Tracks
-                                                      : share::Layout::Albums;
+        share::Layout layout = share::Layout::Albums;
+        if (root == folders.tracks()) {
+            const bool albumsToo = !folders.albums().isEmpty() &&
+                                   collection::comparisonKey(root) == collection::comparisonKey(folders.albums());
+            layout = albumsToo ? share::Layout::TracksAndAlbums : share::Layout::Tracks;
+        }
         m_roots.append(share::ShareRoot{.path = root, .alias = QFileInfo(root).fileName(), .layout = layout});
     }
     m_excluded = excluded;

@@ -40,8 +40,8 @@ inline constexpr int kMaxFiles = 1'000'000;
 // What a shared folder holds, as the collection's two folders hold it (PRD LIB-1, SHARE-1): build() shares its tracks
 // and nothing else.
 enum class Layout : quint8 {
-    Tracks,          // the tracks folder: the tracks lying in it; nothing in its subfolders
-    Albums,          // the albums folder: one album per subfolder, the tracks lying in it; nothing deeper, nothing loose
+    Tracks, // the tracks folder: the tracks lying in it; nothing in its subfolders
+    Albums, // the albums folder: one album per subfolder, the tracks lying in it; nothing deeper, nothing loose
     TracksAndAlbums, // one folder in both roles: its loose tracks and its albums' tracks
 };
 
@@ -103,8 +103,9 @@ struct BuildResult
 // audio::probeStreamInfo() reads from its header (the file opened with O_NOFOLLOW and checked to be the walked file),
 // or no attributes when that fails.
 //
-// Virtual paths: `<alias>\<name>` or `<alias>\<album>\<name>`, NFC, never revealing anything above the root. A `\` inside a local name
-// becomes `＼` (U+FF3C) in its virtual name. Aliases are cleaned (`\` and `/` become `_`, control characters go, empty,
+// Virtual paths: `<alias>\<name>` or `<alias>\<album>\<name>`, NFC, never revealing anything above the root. A `\`
+// inside a local name becomes `＼` (U+FF3C) in its virtual name. Aliases are cleaned (`\` and `/` become `_`, control
+// characters go, empty,
 // "." and ".." become "Shared") and made unique case-insensitively in root order: "Music", "Music (2)". A root that
 // isn't there (an unplugged drive) or isn't a folder is reported, keeps its alias (so aliases don't shift while a
 // drive is away) and contributes nothing.
