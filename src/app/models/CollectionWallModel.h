@@ -74,7 +74,7 @@ private:
     };
 
     void regroup();
-    const core::CollectionTile *tileAt(const Row &row) const;
+    const core::CollectionTile *tileAt(Row row) const;
     QVariant tileData(const core::CollectionTile &tile, int role) const;
     QVariant sectionHeaderData(const core::CollectionSection &section, int role) const;
     // An album's first track as it plays; its tile's text, tooltip and lowest tier.

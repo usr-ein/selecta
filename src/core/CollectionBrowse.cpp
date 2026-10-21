@@ -96,7 +96,7 @@ QualityTier tierOfBitrate(int kbps)
     return QualityTier::Below192;
 }
 
-QualityTier qualityTier(const match::AudioQuality &quality, const TierEvidence &evidence)
+QualityTier qualityTier(const match::AudioQuality &quality, TierEvidence evidence)
 {
     QualityTier tier = QualityTier::Unknown;
     if (match::isLossless(quality.codec) || evidence.fromLossless) {
@@ -161,9 +161,8 @@ bool isLosslessQualityText(QStringView quality)
     const qsizetype space = trimmed.indexOf(u' ');
     const QStringView format = space < 0 ? trimmed : trimmed.left(space);
     static constexpr std::array<QStringView, 5> kLossless{u"FLAC", u"ALAC", u"WAV", u"AIFF", u"PCM"};
-    return std::ranges::any_of(kLossless, [format](QStringView lossless) {
-        return format.compare(lossless, Qt::CaseInsensitive) == 0;
-    });
+    return std::ranges::any_of(
+        kLossless, [format](QStringView lossless) { return format.compare(lossless, Qt::CaseInsensitive) == 0; });
 }
 
 bool operator==(const CollectionTrack &a, const CollectionTrack &b)
@@ -357,10 +356,10 @@ QList<CollectionSection> groupCollection(const CollectionListing &listing, Colle
     result.reserve(sections.size());
     for (auto it = sections.cbegin(); it != sections.cend(); ++it) {
         const QList<int> &members = it.value();
-        result.append(CollectionSection{
-            .title = sectionTitle(it.key(), order, tracks.at(members.constFirst()), genreSpellings),
-            .tiles = tilesOf(members, tracks, albums, facts, order == CollectionOrder::Added),
-            .trackCount = static_cast<int>(members.size())});
+        result.append(
+            CollectionSection{.title = sectionTitle(it.key(), order, tracks.at(members.constFirst()), genreSpellings),
+                              .tiles = tilesOf(members, tracks, albums, facts, order == CollectionOrder::Added),
+                              .trackCount = static_cast<int>(members.size())});
     }
     return result;
 }

@@ -5,6 +5,8 @@
 #include <QPalette>
 #include <QStyleHints>
 
+#include <array>
+
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
@@ -55,6 +57,26 @@ void applyAppearance(Appearance appearance)
 bool isDarkPalette(const QPalette &palette)
 {
     return palette.color(QPalette::Window).lightness() < palette.color(QPalette::WindowText).lightness();
+}
+
+QColor qualityTierColor(int tier, const QPalette &palette)
+{
+    // As core::QualityTier counts: unknown, below 192, 192–255, 256–319, 320 or V0, from lossless.
+    struct Pair
+    {
+        QColor light;
+        QColor dark;
+    };
+    static const std::array<Pair, 6> kColours{{
+        {QColor(0x8E, 0x8E, 0x93), QColor(0x98, 0x98, 0x9D)}, // grey
+        {QColor(0xFF, 0x3B, 0x30), QColor(0xFF, 0x45, 0x3A)}, // red
+        {QColor(0xFF, 0x95, 0x00), QColor(0xFF, 0x9F, 0x0A)}, // orange
+        {QColor(0xFF, 0xCC, 0x00), QColor(0xFF, 0xD6, 0x0A)}, // yellow
+        {QColor(0x34, 0xC7, 0x59), QColor(0x30, 0xD1, 0x58)}, // green
+        {QColor(0x00, 0x7A, 0xFF), QColor(0x0A, 0x84, 0xFF)}, // blue
+    }};
+    const Pair &pair = kColours.at(tier >= 0 && tier < static_cast<int>(kColours.size()) ? tier : 0);
+    return isDarkPalette(palette) ? pair.dark : pair.light;
 }
 
 QColor symbolAccentColor(const QPalette &palette)

@@ -6,6 +6,7 @@
 #include "meta/Release.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QStringList>
 #include <QTextDocument>
 
@@ -112,6 +113,15 @@ QString quality(const match::AudioQuality &quality)
                                            : u"%1 %2"_s.arg(codec).arg(quality.bitrateKbps);
     }
     return codec;
+}
+
+QString shownPath(const QString &path)
+{
+    const QString home = QDir::homePath();
+    if (!home.isEmpty() && home != u"/" && (path == home || path.startsWith(home + u'/'))) {
+        return QDir::toNativeSeparators(u"~"_s + path.mid(home.size()));
+    }
+    return QDir::toNativeSeparators(path);
 }
 
 QString release(const meta::Release &release)

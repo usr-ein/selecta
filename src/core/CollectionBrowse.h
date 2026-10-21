@@ -44,7 +44,7 @@ QualityTier tierOfBitrate(int kbps);
 // goes by its bitrate, a VBR MP3 of kV0MinimumKbps or more on average with 320. A spectrum verdict puts a file in the
 // tier of the bitrate it was likely made from when that is lower (a fake 320, a FLAC made from an MP3); it never raises
 // one.
-QualityTier qualityTier(const match::AudioQuality &quality, const TierEvidence &evidence = {});
+QualityTier qualityTier(const match::AudioQuality &quality, TierEvidence evidence = {});
 // Where the quality grouping puts a tier: worst first, Unknown last.
 int tierDisplayOrder(QualityTier tier);
 // The tier in words, for a section title: "Below 192 kbps", "192–255 kbps", "256–319 kbps", "320 kbps or V0",

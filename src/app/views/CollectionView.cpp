@@ -36,16 +36,6 @@ namespace {
 constexpr int kWallPage = 0;
 constexpr int kAlbumPage = 1;
 
-// A folder as the Finder says it: the home folder as "~".
-QString shownFolder(const QString &path)
-{
-    const QString home = QDir::homePath();
-    if (!home.isEmpty() && home != u"/" && (path == home || path.startsWith(home + u'/'))) {
-        return QDir::toNativeSeparators(u"~"_s + path.mid(home.size()));
-    }
-    return QDir::toNativeSeparators(path);
-}
-
 QString tracksText(int count)
 {
     return count == 1 ? CollectionView::tr("1 track") : CollectionView::tr("%1 tracks").arg(QLocale().toString(count));
@@ -126,7 +116,8 @@ CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
         const QList<qint64> tracks = selectedTracks();
         const QSet<qint64> selected(tracks.cbegin(), tracks.cend());
         m_wallModel->setOrder(static_cast<core::CollectionOrder>(m_order->currentData().toInt()));
-        for (const int row : m_wallModel->rowsWithAny(selected)) {
+        const QList<int> rows = m_wallModel->rowsWithAny(selected);
+        for (const int row : rows) {
             m_wall->selectionModel()->select(m_wallModel->index(row), QItemSelectionModel::Select);
         }
         m_wall->verticalScrollBar()->setValue(0);
@@ -349,7 +340,7 @@ void CollectionView::showStatus(const core::CollectionStatus &status)
     m_details->setText(details.join(u" · "_s));
     m_details->setVisible(!details.isEmpty());
     // Each folder by its role (PRD LIB-1).
-    const auto folder = [](const QString &path) { return path.isEmpty() ? tr("not chosen") : shownFolder(path); };
+    const auto folder = [](const QString &path) { return path.isEmpty() ? tr("not chosen") : format::shownPath(path); };
     m_folders->setText(
         tr("Tracks folder: %1 · Albums folder: %2").arg(folder(status.tracksFolder), folder(status.albumsFolder)));
     QStringList chosen;
@@ -403,7 +394,8 @@ void CollectionView::showListing(const std::shared_ptr<const core::CollectionLis
     }
     m_wallModel->setListing(listing);
     m_wall->doItemsLayout();
-    for (const int row : m_wallModel->rowsWithAny(selected)) {
+    const QList<int> rows = m_wallModel->rowsWithAny(selected);
+    for (const int row : rows) {
         m_wall->selectionModel()->select(m_wallModel->index(row), QItemSelectionModel::Select);
     }
     m_wall->verticalScrollBar()->setValue(scroll);

@@ -13,7 +13,7 @@ class CollectionCovers;
 
 // Draws the cover wall's rows (CollectionWallModel): a header's title and track count; a tile's cover (an album's with
 // a stack of plates above it), title, artist, and quality with a dot of its tier's colour (the words say it too, PRD
-// UI-4). Covers come from CollectionCovers, asked for as tiles are drawn; until one is read, a placeholder. Main
+// UI-4; the colours are Appearance's). Covers come from CollectionCovers, asked for as tiles are drawn; until one is read, a placeholder. Main
 // thread.
 class CollectionTileDelegate : public QStyledItemDelegate
 {
@@ -29,8 +29,6 @@ public:
     // A tile `width` wide, in `font`: the cover, square, and three lines of text below it.
     static int tileHeight(int width, const QFont &font);
     static int headerHeight(const QFont &font);
-    // The colour of a tier's dot (core::QualityTier, as an int).
-    static QColor tierColour(int tier);
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
     QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;

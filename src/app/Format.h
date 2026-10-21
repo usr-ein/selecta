@@ -31,6 +31,8 @@ QString quality(const match::AudioQuality &quality);
 QString release(const meta::Release &release);
 // "+2 s", "−5 s": a file's length against the release.
 QString lengthDelta(qint64 deltaSeconds);
+// A file or folder as the Finder names it: the home folder as "~" ("~/Music/Tracks"), native separators.
+QString shownPath(const QString &path);
 // "9.4 MB", "820 KB", "1.2 GB" (decimal units, as the Finder shows them).
 QString size(qint64 bytes);
 // "1.2 MB/s", "340 KB/s"; an empty string for an unknown speed.

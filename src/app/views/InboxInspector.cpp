@@ -430,7 +430,7 @@ void InboxInspector::setAlsoOn(const QStringList &albums)
     }
     // P-010: a better copy of a collection file, asked for from the Collection view.
     if (m_item && !m_item->replaces.isEmpty()) {
-        const QString file = QDir::toNativeSeparators(m_item->replaces);
+        const QString file = format::shownPath(m_item->replaces);
         const QString mismatch = core::upgradeMismatch(*m_item);
         lines.append(mismatch.isEmpty() ? tr("An upgrade of %1: Save to collection puts it in that file's place, under "
                                              "the same name, and moves that file to the Trash.")

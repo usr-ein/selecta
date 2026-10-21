@@ -4,6 +4,7 @@
 #include "app/views/CollectionView.h"
 
 #include "SyntheticAudio.h"
+#include "app/Format.h"
 #include "app/models/CollectionWallModel.h"
 #include "app/views/CollectionAlbumView.h"
 #include "app/views/CollectionCovers.h"
@@ -43,6 +44,7 @@ using selecta::app::CollectionCovers;
 using selecta::app::CollectionView;
 using selecta::app::CollectionWall;
 using selecta::app::CollectionWallModel;
+namespace format = selecta::app::format;
 using selecta::core::CollectionAlbum;
 using selecta::core::CollectionListing;
 using selecta::core::CollectionOrder;
@@ -69,7 +71,7 @@ class Listing
 {
 public:
     qint64 track(const QString &artist, const QString &title, QualityTier tier = QualityTier::Top, quint64 album = 0,
-                 int number = 0, qint64 addedMs = 0, AudioQuality quality = mp3(320))
+                 int number = 0, qint64 addedMs = 0, const AudioQuality &quality = mp3(320))
     {
         CollectionTrack track;
         track.id = m_nextId++;
@@ -233,7 +235,7 @@ TEST(CollectionWallModel, AnAlbumsTileHoldsItsTracksOfTheSection)
     EXPECT_EQ(album.data(CollectionWallModel::DetailRole).toString(), u"Album · 2024 · 2 tracks"_s);
     EXPECT_EQ(album.data(CollectionWallModel::TrackIdsRole).value<QList<qint64>>(), (QList<qint64>{6, 7}));
     EXPECT_EQ(album.data(CollectionWallModel::TierRole).toInt(), static_cast<int>(QualityTier::Below192)); // its lowest
-    EXPECT_EQ(album.data(CollectionWallModel::CoverKeyRole).toString(), u"album:7:track:6:0:0"_s); // its first
+    EXPECT_EQ(album.data(CollectionWallModel::CoverKeyRole).toString(), u"album:7:track:6:0:0"_s);         // its first
     EXPECT_EQ(album.data(CollectionWallModel::CoverFolderRole).toString(), u"/Music/Albums/Okuma Drift - Nightfall"_s);
     EXPECT_EQ(album.data(CollectionWallModel::CoverFileRole).toString(), u"/Music/Albums/Okuma Drift - Dusk.mp3"_s);
 
@@ -390,7 +392,8 @@ TEST_F(CollectionWallTest, ADragFromTheBackgroundSelectsTheTilesItCovers)
     QApplication::sendEvent(wall.viewport(), &move);
     QTest::mouseRelease(wall.viewport(), Qt::LeftButton, {}, end);
     QList<int> rows;
-    for (const QModelIndex &index : wall.selectionModel()->selectedIndexes()) {
+    const QModelIndexList selected = wall.selectionModel()->selectedIndexes();
+    for (const QModelIndex &index : selected) {
         rows.append(index.row());
     }
     std::ranges::sort(rows);
@@ -399,7 +402,7 @@ TEST_F(CollectionWallTest, ADragFromTheBackgroundSelectsTheTilesItCovers)
 
 TEST_F(CollectionWallTest, AnAlbumOpensOnADoubleClickOrReturn)
 {
-    QSignalSpy const opened(&wall, &CollectionWall::albumOpened);
+    const QSignalSpy opened(&wall, &CollectionWall::albumOpened);
     // QTest sends a double click as the second press alone: the first click comes before it, as with a mouse.
     QTest::mouseClick(wall.viewport(), Qt::LeftButton, {}, rectOf(2).center());
     QTest::mouseDClick(wall.viewport(), Qt::LeftButton, {}, rectOf(2).center()); // a loose track
@@ -410,7 +413,8 @@ TEST_F(CollectionWallTest, AnAlbumOpensOnADoubleClickOrReturn)
     EXPECT_EQ(opened.constFirst().constFirst().toULongLong(), 7U);
 
     wall.setCurrentIndex(model.index(6));
-    for (QShortcut *shortcut : wall.findChildren<QShortcut *>()) {
+    const QList<QShortcut *> shortcuts = wall.findChildren<QShortcut *>();
+    for (QShortcut *shortcut : shortcuts) {
         if (shortcut->key() == QKeySequence(Qt::Key_Return)) {
             Q_EMIT shortcut->activated();
         }
@@ -460,7 +464,7 @@ TEST_F(CollectionWallTest, ANewGroupingIsLaidOutAgain)
 
 TEST(CollectionCovers, AnEmbeddedCoverIsReadSquareAndBounded)
 {
-    QTemporaryDir const dir;
+    const QTemporaryDir dir;
     const QString front = dir.filePath(u"front.mp3"_s);
     const QString wide = dir.filePath(u"wide.mp3"_s);
     const QString none = dir.filePath(u"none.mp3"_s);
@@ -500,7 +504,7 @@ TEST(CollectionCovers, TheFrontCoverElseTheFirstPicture)
 
 TEST(CollectionCovers, AnAlbumsFolderImageComesFirst)
 {
-    QTemporaryDir const dir;
+    const QTemporaryDir dir;
     const QString album = dir.filePath(u"Okuma Drift - Nightfall"_s);
     ASSERT_TRUE(writeTrackWithCover(album + u"/01 Dusk.mp3"_s, jpeg({300, 300}, Qt::red)));
     {
@@ -520,7 +524,7 @@ TEST(CollectionCovers, AnAlbumsFolderImageComesFirst)
 
 TEST(CollectionCovers, ACoverIsReadOnceAndKept)
 {
-    QTemporaryDir const dir;
+    const QTemporaryDir dir;
     const QString file = dir.filePath(u"a.mp3"_s);
     ASSERT_TRUE(writeTrackWithCover(file, jpeg({400, 400}, Qt::red)));
     CollectionCovers covers;
@@ -572,7 +576,7 @@ TEST(CollectionAlbumView, AnAlbumsTracksInOrderWithTheirQuality)
     EXPECT_FALSE(view.showAlbum(listing.get(), 99));
     ASSERT_TRUE(view.showAlbum(listing.get(), 3));
     EXPECT_EQ(view.albumId(), 3U);
-    QTreeView  const*tracks = view.trackList();
+    const QTreeView *tracks = view.trackList();
     ASSERT_EQ(tracks->model()->rowCount(), 3);
     const auto at = [tracks](int row, int column) { return tracks->model()->index(row, column).data().toString(); };
     EXPECT_EQ(at(0, CollectionAlbumView::TitleColumn), u"Low Sun"_s);
@@ -584,7 +588,7 @@ TEST(CollectionAlbumView, AnAlbumsTracksInOrderWithTheirQuality)
     EXPECT_EQ(view.findChild<QLabel *>(u"collection.album.details"_s)->text(),
               u"2025 · 3 tracks · 18:36 · 2 tracks below 320 kbps"_s);
 
-    QSignalSpy const selection(&view, &CollectionAlbumView::selectionChanged);
+    const QSignalSpy selection(&view, &CollectionAlbumView::selectionChanged);
     tracks->selectionModel()->select(tracks->model()->index(2, 0),
                                      QItemSelectionModel::Select | QItemSelectionModel::Rows);
     EXPECT_FALSE(selection.isEmpty());
@@ -666,7 +670,7 @@ TEST_F(CollectionViewTest, SearchingForBetterQualityAsksForTheTracksSelected)
 {
     auto *button = child<QPushButton>(u"collection.betterQuality"_s);
     EXPECT_FALSE(button->isEnabled()); // nothing selected
-    QSignalSpy const asked(view.get(), &CollectionView::betterQualityRequested);
+    const QSignalSpy asked(view.get(), &CollectionView::betterQualityRequested);
     // Glass is from lossless already: nothing is better.
     view->wall()->selectionModel()->select(view->wallModel()->index(1), QItemSelectionModel::Select);
     EXPECT_FALSE(button->isEnabled());
@@ -728,7 +732,7 @@ TEST_F(CollectionViewTest, AnEmptyCollectionSaysSo)
 TEST(InboxUpgrades, AnUpgradeIsMarkedAndSaysWhetherItCanReplaceItsFile)
 {
     selecta::core::EngineHost engine{selecta::core::EngineOptions{}};
-    selecta::app::InboxView const inbox(engine);
+    const selecta::app::InboxView inbox(engine);
     selecta::core::InboxEntry upgrade;
     upgrade.item.id = 1;
     upgrade.item.kind = selecta::library::InboxItem::Kind::Single;
@@ -769,13 +773,13 @@ TEST(InboxUpgrades, TheInspectorSaysWhatAnUpgradeReplaces)
     item.state = selecta::library::InboxItem::State::Ready;
     item.relativePath = u"Singles/Okuma Drift - Dusk.mp3"_s;
     item.replaces = u"/Music/Albums/Okuma Drift - Nightfall/01 Dusk.mp3"_s;
-    QTemporaryDir const dir;
+    const QTemporaryDir dir;
     inspector.showItem(item, dir.path());
     inspector.setAlsoOn({});
     const auto *notes = inspector.findChild<QLabel *>(u"inspector.inbox.alsoOn"_s);
     ASSERT_NE(notes, nullptr);
-    EXPECT_TRUE(notes->text().startsWith(u"An upgrade of %1: Save to collection puts it in that file's place"_s.arg(
-        QDir::toNativeSeparators(item.replaces))))
+    EXPECT_TRUE(notes->text().startsWith(
+        u"An upgrade of %1: Save to collection puts it in that file's place"_s.arg(format::shownPath(item.replaces))))
         << notes->text().toStdString();
     item.replaces = u"/Music/Tracks/Okuma Drift - Dusk.m4a"_s;
     inspector.showItem(item, dir.path());
@@ -820,7 +824,7 @@ TEST(CollectionScreenshots, AnAlbumsPage)
     if (folder.isEmpty()) {
         GTEST_SKIP() << "set SELECTA_SCREENS_DIR to draw the screenshots";
     }
-    QTemporaryDir const dir;
+    const QTemporaryDir dir;
     const QString first = dir.filePath(u"01 Dusk.mp3"_s);
     ASSERT_TRUE(writeTrackWithCover(first, paintedCover(QColor(0xff, 0x51, 0x2f), QColor(0xdd, 0x24, 0x76))));
     CollectionListing listing;

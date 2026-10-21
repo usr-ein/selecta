@@ -2,6 +2,7 @@
 #include "app/views/CollectionAlbumView.h"
 
 #include "app/Accessibility.h"
+#include "app/Appearance.h"
 #include "app/Format.h"
 #include "app/models/CollectionWallModel.h"
 #include "app/views/CollectionCovers.h"
@@ -31,7 +32,7 @@ namespace selecta::app {
 namespace {
 
 // A tier's dot, for the quality column: the words beside it say it too (PRD UI-4).
-QIcon tierDot(int tier)
+QIcon tierDot(int tier, const QPalette &palette)
 {
     QPixmap dot(QSize(20, 20));
     dot.setDevicePixelRatio(2.0);
@@ -39,7 +40,7 @@ QIcon tierDot(int tier)
     QPainter painter(&dot);
     painter.setRenderHint(QPainter::Antialiasing);
     painter.setPen(Qt::NoPen);
-    painter.setBrush(CollectionTileDelegate::tierColour(tier));
+    painter.setBrush(qualityTierColor(tier, palette));
     painter.drawEllipse(QRectF(2, 2, 6, 6));
     return {dot};
 }
@@ -217,7 +218,7 @@ bool CollectionAlbumView::showAlbum(const std::shared_ptr<const core::Collection
             cell(CollectionWallModel::qualityText(*track), track->id),
             cell(format::length(track->durationMs > 0 ? std::optional(track->durationMs) : std::nullopt), track->id),
         };
-        row.at(QualityColumn)->setIcon(tierDot(static_cast<int>(track->tier)));
+        row.at(QualityColumn)->setIcon(tierDot(static_cast<int>(track->tier), palette()));
         row.at(QualityColumn)->setToolTip(format::plainToolTip(core::tierName(track->tier)));
         row.at(TitleColumn)->setToolTip(format::plainToolTip(QDir::toNativeSeparators(track->path)));
         row.at(TitleColumn)->setData(track->path, kPathRole);

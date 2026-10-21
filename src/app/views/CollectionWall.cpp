@@ -2,6 +2,7 @@
 #include "app/views/CollectionWall.h"
 
 #include "app/Accessibility.h"
+#include "app/Appearance.h"
 #include "app/models/CollectionWallModel.h"
 #include "app/views/CollectionCovers.h"
 #include "core/CollectionBrowse.h"
@@ -80,25 +81,6 @@ int CollectionTileDelegate::tileHeight(int width, const QFont &font)
 int CollectionTileDelegate::headerHeight(const QFont &font)
 {
     return QFontMetrics(headerFont(font)).height() + 4;
-}
-
-QColor CollectionTileDelegate::tierColour(int tier)
-{
-    switch (static_cast<QualityTier>(tier)) {
-    case QualityTier::Below192:
-        return {0xE5, 0x48, 0x4D}; // red
-    case QualityTier::From192:
-        return {0xF7, 0x6B, 0x15}; // orange
-    case QualityTier::From256:
-        return {0xE2, 0xB3, 0x08}; // yellow
-    case QualityTier::Top:
-        return {0x30, 0xA4, 0x6C}; // green
-    case QualityTier::Lossless:
-        return {0x3E, 0x7B, 0xF0}; // blue
-    case QualityTier::Unknown:
-        break;
-    }
-    return {0x8E, 0x8E, 0x93}; // grey
 }
 
 QSize CollectionTileDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
@@ -223,7 +205,7 @@ void CollectionTileDelegate::paintTile(QPainter *painter, const QStyleOptionView
     // The tier's dot, then its words: the colour never says it alone.
     const int dot = std::max(6, (smallMetrics.height() / 2) - 1);
     painter->setPen(Qt::NoPen);
-    painter->setBrush(tierColour(index.data(CollectionWallModel::TierRole).toInt()));
+    painter->setBrush(qualityTierColor(index.data(CollectionWallModel::TierRole).toInt(), palette));
     painter->drawEllipse(QRectF(rect.left() + 1, y + ((smallMetrics.height() - dot) / 2.0), dot, dot));
     painter->setPen(palette.color(QPalette::PlaceholderText));
     const int textLeft = rect.left() + dot + 6;
@@ -351,7 +333,7 @@ int CollectionWall::firstRowReaching(int y) const
 {
     // Rows go down the page: their bottoms never decrease.
     const QList<QRect> &rects = m_rects;
-    const auto it = std::ranges::partition_point(rects, [y](const QRect &rect) { return rect.bottom() < y; });
+    const auto it = std::ranges::partition_point(rects, [y](QRect rect) { return rect.bottom() < y; });
     return static_cast<int>(it - rects.cbegin());
 }
 

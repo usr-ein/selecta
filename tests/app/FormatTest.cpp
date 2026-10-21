@@ -3,6 +3,8 @@
 
 #include "match/Types.h"
 
+#include <QDir>
+
 #include <gtest/gtest.h>
 #include <limits>
 
@@ -63,4 +65,13 @@ TEST(FormatTest, ALocalFilesQuality)
     EXPECT_EQ(quality(AudioQuality{.codec = Codec::Wav, .sampleRateHz = 96000, .bitDepth = 24}), u"WAV 24/96"_s);
     EXPECT_EQ(quality(AudioQuality{.codec = Codec::Alac}), u"ALAC"_s);
     EXPECT_EQ(quality(AudioQuality{}), u"?"_s);
+}
+
+TEST(FormatTest, PathsUnderTheHomeFolderStartWithATilde)
+{
+    const QString home = QDir::homePath();
+    EXPECT_EQ(format::shownPath(home + u"/Music/Tracks"_s), QDir::toNativeSeparators(u"~/Music/Tracks"_s));
+    EXPECT_EQ(format::shownPath(home), u"~"_s);
+    EXPECT_EQ(format::shownPath(home + u"stead/Music"_s), QDir::toNativeSeparators(home + u"stead/Music"_s));
+    EXPECT_EQ(format::shownPath(u"/Volumes/Crate/Albums"_s), QDir::toNativeSeparators(u"/Volumes/Crate/Albums"_s));
 }

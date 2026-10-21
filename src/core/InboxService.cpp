@@ -423,8 +423,7 @@ void InboxService::drain()
         } else if (filed) {
             done = "filed";
         }
-        qCInfo(lcInbox).noquote() << done
-                                  << name << "→" << outcome.result.path;
+        qCInfo(lcInbox).noquote() << done << name << "→" << outcome.result.path;
         QString message;
         if (replaced) {
             message = tr("Replaced %1. The old file is in the Trash.").arg(outcome.result.path);

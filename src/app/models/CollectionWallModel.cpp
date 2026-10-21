@@ -109,7 +109,7 @@ void CollectionWallModel::regroup()
     }
 }
 
-const core::CollectionTile *CollectionWallModel::tileAt(const Row &row) const
+const core::CollectionTile *CollectionWallModel::tileAt(Row row) const
 {
     if (row.kind != Kind::Tile || row.section < 0 || row.section >= m_sections.size()) {
         return nullptr;
