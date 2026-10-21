@@ -435,6 +435,23 @@ MetadataModel tagsAsWritten(const MetadataModel &model, audio::Container contain
     return predicted;
 }
 
+bool canWriteTags(audio::Container container)
+{
+    switch (container) {
+    case audio::Container::MpegAudio:
+    case audio::Container::Aiff:
+    case audio::Container::Wav:
+    case audio::Container::Flac:
+    case audio::Container::Mp4:
+        return true;
+    case audio::Container::Ogg:
+    case audio::Container::Other:
+    case audio::Container::Unknown:
+        break;
+    }
+    return false;
+}
+
 Result<void> writeTags(const QString &path, const MetadataModel &model, const TagWriteOptions &options)
 {
     if (!QFileInfo(path).isFile()) {

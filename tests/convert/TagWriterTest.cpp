@@ -289,6 +289,17 @@ TEST_F(TagWriting, FailuresAreReported)
     EXPECT_EQ(writeTags(ogg, model).error().code, ErrorCode::Unsupported);
     const QString garbage = file(u"garbage.mp3"_s, randomBytes(5000, 3));
     EXPECT_EQ(writeTags(garbage, model).error().code, ErrorCode::Unsupported);
+    // canWriteTags() says the same as writeTags() does, before trying (P-025: the Inbox converts what it can't tag).
+    using selecta::audio::Container;
+    for (const auto container :
+         {Container::MpegAudio, Container::Aiff, Container::Wav, Container::Flac, Container::Mp4}) {
+        EXPECT_TRUE(canWriteTags(container));
+    }
+    for (const auto container : {Container::Ogg, Container::Other, Container::Unknown}) {
+        EXPECT_FALSE(canWriteTags(container));
+    }
+    const QString opus = file(u"song.opus"_s, makeOpus(sine(440.0, 1.0, 48000)));
+    EXPECT_EQ(writeTags(opus, model).error().code, ErrorCode::Unsupported);
     const QString readOnly = file(u"readonly.mp3"_s, makeMp3(pcm, {}));
     QFile::setPermissions(readOnly, QFileDevice::ReadOwner);
     EXPECT_EQ(writeTags(readOnly, model).error().code, ErrorCode::OpenFailed);

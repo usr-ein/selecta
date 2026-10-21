@@ -41,6 +41,10 @@ struct TagWriteOptions
 // MP3/AIFF/WAV/FLAC/M4A), TagError (TagLib can't parse the file or couldn't save it, e.g. on a full disk).
 Result<void> writeTags(const QString &path, const MetadataModel &model, const TagWriteOptions &options = {});
 
+// Whether writeTags() writes files of `container` (MP3, AIFF, WAV, FLAC, M4A); Ogg and Other containers it refuses
+// with Unsupported. Pure.
+bool canWriteTags(audio::Container container);
+
 // What `model` looks like once written as ID3v2.3: TMOO/TSST/TDRL/TDTG/TPRO keys become the TXXX names TagLib reads
 // back (MOOD, DISCSUBTITLE, RELEASEDATE, TAGGINGDATE, PRODUCEDNOTICE stay as keys but are stored as TXXX), multi-value
 // fields are joined with the separators. Pure; the verifier compares a re-read file against this.

@@ -326,7 +326,8 @@ ArrivalService::Outcome ArrivalService::work(const Job &job)
         return outcome;
     }
 
-    // What the file really is, and what the Inbox gets from it (D29: lossy audio below the format is kept as is).
+    // What the file really is, and what the Inbox gets from it (D29: an MP3 below the format is kept as is;
+    // other lossy formats become MP3, P-025).
     convert::Result<convert::SourceQuality> probed = convert::probeSourceQuality(source, false, &job.cancel);
     if (!probed) {
         outcome.cancelled = job.cancel.isCancelled();

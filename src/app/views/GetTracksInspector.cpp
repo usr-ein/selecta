@@ -220,8 +220,8 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     // Not found: the track's files below the quality wanted.
     m_nearMisses = makeChoices(u"inspector.get.nearMisses"_s, details);
     m_nearMisses.heading->setText(tr("Files below the quality wanted"));
-    m_nearMisses.note->setText(tr("A lossy file is kept as it is, with its tags and cover. Your Inbox marks it below "
-                                  "your quality."));
+    m_nearMisses.note->setText(tr("An MP3 is kept as it is; other lossy files become MP3 320. Either way it gets its "
+                                  "tags and cover, and your Inbox marks it below your quality."));
     m_nearMisses.button->setText(tr("Get Anyway"));
     m_nearMisses.button->setToolTip(tr("Get the file picked, below the quality wanted"));
     connect(m_nearMisses.button, &QPushButton::clicked, this, [this] {
