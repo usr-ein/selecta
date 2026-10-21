@@ -161,16 +161,17 @@ TEST(InboxStoreMigration, ItemsFromBeforeTheSpectrumCheckReadAsUnchecked)
     ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(15)).ok());
     ASSERT_TRUE(db.exec(u"INSERT INTO inbox_items (kind, relative_path, state, created_at) "
                         "VALUES ('single', 'Singles/old.mp3', 'ready', 1);"_s));
-    // Up to the schema of earlier builds: the next migration empties the Inbox (P-001).
+    // Up to the schema of earlier builds: the next migration empties the Inbox (P-001). The store reads the newest
+    // schema, so the columns are read as it reads them.
     const auto beforeTheMove = static_cast<std::size_t>(selecta::storage::kInboxMovedVersion - 1);
     ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(beforeTheMove)).ok());
-    InboxStore store(db);
-    const auto old = store.findByPath(u"Singles/old.mp3"_s);
-    ASSERT_TRUE(old.has_value());
-    EXPECT_FALSE(old->qualityChecked);
-    EXPECT_TRUE(old->qualityFindings.isEmpty());
-    EXPECT_FALSE(old->qualityCutoffHz.has_value());
-    EXPECT_TRUE(old->qualityKey.isEmpty());
+    selecta::storage::Statement old = db.prepare(u"SELECT quality_checked, quality_findings, quality_cutoff_hz, "
+                                                 "quality_key FROM inbox_items WHERE relative_path = 'Singles/old.mp3';"_s);
+    ASSERT_EQ(old.step(), selecta::storage::Statement::Step::Row);
+    EXPECT_EQ(old.int64(0), 0);
+    EXPECT_TRUE(old.text(1).isEmpty());
+    EXPECT_TRUE(old.isNull(2));
+    EXPECT_TRUE(old.text(3).isEmpty());
     // The flag is a boolean.
     EXPECT_FALSE(db.exec(u"UPDATE inbox_items SET quality_checked = 2;"_s));
 }
@@ -196,10 +197,12 @@ TEST(InboxStoreMigration, ItemsFromBeforeGetAnywayMetTheQualityWanted)
     ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(17)).ok());
     ASSERT_TRUE(db.exec(u"INSERT INTO inbox_items (kind, relative_path, state, created_at) "
                         "VALUES ('single', 'Singles/old.mp3', 'ready', 1);"_s));
-    // Up to the schema of earlier builds: the next migration empties the Inbox (P-001).
+    // Up to the schema of earlier builds: the next migration empties the Inbox (P-001). The store reads the newest
+    // schema, so the column is read as it reads it.
     const auto beforeTheMove = static_cast<std::size_t>(selecta::storage::kInboxMovedVersion - 1);
     ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(beforeTheMove)).ok());
-    const auto old = InboxStore(db).findByPath(u"Singles/old.mp3"_s);
-    ASSERT_TRUE(old.has_value());
-    EXPECT_TRUE(old->belowWanted.isEmpty());
+    selecta::storage::Statement old =
+        db.prepare(u"SELECT below_wanted FROM inbox_items WHERE relative_path = 'Singles/old.mp3';"_s);
+    ASSERT_EQ(old.step(), selecta::storage::Statement::Step::Row);
+    EXPECT_TRUE(old.text(0).isEmpty());
 }

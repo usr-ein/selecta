@@ -3,6 +3,7 @@
 
 #include "core/ReleaseJson.h"
 #include "governor/Limits.h"
+#include "match/Quality.h"
 #include "storage/Database.h"
 
 #include <QJsonDocument>
@@ -24,7 +25,7 @@ constexpr qsizetype kMaxShortfallChars = 200; // a few words; anything longer is
 
 constexpr auto kColumns =
     u"id, position, raw, dedupe_key, artist, title, duration_hint_ms, isrc, label_hint, release_state, release_json, "
-    "release_confidence, find_state, best_json, ticked, download_state, message, added_at";
+    "release_confidence, find_state, best_json, ticked, download_state, message, added_at, upgrade_of";
 
 QString releaseStateName(ReleaseState state)
 {
@@ -127,7 +128,7 @@ void bindOptionalText(Statement &statement, int index, const QByteArray &text)
     }
 }
 
-// Binds every column but id and position, from parameter 1 (raw) to 16 (added_at).
+// Binds every column but id and position, from parameter 1 (raw) to 17 (upgrade_of).
 void bindLine(Statement &statement, const GetLine &line)
 {
     statement.bind(1, line.raw).bind(2, line.dedupeKey).bind(3, line.artist).bind(4, line.title);
@@ -143,7 +144,8 @@ void bindLine(Statement &statement, const GetLine &line)
     statement.bind(13, line.ticked ? 1 : 0)
         .bind(14, downloadStateName(line.downloadState))
         .bind(15, line.message)
-        .bind(16, line.addedAt);
+        .bind(16, line.addedAt)
+        .bind(17, line.upgradeOf);
 }
 
 GetLine readLine(const Statement &row)
@@ -167,6 +169,7 @@ GetLine readLine(const Statement &row)
     line.downloadState = downloadStateFrom(row.text(15));
     line.message = row.text(16);
     line.addedAt = row.int64(17);
+    line.upgradeOf = row.text(18);
     return line;
 }
 
@@ -190,7 +193,8 @@ QList<GetLine> GetTracksStore::append(const QList<GetLine> &lines)
     Statement insert = m_db.prepare(
         u"INSERT INTO get_lines (raw, dedupe_key, artist, title, duration_hint_ms, isrc, label_hint, release_state, "
         "release_json, release_confidence, find_state, best_json, ticked, download_state, message, added_at, "
-        "position) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17) "
+        "upgrade_of, position) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, "
+        "?18) "
         "ON CONFLICT (dedupe_key) DO NOTHING;");
     if (!insert.isValid()) {
         return added;
@@ -198,7 +202,7 @@ QList<GetLine> GetTracksStore::append(const QList<GetLine> &lines)
     for (const GetLine &line : lines) {
         insert.reset();
         bindLine(insert, line);
-        insert.bind(17, position);
+        insert.bind(18, position);
         if (!insert.run()) {
             return {};
         }
@@ -221,12 +225,13 @@ bool GetTracksStore::update(const GetLine &line)
     Statement update = m_db.prepare(
         u"UPDATE get_lines SET raw = ?1, dedupe_key = ?2, artist = ?3, title = ?4, duration_hint_ms = ?5, isrc = ?6, "
         "label_hint = ?7, release_state = ?8, release_json = ?9, release_confidence = ?10, find_state = ?11, "
-        "best_json = ?12, ticked = ?13, download_state = ?14, message = ?15, added_at = ?16 WHERE id = ?17;");
+        "best_json = ?12, ticked = ?13, download_state = ?14, message = ?15, added_at = ?16, upgrade_of = ?17 "
+        "WHERE id = ?18;");
     if (!update.isValid()) {
         return false;
     }
     bindLine(update, line);
-    update.bind(17, line.id);
+    update.bind(18, line.id);
     return update.run() && m_db.changes() == 1;
 }
 
@@ -277,6 +282,22 @@ int GetTracksStore::count()
 {
     Statement query = m_db.prepare(u"SELECT COUNT(*) FROM get_lines;");
     return query.isValid() && query.step() == Statement::Step::Row ? static_cast<int>(query.int64(0)) : 0;
+}
+
+QualityTier qualityTierOf(const FileChoice &choice)
+{
+    match::RemoteAttributes attributes;
+    attributes.bitrateKbps = choice.bitrate.value_or(0);
+    attributes.vbr = choice.vbr;
+    attributes.sampleRateHz = choice.sampleRate.value_or(0);
+    attributes.bitDepth = choice.bitDepth.value_or(0);
+    match::AudioQuality quality;
+    quality.codec = match::codecFor(choice.extension, attributes);
+    quality.bitrateKbps = attributes.bitrateKbps;
+    quality.vbr = choice.vbr;
+    quality.sampleRateHz = attributes.sampleRateHz;
+    quality.bitDepth = attributes.bitDepth;
+    return qualityTier(quality);
 }
 
 QByteArray fileChoiceToText(const FileChoice &choice)

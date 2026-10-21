@@ -469,6 +469,12 @@ void ArrivalService::record(const Outcome &outcome)
     library::InboxItem item = outcome.item;
     item.session = m_options.session;
     item.createdAt = m_now();
+    // P-010: the better copy a Get tracks line looked for takes its collection file's place when filed.
+    if (download.getLine) {
+        if (const std::optional<GetLine> line = GetTracksStore(m_db).find(*download.getLine)) {
+            item.replaces = line->upgradeOf;
+        }
+    }
     const std::optional<qint64> id = m_inbox.add(item);
     if (!id) {
         const QString error =

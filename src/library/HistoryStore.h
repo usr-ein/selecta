@@ -68,6 +68,9 @@ public:
     // changed, or -1 on failure.
     int setWhereaboutsForInboxItem(qint64 inboxItem, HistoryEntry::Whereabouts whereabouts,
                                    const QString &filedPath = {});
+    // The entries filed at exactly `filedPath` went to the Trash: an upgrade took their file's place (P-010). Returns
+    // how many changed, or -1 on failure.
+    int trashFiledAt(const QString &filedPath);
     // The entries that arrived as this Inbox item.
     QList<qint64> idsForInboxItem(qint64 inboxItem);
     // These entries are in the Inbox again, as `inboxItem` (an Undo of a move to the Trash). Returns how many changed,

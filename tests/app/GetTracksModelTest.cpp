@@ -60,3 +60,21 @@ TEST(GetTracksModel, AStuckQueueIsShownPlainly)
     EXPECT_EQ(model.counts().downloading, 1);
     EXPECT_EQ(model.data(model.index(0, GetTracksModel::StatusColumn), Qt::ToolTipRole).toString(), stuck.message);
 }
+
+// P-010: a line the Collection view asked for says it looks for a better copy, and of which file.
+TEST(GetTracksModel, AnUpgradeLineSaysSo)
+{
+    GetLine upgrade = line(GetLine::ReleaseState::None, GetLine::FindState::Searching);
+    upgrade.raw = u"Kel Hale - Hollow Tide"_s;
+    upgrade.upgradeOf = u"/Music/Tracks/Kel Hale - Hollow Tide.mp3"_s;
+    EXPECT_TRUE(GetTracksModel::subtitle(upgrade).startsWith(u"Upgrade · No release found"_s))
+        << GetTracksModel::subtitle(upgrade).toStdString();
+    GetTracksModel model;
+    model.reset({upgrade});
+    const QString tip = model.data(model.index(0, GetTracksModel::TrackColumn), Qt::ToolTipRole).toString();
+    EXPECT_TRUE(tip.contains(u"Kel Hale - Hollow Tide.mp3"_s)) << tip.toStdString();
+
+    GetLine ordinary = upgrade;
+    ordinary.upgradeOf.clear();
+    EXPECT_FALSE(GetTracksModel::subtitle(ordinary).contains(u"Upgrade"_s));
+}

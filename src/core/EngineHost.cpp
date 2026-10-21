@@ -114,6 +114,7 @@ void EngineHost::start()
         m_collectionStatus = status;
         Q_EMIT collectionStatusChanged(status);
     });
+    connect(engine, &Engine::betterQualitySearched, this, &EngineHost::betterQualitySearched);
     connect(engine, &Engine::collectionListingChanged, this,
             [this](const std::shared_ptr<const CollectionListing> &listing) {
                 if (listing) {
@@ -836,6 +837,11 @@ void EngineHost::dismissSupersedeFlag(qint64 id)
 void EngineHost::correctSearchMatch(qint64 searchId, int index, bool same)
 {
     post([searchId, index, same](Engine &engine) { engine.correctSearchMatch(searchId, index, same); });
+}
+
+void EngineHost::searchForBetterQuality(const QList<qint64> &trackIds)
+{
+    post([trackIds](Engine &engine) { engine.searchForBetterQuality(trackIds); });
 }
 
 void EngineHost::notOwnedFindTracks(const QList<qint64> &ids)

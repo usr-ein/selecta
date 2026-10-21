@@ -509,6 +509,39 @@ selecta::slsk::peer::FileSearchResponse result(quint32 token, const QString &pat
 
 } // namespace
 
+// P-010: the user asked the Collection view for a better copy of a track; one found with confidence comes by itself,
+// a better one only.
+TEST_F(TransferServiceTest, AConfidentUpgradeDownloadsByItself)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    const QString ghostPath = u"@@g\\Okuma Drift - Neon Rain.mp3"_s;
+    constexpr qint64 kSize = 14'880'000; // 320 kbps × 372 s
+    ghost->files.insert(selecta::slsk::RemotePath::fromText(ghostPath).raw,
+                        FakePeer::Upload{.content = content(kSize, 3)});
+
+    LocalSearch network;
+    selecta::core::SearchService search(governor, network, clock, {.idle = 40ms, .total = 1000ms});
+    selecta::core::GetTracksService getTracks(db, [this] { return now; });
+    getTracks.setSearch(&search, [] { return QStringList(); });
+    getTracks.setTransfers(service.get());
+    getTracks.setTierLookup([](const QString &) { return std::optional(selecta::core::QualityTier::Below192); });
+    QObject::connect(service.get(), &TransferService::changed, &getTracks,
+                     &selecta::core::GetTracksService::downloadChanged);
+    QSignalSpy completed(service.get(), &TransferService::completed);
+    const auto added = getTracks.addUpgrades({{.path = u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s,
+                                               .artist = u"Okuma Drift"_s,
+                                               .title = u"Neon Rain"_s,
+                                               .durationMs = 372'000}});
+    ASSERT_EQ(added.lines.size(), 1);
+    ASSERT_TRUE(waitFor([&] { return network.sent == 1; }));
+    search.received(1, u"vinyl_ghost"_s, result(1, ghostPath, kSize));
+    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s)); // nobody pressed Download
+    EXPECT_EQ(completed.at(0).at(0).value<Download>().getLine, added.lines.constFirst());
+    const selecta::core::GetLine line = getTracks.lines().constFirst();
+    EXPECT_EQ(line.findState, selecta::core::GetLine::FindState::Ready);
+    EXPECT_EQ(line.downloadState, selecta::core::GetLine::DownloadState::Converting);
+}
+
 TEST_F(TransferServiceTest, GetTracksMovesOnToTheNextPeersCopy)
 {
     auto rita = peer(u"refusing_rita"_s);

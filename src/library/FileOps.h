@@ -20,7 +20,9 @@ struct FileResult
 };
 
 // The only code that writes outside Selecta's caches (ADR-009, PRD principle 2):
-// - in collection roots it can only create new files, never overwrite, move, rename or delete anything;
+// - in collection roots it can only create new files, never overwrite, move, rename or delete anything, with one
+//   exception the user asks for: an upgrade filed takes a collection file's place, and that file goes to the Trash
+//   (replaceInCollection(), P-010, PRD D41);
 // - in the Inbox it can publish, rename and move files to the Trash;
 // - every path is canonicalised and must stay inside its root (no "..", no symlink escapes).
 // Moves within one volume use an atomic exclusive rename; across volumes, copy → flush → verify (SHA-256) → rename,
@@ -62,6 +64,18 @@ public:
 
     // Moves a file or folder inside the Inbox to the Trash. Anything outside the Inbox is refused.
     FileResult trashFromInbox(const QString &path) const;
+
+    // Files an Inbox file (an upgrade, P-010) in the place of `collectionFile`, under its exact path: a copy is made
+    // and verified (SHA-256) under a hidden name next to it, the old file goes to the Trash, and the copy is renamed
+    // into its place; then the Inbox file goes. Should that last rename fail, the old file is put back from the Trash.
+    // So the path only ever holds the old file or the new one, and a crash between the two steps leaves the old file in
+    // the Trash and the new one still in the Inbox. A path no file holds any more (the old one was deleted) simply
+    // gets the new one. Refused: an Inbox file that isn't one, a path outside the collection folders or in a folder
+    // that isn't there, a symbolic link, and a file of another extension (the name stays exactly the same).
+    FileResult replaceInCollection(const QString &inboxFile, const QString &collectionFile) const;
+    // What replaceInCollection() checks before it touches anything: the path it would put the file at (real, as filed
+    // paths are reported), or why it won't. Reads the disk (stat).
+    FileResult checkReplace(const QString &inboxFile, const QString &collectionFile) const;
 
     // Moves `sourceFolder` (a staged album, outside the Inbox) to `relativeFolder` inside the Inbox, with everything in
     // it, all quarantined: renamed on one volume, else copied and verified into a hidden folder next to the target that

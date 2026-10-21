@@ -3,6 +3,7 @@
 
 #include "base/Clock.h"
 #include "base/Version.h"
+#include "core/CollectionStore.h"
 #include "core/GovernorStore.h"
 #include "core/MatchCorrections.h"
 #include "core/ReleaseJson.h"
@@ -15,7 +16,9 @@
 #include "storage/Migrations.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QLoggingCategory>
+#include <QSet>
 #include <QThread>
 #include <QTimer>
 
@@ -266,6 +269,25 @@ bool Engine::start()
     m_collection = std::make_unique<CollectionService>(*m_db, collectionOptions, m_options.wallClock);
     connect(m_collection.get(), &CollectionService::statusChanged, this, &Engine::collectionStatusChanged);
     connect(m_collection.get(), &CollectionService::listingChanged, this, &Engine::collectionListingChanged);
+    // An upgrade line takes only a better copy than its file is now (P-010).
+    m_getTracks->setTierLookup([collection = m_collection.get()](const QString &path) -> std::optional<QualityTier> {
+        const std::shared_ptr<const CollectionListing> listing = collection->listing();
+        if (!listing) {
+            return std::nullopt;
+        }
+        for (const CollectionTrack &track : listing->tracks) {
+            if (track.path == path) {
+                return track.tier;
+            }
+        }
+        const QString key = collection::comparisonKey(path); // another spelling of the same path (NFD, say)
+        for (const CollectionTrack &track : listing->tracks) {
+            if (collection::comparisonKey(track.path) == key) {
+                return track.tier;
+            }
+        }
+        return std::nullopt;
+    });
     // Sharing: the collection, read-only (D12).
     m_shares = std::make_unique<ShareService>(*m_db, *m_governor, *m_network, *m_activity, *m_clock, m_options.session,
                                               m_options.wallClock);
@@ -546,6 +568,52 @@ void Engine::notOwnedFindTracks(const QList<qint64> &ids)
         m_getTracks->notOwned(ids);
         refreshCorrections();
     }
+}
+
+void Engine::searchForBetterQuality(const QList<qint64> &trackIds)
+{
+    if (!m_started) {
+        return;
+    }
+    const std::shared_ptr<const CollectionListing> listing = m_collection->listing();
+    QHash<qint64, qsizetype> byId;
+    if (listing) {
+        byId.reserve(listing->tracks.size());
+        for (qsizetype i = 0; i < listing->tracks.size(); ++i) {
+            byId.insert(listing->tracks.at(i).id, i);
+        }
+    }
+    int best = 0;
+    int gone = 0;
+    QList<GetTracksService::UpgradeRequest> requests;
+    CollectionStore store(*m_db);
+    QSet<qint64> asked;
+    for (const qint64 id : trackIds) {
+        if (asked.contains(id)) {
+            continue; // asked twice: one line
+        }
+        asked.insert(id);
+        const qsizetype at = byId.value(id, -1);
+        if (at < 0) {
+            ++gone;
+            continue;
+        }
+        const CollectionTrack &track = listing->tracks.at(at);
+        if (track.tier == QualityTier::Lossless) {
+            ++best; // nothing is better than lossless
+            continue;
+        }
+        GetTracksService::UpgradeRequest request{
+            .path = track.path, .artist = track.artist, .title = track.title, .durationMs = track.durationMs};
+        if (const std::optional<CollectionFile> file = store.find(id)) {
+            request.isrc = file->file.isrc;
+        }
+        requests.append(std::move(request));
+    }
+    const GetTracksService::UpgradeResult added = m_getTracks->addUpgrades(requests);
+    qCInfo(lcEngine) << "better quality: searching for" << added.lines.size() << "tracks," << added.already
+                     << "already listed," << best << "from lossless," << gone << "gone";
+    Q_EMIT betterQualitySearched(static_cast<int>(added.lines.size()), added.already, best, gone);
 }
 
 void Engine::notTheSameTrack(qint64 flagId)

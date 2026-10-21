@@ -48,6 +48,9 @@ struct InboxItem
     // Got anyway, below the quality the list wanted: why it fell short, in words ("under 320 kbps"); empty when it met
     // it. A better copy can replace it later.
     QString belowWanted;
+    // P-010: an upgrade, the better copy of this collection file (as the collection knows its path): filing it puts it
+    // in that file's place, under its exact name, and the file goes to the Trash. Empty for any other item.
+    QString replaces;
     // The spectrum check of the file as downloaded (PRD PREV-9), when it ran: what it found (audio::findingName()
     // names, worded "likely …" in the UI), the spectral cut-off and the bitrate it suggests, and the analysis-cache
     // key (64 hex digits) of the full report with its spectrogram, empty when it wasn't cached.

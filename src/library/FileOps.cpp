@@ -11,6 +11,7 @@
 #include <QLoggingCategory>
 #include <QSaveFile>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -456,6 +457,93 @@ FileResult FileOps::publishFolderIntoInbox(const QString &sourceFolder, const QS
         return copied;
     }
     return FileResult::failure(u"too many folders named like %1 in the Inbox"_s.arg(target));
+}
+
+FileResult FileOps::checkReplace(const QString &inboxFile, const QString &collectionFile) const
+{
+    const QFileInfo source(inboxFile);
+    if (!isInside(inboxFile, m_inboxRoot) || !source.isFile() || source.isSymLink()) {
+        return FileResult::failure(u"only Inbox files can be filed: %1"_s.arg(inboxFile));
+    }
+    if (collectionFile.isEmpty() || !QDir::isAbsolutePath(collectionFile)) {
+        return FileResult::failure(u"the collection file's path must be absolute: %1"_s.arg(collectionFile));
+    }
+    if (QFileInfo(QDir::cleanPath(collectionFile)).isSymLink()) {
+        return FileResult::failure(u"%1 is a symbolic link; Selecta won't replace it"_s.arg(collectionFile));
+    }
+    // As the collection's other filed paths are reported: real ones.
+    const QString target = resolved(collectionFile);
+    const bool inCollection =
+        std::ranges::any_of(m_collectionRoots, [&target](const QString &root) { return isInside(target, root); });
+    if (!inCollection) {
+        return FileResult::failure(u"%1 isn't in a collection folder"_s.arg(collectionFile));
+    }
+    const QFileInfo old(target);
+    if (!QFileInfo(old.absolutePath()).isDir()) {
+        return FileResult::failure(u"there's no folder %1"_s.arg(old.absolutePath()));
+    }
+    if (old.exists() && !old.isFile()) {
+        return FileResult::failure(u"%1 isn't a plain file; Selecta won't replace it"_s.arg(target));
+    }
+    if (source.suffix().compare(old.suffix(), Qt::CaseInsensitive) != 0) {
+        return FileResult::failure(u"%1 and %2 aren't of the same type"_s.arg(source.fileName(), old.fileName()));
+    }
+    return FileResult::success(target);
+}
+
+FileResult FileOps::replaceInCollection(const QString &inboxFile, const QString &collectionFile) const
+{
+    const FileResult checked = checkReplace(inboxFile, collectionFile);
+    if (!checked.ok) {
+        return checked;
+    }
+    const QString &target = checked.path;
+    const QFileInfo old(target);
+
+    // A verified copy, hidden next to the old file (the collection's scans skip it); the Inbox file stays meanwhile.
+    QString error;
+    const QByteArray sourceHash = sha256(inboxFile, &error);
+    if (sourceHash.isEmpty()) {
+        return FileResult::failure(error);
+    }
+    const QString staged = old.dir().filePath(u"."_s + old.fileName() + u".selecta-part"_s);
+    QFile::remove(staged); // left by an attempt a crash cut short
+    if (!QFile::copy(inboxFile, staged)) {
+        QFile::remove(staged);
+        return FileResult::failure(u"can't copy %1 next to %2"_s.arg(inboxFile, target));
+    }
+    if (sha256(staged, &error) != sourceHash) {
+        QFile::remove(staged);
+        return FileResult::failure(error.isEmpty() ? u"the copy of %1 doesn't match the original"_s.arg(inboxFile)
+                                                   : error);
+    }
+    keepQuarantine(inboxFile, staged);
+
+    // The old file to the Trash, then the copy in its place.
+    QString trashed;
+    if (old.exists() && !m_trash(target, &trashed)) {
+        QFile::remove(staged);
+        return FileResult::failure(u"couldn't move %1 to the Trash; nothing changed"_s.arg(target));
+    }
+    if (const int code = renameExclusive(staged, target); code != 0) {
+        QFile::remove(staged);
+        QString outcome;
+        if (trashed.isEmpty()) {
+            outcome = u"nothing changed"_s;
+        } else if (renameExclusive(trashed, target) == 0) {
+            outcome = u"the old file is back"_s;
+        } else {
+            outcome = u"the old file is in the Trash: %1"_s.arg(trashed);
+        }
+        return FileResult::failure(u"can't put the new file at %1 (%2); %3"_s.arg(target, describeErrno(code), outcome));
+    }
+    qCInfo(lcFileOps).noquote() << "replaced" << target
+                                << (trashed.isEmpty() ? u"(no old file)"_s : u"(the old file: "_s + trashed + u')');
+    if (!QFile::remove(inboxFile)) {
+        // The new file is in place and verified; a leftover Inbox copy is safe, so report success with a note.
+        return FileResult{true, target, u"replaced, but the Inbox copy stayed at %1"_s.arg(inboxFile)};
+    }
+    return FileResult::success(target);
 }
 
 FileResult FileOps::replaceInInbox(const QString &newFile, const QString &inboxFile) const

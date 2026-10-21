@@ -178,6 +178,22 @@ int HistoryStore::setWhereaboutsForInboxItem(qint64 inboxItem, Whereabouts where
     return update.bind(3, inboxItem).run() ? m_db.changes() : -1;
 }
 
+int HistoryStore::trashFiledAt(const QString &filedPath)
+{
+    if (filedPath.isEmpty()) {
+        return 0;
+    }
+    Statement update = m_db.prepare(
+        u"UPDATE history SET whereabouts = ?1, filed_path = NULL WHERE whereabouts = ?2 AND filed_path = ?3;"_s);
+    if (!update.isValid()) {
+        return -1;
+    }
+    update.bind(1, whereaboutsName(Whereabouts::Trashed))
+        .bind(2, whereaboutsName(Whereabouts::Filed))
+        .bind(3, filedPath);
+    return update.run() ? m_db.changes() : -1;
+}
+
 QList<qint64> HistoryStore::idsForInboxItem(qint64 inboxItem)
 {
     QList<qint64> ids;
