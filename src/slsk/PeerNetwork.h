@@ -35,7 +35,7 @@ enum class PeerError {
     NotPermitted,     // the PermitSource refused the PeerLookup
     UserOffline,      // the server says the user isn't connected
     Unreachable,      // neither the direct nor the indirect connection worked
-    SocketLimit,      // the global socket cap (protocol::kSocketsMax) is reached
+    SocketLimit,      // the global socket cap (setSocketLimit(), at most protocol::kSocketsMax) is reached
     Timeout,          // the peer didn't answer in time
     ConnectionClosed, // the connection closed before the answer arrived
     ProtocolError,    // the answer was malformed, oversize, or didn't inflate
@@ -65,7 +65,7 @@ enum class PeerRequest {
 // becomes the one we send on and the older one is only read from until it closes or idles out, so no message in flight
 // is lost. Every connection closes after 60 s idle (10 s if it never identifies itself); a `P` connection a peer opened
 // only to deliver search results is closed once they're read; the one we open to deliver ours is closed once it's
-// sent. A global cap (protocol::kSocketsMax) bounds sockets, `F` ones included.
+// sent. A global cap (setSocketLimit(), at most protocol::kSocketsMax) bounds sockets, `F` ones included.
 //
 // Answers to peers' requests come from ShareProvider and UserInfoProvider (unbudgeted). Large responses are accepted
 // only while we wait for one from that user (share lists up to 256 MiB, user info up to 16 MiB); an unsolicited one
