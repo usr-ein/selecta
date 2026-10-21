@@ -117,6 +117,7 @@ if(SELECTA_WITH_MEDIA)
             app/LibrarySettingsTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp
+            app/NetworkTextTest.cpp
             app/NotifierTest.cpp
             app/PortMappingSettingsTest.cpp
             app/PresetsTest.cpp
