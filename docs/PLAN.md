@@ -104,8 +104,8 @@ flowchart LR
 - Free writes inside the Inbox and caches.
 
 There is no API to modify, move or delete a file inside a collection root, but one the user asks for: an upgrade saved
-to the collection takes its file's exact place, the old file going to the Trash (`replaceInCollection`, PRD LIB-9, D41).
-Tests assert both.
+to the collection, judged better, takes its file's place (its exact path, or its name with .mp3 for an AAC, Ogg or Opus
+file), the old file going to the Trash (`replaceInCollection`, PRD LIB-9, D41). Tests assert both.
 
 ### 2.5 Default locations
 

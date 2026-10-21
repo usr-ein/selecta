@@ -25,12 +25,14 @@
 ## Amendment, 2026-10-21 (P-010, PRD D41)
 
 One way, the user's, to change a file in the collection: an **upgrade** saved to the collection takes the place of the
-file it upgrades (`FileOps::replaceInCollection()`). Only an Inbox file of the same extension replaces a plain file at
-an exact path inside a collection folder: a copy is made and verified (SHA-256) under a hidden name next to the old
-file, the old file goes to the macOS Trash, and the copy is renamed into its place (an exclusive rename); should that
-fail, the old file comes back from the Trash. The path only ever holds the old file or the new one; a crash between
-the two steps leaves the old file in the Trash and the new one still in the Inbox. Nothing else in a collection folder
-can be modified, moved or deleted.
+file it upgrades (`FileOps::replaceInCollection()`). Only an Inbox file replaces a plain file inside a collection
+folder, and only one judged better (its real tier against the file's, in the Inbox and again when saved). It takes the
+file's exact path when both are of one type; an AAC, Ogg or Opus file's upgrade, an MP3, takes its name with .mp3,
+never over another file of that name. A copy is made and verified (SHA-256) under a hidden name beside it, the old file
+goes to the macOS Trash, and the copy is renamed into place (an exclusive rename); should that fail, the old file comes
+back from the Trash. The path holds the old file until the new one takes its place, and is empty only for the moment
+between the two steps: a crash there leaves the old file in the Trash and the new one still in the Inbox, and saving it
+again fills the path. Nothing else in a collection folder can be modified, moved or deleted.
 
 ## Consequences
 
