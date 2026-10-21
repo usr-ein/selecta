@@ -235,9 +235,9 @@ void MainWindow::createNotifications()
     // The wishlist found files it hadn't seen (SRCH-14).
     connect(&m_services.engine, &core::EngineHost::wishlistFound, this,
             [this](const core::WishlistItem &item, int newFiles) {
-                const QString title = newFiles == 1
-                                          ? tr("Wishlist: 1 new file for “%1”").arg(item.text)
-                                          : tr("Wishlist: %1 new files for “%2”").arg(newFiles).arg(item.text);
+                const QString title =
+                    newFiles == 1 ? tr("Wishlist: 1 new file for “%1”").arg(item.text)
+                                  : tr("Wishlist: %1 new files for “%2”").arg(QString::number(newFiles), item.text);
                 m_toasts->show(title, {}, Toasts::Kind::Good,
                                {{tr("Show"),
                                  [this, item] {
@@ -302,8 +302,9 @@ void MainWindow::albumReported(const core::AlbumReport &report)
 {
     QStringList lines;
     if (report.arrival) {
-        lines.append(report.tracks == 1 ? tr("1 track in Inbox/%1/").arg(report.where)
-                                        : tr("%1 tracks in Inbox/%2/").arg(report.tracks).arg(report.where));
+        lines.append(report.tracks == 1
+                         ? tr("1 track in Inbox/%1/").arg(report.where)
+                         : tr("%1 tracks in Inbox/%2/").arg(QString::number(report.tracks), report.where));
         if (!report.warning.isEmpty()) {
             lines.append(report.warning);
         }
@@ -313,15 +314,13 @@ void MainWindow::albumReported(const core::AlbumReport &report)
             report.trashed.size() == 1
                 ? tr("“%1” was in your Inbox as a single, so it went to the Trash.").arg(report.trashed.first())
                 : tr("%1 singles in your Inbox are on it, so they went to the Trash: %2.")
-                      .arg(report.trashed.size())
-                      .arg(report.trashed.join(u", "_s)));
+                      .arg(QString::number(report.trashed.size()), report.trashed.join(u", "_s)));
     } else if (!report.trashed.isEmpty()) {
         lines.append(tr("They're on “%1”: %2.").arg(report.album, report.trashed.join(u", "_s)));
     }
     if (!report.held.isEmpty()) {
         lines.append(tr("%1 singles in your Inbox are on it: %2. Move them to the Trash?")
-                         .arg(report.held.size())
-                         .arg(report.held.join(u", "_s)));
+                         .arg(QString::number(report.held.size()), report.held.join(u", "_s)));
     }
     if (!report.flagged.isEmpty()) {
         lines.append(tr("Also on it: %1. Those files stay where they are.").arg(report.flagged.join(u", "_s)));
@@ -1033,11 +1032,13 @@ void MainWindow::createToolBar()
     titleLayout->setSpacing(0);
     m_title = new QLabel(titleBox);
     m_title->setObjectName(u"toolbar.title"_s);
+    m_title->setTextFormat(Qt::PlainText); // a peer's name, a search as typed
     QFont titleFont = m_title->font();
     titleFont.setWeight(QFont::DemiBold);
     m_title->setFont(titleFont);
     m_subtitle = new QLabel(titleBox);
     m_subtitle->setObjectName(u"toolbar.subtitle"_s);
+    m_subtitle->setTextFormat(Qt::PlainText); // may be a peer's or the server's words
     QFont subtitleFont = m_subtitle->font();
     subtitleFont.setPointSizeF(subtitleFont.pointSizeF() - 2.0);
     m_subtitle->setFont(subtitleFont);

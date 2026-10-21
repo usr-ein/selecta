@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/models/ConverterModel.h"
 
+#include "app/Format.h"
+
 #include <QColor>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -110,10 +112,10 @@ QVariant ConverterModel::data(const QModelIndex &index, int role) const
         }
     case Qt::ToolTipRole:
         if (index.column() == FileColumn) {
-            return item.path;
+            return format::plainToolTip(item.path); // a file's name, as it is
         }
         if (index.column() == ResultColumn) {
-            return item.notices.isEmpty() ? resultText(item) : item.notices.join(u'\n');
+            return format::plainToolTip(item.notices.isEmpty() ? resultText(item) : item.notices.join(u'\n'));
         }
         return {};
     case Qt::CheckStateRole:

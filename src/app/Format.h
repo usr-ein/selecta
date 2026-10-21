@@ -34,4 +34,11 @@ QString ago(qint64 thenMs, qint64 nowMs);
 // "under a minute", "about 6 min", "about 1 h 20 min": a time left, rounded up to the minute.
 QString about(qint64 milliseconds);
 
+// Text from the network or from files (a peer, a file, a room, a message) can be anything, "<b>x</b>&y" included.
+// A tooltip of such text: shown as it is. Qt shows a tooltip that looks like markup as rich text, so one that does is
+// escaped and set in a paragraph that keeps its lines and doesn't wrap, as a plain tooltip shows; any other is kept.
+QString plainToolTip(const QString &text);
+// The words of a button, a menu item or an action made of such text: an "&" in it stays an "&", not a shortcut.
+QString noMnemonic(const QString &text);
+
 } // namespace selecta::app::format

@@ -531,13 +531,16 @@ QVariant SearchResultsModel::data(const QModelIndex &index, int role) const
     if (!index.isValid()) {
         return {};
     }
+    QVariant value;
     if (const core::SearchResult *found = resultAt(index)) {
-        return resultData(*found, index.column(), role);
+        value = resultData(*found, index.column(), role);
+    } else if (m_grouped && index.internalId() == 0 && index.row() < m_folders.size()) {
+        value = folderData(m_folders.at(index.row()), index.column(), role);
     }
-    if (m_grouped && index.internalId() == 0 && index.row() < m_folders.size()) {
-        return folderData(m_folders.at(index.row()), index.column(), role);
+    if (role == Qt::ToolTipRole && value.typeId() == QMetaType::QString) {
+        return format::plainToolTip(value.toString()); // peers' names and paths, as they are
     }
-    return {};
+    return value;
 }
 
 QVariant SearchResultsModel::resultData(const core::SearchResult &result, int column, int role) const

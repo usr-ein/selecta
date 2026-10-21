@@ -229,6 +229,21 @@ GetTracksModel::StatusKind GetTracksModel::statusKind(const GetLine &line)
     return StatusKind::Waiting;
 }
 
+QString GetTracksModel::toolTip(const GetLine &line, int column)
+{
+    switch (column) {
+    case TrackColumn:
+        // The cleaned line shows; numbering, timestamps and labels stay in the raw text here.
+        return line.raw + u'\n' + subtitle(line);
+    case StatusColumn:
+        return line.message;
+    case FileColumn:
+        return line.best ? QString::fromUtf8(line.best->remotePath) : QString();
+    default:
+        return {};
+    }
+}
+
 QString GetTracksModel::subtitle(const GetLine &line)
 {
     if (line.release && line.releaseState != ReleaseState::None) {
@@ -290,6 +305,10 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
     if (role == Qt::AccessibleTextRole) {
         return accessibleText(*line, index.column());
     }
+    if (role == Qt::ToolTipRole) {
+        const QString tip = toolTip(*line, index.column());
+        return tip.isEmpty() ? QVariant() : QVariant(format::plainToolTip(tip)); // names from peers, as they are
+    }
     switch (index.column()) {
     case TickColumn:
         if (role == Qt::CheckStateRole && line->best) {
@@ -304,9 +323,6 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         if (role == SubtitleRole) {
             return subtitle(*line);
         }
-        if (role == Qt::ToolTipRole) {
-            return QString(line->raw + u'\n' + subtitle(*line));
-        }
         break;
     case StatusColumn:
         if (role == Qt::DisplayRole) {
@@ -315,7 +331,7 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
         if (role == Qt::ForegroundRole) {
             return colourFor(statusKind(*line));
         }
-        if ((role == Qt::ToolTipRole || role == Qt::AccessibleDescriptionRole) && !line->message.isEmpty()) {
+        if (role == Qt::AccessibleDescriptionRole && !line->message.isEmpty()) {
             return line->message;
         }
         break;
@@ -329,9 +345,6 @@ QVariant GetTracksModel::data(const QModelIndex &index, int role) const
                 text += u" · "_s + format::length(qint64{*line->best->durationSec} * 1000);
             }
             return QString(text + u" · "_s + line->best->peer);
-        }
-        if (role == Qt::ToolTipRole) {
-            return QString::fromUtf8(line->best->remotePath);
         }
         break;
     default:

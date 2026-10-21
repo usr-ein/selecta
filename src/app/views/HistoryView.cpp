@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/HistoryView.h"
 
+#include "app/Format.h"
 #include "library/HistoryStore.h"
 #include "storage/SessionLog.h"
 
@@ -81,7 +82,7 @@ QStandardItem *readOnly(const QString &text, const QString &toolTip = {})
     auto *item = new QStandardItem(text);
     item->setEditable(false);
     if (!toolTip.isEmpty()) {
-        item->setToolTip(toolTip);
+        item->setToolTip(format::plainToolTip(toolTip)); // a peer's path, a folder
     }
     return item;
 }

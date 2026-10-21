@@ -30,6 +30,8 @@ EditTagsDialog::EditTagsDialog(const QString &fileName, const convert::MetadataM
     setWindowModality(Qt::WindowModal); // a sheet on macOS
 
     auto *heading = new QLabel(tr("Tags of “%1”").arg(fileName), this);
+    heading->setObjectName(u"dialog.editTags.heading"_s);
+    heading->setTextFormat(Qt::PlainText); // a file's name
     QFont font = heading->font();
     font.setWeight(QFont::DemiBold);
     heading->setFont(font);

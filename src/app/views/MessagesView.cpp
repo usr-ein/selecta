@@ -225,7 +225,9 @@ QWidget *MessagesView::createThread()
     nameFont.setPointSizeF(nameFont.pointSizeF() + 2.0);
     m_peerName->setFont(nameFont);
     m_peerName->setObjectName(u"messages.peer"_s);
+    m_peerName->setTextFormat(Qt::PlainText); // a peer can be named anything
     m_peerState->setObjectName(u"messages.peerState"_s);
+    m_peerState->setTextFormat(Qt::PlainText);
     m_peerState->setForegroundRole(QPalette::PlaceholderText);
     m_browse->setObjectName(u"messages.browse"_s);
     m_buddy->setObjectName(u"messages.buddy"_s);
@@ -252,6 +254,7 @@ QWidget *MessagesView::createThread()
             box->setAttribute(Qt::WA_DeleteOnClose);
             box->setObjectName(u"messages.deleteConfirm"_s);
             box->setIcon(QMessageBox::Warning);
+            box->setTextFormat(Qt::PlainText); // a peer's name
             box->setText(tr("Delete the conversation with %1?").arg(m_peer));
             box->setInformativeText(tr("Its messages are removed from this Mac. This can't be undone."));
             QPushButton *remove = box->addButton(tr("Delete"), QMessageBox::DestructiveRole);
@@ -283,6 +286,7 @@ QWidget *MessagesView::createThread()
     m_thread->setOpenLinks(false); // messages are shown as typed, links included
     m_thread->setAccessibleName(tr("Messages"));
     m_problem->setObjectName(u"messages.problem"_s);
+    m_problem->setTextFormat(Qt::PlainText); // may be the server's words
     m_problem->setWordWrap(true);
     m_problem->setForegroundRole(QPalette::PlaceholderText);
     m_problem->hide();
@@ -465,7 +469,7 @@ void MessagesView::rebuildConversations()
     const auto addRow = [this](const QString &peer, const QString &line, const QString &when, int unread) {
         auto *who = new QStandardItem(line.isEmpty() ? peer : peer + u'\n' + line);
         who->setData(peer, kPeerRole);
-        who->setToolTip(peer);
+        who->setToolTip(format::plainToolTip(peer));
         auto *at = new QStandardItem(unread > 0 ? when + u'\n' + tr("%n new", nullptr, unread) : when);
         at->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
         at->setForeground(QPalette().brush(QPalette::PlaceholderText));

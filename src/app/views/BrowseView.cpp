@@ -47,7 +47,9 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     headlineFont.setPointSizeF(headlineFont.pointSizeF() + 2.0);
     m_headline->setFont(headlineFont);
     m_headline->setObjectName(u"browse.headline"_s);
+    m_headline->setTextFormat(Qt::PlainText); // the peer's name
     m_details->setObjectName(u"browse.details"_s);
+    m_details->setTextFormat(Qt::PlainText);
     m_details->setForegroundRole(QPalette::PlaceholderText);
     m_details->setWordWrap(true);
     m_refresh->setObjectName(u"browse.refresh"_s);
@@ -95,6 +97,7 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     connect(m_model, &QAbstractItemModel::modelReset, m_table, &QTreeView::expandAll);
 
     m_waiting->setObjectName(u"browse.waiting"_s);
+    m_waiting->setTextFormat(Qt::PlainText); // the peer's name, or why the list didn't come
     m_waiting->setAlignment(Qt::AlignCenter);
     m_waiting->setWordWrap(true);
     m_waiting->setForegroundRole(QPalette::PlaceholderText);
