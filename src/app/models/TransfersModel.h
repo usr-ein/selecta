@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "app/Status.h"
+
 #include "core/Downloads.h"
 #include "core/ShareService.h"
 
@@ -61,6 +63,8 @@ public:
     QList<qint64> downloadsAt(const QModelIndex &index) const;
     // "42 % · 1.3 MB/s · 0:12 left", "Queued at vinyl_ghost, place 3", "Failed: File not shared."
     QString statusText(qint64 id) const;
+    // A download's status as shown (P-003): its SF Symbol and the kind that colours it.
+    static status::Status statusSymbol(const core::Download &download);
 
     QModelIndex index(int row, int column, const QModelIndex &parent = {}) const override;
     QModelIndex parent(const QModelIndex &child) const override;

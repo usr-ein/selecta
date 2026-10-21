@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ActivityView.h"
 
+#include "app/Segmented.h"
+#include "app/Status.h"
 #include "app/Style.h"
 
 #include "app/Accessibility.h"
@@ -25,6 +27,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
 #include <QTreeView>
@@ -101,11 +104,26 @@ ActivityView::ActivityView(core::EngineHost &engine, storage::Database &db, QWid
     m_pages->addTab(createTransfersPage(), tr("Transfers"));
     m_pages->addTab(createPeersPage(), tr("Peers"));
     m_pages->addTab(createLogPage(), tr("Log"));
+    // The pages chosen with a segmented control, as macOS 26 does (P-003), in place of the tabs.
+    m_pages->tabBar()->hide();
+    auto *switcher = new SegmentedControl(this);
+    switcher->setObjectName(u"activity.switcher"_s);
+    switcher->setAccessibleName(tr("Activity"));
+    for (int page = 0; page < m_pages->count(); ++page) {
+        switcher->addSegment(m_pages->tabText(page), u"activity.switcher.%1"_s.arg(page));
+    }
+    connect(switcher, &SegmentedControl::currentChanged, m_pages, &QTabWidget::setCurrentIndex);
+    connect(m_pages, &QTabWidget::currentChanged, switcher, &SegmentedControl::setCurrentIndex);
+    auto *switcherRow = new QHBoxLayout;
+    switcherRow->setContentsMargins(style::kSpace5, style::kSpace2, style::kSpace5, 0);
+    switcherRow->addWidget(switcher);
+    switcherRow->addStretch(1);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(m_pausedBanner);
+    layout->addLayout(switcherRow);
     layout->addWidget(m_pages, 1);
 
     // Follow the engine first, then load: a line logged in between arrives twice and the model drops the copy.
@@ -169,13 +187,10 @@ QWidget *ActivityView::createTransfersPage()
     });
     auto *bar = new QHBoxLayout;
     bar->setContentsMargins(style::kBarMargins);
-    auto *explanation =
-        new QLabel(tr("Each file Selecta wants, from asking the peer to the Inbox. Right-click (or ⌃Return) to cancel "
-                      "one or try a failed one again."),
-                   page);
-    explanation->setForegroundRole(QPalette::PlaceholderText);
-    explanation->setWordWrap(true);
-    bar->addWidget(explanation, 1);
+    // Fewer words (P-003): what the list is goes to its tooltip.
+    m_transfersTable->setToolTip(tr("Each file Selecta wants, from asking the peer to the Inbox. Right-click (or "
+                                    "⌃Return) to cancel one or try a failed one again."));
+    bar->addStretch(1);
     auto *groupLabel = new QLabel(tr("Group"), page);
     groupLabel->setForegroundRole(QPalette::PlaceholderText);
     groupLabel->setBuddy(m_grouping); // VoiceOver reads a pop-up by its label
@@ -187,6 +202,8 @@ QWidget *ActivityView::createTransfersPage()
     a11y::addMenuKey(m_transfersTable);
     m_transfersTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_transfersTable->setItemDelegateForColumn(TransfersModel::ProgressColumn, new MeterDelegate(m_transfersTable));
+    m_transfersTable->setItemDelegateForColumn(TransfersModel::StatusColumn,
+                                               new status::StatusDelegate(m_transfersTable));
     m_transfersTable->setContextMenuPolicy(Qt::CustomContextMenu);
     QHeaderView *header = m_transfersTable->header();
     header->setStretchLastSection(false);

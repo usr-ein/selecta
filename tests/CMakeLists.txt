@@ -130,6 +130,7 @@ if(SELECTA_WITH_MEDIA)
             app/PresetsTest.cpp
             app/PreviewQualityTest.cpp
             app/SearchResultsModelTest.cpp
+            app/SegmentedTest.cpp
             app/SpectrogramViewTest.cpp
             app/SpotifyTermsTest.cpp
             app/StatusTest.cpp

@@ -17,6 +17,7 @@ qt_add_library(selecta_app STATIC
     Presets.h Presets.cpp
     Preview.h Preview.cpp
     Sidebar.h Sidebar.cpp
+    Segmented.h Segmented.cpp
     SourceListView.h SourceListView.cpp
     SpectrogramView.h SpectrogramView.cpp
     Status.h Status.cpp

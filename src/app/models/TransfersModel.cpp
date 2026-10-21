@@ -295,6 +295,28 @@ QString TransfersModel::statusText(qint64 id) const
     return {};
 }
 
+status::Status TransfersModel::statusSymbol(const core::Download &download)
+{
+    using status::Kind;
+    switch (download.state) {
+    case State::Waiting:
+        return {u"clock"_s, Kind::Waiting};
+    case State::Queued:
+        return {u"hourglass"_s, Kind::Waiting};
+    case State::Transferring:
+        return {u"arrow.down.circle.fill"_s, Kind::Working};
+    case State::Converting:
+        return {u"arrow.triangle.2.circlepath"_s, Kind::Working};
+    case State::Arrived:
+        return {u"tray.full.fill"_s, Kind::Inbox};
+    case State::Failed:
+        return {u"exclamationmark.octagon.fill"_s, Kind::Failed};
+    case State::Cancelled:
+        return {u"minus.circle.fill"_s, Kind::Waiting};
+    }
+    return {};
+}
+
 QModelIndex TransfersModel::index(int row, int column, const QModelIndex &parent) const
 {
     if (row < 0 || column < 0 || column >= ColumnCount) {
@@ -392,6 +414,12 @@ QVariant TransfersModel::downloadData(const Row &row, int column, int role) cons
     if (role == Qt::ToolTipRole) {
         return column == StatusColumn ? statusText(download.id) : QVariant(core::decodeRemotePath(download.remotePath));
     }
+    if (column == StatusColumn && role == status::kSymbolRole) {
+        return statusSymbol(download).symbol;
+    }
+    if (column == StatusColumn && role == status::kKindRole) {
+        return static_cast<int>(statusSymbol(download).kind);
+    }
     if (role == Qt::ForegroundRole && column == StatusColumn && download.state != State::Failed) {
         return QGuiApplication::palette().brush(QPalette::PlaceholderText);
     }
@@ -469,6 +497,16 @@ QVariant TransfersModel::groupData(const Group &group, int column, int role) con
         QFont bold;
         bold.setBold(true);
         return bold;
+    }
+    if (column == StatusColumn && (role == status::kSymbolRole || role == status::kKindRole)) {
+        // A folder: failed if any failed, in the Inbox once all arrived, else on its way.
+        const status::Status shown = summary.failed > 0 ? status::Status{u"exclamationmark.octagon.fill"_s,
+                                                                         status::Kind::Failed}
+                                     : summary.arrived == count ? status::Status{u"tray.full.fill"_s, status::Kind::Inbox}
+                                     : summary.arriving > 0
+                                         ? status::Status{u"arrow.down.circle.fill"_s, status::Kind::Working}
+                                         : status::Status{u"hourglass"_s, status::Kind::Waiting};
+        return role == status::kSymbolRole ? QVariant(shown.symbol) : QVariant(static_cast<int>(shown.kind));
     }
     if (role == Qt::ForegroundRole && column == StatusColumn) {
         return QGuiApplication::palette().brush(QPalette::PlaceholderText);

@@ -2,6 +2,7 @@
 #include "app/models/TransfersModel.h"
 
 #include "app/MeterDelegate.h"
+#include "app/Status.h"
 #include "app/models/PeersModel.h"
 #include "governor/Limits.h"
 
@@ -139,4 +140,38 @@ TEST(PeersModel, SaysWhereEachPeerStandsAgainstTheLimits)
     EXPECT_EQ(model.index(1, PeersModel::LimitColumn).data(Qt::AccessibleTextRole).toString(),
               u"25 of %1 files today"_s.arg(selecta::governor::limits::kPeerDailyStopFiles));
     EXPECT_EQ(model.index(0, PeersModel::PeerColumn).data(Qt::AccessibleTextRole).toString(), u"vinyl_ghost"_s);
+}
+
+TEST(TransfersModel, EachStatusHasItsSymbolAndKind)
+{
+    // P-003: the status column shows a tinted SF Symbol before the words; a folder sums up its files.
+    using selecta::app::status::Kind;
+    using selecta::app::status::kKindRole;
+    using selecta::app::status::kSymbolRole;
+    const auto symbolOf = [](State state) { return TransfersModel::statusSymbol(download(1, u"p"_s, "a.flac", state)); };
+    EXPECT_EQ(symbolOf(State::Waiting).symbol, u"clock"_s);
+    EXPECT_EQ(symbolOf(State::Queued).kind, Kind::Waiting);
+    EXPECT_EQ(symbolOf(State::Transferring).symbol, u"arrow.down.circle.fill"_s);
+    EXPECT_EQ(symbolOf(State::Transferring).kind, Kind::Working);
+    EXPECT_EQ(symbolOf(State::Converting).kind, Kind::Working);
+    EXPECT_EQ(symbolOf(State::Arrived).symbol, u"tray.full.fill"_s);
+    EXPECT_EQ(symbolOf(State::Arrived).kind, Kind::Inbox);
+    EXPECT_EQ(symbolOf(State::Failed).kind, Kind::Failed);
+    EXPECT_EQ(symbolOf(State::Cancelled).kind, Kind::Waiting);
+    for (const State state : {State::Waiting, State::Queued, State::Transferring, State::Converting, State::Arrived,
+                              State::Failed, State::Cancelled}) {
+        const QString symbol = symbolOf(state).symbol;
+        EXPECT_FALSE(selecta::app::status::drawnPixmap(symbol, Qt::black, 15, 1.0).isNull()) << symbol.toStdString();
+    }
+
+    TransfersModel model;
+    model.reset({download(1, u"vinyl_ghost"_s, "Music\\Night Signals\\01 Neon Rain.flac", State::Arrived),
+                 download(2, u"vinyl_ghost"_s, "Music\\Night Signals\\02 Low Tide.flac", State::Failed)},
+                {});
+    const QModelIndex folder = model.index(0, TransfersModel::StatusColumn);
+    EXPECT_EQ(folder.data(kSymbolRole).toString(), u"exclamationmark.octagon.fill"_s); // one failed: the folder says so
+    EXPECT_EQ(folder.data(kKindRole).toInt(), static_cast<int>(Kind::Failed));
+    const QModelIndex first = model.index(0, TransfersModel::StatusColumn, model.index(0, 0));
+    EXPECT_EQ(first.data(kSymbolRole).toString(), u"tray.full.fill"_s);
+    EXPECT_FALSE(model.index(0, TransfersModel::PeerColumn, model.index(0, 0)).data(kSymbolRole).isValid());
 }
