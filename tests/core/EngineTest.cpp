@@ -208,3 +208,57 @@ TEST_F(EngineTest, PreviewsFallBackFromYouTubeToTheClipToThePeer)
     QTest::qWait(300);
     EXPECT_TRUE(refused.isEmpty());
 }
+
+namespace {
+
+selecta::meta::Release releaseWithMbid()
+{
+    selecta::meta::Release release;
+    release.title = u"Neon Rain"_s;
+    release.musicBrainzReleaseId = u"c6a53877-7733-4bdb-9721-0dff076ce2ef"_s;
+    return release;
+}
+
+} // namespace
+
+TEST_F(EngineTest, ACoverThatCantBeFetchedIsAnsweredWithNone)
+{
+    Engine engine(options()); // cover downloads off, as in isolated runs
+    const QSignalSpy fetched(&engine, &Engine::coverFetched);
+    engine.fetchCover(u"before start"_s, releaseWithMbid());
+    ASSERT_EQ(fetched.size(), 1);
+    EXPECT_TRUE(fetched.at(0).at(1).toByteArray().isEmpty());
+
+    ASSERT_TRUE(engine.start()) << engine.error().toStdString();
+    engine.fetchCover(u"off"_s, releaseWithMbid());
+    ASSERT_EQ(fetched.size(), 2);
+    EXPECT_EQ(fetched.at(1).at(0).toString(), u"off"_s);
+    EXPECT_TRUE(fetched.at(1).at(1).toByteArray().isEmpty());
+
+    // Downloads on, but the archive can't be reached: no cover, said once. (Fetching one is CoverFetcher's tests'.)
+    EngineOptions opts = options();
+    opts.metaEndpoints.coverDownloads = true;
+    opts.databasePath = dir.filePath(u"other.sqlite3"_s);
+    Engine reaching(opts);
+    ASSERT_TRUE(reaching.start()) << reaching.error().toStdString();
+    QSignalSpy failed(&reaching, &Engine::coverFetched);
+    reaching.fetchCover(u"closed"_s, releaseWithMbid());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !failed.isEmpty(); }, 5000));
+    QTest::qWait(100);
+    ASSERT_EQ(failed.size(), 1);
+    EXPECT_EQ(failed.at(0).at(0).toString(), u"closed"_s);
+    EXPECT_TRUE(failed.at(0).at(1).toByteArray().isEmpty());
+}
+
+TEST_F(EngineTest, HostForwardsCovers)
+{
+    EngineHost host(options());
+    QSignalSpy started(&host, &EngineHost::started);
+    QSignalSpy fetched(&host, &EngineHost::coverFetched);
+    host.start();
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !started.isEmpty(); }, 5000));
+    host.fetchCover(u"get:host"_s, releaseWithMbid());
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !fetched.isEmpty(); }, 5000));
+    EXPECT_EQ(fetched.at(0).at(0).toString(), u"get:host"_s);
+    EXPECT_TRUE(fetched.at(0).at(1).toByteArray().isEmpty());
+}

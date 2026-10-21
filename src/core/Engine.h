@@ -26,6 +26,7 @@
 #include "core/YouTubePreviews.h"
 #include "governor/Governor.h"
 
+#include <QByteArray>
 #include <QObject>
 #include <QSet>
 #include <QString>
@@ -77,6 +78,9 @@ struct EngineOptions
     QString incomingDir;
     QString stagingDir;
     QString previewDir; // the preview cache (PREV-8): peer and YouTube previews, kept across launches
+    // The cover cache (P-021): covers fetched for the inspector or an arrival, kept 30 days, 500 MB at most (the cover
+    // fetcher's bounds). Empty: covers are kept in memory only, for the inspector.
+    QString coverCacheDir;
     // The analysis cache the app's waveforms and inspector use (thread-safe): arrivals keep their spectrum checks'
     // reports and spectrograms in it (PREV-9). Null: findings only.
     std::shared_ptr<audio::AnalysisCache> analysisCache;
@@ -170,6 +174,11 @@ public:
     void editInboxTags(qint64 itemId, const convert::MetadataModel &changes, const QStringList &cleared);
     void findInboxReleases(qint64 itemId);
     void applyInboxRelease(qint64 itemId, const meta::Release &release);
+    // The cover of one release, for the Get tracks inspector (P-021): the one the arrival embeds, through the cover
+    // fetcher (its CDNs and the Cover Art Archive, paced, bounded, checked JPEG or PNG; never from Soulseek peers).
+    // coverFetched() answers with `key` (the caller's, opaque here) and the image's bytes, undecoded; empty when the
+    // release has none, it couldn't be fetched, or cover downloads are off (isolated runs).
+    void fetchCover(const QString &key, const meta::Release &release);
     // Moves Inbox items to the Trash for the user: each one that goes is reported (inboxItemTrashed()) for Undo.
     void trashInboxItems(const QList<qint64> &ids);
     // Puts back items inboxItemTrashed() reported.
@@ -268,6 +277,8 @@ Q_SIGNALS:
     void ytDlpChecked(bool ok, const QString &description);
     // Release candidates for an Inbox item (findInboxReleases()), or why there are none.
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
+    // What fetchCover() found for `key`: the image's bytes, or empty for none.
+    void coverFetched(const QString &key, const QByteArray &bytes);
     // An Inbox item the user moved to the Trash (trashInboxItems()), with what it takes to put it back.
     void inboxItemTrashed(const selecta::core::TrashedItem &item);
     // Transfers (TransferService's signals, forwarded).
