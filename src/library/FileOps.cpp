@@ -186,16 +186,14 @@ FileResult FileOps::moveExclusive(const QString &from, const QString &to) const
     return copyVerifyRename(from, to);
 }
 
-FileResult FileOps::copyVerifyRename(const QString &from, const QString &to) const
+FileResult FileOps::copyToPart(const QString &from, const QString &part) const
 {
     QString error;
     const QByteArray sourceHash = sha256(from, &error);
     if (sourceHash.isEmpty()) {
         return FileResult::failure(error);
     }
-    // Write next to the target, then rename into place, so the target name only ever holds a complete, checked copy.
-    const QString part = to + u".selecta-part"_s;
-    QFile::remove(part);
+    QFile::remove(part); // left by an attempt a crash cut short
     {
         QFile source(from);
         QFile target(part);
@@ -224,6 +222,16 @@ FileResult FileOps::copyVerifyRename(const QString &from, const QString &to) con
         return FileResult::failure(error.isEmpty() ? u"the copy of %1 doesn't match the original"_s.arg(from) : error);
     }
     keepQuarantine(from, part);
+    return FileResult::success(part);
+}
+
+FileResult FileOps::copyVerifyRename(const QString &from, const QString &to) const
+{
+    // Write next to the target, then rename into place, so the target name only ever holds a complete, checked copy.
+    const QString part = to + u".selecta-part"_s;
+    if (FileResult copied = copyToPart(from, part); !copied.ok) {
+        return copied;
+    }
     if (const int code = renameExclusive(part, to); code != 0) {
         QFile::remove(part);
         return FileResult::failure(u"can't create %1: %2"_s.arg(to, describeErrno(code)));
@@ -476,6 +484,22 @@ FileResult FileOps::publishFolderIntoInbox(const QString &sourceFolder, const QS
     return FileResult::failure(u"too many folders named like %1 in the Inbox"_s.arg(target));
 }
 
+QString FileOps::upgradeTarget(const QString &upgradeFile, const QString &collectionFile)
+{
+    const QFileInfo upgrade(upgradeFile);
+    const QFileInfo old(collectionFile);
+    if (upgrade.suffix().compare(old.suffix(), Qt::CaseInsensitive) == 0) {
+        return collectionFile;
+    }
+    // Another lossy type's upgrade arrives as an MP3: it takes the name with .mp3 (the maintainer: "Allow .mp3").
+    static const QStringList kOtherLossy{u"m4a"_s, u"mp4"_s, u"aac"_s, u"ogg"_s, u"oga"_s, u"opus"_s, u"wma"_s};
+    if (upgrade.suffix().compare(u"mp3"_s, Qt::CaseInsensitive) == 0 &&
+        kOtherLossy.contains(old.suffix(), Qt::CaseInsensitive)) {
+        return old.dir().filePath(old.completeBaseName() + u".mp3"_s);
+    }
+    return {};
+}
+
 FileResult FileOps::checkReplace(const QString &inboxFile, const QString &collectionFile) const
 {
     const QFileInfo source(inboxFile);
@@ -489,21 +513,28 @@ FileResult FileOps::checkReplace(const QString &inboxFile, const QString &collec
         return FileResult::failure(u"%1 is a symbolic link; Selecta won't replace it"_s.arg(collectionFile));
     }
     // As the collection's other filed paths are reported: real ones.
-    const QString target = resolved(collectionFile);
+    const QString oldPath = resolved(collectionFile);
     const bool inCollection =
-        std::ranges::any_of(m_collectionRoots, [&target](const QString &root) { return isInside(target, root); });
+        std::ranges::any_of(m_collectionRoots, [&oldPath](const QString &root) { return isInside(oldPath, root); });
     if (!inCollection) {
         return FileResult::failure(u"%1 isn't in a collection folder"_s.arg(collectionFile));
     }
-    const QFileInfo old(target);
+    const QFileInfo old(oldPath);
     if (!QFileInfo(old.absolutePath()).isDir()) {
         return FileResult::failure(u"there's no folder %1"_s.arg(old.absolutePath()));
     }
     if (old.exists() && !old.isFile()) {
-        return FileResult::failure(u"%1 isn't a plain file; Selecta won't replace it"_s.arg(target));
+        return FileResult::failure(u"%1 isn't a plain file; Selecta won't replace it"_s.arg(oldPath));
     }
-    if (source.suffix().compare(old.suffix(), Qt::CaseInsensitive) != 0) {
+    const QString target = upgradeTarget(inboxFile, oldPath);
+    if (target.isEmpty()) {
         return FileResult::failure(u"%1 and %2 aren't of the same type"_s.arg(source.fileName(), old.fileName()));
+    }
+    // An .m4a's upgrade takes the name with .mp3: never over another file already there.
+    if (target != oldPath && (QFileInfo::exists(target) || QFileInfo(target).isSymLink())) {
+        return FileResult::failure(
+            u"%1 is already there, beside %2; Selecta won't replace it"_s.arg(QFileInfo(target).fileName(),
+                                                                              old.fileName()));
     }
     return FileResult::success(target);
 }
@@ -515,39 +546,28 @@ FileResult FileOps::replaceInCollection(const QString &inboxFile, const QString 
         return checked;
     }
     const QString target = checked.path;
-    const QFileInfo old(target);
+    const QString oldPath = resolved(collectionFile);
+    const QFileInfo old(oldPath);
 
-    // A verified copy, hidden next to the old file (the collection's scans skip it); the Inbox file stays meanwhile.
-    QString error;
-    const QByteArray sourceHash = sha256(inboxFile, &error);
-    if (sourceHash.isEmpty()) {
-        return FileResult::failure(error);
+    // A verified copy, hidden next to where it goes (the collection's scans skip it); the Inbox file stays meanwhile.
+    const QFileInfo place(target);
+    const QString staged = place.dir().filePath(u"."_s + place.fileName() + u".selecta-part"_s);
+    if (FileResult copied = copyToPart(inboxFile, staged); !copied.ok) {
+        return FileResult::failure(copied.error + u"; nothing changed"_s);
     }
-    const QString staged = old.dir().filePath(u"."_s + old.fileName() + u".selecta-part"_s);
-    QFile::remove(staged); // left by an attempt a crash cut short
-    if (!QFile::copy(inboxFile, staged)) {
-        QFile::remove(staged);
-        return FileResult::failure(u"can't copy %1 next to %2"_s.arg(inboxFile, target));
-    }
-    if (sha256(staged, &error) != sourceHash) {
-        QFile::remove(staged);
-        return FileResult::failure(error.isEmpty() ? u"the copy of %1 doesn't match the original"_s.arg(inboxFile)
-                                                   : error);
-    }
-    keepQuarantine(inboxFile, staged);
 
     // The old file to the Trash, then the copy in its place.
     QString trashed;
-    if (old.exists() && !m_trash(target, &trashed)) {
+    if (old.exists() && !m_trash(oldPath, &trashed)) {
         QFile::remove(staged);
-        return FileResult::failure(u"couldn't move %1 to the Trash; nothing changed"_s.arg(target));
+        return FileResult::failure(u"couldn't move %1 to the Trash; nothing changed"_s.arg(oldPath));
     }
     if (const int code = renameExclusive(staged, target); code != 0) {
         QFile::remove(staged);
         QString outcome;
         if (trashed.isEmpty()) {
             outcome = u"nothing changed"_s;
-        } else if (renameExclusive(trashed, target) == 0) {
+        } else if (renameExclusive(trashed, oldPath) == 0) {
             outcome = u"the old file is back"_s;
         } else {
             outcome = u"the old file is in the Trash: %1"_s.arg(trashed);
@@ -555,7 +575,7 @@ FileResult FileOps::replaceInCollection(const QString &inboxFile, const QString 
         return FileResult::failure(
             u"can't put the new file at %1 (%2); %3"_s.arg(target, describeErrno(code), outcome));
     }
-    qCInfo(lcFileOps).noquote() << "replaced" << target
+    qCInfo(lcFileOps).noquote() << "replaced" << oldPath << "with" << target
                                 << (trashed.isEmpty() ? u"(no old file)"_s : u"(the old file: "_s + trashed + u')');
     if (!QFile::remove(inboxFile)) {
         // The new file is in place and verified; a leftover Inbox copy is safe, so report success with a note.
