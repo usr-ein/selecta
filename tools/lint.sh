@@ -19,6 +19,10 @@ paths=("$@")
 llvm="$(brew --prefix llvm 2>/dev/null || true)"
 clang_tidy="${CLANG_TIDY:-${llvm:+$llvm/bin/}clang-tidy}"
 run_clang_tidy="${RUN_CLANG_TIDY:-${llvm:+$llvm/bin/}run-clang-tidy}"
+# --fix applies clang-tidy's fixes with clang-apply-replacements, which brew's llvm keeps off PATH: take the one
+# beside the clang-tidy in use.
+tidy_path="$(command -v "$clang_tidy" || true)"
+apply_replacements="${CLANG_APPLY_REPLACEMENTS:-$(dirname "${tidy_path:-$clang_tidy}")/clang-apply-replacements}"
 # clazy-standalone is installed outside LLVM's prefix and can't find the compiler's builtin headers on its own.
 resource_dir="$("${llvm:+$llvm/bin/}clang" -print-resource-dir)"
 jobs="${LINT_JOBS:-$(getconf _NPROCESSORS_ONLN)}"
@@ -52,11 +56,30 @@ fi
 
 echo "== clang-tidy (${#units[@]} translation units$not_built)"
 tidy_args=(-quiet -j "$jobs" -p "$build" -clang-tidy-binary "$clang_tidy")
-[[ $fix -eq 1 ]] && tidy_args+=(-fix)
-: > "$build/clang-tidy.log"
-[[ ${#units[@]} -eq 0 ]] || "$run_clang_tidy" "${tidy_args[@]}" "${units[@]/#/$root/}" > "$build/clang-tidy.log" 2>&1 || true
+tidy_log="$build/clang-tidy.log"
+: > "$tidy_log"
+if [[ $fix -eq 1 ]]; then
+    if ! apply_binary="$(command -v "$apply_replacements")"; then
+        echo "lint: --fix needs clang-apply-replacements, not found at $apply_replacements (set CLANG_APPLY_REPLACEMENTS)" | tee "$tidy_log" >&2
+        exit 1
+    fi
+    tidy_args+=(-fix -clang-apply-replacements-binary "$apply_binary")
+fi
+tidy_status=0
+[[ ${#units[@]} -eq 0 ]] || "$run_clang_tidy" "${tidy_args[@]}" "${units[@]/#/$root/}" > "$tidy_log" 2>&1 || tidy_status=$?
+# A failure of the fix step itself (a missing tool, fixes that didn't apply) is an error line of run-clang-tidy's or
+# clang-apply-replacements' own, not a diagnostic: it doesn't start with a file path. clang-tidy's "Error while
+# processing" follows a diagnostic, reported below.
+if [[ $fix -eq 1 ]] && grep -E '^(error:|Error )' "$tidy_log" | grep -qv '^Error while processing '; then
+    echo "lint: clang-tidy --fix failed, fixes not applied; see $tidy_log" >&2
+    exit 1
+fi
 # Diagnostics are lines starting with a file path; progress and summary lines are not.
-if grep -E '^/[^:]+:[0-9]+:[0-9]+: (warning|error):' "$build/clang-tidy.log"; then exit 1; fi
+if grep -E '^/[^:]+:[0-9]+:[0-9]+: (warning|error):' "$tidy_log"; then exit 1; fi
+if [[ $fix -eq 1 && $tidy_status -ne 0 ]]; then
+    echo "lint: clang-tidy --fix exited with status $tidy_status; see $tidy_log" >&2
+    exit 1
+fi
 
 echo "== clazy"
 clazy_out="$build/clazy.log"
