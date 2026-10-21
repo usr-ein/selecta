@@ -67,12 +67,12 @@
     {
       "name": "linux",
       "displayName": "Debug on Linux",
-      "description": "Debug with Clang and line tables only (-g1), as dev. Dependencies keep the system's default compiler.",
+      "description": "Debug with Clang 22 and line tables only (-g1), as dev. Dependencies keep the system's default compiler.",
       "inherits": [ "base", "vcpkg-static-linux" ],
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER": "clang-22",
+        "CMAKE_CXX_COMPILER": "clang++-22",
         "CMAKE_C_FLAGS_DEBUG": "-g1",
         "CMAKE_CXX_FLAGS_DEBUG": "-g1"
       }
