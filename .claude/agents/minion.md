@@ -45,11 +45,12 @@ ctest --test-dir build/dev -R '<your tests>'             # while you work
 ```
 
 - **Tests:** write a test for every requirement and edge case, before or with the code.
-- **Before the PR,** run the full suite once (`ctest --preset dev`), then
+- **Before the PR,** run your targeted tests (every test file you touched or that covers what you changed), then
   `tools/lint.sh --fix <dirs>` and `tools/lint.sh <dirs>` on the directories you touched (directories, not files).
+  Don't run the full suite here: CI runs it on the PR (maintainer, 2026-10-21).
 - **No local sanitizer builds:** CI runs them.
 - **Run long commands in the background,** and keep working or end your turn. Never sleep-poll.
-- **One full suite at a time** on this Mac: if the nightman asks you to wait your turn, wait.
+- **A full suite on this Mac** only when the nightman asks for one, and one at a time.
 - **The app:** run it only isolated (`SELECTA_DEBUG_SOCKET=<your session name> tools/dev/run-headless.sh <your worktree>/local/e2e`),
   against your own local test network. Never the beta build, never the live network.
 - **UI changes:** if the pitch changes what's on screen, check every changed screen in the headless app:
@@ -62,8 +63,8 @@ ctest --test-dir build/dev -R '<your tests>'             # while you work
 
 ## Pull request
 
-1. `git fetch origin && git merge origin/main`. Resolve conflicts keeping both sides' work. Rebuild, run your tests
-   and the full suite once, and lint.
+1. `git fetch origin && git merge origin/main`. Resolve conflicts keeping both sides' work. Rebuild, run your targeted
+   tests, and lint. CI runs the full suite.
 2. Push and open the PR:
    ```sh
    git push -u origin crew/P-NNN-slug

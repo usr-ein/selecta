@@ -48,6 +48,8 @@ ReleasePickerDialog::ReleasePickerDialog(core::EngineHost &engine, qint64 itemId
     resize(560, 380);
 
     auto *heading = new QLabel(tr("Which release is “%1”?").arg(track), this);
+    heading->setObjectName(u"dialog.releasePicker.heading"_s);
+    heading->setTextFormat(Qt::PlainText); // the file's tags
     QFont font = heading->font();
     font.setWeight(QFont::DemiBold);
     heading->setFont(font);
@@ -56,6 +58,7 @@ ReleasePickerDialog::ReleasePickerDialog(core::EngineHost &engine, qint64 itemId
     note->setWordWrap(true);
     note->setForegroundRole(QPalette::PlaceholderText);
     m_status->setObjectName(u"dialog.releasePicker.status"_s);
+    m_status->setTextFormat(Qt::PlainText); // may be a service's words
     m_status->setWordWrap(true);
     m_list->setObjectName(u"dialog.releasePicker.list"_s);
     m_list->setAlternatingRowColors(true);
@@ -106,7 +109,7 @@ void ReleasePickerDialog::showCandidates(qint64 itemId, const QList<meta::Candid
         }
         facts.append(u"%1 (%2)"_s.arg(meta::sourceName(release.source), confidenceText(candidate.confidence)));
         auto *row = new QListWidgetItem(facts.join(u" · "_s), m_list);
-        row->setToolTip(candidate.reasons.join(u"\n"_s));
+        row->setToolTip(format::plainToolTip(candidate.reasons.join(u"\n"_s))); // may quote a release
     }
     m_list->setVisible(!candidates.isEmpty());
     m_status->setVisible(candidates.isEmpty());

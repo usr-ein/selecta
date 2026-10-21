@@ -57,6 +57,7 @@ QLabel *body(const QString &name, QWidget *parent)
     auto *label = new QLabel(parent);
     label->setObjectName(name);
     label->setWordWrap(true);
+    label->setTextFormat(Qt::PlainText); // names from peers, files and tags; the tags' list is set rich, escaped
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     return label;
 }

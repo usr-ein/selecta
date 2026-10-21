@@ -82,13 +82,19 @@ void AddTracksDialog::openFile()
     if (path.isEmpty()) {
         return;
     }
+    // A file's path, shown as it is.
+    const auto warn = [this](const QString &title, const QString &text) {
+        QMessageBox box(QMessageBox::Warning, title, text, QMessageBox::Ok, this);
+        box.setTextFormat(Qt::PlainText);
+        box.exec();
+    };
     QFile file(path);
     if (QFileInfo(path).size() > kMaxFileBytes) {
-        QMessageBox::warning(this, tr("File Too Large"), tr("%1 is larger than a tracklist should be.").arg(path));
+        warn(tr("File Too Large"), tr("%1 is larger than a tracklist should be.").arg(path));
         return;
     }
     if (!file.open(QIODevice::ReadOnly)) {
-        QMessageBox::warning(this, tr("Can't Open the File"), file.errorString());
+        warn(tr("Can't Open the File"), file.errorString());
         return;
     }
     const QByteArray bytes = file.read(kMaxFileBytes);

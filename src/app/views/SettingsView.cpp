@@ -39,6 +39,7 @@ constexpr int kColumnWidth = 640;
 QLabel *valueLabel(const QString &text, QWidget *parent)
 {
     auto *label = new QLabel(text, parent);
+    label->setTextFormat(Qt::PlainText);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     return label;
 }
@@ -52,7 +53,7 @@ QWidget *folderRow(const QString &path, const QString &objectName, QWidget *pare
     auto *field = new QLineEdit(path, row);
     field->setObjectName(objectName);
     field->setReadOnly(true);
-    field->setToolTip(path);
+    field->setToolTip(format::plainToolTip(path));
     field->setCursorPosition(0);
     auto *show = new QPushButton(SettingsView::tr("Show in Finder"), row);
     show->setObjectName(objectName + u".show"_s);
@@ -215,6 +216,7 @@ QWidget *SettingsView::createLibraryBox(QWidget *parent)
 
     m_libraryError = new QLabel(box);
     m_libraryError->setObjectName(u"settings.libraryError"_s);
+    m_libraryError->setTextFormat(Qt::PlainText); // names a folder
     m_libraryError->setWordWrap(true);
     m_libraryError->hide();
     form->addRow(m_libraryError);
@@ -261,6 +263,7 @@ QWidget *SettingsView::createFilingBox(QWidget *parent)
 
     m_preview = new QLabel(box);
     m_preview->setObjectName(u"settings.preview"_s);
+    m_preview->setTextFormat(Qt::PlainText); // folder names and a template's words
     m_preview->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_preview->setWordWrap(true);
     form->addRow(tr("Example:"), m_preview);
@@ -284,6 +287,7 @@ QWidget *SettingsView::createSpotifyBox(QWidget *parent)
 
     m_spotifyState = new QLabel(box);
     m_spotifyState->setObjectName(u"settings.spotify.state"_s);
+    m_spotifyState->setTextFormat(Qt::PlainText); // may be Spotify's words
     m_spotifyState->setWordWrap(true);
     form->addRow(tr("Status:"), m_spotifyState);
 
@@ -406,6 +410,7 @@ QWidget *SettingsView::createPreviewBox(QWidget *parent)
     form->addRow(tr("yt-dlp:"), row);
     m_ytDlpState = new QLabel(tr("Not checked yet."), box);
     m_ytDlpState->setObjectName(u"settings.preview.ytDlp.state"_s);
+    m_ytDlpState->setTextFormat(Qt::PlainText); // what yt-dlp says of itself
     m_ytDlpState->setWordWrap(true);
     m_ytDlpState->setTextInteractionFlags(Qt::TextSelectableByMouse);
     form->addRow(QString(), m_ytDlpState);
@@ -480,6 +485,7 @@ QWidget *SettingsView::createNetworkBox(QWidget *parent)
 
     m_networkState = new QLabel(box);
     m_networkState->setObjectName(u"settings.network.state"_s);
+    m_networkState->setTextFormat(Qt::PlainText); // may be the server's words
     m_networkState->setWordWrap(true);
     form->addRow(tr("Status:"), m_networkState);
 
@@ -535,11 +541,13 @@ QWidget *SettingsView::createNetworkBox(QWidget *parent)
     form->addRow(QString(), m_portMapping);
     m_portMappingState = new QLabel(box);
     m_portMappingState->setObjectName(u"settings.network.portMappingState"_s);
+    m_portMappingState->setTextFormat(Qt::PlainText); // may be the router's words
     m_portMappingState->setWordWrap(true);
     m_portMappingState->setTextInteractionFlags(Qt::TextSelectableByMouse);
     form->addRow(QString(), m_portMappingState);
     m_reachability = new QLabel(box);
     m_reachability->setObjectName(u"settings.network.reachability"_s);
+    m_reachability->setTextFormat(Qt::PlainText);
     m_reachability->setWordWrap(true);
     form->addRow(QString(), m_reachability);
 
@@ -821,7 +829,7 @@ void SettingsView::showLibrary()
     for (const auto &[field, folder] :
          {std::pair{m_tracksFolder, m_library.tracksRoot}, std::pair{m_albumsFolder, m_library.albumsRoot}}) {
         field->setText(QDir::toNativeSeparators(folder));
-        field->setToolTip(QDir::toNativeSeparators(folder));
+        field->setToolTip(format::plainToolTip(QDir::toNativeSeparators(folder)));
         field->setCursorPosition(0);
     }
     // Asked for until both are chosen (after the update from a single collection folder too: no guessing).

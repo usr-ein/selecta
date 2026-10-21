@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QStringList>
+#include <QTextDocument>
 
 #include <algorithm>
 #include <cmath>
@@ -136,6 +137,22 @@ QString about(qint64 milliseconds)
     return rest == 0
                ? QCoreApplication::translate("selecta::app::format", "about %1 h").arg(minutes / 60)
                : QCoreApplication::translate("selecta::app::format", "about %1 h %2 min").arg(minutes / 60).arg(rest);
+}
+
+QString plainToolTip(const QString &text)
+{
+    if (!Qt::mightBeRichText(text)) {
+        return text; // Qt shows it as plain text: as it is
+    }
+    QString escaped = text.toHtmlEscaped();
+    escaped.replace(u'\n', u"<br>"_s);
+    return u"<p style=\"white-space:pre\">"_s + escaped + u"</p>"_s;
+}
+
+QString noMnemonic(const QString &text)
+{
+    QString literal = text;
+    return literal.replace(u'&', u"&&"_s);
 }
 
 } // namespace selecta::app::format
