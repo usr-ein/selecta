@@ -14,4 +14,8 @@ if(PORT STREQUAL "qtbase")
     set(VCPKG_C_FLAGS "-fsanitize=thread")
     set(VCPKG_CXX_FLAGS "-fsanitize=thread")
     set(VCPKG_LINKER_FLAGS "-fsanitize=thread")
+    # Qt's tools (moc, rcc, uic) are instrumented too and load the TSan runtime from the toolchain through the rpath
+    # clang gives them. vcpkg's Mach-O fixup would replace it with the package's own lib folder, where moc can't find
+    # the runtime and won't start.
+    set(VCPKG_FIXUP_MACHO_RPATH OFF)
 endif()
