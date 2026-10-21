@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Jobs to run: any of build, replay, lint, windows (empty: all)"
+        description: "Jobs to run: any of build, replay, same, lint, windows (empty: all)"
         type: string
         default: ''
       replay:
@@ -261,6 +261,67 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: exp-replay-${{ matrix.name }}
+          path: |
+            *.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The same tree built cold with each compiler, one after the other on one runner: runners differ by half.
+  same-runner:
+    name: exp · same runner ${{ matrix.set }}
+    if: contains(inputs.only, 'same')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        set: [a, b]
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tools
+        run: |
+          lscpu | sed -n 's/^Model name: *//p'; nproc
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm libgl-dev libegl-dev \
+            libglu1-mesa-dev mold lld
+
+      - name: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-linux-selecta
+
+      - name: Cold builds
+        run: |
+          gcc=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD)
+          quiet="-DCMAKE_PROJECT_INCLUDE=$PWD/.github/experiments/clang.cmake"
+          if [[ "${{ matrix.set }}" == a ]]; then configs=(gcc clang-22 clang-21); else configs=(gcc gcc-pch gcc-g0); fi
+          for config in "${configs[@]}"; do
+            case "$config" in
+              gcc) flags=("${gcc[@]}") ;;
+              gcc-g0) flags=("${gcc[@]}" -DCMAKE_C_FLAGS_DEBUG=-g0 -DCMAKE_CXX_FLAGS_DEBUG=-g0) ;;
+              gcc-pch) flags=("${gcc[@]}" "-DCMAKE_PROJECT_INCLUDE=$PWD/.github/experiments/pch.cmake") ;;
+              clang-21) flags=(-DCMAKE_C_COMPILER=clang-21 -DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_LINKER_TYPE=LLD "$quiet") ;;
+              clang-22) flags=(-DCMAKE_C_COMPILER=clang-22 -DCMAKE_CXX_COMPILER=clang++-22 -DCMAKE_LINKER_TYPE=LLD "$quiet") ;;
+            esac
+            rm -rf build/c
+            cmake --preset linux -B build/c -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DSELECTA_CCACHE=OFF "${flags[@]}" \
+              > "configure-$config.log" 2>&1 || { cat "configure-$config.log"; exit 1; }
+            start=$SECONDS
+            status=0
+            cmake --build build/c -- -k 0 > "build-$config.log" 2>&1 || status=$?
+            echo "cold build $config: $((SECONDS - start)) s (exit $status)"
+            [[ $status -eq 0 ]] || grep -E ' error: ' "build-$config.log" | head -10
+          done
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: exp-same-runner-${{ matrix.set }}
           path: |
             *.log
           if-no-files-found: ignore
