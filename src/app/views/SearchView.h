@@ -78,7 +78,8 @@ Q_SIGNALS:
     void summaryChanged();
     void previewRequested();
     // "Browse <peer>'s Files" (BRWS-1).
-    void browseRequested(const QString &peer);
+    // Browse the peer's files; with `remotePath` (as the peer sent it), opened on that file.
+    void browseRequested(const QString &peer, const QByteArray &remotePath = {});
     // "Message <peer>…" (NET-7).
     void messageRequested(const QString &peer);
 

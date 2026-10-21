@@ -113,6 +113,7 @@ if(SELECTA_WITH_MEDIA)
             app/AppearanceTest.cpp
             app/ActivityModelTest.cpp
             app/AppIconTest.cpp
+            app/BrowseTreeModelTest.cpp
             app/DiagnosticsTest.cpp
             app/ConverterViewTest.cpp
             app/FormatTest.cpp

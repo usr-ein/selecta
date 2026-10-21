@@ -4,7 +4,7 @@
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
-#include "app/models/SearchResultsModel.h"
+#include "app/models/BrowseTreeModel.h"
 #include "core/EngineHost.h"
 
 #include <QApplication>
@@ -26,12 +26,18 @@
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
+namespace {
+
+// Up to this many files, every folder opens when the list arrives; a bigger tree opens its top folders only.
+constexpr int kOpenAllFiles = 2000;
+
+} // namespace
 
 BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget *parent)
     : QWidget(parent)
     , m_engine(engine)
     , m_settings(settings)
-    , m_model(new SearchResultsModel(this))
+    , m_model(new BrowseTreeModel(this))
     , m_headline(new QLabel(this))
     , m_details(new QLabel(this))
     , m_refresh(new QPushButton(tr("Refresh"), this))
@@ -60,10 +66,8 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     connect(m_download, &QPushButton::clicked, this, &BrowseView::downloadSelected);
     connect(m_downloadFolder, &QPushButton::clicked, this, &BrowseView::downloadFolder);
 
-    // The same filters as searches; folders, as the peer has them.
+    // Folders as the peer has them; the search filters only dim what they would hide.
     m_model->setFilter(m_settings.searchViewState().filter);
-    m_model->setGrouped(true);
-    m_model->setReleaseChosen(false);
     m_table->setObjectName(u"browse.results"_s);
     m_table->setModel(m_model);
     m_table->setUniformRowHeights(true);
@@ -74,16 +78,14 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     m_table->setAttribute(Qt::WA_MacShowFocusRect, false);
     m_table->setContextMenuPolicy(Qt::CustomContextMenu);
     m_table->setSortingEnabled(true);
-    m_table->sortByColumn(SearchResultsModel::TitleColumn, Qt::AscendingOrder); // a folder plays in track order
+    m_table->sortByColumn(BrowseTreeModel::NameColumn, Qt::AscendingOrder); // a folder plays in track order
     QHeaderView *header = m_table->header();
     header->setStretchLastSection(false);
-    header->setSectionResizeMode(SearchResultsModel::TitleColumn, QHeaderView::Stretch);
-    m_table->setColumnWidth(SearchResultsModel::StatusColumn, 130);
-    m_table->setColumnWidth(SearchResultsModel::QualityColumn, 110);
-    m_table->setColumnWidth(SearchResultsModel::LengthColumn, 80);
-    m_table->setColumnHidden(SearchResultsModel::PeerColumn, true); // one peer
-    m_table->setColumnHidden(SearchResultsModel::QueueColumn, true);
-    m_table->setColumnHidden(SearchResultsModel::SpeedColumn, true);
+    header->setSectionResizeMode(BrowseTreeModel::NameColumn, QHeaderView::Stretch);
+    m_table->setColumnWidth(BrowseTreeModel::StatusColumn, 130);
+    m_table->setColumnWidth(BrowseTreeModel::QualityColumn, 110);
+    m_table->setColumnWidth(BrowseTreeModel::LengthColumn, 70);
+    m_table->setColumnWidth(BrowseTreeModel::SizeColumn, 80);
     m_table->installEventFilter(this); // Return downloads, Space previews
     connect(m_table, &QTreeView::customContextMenuRequested, this, &BrowseView::contextMenu);
     m_table->setAccessibleName(tr("Shared files"));
@@ -94,7 +96,7 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
         }
     });
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &BrowseView::selectionMoved);
-    connect(m_model, &QAbstractItemModel::modelReset, m_table, &QTreeView::expandAll);
+    connect(m_model, &QAbstractItemModel::modelReset, this, &BrowseView::openFolders);
 
     m_waiting->setObjectName(u"browse.waiting"_s);
     m_waiting->setTextFormat(Qt::PlainText); // the peer's name, or why the list didn't come
@@ -129,6 +131,7 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
             [this](const QString &peer, const QList<core::SearchResult> &results) {
                 if (peer == m_peer) {
                     m_model->reset(results);
+                    revealPending(true);
                     refresh();
                 }
             });
@@ -138,10 +141,57 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
 void BrowseView::showPeer(const QString &peer)
 {
     m_peer = peer;
+    m_missing.clear();
     m_table->selectionModel()->clear();
     m_model->setFilter(m_settings.searchViewState().filter); // the filters may have changed in a search
     m_model->reset(m_engine.browseResults(peer));
+    revealPending(false); // the list shown may be an older one: the fresh one may still have the file
     refresh();
+}
+
+void BrowseView::revealFile(const QString &peer, const QByteArray &remotePath)
+{
+    m_revealPeer = peer;
+    m_revealPath = remotePath;
+}
+
+void BrowseView::revealPending(bool final)
+{
+    if (m_revealPath.isEmpty() || m_revealPeer != m_peer) {
+        return;
+    }
+    const QModelIndex found = m_model->indexOfPath(m_revealPath);
+    if (!found.isValid()) {
+        if (final) {
+            m_missing = core::remoteNameOf(core::decodeRemotePath(m_revealPath));
+            m_revealPath.clear();
+        }
+        return;
+    }
+    for (QModelIndex folder = found.parent(); folder.isValid(); folder = folder.parent()) {
+        m_table->expand(folder);
+    }
+    m_table->selectionModel()->setCurrentIndex(found,
+                                               QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    m_table->scrollTo(found, QAbstractItemView::PositionAtCenter);
+    m_revealPath.clear();
+    m_missing.clear();
+}
+
+void BrowseView::openFolders()
+{
+    if (m_model->fileCount() <= kOpenAllFiles) {
+        m_table->expandAll();
+        return;
+    }
+    // A big tree: its top folders, and down every chain of lone folders ("@@music" › "Music" › …).
+    for (int row = 0; row < m_model->rowCount(); ++row) {
+        QModelIndex folder = m_model->index(row, 0);
+        while (folder.isValid() && folder.data(BrowseTreeModel::IsFolderRole).toBool()) {
+            m_table->expand(folder);
+            folder = m_model->rowCount(folder) == 1 ? m_model->index(0, 0, folder) : QModelIndex();
+        }
+    }
 }
 
 QString BrowseView::title() const
@@ -168,7 +218,12 @@ QString BrowseView::summary() const
         break;
     }
     const core::FilterCounts counts = m_model->counts();
-    return tr("%1 of %2 files shown").arg(QLocale().toString(counts.shown), QLocale().toString(browse->files));
+    if (counts.total == 0 || counts.shown == counts.total) {
+        return browse->files == 1 ? tr("1 file") : tr("%1 files").arg(QLocale().toString(browse->files));
+    }
+    // Every file is listed; those the search filters would hide are dimmed.
+    return tr("%1 files · %2 pass your search filters")
+        .arg(QLocale().toString(browse->files), QLocale().toString(counts.shown));
 }
 
 void BrowseView::refresh()
@@ -183,11 +238,10 @@ void BrowseView::refresh()
     }
     m_pages->setCurrentIndex(ready && m_model->rowCount() > 0 ? 1 : 0);
     if (ready && m_model->rowCount() == 0) {
-        m_waiting->setText(browse->files == 0 ? tr("%1 shares nothing.").arg(m_peer)
-                                              : tr("Nothing here passes your search filters."));
+        m_waiting->setText(browse->files == 0 ? tr("%1 shares nothing.").arg(m_peer) : tr("Reading the list…"));
     }
     QStringList details;
-    if (browse && browse->files > 0) {
+    if (ready && browse->files > 0) {
         details.append(browse->folders == 1
                            ? tr("%1 files in 1 folder").arg(QLocale().toString(browse->files))
                            : tr("%1 files in %2 folders")
@@ -200,8 +254,11 @@ void BrowseView::refresh()
                 ? tr("as it was %1").arg(format::ago(browse->fetchedAtMs, QDateTime::currentMSecsSinceEpoch()))
                 : tr("just listed"));
     }
-    if (browse && browse->state == core::Browse::State::Ready && !browse->message.isEmpty()) {
+    if (ready && !browse->message.isEmpty()) {
         details.append(browse->message); // a refresh the governor held back
+    }
+    if (ready && !m_missing.isEmpty()) {
+        details.append(tr("%1 isn't in this list").arg(m_missing));
     }
     m_details->setText(details.join(u" · "_s));
     m_refresh->setEnabled(
@@ -217,11 +274,14 @@ QList<int> BrowseView::selectedResults() const
     QSet<int> seen;
     const QModelIndexList rows = m_table->selectionModel()->selectedRows();
     for (const QModelIndex &row : rows) {
-        const QList<int> indexes =
-            m_model->resultAt(row) ? QList<int>{m_model->resultAt(row)->index} : m_model->resultsUnder(row);
+        const core::SearchResult *picked = m_model->resultAt(row);
+        // A file picked by name goes, filters or not; a folder stands for what passes them.
+        const QList<int> indexes = picked != nullptr ? QList<int>{picked->index} : m_model->filesIn(row);
         for (const int index : indexes) {
             const core::SearchResult *result = m_model->result(index);
-            if (result && result->isAudio() && !seen.contains(index)) {
+            const bool wanted =
+                picked != nullptr || m_model->hiddenReason(index) == core::HiddenReason::None;
+            if (result && result->isAudio() && wanted && !seen.contains(index)) {
                 seen.insert(index);
                 results.append(index);
             }
@@ -239,7 +299,7 @@ std::optional<int> BrowseView::folderAnchor() const
     if (const core::SearchResult *result = m_model->resultAt(current)) {
         return result->index;
     }
-    const QList<int> under = m_model->resultsUnder(current.siblingAtColumn(0));
+    const QList<int> under = m_model->filesIn(current.siblingAtColumn(0));
     return under.isEmpty() ? std::nullopt : std::optional(under.constFirst());
 }
 
@@ -301,7 +361,7 @@ bool BrowseView::eventFilter(QObject *watched, QEvent *event)
         if (key && (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&
             key->modifiers() == Qt::NoModifier) {
             const QModelIndex current = m_table->currentIndex();
-            if (current.isValid() && current.data(SearchResultsModel::IsFolderRole).toBool()) {
+            if (current.isValid() && current.data(BrowseTreeModel::IsFolderRole).toBool()) {
                 downloadFolder();
             } else {
                 downloadSelected();

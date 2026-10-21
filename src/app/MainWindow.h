@@ -111,6 +111,8 @@ public:
     PreviewController &preview() { return m_services.preview; }
     // Browses a peer's shares (BRWS-1): a sidebar item under Digging, and the Browse view.
     void browsePeer(const QString &peer);
+    // The same, opened on one of their files (`remotePath` as the peer sent it): its folders open, the file selected.
+    void browseFile(const QString &peer, const QByteArray &remotePath);
     // Opens the conversation with a peer (NET-7) in the Messages view.
     void messagePeer(const QString &peer);
     // System notifications and the Dock badge (UI-6).
