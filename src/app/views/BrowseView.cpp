@@ -123,15 +123,29 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     layout->addWidget(m_pages, 1);
 
     connect(&m_engine, &core::EngineHost::browseChanged, this, [this](const core::Browse &browse) {
-        if (browse.peer == m_peer) {
-            refresh();
+        if (browse.peer != m_peer) {
+            return;
         }
+        // No fresh list is coming (it failed, or the governor held the request back): the one shown is the answer.
+        const bool settled = browse.state == core::Browse::State::Failed ||
+                             (browse.state == core::Browse::State::Ready && !browse.message.isEmpty());
+        if (settled) {
+            revealPending(true);
+        }
+        refresh();
     });
     connect(&m_engine, &core::EngineHost::browseResultsReset, this,
             [this](const QString &peer, const QList<core::SearchResult> &results) {
                 if (peer == m_peer) {
+                    // The file picked in the list shown so far stays picked in the fresh one.
+                    const core::SearchResult *current = m_model->resultAt(m_table->currentIndex());
+                    const QByteArray kept = current != nullptr ? current->hit.path : QByteArray();
                     m_model->reset(results);
-                    revealPending(true);
+                    if (!m_revealPath.isEmpty()) {
+                        revealPending(true);
+                    } else if (!kept.isEmpty()) {
+                        select(m_model->indexOfPath(kept));
+                    }
                     refresh();
                 }
             });
@@ -168,14 +182,24 @@ void BrowseView::revealPending(bool final)
         }
         return;
     }
-    for (QModelIndex folder = found.parent(); folder.isValid(); folder = folder.parent()) {
+    select(found);
+    // Kept until a fresh list comes: the one shown now may be older, and the fresh one replaces its rows.
+    if (final) {
+        m_revealPath.clear();
+    }
+    m_missing.clear();
+}
+
+void BrowseView::select(const QModelIndex &file)
+{
+    if (!file.isValid()) {
+        return;
+    }
+    for (QModelIndex folder = file.parent(); folder.isValid(); folder = folder.parent()) {
         m_table->expand(folder);
     }
-    m_table->selectionModel()->setCurrentIndex(found,
-                                               QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
-    m_table->scrollTo(found, QAbstractItemView::PositionAtCenter);
-    m_revealPath.clear();
-    m_missing.clear();
+    m_table->selectionModel()->setCurrentIndex(file, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    m_table->scrollTo(file, QAbstractItemView::PositionAtCenter);
 }
 
 void BrowseView::openFolders()

@@ -60,6 +60,8 @@ Q_SIGNALS:
 private:
     void refresh();
     void openFolders();
+    // Opens the file's folders, selects it and scrolls to it.
+    void select(const QModelIndex &file);
     // Selects the file revealFile() asked for, if the list has it. `final`: this list is the answer, so a file it
     // lacks is reported rather than waited for.
     void revealPending(bool final);
