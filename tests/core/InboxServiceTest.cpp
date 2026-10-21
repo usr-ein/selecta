@@ -394,10 +394,11 @@ TEST_F(InboxServiceTest, AnUpgradeTakesItsFilesPlaceAndTheOldOneGoesToTheTrash)
 
     ASSERT_EQ(finished.size(), 1);
     EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
-    EXPECT_TRUE(finished.at(0).at(2).toString().startsWith(u"Replaced "_s)) << finished.at(0).at(2).toString().toStdString();
+    EXPECT_TRUE(finished.at(0).at(2).toString().startsWith(u"Replaced "_s))
+        << finished.at(0).at(2).toString().toStdString();
     QFile replaced(old);
     ASSERT_TRUE(replaced.open(QIODevice::ReadOnly));
-    EXPECT_EQ(replaced.readAll(), "audio"); // the upgrade, at the exact path
+    EXPECT_EQ(replaced.readAll(), "audio");                                            // the upgrade, at the exact path
     EXPECT_FALSE(QFileInfo::exists(config.tracksRoot + u"/Okuma Drift - Dusk.mp3"_s)); // not a new file
     EXPECT_TRUE(QFileInfo::exists(dir.filePath(u"Trash/01 Dusk.mp3"_s)));
     EXPECT_EQ(inbox.count(), 0);

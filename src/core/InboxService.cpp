@@ -400,8 +400,8 @@ void InboxService::drain()
         const auto item = m_inbox.find(outcome.id);
         const QString name = item ? item->relativePath : QString::number(outcome.id);
         if (!outcome.result.ok) {
-            qCWarning(lcInbox).noquote() << "couldn't" << (outcome.work == Work::Trash ? "trash" : "file") << name << ':'
-                                         << outcome.result.error;
+            qCWarning(lcInbox).noquote() << "couldn't" << (outcome.work == Work::Trash ? "trash" : "file") << name
+                                         << ':' << outcome.result.error;
             Q_EMIT finished(outcome.id, false, outcome.result.error);
             continue;
         }
@@ -417,8 +417,14 @@ void InboxService::drain()
             // The file already moved; reconcile() will drop the stale row on the next pass.
             qCWarning(lcInbox) << "moved" << name << "but couldn't update the Inbox:" << m_db.lastError();
         }
-        qCInfo(lcInbox).noquote() << (replaced ? "replaced with" : filed ? "filed" : "trashed") << name << "→"
-                                  << outcome.result.path;
+        const char *done = "trashed";
+        if (replaced) {
+            done = "replaced with";
+        } else if (filed) {
+            done = "filed";
+        }
+        qCInfo(lcInbox).noquote() << done
+                                  << name << "→" << outcome.result.path;
         QString message;
         if (replaced) {
             message = tr("Replaced %1. The old file is in the Trash.").arg(outcome.result.path);

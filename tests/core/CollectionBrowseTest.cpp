@@ -36,7 +36,8 @@ AudioQuality mp3(int kbps, std::optional<bool> vbr = false)
 
 AudioQuality lossless(Codec codec)
 {
-    return AudioQuality{.codec = codec, .bitrateKbps = 1411, .vbr = std::nullopt, .sampleRateHz = 44100, .bitDepth = 16};
+    return AudioQuality{
+        .codec = codec, .bitrateKbps = 1411, .vbr = std::nullopt, .sampleRateHz = 44100, .bitDepth = 16};
 }
 
 // Noon on a day of a month, local time: the month it falls in doesn't depend on the time zone.
@@ -131,8 +132,8 @@ TEST(QualityTiers, CodecsAndV0)
     EXPECT_EQ(qualityTier(mp3(256)), QualityTier::From256);
     EXPECT_EQ(qualityTier(mp3(245, true)), QualityTier::Top); // V0
     EXPECT_EQ(qualityTier(mp3(220, true)), QualityTier::Top);
-    EXPECT_EQ(qualityTier(mp3(219, true)), QualityTier::From192); // V1-class
-    EXPECT_EQ(qualityTier(mp3(190, true)), QualityTier::Below192); // V2-class averages under 192
+    EXPECT_EQ(qualityTier(mp3(219, true)), QualityTier::From192);         // V1-class
+    EXPECT_EQ(qualityTier(mp3(190, true)), QualityTier::Below192);        // V2-class averages under 192
     EXPECT_EQ(qualityTier(mp3(245, std::nullopt)), QualityTier::From192); // not known to be VBR: its bitrate
     EXPECT_EQ(qualityTier(mp3(0)), QualityTier::Unknown);
     EXPECT_EQ(qualityTier(AudioQuality{.codec = Codec::Aac, .bitrateKbps = 256}), QualityTier::From256);
@@ -163,7 +164,7 @@ TEST(QualityTiers, WhatTheDownloadSaid)
 
 TEST(QualityTiers, WorstFirstUnknownLastEachNamed)
 {
-    const QList<QualityTier> shown{QualityTier::Below192, QualityTier::From192, QualityTier::From256,
+    const QList<QualityTier> shown{QualityTier::Below192, QualityTier::From192,  QualityTier::From256,
                                    QualityTier::Top,      QualityTier::Lossless, QualityTier::Unknown};
     QStringList names;
     for (qsizetype i = 0; i < shown.size(); ++i) {
@@ -181,8 +182,8 @@ TEST(QualityTiers, WorstFirstUnknownLastEachNamed)
 
 TEST(QualityTiers, LosslessDownloadsByTheirQualityText)
 {
-    for (const QString &yes : {u"FLAC 16/44.1"_s, u"flac"_s, u" WAV 24/96 "_s, u"AIFF 16/44.1"_s, u"ALAC 24/96"_s,
-                               u"PCM"_s}) {
+    for (const QString &yes :
+         {u"FLAC 16/44.1"_s, u"flac"_s, u" WAV 24/96 "_s, u"AIFF 16/44.1"_s, u"ALAC 24/96"_s, u"PCM"_s}) {
         EXPECT_TRUE(isLosslessQualityText(yes)) << yes.toStdString();
     }
     for (const QString &no :
@@ -195,8 +196,8 @@ TEST(CollectionBrowse, NamesCompareWithoutCaseOrAccents)
 {
     EXPECT_EQ(browseKey(u"Étienne de Crécy"), u"etienne de crecy"_s);
     EXPECT_EQ(browseKey(u"  The   KLF "), u"the klf"_s);
-    EXPECT_EQ(browseKey(u"STRAßE"), u"straße"_s); // simple case folding: ß stays
-    EXPECT_EQ(browseKey(u"ﬁve"), u"five"_s); // a ligature
+    EXPECT_EQ(browseKey(u"STRAßE"), u"straße"_s);      // simple case folding: ß stays
+    EXPECT_EQ(browseKey(u"ﬁve"), u"five"_s);           // a ligature
     EXPECT_EQ(browseKey(u"Ｒöyksopp"), u"royksopp"_s); // full width
     EXPECT_EQ(browseKey(u""), QString());
 }
@@ -305,8 +306,7 @@ TEST(CollectionBrowse, ByMonthAddedNewestFirst)
         name[0] = name.at(0).toUpper();
         return u"%1 %2"_s.arg(name).arg(year);
     };
-    EXPECT_EQ(titles(sections),
-              (QStringList{month(2026, 10), month(2026, 9), month(2025, 10), u"Date unknown"_s}));
+    EXPECT_EQ(titles(sections), (QStringList{month(2026, 10), month(2026, 9), month(2025, 10), u"Date unknown"_s}));
     // An album tile is as new as its newest track.
     EXPECT_EQ(tiles(all, sections.at(0)), (QStringList{u"Newest"_s, u"[Side A, Side B]"_s, u"Earlier"_s}));
     EXPECT_EQ(tiles(all, sections.at(1)), QStringList{u"Older"_s});
@@ -350,7 +350,7 @@ TEST(CollectionBrowse, ALargeCollectionGroupsQuickly)
     for (int i = 0; i < 20'000; ++i) {
         const quint64 album = i % 2 == 0 ? static_cast<quint64>(i % 2000) + 1 : 0;
         listing.track(u"Artist %1"_s.arg(i % 900), u"Title %1"_s.arg(i), static_cast<QualityTier>(i % 6), album,
-                      i % 12 + 1, u"Genre %1"_s.arg(i % 40), on(2020 + i % 7, i % 12 + 1, 1));
+                      (i % 12) + 1, u"Genre %1"_s.arg(i % 40), on(2020 + (i % 7), (i % 12) + 1, 1));
     }
     QElapsedTimer timer;
     timer.start();
@@ -362,6 +362,6 @@ TEST(CollectionBrowse, ALargeCollectionGroupsQuickly)
             tracks += section.trackCount;
         }
     }
-    EXPECT_EQ(tracks, 4 * 20'000); // every track, once per grouping
+    EXPECT_EQ(tracks, 4 * 20'000);        // every track, once per grouping
     EXPECT_LT(timer.elapsed(), 4 * 1000); // generous: sanitizer builds are slow
 }

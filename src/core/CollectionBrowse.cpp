@@ -10,7 +10,9 @@
 #include <QMap>
 
 #include <algorithm>
+#include <array>
 #include <limits>
+#include <numeric>
 #include <tuple>
 
 using namespace Qt::StringLiterals;
@@ -29,7 +31,10 @@ struct SectionId
     int rank = 0;
     QString key;
 
-    friend bool operator<(const SectionId &a, const SectionId &b) { return std::tie(a.rank, a.key) < std::tie(b.rank, b.key); }
+    friend bool operator<(const SectionId &a, const SectionId &b)
+    {
+        return std::tie(a.rank, a.key) < std::tie(b.rank, b.key);
+    }
 };
 
 // What a track brings to its tile's place in a section.
@@ -69,7 +74,7 @@ QString initialOf(const QString &key)
     if (key.at(0).isHighSurrogate() && key.size() > 1) {
         return key.left(2).toUpper(); // a letter outside the BMP
     }
-    return QString(key.at(0).toUpper());
+    return {key.at(0).toUpper()};
 }
 
 } // namespace
@@ -155,12 +160,22 @@ bool isLosslessQualityText(QStringView quality)
     const QStringView trimmed = quality.trimmed();
     const qsizetype space = trimmed.indexOf(u' ');
     const QStringView format = space < 0 ? trimmed : trimmed.left(space);
-    for (const QStringView lossless : {u"FLAC", u"ALAC", u"WAV", u"AIFF", u"PCM"}) {
-        if (format.compare(lossless, Qt::CaseInsensitive) == 0) {
-            return true;
-        }
-    }
-    return false;
+    static constexpr std::array<QStringView, 5> kLossless{u"FLAC", u"ALAC", u"WAV", u"AIFF", u"PCM"};
+    return std::ranges::any_of(kLossless, [format](QStringView lossless) {
+        return format.compare(lossless, Qt::CaseInsensitive) == 0;
+    });
+}
+
+bool operator==(const CollectionTrack &a, const CollectionTrack &b)
+{
+    const auto facts = [](const CollectionTrack &t) {
+        return std::tie(t.id, t.path, t.artist, t.title, t.album, t.albumArtist, t.genre, t.year, t.trackNumber,
+                        t.discNumber, t.durationMs, t.sizeBytes, t.modifiedMs, t.addedMs, t.tier, t.albumId);
+    };
+    const auto quality = [](const match::AudioQuality &q) {
+        return std::tie(q.codec, q.bitrateKbps, q.vbr, q.sampleRateHz, q.bitDepth);
+    };
+    return facts(a) == facts(b) && quality(a.quality) == quality(b.quality);
 }
 
 const CollectionAlbum *CollectionListing::album(quint64 id) const
@@ -191,6 +206,126 @@ QString browseKey(QStringView text)
     return key.toCaseFolded().simplified();
 }
 
+namespace {
+
+// Where `track` goes when the wall is grouped `order`.
+SectionId sectionOf(const CollectionTrack &track, const TrackFacts &fact, CollectionOrder order)
+{
+    SectionId section;
+    switch (order) {
+    case CollectionOrder::Added:
+        if (track.addedMs > 0) {
+            const QDate date = QDateTime::fromMSecsSinceEpoch(track.addedMs).date();
+            section.rank = -((date.year() * 12) + date.month()); // newest first
+        } else {
+            section.rank = kLastRank;
+        }
+        break;
+    case CollectionOrder::Artist:
+        section.key = initialOf(fact.artistKey);
+        section.rank = section.key == u"#" ? 1 : 0;
+        break;
+    case CollectionOrder::Genre:
+        section.key = browseKey(track.genre);
+        section.rank = section.key.isEmpty() ? 1 : 0;
+        break;
+    case CollectionOrder::Quality:
+        section.rank = tierDisplayOrder(track.tier);
+        break;
+    }
+    return section;
+}
+
+// The spelling most of a genre's tracks use; a tie goes to the one that sorts first.
+QString mostSpelled(const QHash<QString, int> &spellings)
+{
+    QString title;
+    int most = 0;
+    for (auto it = spellings.cbegin(); it != spellings.cend(); ++it) {
+        if (it.value() > most || (it.value() == most && it.key() < title)) {
+            most = it.value();
+            title = it.key();
+        }
+    }
+    return title;
+}
+
+QString sectionTitle(const SectionId &id, CollectionOrder order, const CollectionTrack &first,
+                     const QHash<QString, QHash<QString, int>> &genreSpellings)
+{
+    switch (order) {
+    case CollectionOrder::Added:
+        return id.rank == kLastRank ? translated("Date unknown")
+                                    : monthTitle(QDateTime::fromMSecsSinceEpoch(first.addedMs).date());
+    case CollectionOrder::Artist:
+        return id.key;
+    case CollectionOrder::Genre:
+        return id.key.isEmpty() ? translated("No genre") : mostSpelled(genreSpellings.value(id.key));
+    case CollectionOrder::Quality:
+        break;
+    }
+    return tierName(first.tier);
+}
+
+// A section's tiles: the tracks of one album make one tile, a loose track is a tile of its own; newest first, or by
+// artist and title.
+QList<CollectionTile> tilesOf(const QList<int> &members, const QList<CollectionTrack> &tracks,
+                              const QHash<quint64, const CollectionAlbum *> &albums, const QList<TrackFacts> &facts,
+                              bool newestFirst)
+{
+    QList<CollectionTile> tiles;
+    QList<TileFacts> placing;
+    QHash<quint64, qsizetype> albumTile;
+    for (const int index : members) {
+        const CollectionTrack &track = tracks.at(index);
+        const bool inAlbum = track.albumId != 0 && albums.contains(track.albumId);
+        qsizetype at = inAlbum ? albumTile.value(track.albumId, -1) : -1;
+        if (at < 0) {
+            at = tiles.size();
+            tiles.append(CollectionTile{.albumId = inAlbum ? track.albumId : 0, .tracks = {}});
+            placing.append(TileFacts{.artistKey = facts.at(index).artistKey,
+                                     .titleKey = facts.at(index).titleKey,
+                                     .newestMs = track.addedMs,
+                                     .firstTrack = index});
+            if (inAlbum) {
+                albumTile.insert(track.albumId, at);
+            }
+        }
+        tiles[at].tracks.append(index);
+        placing[at].newestMs = std::max(placing.at(at).newestMs, track.addedMs);
+    }
+    for (CollectionTile &tile : tiles) {
+        if (tile.albumId != 0) {
+            std::ranges::sort(tile.tracks, [&tracks](int a, int b) { return playsBefore(tracks.at(a), tracks.at(b)); });
+        }
+    }
+    QList<qsizetype> order(tiles.size());
+    std::iota(order.begin(), order.end(), qsizetype{0});
+    std::ranges::sort(order, [&placing, newestFirst](qsizetype a, qsizetype b) {
+        const TileFacts &x = placing.at(a);
+        const TileFacts &y = placing.at(b);
+        if (newestFirst && x.newestMs != y.newestMs) {
+            return x.newestMs > y.newestMs;
+        }
+        return std::tie(x.artistKey, x.titleKey, x.firstTrack) < std::tie(y.artistKey, y.titleKey, y.firstTrack);
+    });
+    QList<CollectionTile> sorted;
+    sorted.reserve(tiles.size());
+    for (const qsizetype i : std::as_const(order)) {
+        sorted.append(std::move(tiles[i]));
+    }
+    return sorted;
+}
+
+} // namespace
+
+bool playsBefore(const CollectionTrack &x, const CollectionTrack &y)
+{
+    const int xNumber = x.trackNumber > 0 ? x.trackNumber : std::numeric_limits<int>::max();
+    const int yNumber = y.trackNumber > 0 ? y.trackNumber : std::numeric_limits<int>::max();
+    return std::tie(x.discNumber, xNumber, x.path) < std::tie(y.discNumber, yNumber, y.path);
+}
+
 QList<CollectionSection> groupCollection(const CollectionListing &listing, CollectionOrder order)
 {
     const QList<CollectionTrack> &tracks = listing.tracks;
@@ -208,33 +343,11 @@ QList<CollectionSection> groupCollection(const CollectionListing &listing, Colle
     for (qsizetype i = 0; i < tracks.size(); ++i) {
         const CollectionTrack &track = tracks.at(i);
         const CollectionAlbum *album = track.albumId != 0 ? albums.value(track.albumId) : nullptr;
-        TrackFacts fact;
-        fact.artistKey = browseKey(album ? album->artist : track.artist);
-        fact.titleKey = browseKey(album ? album->title : track.title);
-        SectionId section;
-        switch (order) {
-        case CollectionOrder::Added:
-            if (track.addedMs > 0) {
-                const QDate date = QDateTime::fromMSecsSinceEpoch(track.addedMs).date();
-                section.rank = -(date.year() * 12 + date.month()); // newest first
-            } else {
-                section.rank = kLastRank;
-            }
-            break;
-        case CollectionOrder::Artist:
-            section.key = initialOf(fact.artistKey);
-            section.rank = section.key == u"#" ? 1 : 0;
-            break;
-        case CollectionOrder::Genre:
-            section.key = browseKey(track.genre);
-            section.rank = section.key.isEmpty() ? 1 : 0;
-            if (!section.key.isEmpty()) {
-                ++genreSpellings[section.key][track.genre];
-            }
-            break;
-        case CollectionOrder::Quality:
-            section.rank = tierDisplayOrder(track.tier);
-            break;
+        TrackFacts fact{.artistKey = browseKey(album ? album->artist : track.artist),
+                        .titleKey = browseKey(album ? album->title : track.title)};
+        const SectionId section = sectionOf(track, fact, order);
+        if (order == CollectionOrder::Genre && !section.key.isEmpty()) {
+            ++genreSpellings[section.key][track.genre];
         }
         facts.append(std::move(fact));
         sections[section].append(static_cast<int>(i));
@@ -243,95 +356,11 @@ QList<CollectionSection> groupCollection(const CollectionListing &listing, Colle
     QList<CollectionSection> result;
     result.reserve(sections.size());
     for (auto it = sections.cbegin(); it != sections.cend(); ++it) {
-        const SectionId &id = it.key();
         const QList<int> &members = it.value();
-        CollectionSection section;
-        section.trackCount = static_cast<int>(members.size());
-        switch (order) {
-        case CollectionOrder::Added:
-            if (id.rank == kLastRank) {
-                section.title = translated("Date unknown");
-            } else {
-                const QDate date = QDateTime::fromMSecsSinceEpoch(tracks.at(members.constFirst()).addedMs).date();
-                section.title = monthTitle(date);
-            }
-            break;
-        case CollectionOrder::Artist:
-            section.title = id.key;
-            break;
-        case CollectionOrder::Genre:
-            if (id.key.isEmpty()) {
-                section.title = translated("No genre");
-            } else {
-                // As most of its tracks spell it; a tie goes to the spelling that sorts first.
-                const QHash<QString, int> &spellings = genreSpellings.value(id.key);
-                int most = 0;
-                for (auto spelling = spellings.cbegin(); spelling != spellings.cend(); ++spelling) {
-                    if (spelling.value() > most || (spelling.value() == most && spelling.key() < section.title)) {
-                        most = spelling.value();
-                        section.title = spelling.key();
-                    }
-                }
-            }
-            break;
-        case CollectionOrder::Quality:
-            section.title = tierName(tracks.at(members.constFirst()).tier);
-            break;
-        }
-
-        // The tracks of one album make one tile; a loose track is a tile of its own.
-        QList<CollectionTile> tiles;
-        QList<TileFacts> placing;
-        QHash<quint64, qsizetype> albumTile;
-        for (const int index : members) {
-            const CollectionTrack &track = tracks.at(index);
-            const bool inAlbum = track.albumId != 0 && albums.contains(track.albumId);
-            qsizetype at = inAlbum ? albumTile.value(track.albumId, -1) : -1;
-            if (at < 0) {
-                at = tiles.size();
-                tiles.append(CollectionTile{.albumId = inAlbum ? track.albumId : 0, .tracks = {}});
-                placing.append(TileFacts{.artistKey = facts.at(index).artistKey,
-                                         .titleKey = facts.at(index).titleKey,
-                                         .newestMs = track.addedMs,
-                                         .firstTrack = index});
-                if (inAlbum) {
-                    albumTile.insert(track.albumId, at);
-                }
-            }
-            tiles[at].tracks.append(index);
-            placing[at].newestMs = std::max(placing.at(at).newestMs, track.addedMs);
-        }
-        for (CollectionTile &tile : tiles) {
-            if (tile.albumId == 0) {
-                continue;
-            }
-            std::ranges::sort(tile.tracks, [&tracks](int a, int b) {
-                const CollectionTrack &x = tracks.at(a);
-                const CollectionTrack &y = tracks.at(b);
-                // Unnumbered tracks after the numbered ones of their disc.
-                const int xNumber = x.trackNumber > 0 ? x.trackNumber : std::numeric_limits<int>::max();
-                const int yNumber = y.trackNumber > 0 ? y.trackNumber : std::numeric_limits<int>::max();
-                return std::tie(x.discNumber, xNumber, x.path) < std::tie(y.discNumber, yNumber, y.path);
-            });
-        }
-        QList<qsizetype> tileOrder(tiles.size());
-        for (qsizetype i = 0; i < tileOrder.size(); ++i) {
-            tileOrder[i] = i;
-        }
-        const bool newestFirst = order == CollectionOrder::Added;
-        std::ranges::sort(tileOrder, [&placing, newestFirst](qsizetype a, qsizetype b) {
-            const TileFacts &x = placing.at(a);
-            const TileFacts &y = placing.at(b);
-            if (newestFirst && x.newestMs != y.newestMs) {
-                return x.newestMs > y.newestMs;
-            }
-            return std::tie(x.artistKey, x.titleKey, x.firstTrack) < std::tie(y.artistKey, y.titleKey, y.firstTrack);
-        });
-        section.tiles.reserve(tiles.size());
-        for (const qsizetype i : std::as_const(tileOrder)) {
-            section.tiles.append(std::move(tiles[i]));
-        }
-        result.append(std::move(section));
+        result.append(CollectionSection{
+            .title = sectionTitle(it.key(), order, tracks.at(members.constFirst()), genreSpellings),
+            .tiles = tilesOf(members, tracks, albums, facts, order == CollectionOrder::Added),
+            .trackCount = static_cast<int>(members.size())});
     }
     return result;
 }

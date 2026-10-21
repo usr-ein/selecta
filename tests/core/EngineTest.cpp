@@ -326,8 +326,8 @@ TEST_F(EngineTest, SearchingForBetterQualityAddsUpgradeLines)
         tags.set(keys::Title, title, selecta::convert::Provenance::Embedded);
         return selecta::convert::writeTags(path, tags).ok();
     };
-    ASSERT_TRUE(write(u"Tracks/Okuma Drift - Dusk.mp3"_s,
-                      synth::makeMp3(synth::sine(440.0, 3.0), {.bitrateKbps = 128}), u"Dusk"_s));
+    ASSERT_TRUE(write(u"Tracks/Okuma Drift - Dusk.mp3"_s, synth::makeMp3(synth::sine(440.0, 3.0), {.bitrateKbps = 128}),
+                      u"Dusk"_s));
     ASSERT_TRUE(write(u"Tracks/Okuma Drift - Dawn.flac"_s,
                       synth::makeFlac(synth::quantised(synth::sine(440.0, 3.0), 16)), u"Dawn"_s));
     EngineOptions opts = options();

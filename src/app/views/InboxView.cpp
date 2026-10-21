@@ -111,8 +111,9 @@ QString accessibleStatus(const core::InboxEntry &entry)
         return InboxView::tr("Warning: %1").arg(badge.replace(u"≈ "_s, InboxView::tr("roughly ")));
     }
     if (!entry.item.replaces.isEmpty()) {
-        return core::upgradeMismatch(entry.item).isEmpty() ? InboxView::tr("Ready, an upgrade")
-                                                           : InboxView::tr("Warning: an upgrade that can't replace its file");
+        return core::upgradeMismatch(entry.item).isEmpty()
+                   ? InboxView::tr("Ready, an upgrade")
+                   : InboxView::tr("Warning: an upgrade that can't replace its file");
     }
     if (!entry.item.belowWanted.isEmpty()) {
         return InboxView::tr("Ready, below your quality");
@@ -139,11 +140,12 @@ QString statusToolTip(const core::InboxEntry &entry)
     }
     if (!item.replaces.isEmpty()) {
         const QString mismatch = core::upgradeMismatch(item);
-        lines.append(mismatch.isEmpty() ? InboxView::tr("A better copy of %1: Save to collection puts it in that file's "
-                                                        "place, under the same name, and moves that file to the Trash.")
-                                              .arg(QDir::toNativeSeparators(item.replaces))
-                                        : InboxView::tr("A better copy of %1. %2")
-                                              .arg(QDir::toNativeSeparators(item.replaces), mismatch));
+        lines.append(
+            mismatch.isEmpty()
+                ? InboxView::tr("A better copy of %1: Save to collection puts it in that file's "
+                                "place, under the same name, and moves that file to the Trash.")
+                      .arg(QDir::toNativeSeparators(item.replaces))
+                : InboxView::tr("A better copy of %1. %2").arg(QDir::toNativeSeparators(item.replaces), mismatch));
     }
     if (!item.belowWanted.isEmpty()) {
         lines.append(InboxView::tr("Below the quality you wanted (%1): you got it anyway.").arg(item.belowWanted));

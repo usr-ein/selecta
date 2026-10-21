@@ -157,7 +157,7 @@ void CollectionCovers::finished(const QString &key, quint64 generation, const QI
     if (generation == m_generation) {
         m_asked.remove(key);
         // "No cover" is remembered at a nominal cost, so it isn't read again and again.
-        const qsizetype cost = image.isNull() ? 1 : static_cast<qsizetype>(image.sizeInBytes());
+        const qsizetype cost = image.isNull() ? 1 : image.sizeInBytes();
         m_cache.insert(key, new QPixmap(image.isNull() ? QPixmap() : QPixmap::fromImage(image)), cost);
         Q_EMIT ready(key);
     }

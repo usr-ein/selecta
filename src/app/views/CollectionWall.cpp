@@ -127,8 +127,8 @@ void CollectionTileDelegate::paintHeader(QPainter *painter, const QStyleOptionVi
 {
     const QFont title = headerFont(option.font);
     const QFontMetrics titleMetrics(title);
-    const QString text = titleMetrics.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight,
-                                                 option.rect.width() * 2 / 3);
+    const QString text =
+        titleMetrics.elidedText(index.data(Qt::DisplayRole).toString(), Qt::ElideRight, option.rect.width() * 2 / 3);
     painter->setFont(title);
     painter->setPen(option.palette.color(QPalette::Text));
     const int baseline = option.rect.bottom() - titleMetrics.descent() - 2;
@@ -167,7 +167,7 @@ void CollectionTileDelegate::paintTile(QPainter *painter, const QStyleOptionView
         painter->setBrush(blend(palette, 0.22));
         painter->drawRoundedRect(cover.adjusted(12, -kStack, -12, -side + 2), 2, 2);
         painter->setBrush(blend(palette, 0.32));
-        painter->drawRoundedRect(cover.adjusted(6, -kStack / 2.0, -6, -side + 2), 2, 2);
+        painter->drawRoundedRect(cover.adjusted(6, -(kStack / 2.0), -6, -side + 2), 2, 2);
     }
 
     QPainterPath shape;
@@ -221,7 +221,7 @@ void CollectionTileDelegate::paintTile(QPainter *painter, const QStyleOptionView
         smallMetrics.elidedText(index.data(CollectionWallModel::SubtitleRole).toString(), Qt::ElideRight, width));
     y += smallMetrics.height();
     // The tier's dot, then its words: the colour never says it alone.
-    const int dot = std::max(6, smallMetrics.height() / 2 - 1);
+    const int dot = std::max(6, (smallMetrics.height() / 2) - 1);
     painter->setPen(Qt::NoPen);
     painter->setBrush(tierColour(index.data(CollectionWallModel::TierRole).toInt()));
     painter->drawEllipse(QRectF(rect.left() + 1, y + ((smallMetrics.height() - dot) / 2.0), dot, dot));
@@ -318,8 +318,8 @@ void CollectionWall::layoutRows() const
     int y = kTopMargin;
     int column = 0;
     for (int row = 0; row < rows; ++row) {
-        const bool header =
-            model()->index(row, 0, rootIndex()).data(CollectionWallModel::KindRole).toInt() == static_cast<int>(Kind::Header);
+        const bool header = model()->index(row, 0, rootIndex()).data(CollectionWallModel::KindRole).toInt() ==
+                            static_cast<int>(Kind::Header);
         m_headers[row] = header;
         if (header) {
             if (column > 0) { // the last row of the section before
@@ -398,8 +398,8 @@ int CollectionWall::tileInNextRow(int row, int direction) const
     }
     const int top = m_rects.at(next).top();
     int best = next;
-    for (int candidate = next; candidate >= 0 && candidate < count && !m_headers.at(candidate) &&
-                               m_rects.at(candidate).top() == top;
+    for (int candidate = next;
+         candidate >= 0 && candidate < count && !m_headers.at(candidate) && m_rects.at(candidate).top() == top;
          candidate += direction) {
         if (std::abs(m_rects.at(candidate).center().x() - here.center().x()) <
             std::abs(m_rects.at(best).center().x() - here.center().x())) {
@@ -425,7 +425,10 @@ int CollectionWall::tileNear(QPoint point) const
             bestDistance = distance;
         }
     }
-    return best >= 0 ? best : (point.y() < 0 ? firstTile() : lastTile());
+    if (best >= 0) {
+        return best;
+    }
+    return point.y() < 0 ? firstTile() : lastTile();
 }
 
 QRect CollectionWall::visualRect(const QModelIndex &index) const
@@ -482,8 +485,7 @@ QModelIndex CollectionWall::indexAt(const QPoint &point) const
 {
     ensureLayout();
     const QPoint content = point + QPoint(horizontalOffset(), verticalOffset());
-    for (int row = firstRowReaching(content.y()); row < m_rects.size() && m_rects.at(row).top() <= content.y();
-         ++row) {
+    for (int row = firstRowReaching(content.y()); row < m_rects.size() && m_rects.at(row).top() <= content.y(); ++row) {
         if (m_rects.at(row).contains(content)) {
             return tileIndex(row);
         }
@@ -711,8 +713,8 @@ void CollectionWall::mouseMoveEvent(QMouseEvent *event)
         const QRect before = m_band;
         m_band = QRect(m_bandOrigin, event->position().toPoint() + QPoint(horizontalOffset(), verticalOffset()))
                      .normalized();
-        viewport()->update(before.united(m_band).translated(-horizontalOffset(), -verticalOffset()).adjusted(-2, -2,
-                                                                                                              2, 2));
+        viewport()->update(
+            before.united(m_band).translated(-horizontalOffset(), -verticalOffset()).adjusted(-2, -2, 2, 2));
     }
 }
 

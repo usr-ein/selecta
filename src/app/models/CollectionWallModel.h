@@ -4,6 +4,7 @@
 #include "core/CollectionBrowse.h"
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QList>
 #include <QSet>
 #include <QString>
@@ -25,7 +26,7 @@ class CollectionWallModel : public QAbstractListModel
 
 public:
     enum class Kind : quint8 { Header, Tile };
-    enum Role { // NOLINT(cppcoreguidelines-use-enum-class): Qt roles are plain ints
+    enum Role {                      // NOLINT(cppcoreguidelines-use-enum-class): Qt roles are plain ints
         KindRole = Qt::UserRole + 1, // Kind, as an int
         SubtitleRole,                // a tile's artist (an album's artist); a header's track count, in words
         DetailRole,                  // a tile's quality ("MP3 320") or album ("Album · 2024 · 3 of 11 tracks")
@@ -55,6 +56,10 @@ public:
     // The tile's quality in words: "MP3 320", "FLAC 16/44.1"; with what the tier says beyond it ("MP3 320 · from
     // lossless", "MP3 320 · below 192 kbps").
     static QString qualityText(const core::CollectionTrack &track);
+    // What names a cover (CollectionCovers): a loose track's, or an album's from its first track as it plays. With the
+    // file's size and last change: another file at the same path (an upgrade) is read again.
+    static QString coverKey(const core::CollectionTrack &track);
+    static QString albumCoverKey(quint64 albumId, const core::CollectionTrack &first);
 
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -72,11 +77,19 @@ private:
     const core::CollectionTile *tileAt(const Row &row) const;
     QVariant tileData(const core::CollectionTile &tile, int role) const;
     QVariant sectionHeaderData(const core::CollectionSection &section, int role) const;
+    // An album's first track as it plays; its tile's text, tooltip and lowest tier.
+    const core::CollectionTrack &albumFirst(quint64 albumId) const;
+    QString albumDetail(const core::CollectionTile &tile, const core::CollectionAlbum &album) const;
+    QString albumToolTip(const core::CollectionTile &tile, const core::CollectionAlbum &album) const;
+    core::QualityTier lowestTier(const core::CollectionTile &tile) const;
+    QList<qint64> trackIds(const core::CollectionTile &tile) const;
 
     std::shared_ptr<const core::CollectionListing> m_listing;
     core::CollectionOrder m_order = core::CollectionOrder::Added;
     QList<core::CollectionSection> m_sections;
     QList<Row> m_rows;
+    QHash<quint64, int> m_albumFirst;  // album id → its first track as it plays (an index into the listing's tracks)
+    QHash<quint64, int> m_albumTracks; // album id → how many tracks it has
 };
 
 } // namespace selecta::app

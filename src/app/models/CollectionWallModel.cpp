@@ -29,6 +29,33 @@ QString titleOf(const CollectionTrack &track)
     return track.title.isEmpty() ? QFileInfo(track.path).completeBaseName() : track.title;
 }
 
+// What an album is called: its title, else its folder's name.
+QString albumTitle(const core::CollectionAlbum &album)
+{
+    return album.title.isEmpty() ? QFileInfo(album.folder).fileName() : album.title;
+}
+
+// A loose track's tooltip: names, album, quality and length, genre, file.
+QString trackToolTip(const CollectionTrack &track)
+{
+    QStringList lines{track.artist.isEmpty() ? titleOf(track)
+                                             : CollectionWallModel::tr("%1 — %2").arg(track.artist, titleOf(track))};
+    if (!track.album.isEmpty()) {
+        lines.append(track.year > 0 ? CollectionWallModel::tr("%1 (%2)").arg(track.album).arg(track.year)
+                                    : track.album);
+    }
+    QString quality = CollectionWallModel::qualityText(track);
+    if (track.durationMs > 0) {
+        quality += u" · "_s + format::length(track.durationMs);
+    }
+    lines.append(quality);
+    if (!track.genre.isEmpty()) {
+        lines.append(track.genre);
+    }
+    lines.append(QDir::toNativeSeparators(track.path));
+    return lines.join(u'\n');
+}
+
 } // namespace
 
 CollectionWallModel::CollectionWallModel(QObject *parent)
@@ -57,6 +84,20 @@ void CollectionWallModel::setOrder(core::CollectionOrder order)
 
 void CollectionWallModel::regroup()
 {
+    m_albumFirst.clear();
+    m_albumTracks.clear();
+    const QList<CollectionTrack> &tracks = m_listing->tracks;
+    for (qsizetype i = 0; i < tracks.size(); ++i) {
+        const CollectionTrack &track = tracks.at(i);
+        if (track.albumId == 0) {
+            continue;
+        }
+        ++m_albumTracks[track.albumId];
+        const auto first = m_albumFirst.constFind(track.albumId);
+        if (first == m_albumFirst.cend() || core::playsBefore(track, tracks.at(*first))) {
+            m_albumFirst.insert(track.albumId, static_cast<int>(i));
+        }
+    }
     m_sections = core::groupCollection(*m_listing, m_order);
     m_rows.clear();
     for (qsizetype s = 0; s < m_sections.size(); ++s) {
@@ -200,87 +241,90 @@ QVariant CollectionWallModel::sectionHeaderData(const core::CollectionSection &s
     return {};
 }
 
+QString CollectionWallModel::coverKey(const CollectionTrack &track)
+{
+    return u"track:%1:%2:%3"_s.arg(track.id).arg(track.sizeBytes).arg(track.modifiedMs);
+}
+
+QString CollectionWallModel::albumCoverKey(quint64 albumId, const CollectionTrack &first)
+{
+    return u"album:%1:%2"_s.arg(albumId).arg(coverKey(first));
+}
+
+const CollectionTrack &CollectionWallModel::albumFirst(quint64 albumId) const
+{
+    return m_listing->tracks.at(m_albumFirst.value(albumId));
+}
+
+QString CollectionWallModel::albumDetail(const core::CollectionTile &tile, const core::CollectionAlbum &album) const
+{
+    QStringList parts{tr("Album")};
+    if (album.year > 0) {
+        parts.append(QString::number(album.year));
+    }
+    const int all = m_albumTracks.value(album.id);
+    parts.append(tile.tracks.size() == all ? countOfTracks(all)
+                                           : tr("%1 of %2").arg(tile.tracks.size()).arg(countOfTracks(all)));
+    return parts.join(u" · "_s);
+}
+
+QString CollectionWallModel::albumToolTip(const core::CollectionTile &tile, const core::CollectionAlbum &album) const
+{
+    return QStringList{album.artist.isEmpty() ? albumTitle(album) : tr("%1 — %2").arg(album.artist, albumTitle(album)),
+                       albumDetail(tile, album), QDir::toNativeSeparators(album.folder)}
+        .join(u'\n');
+}
+
+core::QualityTier CollectionWallModel::lowestTier(const core::CollectionTile &tile) const
+{
+    QualityTier lowest = m_listing->tracks.at(tile.tracks.constFirst()).tier;
+    for (const int index : tile.tracks) {
+        lowest = std::min(lowest, m_listing->tracks.at(index).tier);
+    }
+    return lowest;
+}
+
+QList<qint64> CollectionWallModel::trackIds(const core::CollectionTile &tile) const
+{
+    QList<qint64> ids;
+    ids.reserve(tile.tracks.size());
+    for (const int index : tile.tracks) {
+        ids.append(m_listing->tracks.at(index).id);
+    }
+    return ids;
+}
+
 QVariant CollectionWallModel::tileData(const core::CollectionTile &tile, int role) const
 {
     if (tile.tracks.isEmpty()) {
         return {};
     }
-    const QList<CollectionTrack> &tracks = m_listing->tracks;
-    const CollectionTrack &first = tracks.at(tile.tracks.constFirst());
+    const CollectionTrack &first = m_listing->tracks.at(tile.tracks.constFirst());
     const core::CollectionAlbum *album = tile.albumId != 0 ? m_listing->album(tile.albumId) : nullptr;
-    const auto albumTracks = [this, &tile] {
-        return static_cast<int>(std::ranges::count(m_listing->tracks, tile.albumId, &CollectionTrack::albumId));
-    };
     switch (role) {
     case Qt::DisplayRole:
-        return album ? (album->title.isEmpty() ? QFileInfo(album->folder).fileName() : album->title) : titleOf(first);
+        return album ? albumTitle(*album) : titleOf(first);
     case SubtitleRole:
         return album ? album->artist : first.artist;
-    case DetailRole: {
-        if (!album) {
-            return qualityText(first);
-        }
-        QStringList parts{tr("Album")};
-        if (album->year > 0) {
-            parts.append(QString::number(album->year));
-        }
-        const int all = albumTracks();
-        parts.append(tile.tracks.size() == all ? countOfTracks(all)
-                                               : tr("%1 of %2").arg(tile.tracks.size()).arg(countOfTracks(all)));
-        return parts.join(u" · "_s);
-    }
-    case TierRole: {
-        QualityTier lowest = first.tier;
-        for (const int index : tile.tracks) {
-            lowest = std::min(lowest, tracks.at(index).tier);
-        }
-        return static_cast<int>(lowest);
-    }
-    case TrackIdsRole: {
-        QList<qint64> ids;
-        ids.reserve(tile.tracks.size());
-        for (const int index : tile.tracks) {
-            ids.append(tracks.at(index).id);
-        }
-        return QVariant::fromValue(ids);
-    }
+    case DetailRole:
+        return album ? albumDetail(tile, *album) : qualityText(first);
+    case TierRole:
+        return static_cast<int>(lowestTier(tile));
+    case TrackIdsRole:
+        return QVariant::fromValue(trackIds(tile));
     case AlbumIdRole:
         return QVariant::fromValue(tile.albumId);
     case CoverKeyRole:
-        return album ? u"album:%1"_s.arg(tile.albumId) : u"track:%1"_s.arg(first.id);
+        return album ? albumCoverKey(tile.albumId, albumFirst(tile.albumId)) : coverKey(first);
     case CoverFolderRole:
         return album ? album->folder : QString();
     case CoverFileRole:
-        return first.path;
-    case Qt::ToolTipRole: {
-        QStringList lines;
-        if (album) {
-            lines.append(album->artist.isEmpty() ? album->title : tr("%1 — %2").arg(album->artist, album->title));
-            lines.append(tileData(tile, DetailRole).toString());
-            lines.append(QDir::toNativeSeparators(album->folder));
-        } else {
-            lines.append(first.artist.isEmpty() ? titleOf(first) : tr("%1 — %2").arg(first.artist, titleOf(first)));
-            if (!first.album.isEmpty()) {
-                lines.append(first.year > 0 ? tr("%1 (%2)").arg(first.album).arg(first.year) : first.album);
-            }
-            QString quality = qualityText(first);
-            if (const QString length = format::length(first.durationMs > 0 ? std::optional(first.durationMs)
-                                                                           : std::nullopt);
-                !length.isEmpty()) {
-                quality += u" · "_s + length;
-            }
-            lines.append(quality);
-            if (!first.genre.isEmpty()) {
-                lines.append(first.genre);
-            }
-            lines.append(QDir::toNativeSeparators(first.path));
-        }
-        return format::plainToolTip(lines.join(u'\n')); // names from files, as they are
-    }
+        return album ? albumFirst(tile.albumId).path : first.path;
+    case Qt::ToolTipRole: // names from files, as they are
+        return format::plainToolTip(album ? albumToolTip(tile, *album) : trackToolTip(first));
     case Qt::AccessibleTextRole:
         if (album) {
-            return tr("%1, album by %2, %3")
-                .arg(tileData(tile, Qt::DisplayRole).toString(), album->artist, tileData(tile, DetailRole).toString());
+            return tr("%1, album by %2, %3").arg(albumTitle(*album), album->artist, albumDetail(tile, *album));
         }
         return first.artist.isEmpty() ? tr("%1, %2").arg(titleOf(first), qualityText(first))
                                       : tr("%1, by %2, %3").arg(titleOf(first), first.artist, qualityText(first));

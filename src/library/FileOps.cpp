@@ -510,11 +510,11 @@ FileResult FileOps::checkReplace(const QString &inboxFile, const QString &collec
 
 FileResult FileOps::replaceInCollection(const QString &inboxFile, const QString &collectionFile) const
 {
-    const FileResult checked = checkReplace(inboxFile, collectionFile);
+    FileResult checked = checkReplace(inboxFile, collectionFile);
     if (!checked.ok) {
         return checked;
     }
-    const QString &target = checked.path;
+    const QString target = checked.path;
     const QFileInfo old(target);
 
     // A verified copy, hidden next to the old file (the collection's scans skip it); the Inbox file stays meanwhile.
@@ -552,7 +552,8 @@ FileResult FileOps::replaceInCollection(const QString &inboxFile, const QString 
         } else {
             outcome = u"the old file is in the Trash: %1"_s.arg(trashed);
         }
-        return FileResult::failure(u"can't put the new file at %1 (%2); %3"_s.arg(target, describeErrno(code), outcome));
+        return FileResult::failure(
+            u"can't put the new file at %1 (%2); %3"_s.arg(target, describeErrno(code), outcome));
     }
     qCInfo(lcFileOps).noquote() << "replaced" << target
                                 << (trashed.isEmpty() ? u"(no old file)"_s : u"(the old file: "_s + trashed + u')');

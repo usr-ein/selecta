@@ -108,7 +108,7 @@ public:
 Q_SIGNALS:
     void statusChanged(const selecta::core::CollectionStatus &status);
     void indexChanged(const std::shared_ptr<const selecta::match::MatchIndex> &index);
-    // With every index build.
+    // After an index build that changed what the listing says.
     void listingChanged(const std::shared_ptr<const selecta::core::CollectionListing> &listing);
 
 private Q_SLOTS:

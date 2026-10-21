@@ -401,7 +401,6 @@ void CollectionView::showListing(const std::shared_ptr<const core::CollectionLis
     for (const core::CollectionTrack &track : listing->tracks) {
         m_tiers.insert(track.id, track.tier);
     }
-    m_covers->clear(); // a file may have changed, an upgrade taken its place
     m_wallModel->setListing(listing);
     m_wall->doItemsLayout();
     for (const int row : m_wallModel->rowsWithAny(selected)) {
@@ -470,9 +469,10 @@ void CollectionView::refreshSelection()
     }
     m_betterQuality->setEnabled(!better.isEmpty());
     if (tracks.isEmpty()) {
-        m_betterQuality->setToolTip(tr("Select tracks or albums first: Selecta looks for a better copy of each one, and "
-                                       "a copy it finds takes the old file's place once you save it to the collection "
-                                       "from the Inbox"));
+        m_betterQuality->setToolTip(
+            tr("Select tracks or albums first: Selecta looks for a better copy of each one, and "
+               "a copy it finds takes the old file's place once you save it to the collection "
+               "from the Inbox"));
     } else if (better.isEmpty()) {
         m_betterQuality->setToolTip(tr("Everything selected is from lossless already: nothing is better"));
     } else {
@@ -536,8 +536,8 @@ void CollectionView::showWallMenu(QPoint position)
     menu.addAction(tr("Show in Finder"), this,
                    [path] { QProcess::startDetached(u"/usr/bin/open"_s, {u"-R"_s, path}); });
     menu.addSeparator();
-    QAction *better = menu.addAction(tr("Search for Better Quality"), this,
-                                     [this] { searchForBetterQuality(selectedTracks()); });
+    QAction *better =
+        menu.addAction(tr("Search for Better Quality"), this, [this] { searchForBetterQuality(selectedTracks()); });
     better->setEnabled(!upgradable(selectedTracks()).isEmpty());
     menu.exec(m_wall->viewport()->mapToGlobal(position));
 }

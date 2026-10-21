@@ -328,10 +328,10 @@ TEST_F(CollectionServiceTest, TheListingHasEveryTrackWithItsAlbumTierAndGenre)
 {
     const QString nightfall = albums + u"/Okuma Drift - Nightfall"_s;
     ASSERT_TRUE(writeTrack(nightfall + u"/02 Dawn.mp3"_s, u"Okuma Drift"_s, u"Dawn"_s, 4.0, u"Nightfall"_s));
-    ASSERT_TRUE(writeTrack(nightfall + u"/01 Dusk.mp3"_s, u"Okuma Drift"_s, u"Dusk"_s, 4.0, u"Nightfall"_s,
-                           u"Ambient"_s));
-    ASSERT_TRUE(writeTrack(tracks + u"/Aster Vale - Glass.mp3"_s, u"Aster Vale"_s, u"Glass"_s, 4.0, {},
-                           u"Deep House"_s));
+    ASSERT_TRUE(
+        writeTrack(nightfall + u"/01 Dusk.mp3"_s, u"Okuma Drift"_s, u"Dusk"_s, 4.0, u"Nightfall"_s, u"Ambient"_s));
+    ASSERT_TRUE(
+        writeTrack(tracks + u"/Aster Vale - Glass.mp3"_s, u"Aster Vale"_s, u"Glass"_s, 4.0, {}, u"Deep House"_s));
     const QSignalSpy listings(service.get(), &CollectionService::listingChanged);
     service->setFolders(roles(), {});
     service->waitForIdle();
@@ -428,4 +428,33 @@ TEST_F(CollectionServiceTest, AnAlbumIsFromLosslessOnlyWhenAllItsDownloadsWere)
     ASSERT_NE(dusk, nullptr);
     EXPECT_EQ(dusk->tier, selecta::core::QualityTier::Top);
     EXPECT_EQ(dusk->addedMs, 1'700'000'000'001);
+}
+
+// The Inbox changes all the time while downloads arrive: the index is built again, the listing only when what it says
+// changed, so the wall keeps its covers and its place.
+TEST_F(CollectionServiceTest, AListingIsPublishedOnlyWhenItChanges)
+{
+    service->setFolders(roles(), {});
+    service->waitForIdle();
+    const std::shared_ptr<const selecta::core::CollectionListing> first = service->listing();
+    ASSERT_TRUE(first);
+    const QSignalSpy indexes(service.get(), &CollectionService::indexChanged);
+    const QSignalSpy listings(service.get(), &CollectionService::listingChanged);
+    selecta::library::InboxItem item;
+    item.id = 7;
+    item.artist = u"Kassia Moreau"_s;
+    item.title = u"Night Transit"_s;
+    service->setInbox({item});
+    service->waitForIdle();
+    EXPECT_EQ(indexes.size(), 1);
+    EXPECT_TRUE(listings.isEmpty());
+    EXPECT_EQ(service->listing(), first);
+
+    // A file that changes is another listing.
+    ASSERT_TRUE(writeTrack(tracks + u"/Aster Vale - Glass.mp3"_s, u"Aster Vale"_s, u"Glass"_s));
+    service->scanNow();
+    service->waitForIdle();
+    EXPECT_EQ(listings.size(), 1);
+    EXPECT_NE(service->listing(), first);
+    EXPECT_EQ(service->listing()->tracks.size(), 3);
 }

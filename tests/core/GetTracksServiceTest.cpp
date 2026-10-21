@@ -574,8 +574,8 @@ struct Finding
 
 TEST(QualityTierOf, WhatAPeerDeclares)
 {
-    using selecta::core::qualityTierOf;
     using selecta::core::QualityTier;
+    using selecta::core::qualityTierOf;
     EXPECT_EQ(qualityTierOf(choice(u"mp3"_s, 320)), QualityTier::Top);
     EXPECT_EQ(qualityTierOf(choice(u"mp3"_s, 245, true)), QualityTier::Top); // V0
     EXPECT_EQ(qualityTierOf(choice(u"mp3"_s, 192)), QualityTier::From192);
@@ -614,8 +614,8 @@ TEST_F(GetTracksServiceTest, UpgradesAreOneLinePerFileSearchedAtOnce)
     EXPECT_EQ(service->lines().at(0).findState, GetLine::FindState::Idle);
 
     // Asked again for the same files: the list already looks for them.
-    const auto again =
-        service->addUpgrades({upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s)});
+    const auto again = service->addUpgrades(
+        {upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s)});
     EXPECT_TRUE(again.lines.isEmpty());
     EXPECT_EQ(again.already, 1);
 

@@ -42,9 +42,9 @@ public:
         friend bool operator==(const Source &, const Source &) = default;
     };
 
-    static constexpr int kSide = 360;                             // pixels: a 180-point tile on a Retina screen
-    static constexpr int kWorkers = 2;                            // files read at once
-    static constexpr int kMaxWaiting = 64;                        // requests kept waiting
+    static constexpr int kSide = 360;                               // pixels: a 180-point tile on a Retina screen
+    static constexpr int kWorkers = 2;                              // files read at once
+    static constexpr int kMaxWaiting = 64;                          // requests kept waiting
     static constexpr qint64 kCacheBytes = qint64{96} * 1024 * 1024; // decoded covers kept
     static constexpr qint64 kMaxPictureBytes = qint64{8} * 1024 * 1024;
 

@@ -28,12 +28,12 @@ class CollectionCovers;
 class CollectionWall;
 class CollectionWallModel;
 
-// The collection (PRD LIB-1, LIB-2, LIB-5, P-010): a wall of covers, one tile per loose track and one per album, grouped
-// by month downloaded, artist, genre or quality; above it what the index knows (tracks, albums, size, the tracks folder
-// and the albums folder by their roles, formats, the scan in progress) and what needs a look (singles also on an album,
-// files that couldn't be read, the Inbox waiting). An album's tile opens its tracks. Tiles and tracks can be selected
-// for "Search for Better Quality": each track becomes a Get tracks line looking for a copy of a higher tier, which the
-// Inbox marks as an upgrade and filing puts in its place (EngineHost::searchForBetterQuality()).
+// The collection (PRD LIB-1, LIB-2, LIB-5, P-010): a wall of covers, one tile per loose track and one per album,
+// grouped by month downloaded, artist, genre or quality; above it what the index knows (tracks, albums, size, the
+// tracks folder and the albums folder by their roles, formats, the scan in progress) and what needs a look (singles
+// also on an album, files that couldn't be read, the Inbox waiting). An album's tile opens its tracks. Tiles and tracks
+// can be selected for "Search for Better Quality": each track becomes a Get tracks line looking for a copy of a higher
+// tier, which the Inbox marks as an upgrade and filing puts in its place (EngineHost::searchForBetterQuality()).
 //
 // Selecta never changes these files but on the user's word: an upgrade filed from the Inbox. Covers come from the
 // files (CollectionCovers). Main thread.

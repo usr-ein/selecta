@@ -45,8 +45,8 @@ struct LibraryConfig
 inline constexpr QStringView kInboxSinglesFolder = u"Singles";
 inline constexpr QStringView kInboxAlbumsFolder = u"Albums";
 
-// An upgrade (InboxItem::replaces, P-010): why filing it can't put it in its collection file's place, in words, from the
-// names alone; empty when it can, as far as they tell (filing checks the rest). The name stays exactly the same, so
+// An upgrade (InboxItem::replaces, P-010): why filing it can't put it in its collection file's place, in words, from
+// the names alone; empty when it can, as far as they tell (filing checks the rest). The name stays exactly the same, so
 // the two must be files of the same type (PRD D41). Pure.
 QString upgradeMismatch(const library::InboxItem &item);
 

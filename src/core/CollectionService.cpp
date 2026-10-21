@@ -70,9 +70,9 @@ match::Codec codecOf(const QString &format)
 // What History says of a path where Selecta filed something: a file, or an album's folder (one entry per file).
 struct FiledFacts
 {
-    qint64 newestMs = 0;      // the newest download filed there
-    TierEvidence newest;      // what that download was
-    bool allLossless = true;  // every download filed there was lossless (an album's files)
+    qint64 newestMs = 0;     // the newest download filed there
+    TierEvidence newest;     // what that download was
+    bool allLossless = true; // every download filed there was lossless (an album's files)
 };
 
 // What History says of the paths where Selecta filed something, by comparison key.
@@ -161,10 +161,12 @@ std::shared_ptr<const CollectionListing> buildListing(const QList<collection::Sc
         track.discNumber = file.discNumber;
         track.durationMs = file.durationMs;
         track.sizeBytes = file.file.size;
+        track.modifiedMs = file.file.modifiedMs;
         track.quality = file.quality;
         track.albumId = albumOf.value(file.file.path);
         QString albumFolder;
-        if (track.albumId != 0 && folders.roleOf(file.file.path, &albumFolder) == collection::FolderRoles::Role::Album &&
+        if (track.albumId != 0 &&
+            folders.roleOf(file.file.path, &albumFolder) == collection::FolderRoles::Role::Album &&
             !albumFolders.contains(track.albumId)) {
             albumFolders.insert(track.albumId, albumFolder);
         }
@@ -466,11 +468,15 @@ void CollectionService::rebuild()
     QHash<QString, FiledFacts> filed = filedFacts(m_history);
     const quint64 generation = ++m_generation;
     m_pool.start([this, files = std::move(files), ids = std::move(ids), inbox = std::move(inbox),
-                  history = std::move(history), folders = m_folders, filed = std::move(filed), generation]() mutable {
+                  history = std::move(history), folders = m_folders, filed = std::move(filed), previous = m_listing,
+                  generation]() mutable {
         QHash<QString, quint64> albumOf;
         const QList<match::LibraryAlbum> albums = collection::albumsOf(files, folders, &albumOf);
         std::shared_ptr<const CollectionListing> listing =
             buildListing(files, ids, albums, albumOf, folders, FiledLookup(std::move(filed), folders.roots()));
+        if (previous && *previous == *listing) {
+            listing = previous; // an Inbox change, say: nothing the view shows changed
+        }
         match::MatchIndexInput input;
         input.tracks.reserve(files.size() + inbox.size());
         for (qsizetype i = 0; i < files.size(); ++i) {
@@ -526,11 +532,14 @@ void CollectionService::drain()
         } else if (const auto *built = std::get_if<IndexOutcome>(&outcome)) {
             m_building = false;
             m_index = built->index;
+            const bool listed = built->listing != m_listing;
             m_listing = built->listing;
             m_status.albums = built->albums;
             publish();
             Q_EMIT indexChanged(m_index);
-            Q_EMIT listingChanged(m_listing);
+            if (listed) {
+                Q_EMIT listingChanged(m_listing);
+            }
             if (std::exchange(m_rebuildWanted, false)) {
                 rebuild();
             }

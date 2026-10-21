@@ -165,8 +165,9 @@ TEST(InboxStoreMigration, ItemsFromBeforeTheSpectrumCheckReadAsUnchecked)
     // schema, so the columns are read as it reads them.
     const auto beforeTheMove = static_cast<std::size_t>(selecta::storage::kInboxMovedVersion - 1);
     ASSERT_TRUE(selecta::storage::migrate(db, migrations.first(beforeTheMove)).ok());
-    selecta::storage::Statement old = db.prepare(u"SELECT quality_checked, quality_findings, quality_cutoff_hz, "
-                                                 "quality_key FROM inbox_items WHERE relative_path = 'Singles/old.mp3';"_s);
+    selecta::storage::Statement old =
+        db.prepare(u"SELECT quality_checked, quality_findings, quality_cutoff_hz, "
+                   "quality_key FROM inbox_items WHERE relative_path = 'Singles/old.mp3';"_s);
     ASSERT_EQ(old.step(), selecta::storage::Statement::Step::Row);
     EXPECT_EQ(old.int64(0), 0);
     EXPECT_TRUE(old.text(1).isEmpty());

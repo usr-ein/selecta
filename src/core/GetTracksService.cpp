@@ -571,11 +571,11 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
                     ? tr("1 file of this track found, below the quality wanted.")
                     : tr("%1 files of this track found, below the quality wanted.").arg(choices.belowQuality);
         } else if (notBetter > 0) {
-            line->message = notBetter == 1 ? tr("1 file of this track found, none better than yours (%1).")
-                                                 .arg(tierName(floor))
-                                           : tr("%1 files of this track found, none better than yours (%2).")
-                                                 .arg(notBetter)
-                                                 .arg(tierName(floor));
+            line->message = notBetter == 1
+                                ? tr("1 file of this track found, none better than yours (%1).").arg(tierName(floor))
+                                : tr("%1 files of this track found, none better than yours (%2).")
+                                      .arg(notBetter)
+                                      .arg(tierName(floor));
         } else if (choices.considered > 0) {
             line->message = choices.considered == 1
                                 ? tr("1 file found, but not of this track.")

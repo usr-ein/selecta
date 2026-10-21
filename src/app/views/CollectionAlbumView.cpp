@@ -24,8 +24,6 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <limits>
-#include <tuple>
 
 using namespace Qt::StringLiterals;
 
@@ -43,7 +41,17 @@ QIcon tierDot(int tier)
     painter.setPen(Qt::NoPen);
     painter.setBrush(CollectionTileDelegate::tierColour(tier));
     painter.drawEllipse(QRectF(2, 2, 6, 6));
-    return QIcon(dot);
+    return {dot};
+}
+
+// "3", or "2-3" for a track of a second disc; empty when unnumbered.
+QString trackNumberText(const core::CollectionTrack &track)
+{
+    if (track.trackNumber <= 0) {
+        return {};
+    }
+    return track.discNumber > 1 ? u"%1-%2"_s.arg(track.discNumber).arg(track.trackNumber)
+                                : QString::number(track.trackNumber);
 }
 
 QStandardItem *cell(const QString &text, qint64 trackId)
@@ -167,17 +175,15 @@ bool CollectionAlbumView::showAlbum(const std::shared_ptr<const core::Collection
             tracks.append(&track);
         }
     }
-    // In disc and track order, as the album plays; unnumbered tracks after the numbered ones.
+    // As the album plays.
     std::ranges::sort(tracks, [](const core::CollectionTrack *a, const core::CollectionTrack *b) {
-        const int x = a->trackNumber > 0 ? a->trackNumber : std::numeric_limits<int>::max();
-        const int y = b->trackNumber > 0 ? b->trackNumber : std::numeric_limits<int>::max();
-        return std::tie(a->discNumber, x, a->path) < std::tie(b->discNumber, y, b->path);
+        return core::playsBefore(*a, *b);
     });
 
     m_albumId = albumId;
     m_folder = album->folder;
     m_firstTrack = tracks.isEmpty() ? QString() : tracks.constFirst()->path;
-    m_coverKey = u"album:%1"_s.arg(albumId);
+    m_coverKey = tracks.isEmpty() ? QString() : CollectionWallModel::albumCoverKey(albumId, *tracks.constFirst());
     m_title->setText(album->title.isEmpty() ? QFileInfo(album->folder).fileName() : album->title);
     m_artist->setText(album->artist);
     QStringList details;
@@ -201,17 +207,11 @@ bool CollectionAlbumView::showAlbum(const std::shared_ptr<const core::Collection
     m_folderLabel->setText(QDir::toNativeSeparators(album->folder));
 
     m_model->removeRows(0, m_model->rowCount());
-    const bool severalArtists =
-        std::ranges::any_of(tracks, [&tracks](const core::CollectionTrack *track) {
-            return track->artist != tracks.constFirst()->artist;
-        });
+    const bool severalArtists = std::ranges::any_of(
+        tracks, [&tracks](const core::CollectionTrack *track) { return track->artist != tracks.constFirst()->artist; });
     for (const core::CollectionTrack *track : std::as_const(tracks)) {
-        const QString number = track->trackNumber > 0
-                                   ? (track->discNumber > 1 ? u"%1-%2"_s.arg(track->discNumber).arg(track->trackNumber)
-                                                            : QString::number(track->trackNumber))
-                                   : QString();
-        QList<QStandardItem *> row{
-            cell(number, track->id),
+        const QList<QStandardItem *> row{
+            cell(trackNumberText(*track), track->id),
             cell(track->title.isEmpty() ? QFileInfo(track->path).completeBaseName() : track->title, track->id),
             cell(track->artist, track->id),
             cell(CollectionWallModel::qualityText(*track), track->id),
@@ -262,9 +262,8 @@ void CollectionAlbumView::showMenu(QPoint position)
     }
     const QString file = m_model->index(index.row(), TitleColumn).data(kPathRole).toString();
     QMenu menu(this);
-    menu.addAction(tr("Show in Finder"), this, [file] {
-        QProcess::startDetached(u"/usr/bin/open"_s, {u"-R"_s, file});
-    });
+    menu.addAction(tr("Show in Finder"), this,
+                   [file] { QProcess::startDetached(u"/usr/bin/open"_s, {u"-R"_s, file}); });
     menu.exec(m_tracks->viewport()->mapToGlobal(position));
 }
 

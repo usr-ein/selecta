@@ -13,17 +13,18 @@ class CollectionCovers;
 
 // Draws the cover wall's rows (CollectionWallModel): a header's title and track count; a tile's cover (an album's with
 // a stack of plates above it), title, artist, and quality with a dot of its tier's colour (the words say it too, PRD
-// UI-4). Covers come from CollectionCovers, asked for as tiles are drawn; until one is read, a placeholder. Main thread.
+// UI-4). Covers come from CollectionCovers, asked for as tiles are drawn; until one is read, a placeholder. Main
+// thread.
 class CollectionTileDelegate : public QStyledItemDelegate
 {
     Q_OBJECT
 
 public:
-    static constexpr int kStack = 6;    // the album's plates above its cover
-    static constexpr int kTextGap = 6;  // between the cover and the title
-    static constexpr int kRadius = 6;   // the cover's corners
+    static constexpr int kStack = 6;   // the album's plates above its cover
+    static constexpr int kTextGap = 6; // between the cover and the title
+    static constexpr int kRadius = 6;  // the cover's corners
 
-    CollectionTileDelegate(CollectionCovers &covers, QObject *parent = nullptr);
+    explicit CollectionTileDelegate(CollectionCovers &covers, QObject *parent = nullptr);
 
     // A tile `width` wide, in `font`: the cover, square, and three lines of text below it.
     static int tileHeight(int width, const QFont &font);
@@ -42,8 +43,8 @@ private:
 };
 
 // The cover wall (P-010): CollectionWallModel's headers across the width, each section's tiles in a grid below its
-// header, as many to a row as fit at least kMinTileWidth wide, widened to fill the row up to kMaxTileWidth. A QListView,
-// so VoiceOver reads it as a list, with a layout of its own.
+// header, as many to a row as fit at least kMinTileWidth wide, widened to fill the row up to kMaxTileWidth. A
+// QListView, so VoiceOver reads it as a list, with a layout of its own.
 //
 // Keys: the arrows move between tiles (headers are passed over), Home and End go to the first and last, Page Up and
 // Page Down a screen away; Return or a double-click on an album opens it (albumOpened()); ⌘A selects every tile. A drag

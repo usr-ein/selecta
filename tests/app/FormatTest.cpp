@@ -52,9 +52,9 @@ TEST(FormatTest, AboutRoundsUpToTheMinute)
 // P-010: the collection's files, as the Collection view words their quality.
 TEST(FormatTest, ALocalFilesQuality)
 {
+    using format::quality;
     using selecta::match::AudioQuality;
     using selecta::match::Codec;
-    using format::quality;
     EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3, .bitrateKbps = 320, .vbr = false}), u"MP3 320"_s);
     EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3, .bitrateKbps = 245, .vbr = true}), u"MP3 VBR 245"_s);
     EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3}), u"MP3"_s);

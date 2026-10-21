@@ -57,6 +57,28 @@ private:
     NetworkService &m_network;
 };
 
+// The quality tier of a collection file now, by its path or another spelling of it (NFD, say): what an upgrade line
+// must beat (P-010). nullopt when the collection hasn't it.
+std::optional<QualityTier> tierInCollection(const CollectionService &collection, const QString &path)
+{
+    const std::shared_ptr<const CollectionListing> listing = collection.listing();
+    if (!listing) {
+        return std::nullopt;
+    }
+    for (const CollectionTrack &track : listing->tracks) {
+        if (track.path == path) {
+            return track.tier;
+        }
+    }
+    const QString key = collection::comparisonKey(path);
+    for (const CollectionTrack &track : listing->tracks) {
+        if (collection::comparisonKey(track.path) == key) {
+            return track.tier;
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 Engine::Engine(EngineOptions options, QObject *parent)
@@ -270,24 +292,8 @@ bool Engine::start()
     connect(m_collection.get(), &CollectionService::statusChanged, this, &Engine::collectionStatusChanged);
     connect(m_collection.get(), &CollectionService::listingChanged, this, &Engine::collectionListingChanged);
     // An upgrade line takes only a better copy than its file is now (P-010).
-    m_getTracks->setTierLookup([collection = m_collection.get()](const QString &path) -> std::optional<QualityTier> {
-        const std::shared_ptr<const CollectionListing> listing = collection->listing();
-        if (!listing) {
-            return std::nullopt;
-        }
-        for (const CollectionTrack &track : listing->tracks) {
-            if (track.path == path) {
-                return track.tier;
-            }
-        }
-        const QString key = collection::comparisonKey(path); // another spelling of the same path (NFD, say)
-        for (const CollectionTrack &track : listing->tracks) {
-            if (collection::comparisonKey(track.path) == key) {
-                return track.tier;
-            }
-        }
-        return std::nullopt;
-    });
+    m_getTracks->setTierLookup(
+        [collection = m_collection.get()](const QString &path) { return tierInCollection(*collection, path); });
     // Sharing: the collection, read-only (D12).
     m_shares = std::make_unique<ShareService>(*m_db, *m_governor, *m_network, *m_activity, *m_clock, m_options.session,
                                               m_options.wallClock);

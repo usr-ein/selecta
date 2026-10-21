@@ -340,8 +340,7 @@ TEST_F(ArrivalServiceTest, AnUpgradeArrivesMarkedWithTheFileItReplaces)
     for (const Download &download : {first, second, third}) {
         const ArrivalResult result = arrive(download);
         ASSERT_TRUE(result.ok) << result.message.toStdString();
-        const std::optional<selecta::library::InboxItem> item =
-            selecta::library::InboxStore(db).find(result.inboxItem);
+        const std::optional<selecta::library::InboxItem> item = selecta::library::InboxStore(db).find(result.inboxItem);
         ASSERT_TRUE(item.has_value());
         EXPECT_EQ(item->replaces, download.id == 5 ? upgrade.upgradeOf : QString()) << download.id;
     }

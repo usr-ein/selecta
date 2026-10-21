@@ -70,7 +70,8 @@ struct CollectionTrack
     int discNumber = 0;
     qint64 durationMs = 0;
     qint64 sizeBytes = 0;
-    qint64 addedMs = 0; // when Selecta downloaded it (History), else when the file last changed; Unix time, ms
+    qint64 modifiedMs = 0; // the file's last change: with its size, what tells another file at the same path
+    qint64 addedMs = 0;    // when Selecta downloaded it (History), else when the file last changed; Unix time, ms
     match::AudioQuality quality;
     QualityTier tier = QualityTier::Unknown;
     quint64 albumId = 0; // its album (CollectionAlbum::id); 0: a loose track of the tracks folder
@@ -79,15 +80,18 @@ struct CollectionTrack
 // One album of the albums folder: one subfolder, whatever its tracks' tags say (collection::albumsOf).
 struct CollectionAlbum
 {
-    quint64 id = 0;  // stable across scans
-    QString folder;  // the album's folder, a subfolder of the albums folder
-    QString title;   // the most common album tag, else what the folder's name says
-    QString artist;  // the album artist; "Various Artists" for a compilation
-    int year = 0;    // 0: unknown
+    quint64 id = 0; // stable across scans
+    QString folder; // the album's folder, a subfolder of the albums folder
+    QString title;  // the most common album tag, else what the folder's name says
+    QString artist; // the album artist; "Various Artists" for a compilation
+    int year = 0;   // 0: unknown
     bool variousArtists = false;
 
     friend bool operator==(const CollectionAlbum &, const CollectionAlbum &) = default;
 };
+
+// Every fact the same, the quality's included.
+bool operator==(const CollectionTrack &a, const CollectionTrack &b);
 
 // The whole collection, as the view shows it: built with the index (CollectionService), shared read-only.
 struct CollectionListing
@@ -98,6 +102,8 @@ struct CollectionListing
     const CollectionAlbum *album(quint64 id) const;
     // The index in `tracks` of the track with this id, or -1.
     qsizetype indexOf(qint64 trackId) const;
+
+    friend bool operator==(const CollectionListing &, const CollectionListing &) = default;
 };
 
 // --- The cover wall ----------------------------------------------------------------------------------------------
@@ -140,6 +146,10 @@ struct CollectionSection
 // - Quality: one section per tier, worst first, then "Quality unknown"; tiles by artist, then album or title.
 // Names compare without case or accents. Empty sections are left out.
 QList<CollectionSection> groupCollection(const CollectionListing &listing, CollectionOrder order);
+
+// Whether `x` plays before `y` on their album: by disc, then number, the unnumbered tracks after the numbered ones of
+// their disc, then by path.
+bool playsBefore(const CollectionTrack &x, const CollectionTrack &y);
 
 // How names are compared and sorted: accents dropped, case folded, whitespace simplified ("Étienne de Crécy" →
 // "etienne de crecy").
