@@ -185,8 +185,16 @@ TEST_F(PlayerTest, PauseHoldsThePositionAndResumeCarriesOn)
     QTest::qWait(150);
     player.pause();
     EXPECT_EQ(player.state(), State::Paused);
-    QTest::qWait(50); // the fade-out
-    const double paused = player.position();
+    // The fade-out plays on the output's clock, late on a busy machine: wait until the position holds still.
+    double paused = player.position();
+    bool still = false;
+    for (int check = 0; check < 100 && !still; ++check) { // 5 s at most
+        QTest::qWait(50);
+        const double now = player.position();
+        still = std::abs(now - paused) < 1e-9;
+        paused = now;
+    }
+    ASSERT_TRUE(still);
     QTest::qWait(300);
     EXPECT_NEAR(player.position(), paused, 0.001);
 

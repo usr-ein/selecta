@@ -65,8 +65,9 @@ protected:
             process.waitForFinished(3000);
         }
         run.exitCode = process.exitStatus() == QProcess::NormalExit ? process.exitCode() : -1;
-        run.out = QString::fromUtf8(process.readAllStandardOutput());
-        run.err = QString::fromUtf8(process.readAllStandardError());
+        // Lines end in "\r\n" on a Windows console.
+        run.out = QString::fromUtf8(process.readAllStandardOutput()).replace(u"\r\n"_s, u"\n"_s);
+        run.err = QString::fromUtf8(process.readAllStandardError()).replace(u"\r\n"_s, u"\n"_s);
         return run;
     }
 

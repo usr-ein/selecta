@@ -101,6 +101,29 @@ TEST(FrameReader, LengthShorterThanTheCodeIsAViolation)
     EXPECT_EQ(byte.error(), FrameReader::Error::TooShort);
 }
 
+TEST(FrameReader, LengthShorterThanTheCodeIsRefusedBeforeTheCodeArrives)
+{
+    // The length field alone says the frame is impossible: waiting for more bytes could wait forever.
+    FrameReader word(CodeWidth::Word, 100);
+    word.append(QByteArray::fromHex("02 00 00 00 01 00"));
+    EXPECT_EQ(word.error(), FrameReader::Error::TooShort);
+    EXPECT_FALSE(word.next().has_value());
+    FrameReader byte(CodeWidth::Byte, 100);
+    byte.append(QByteArray::fromHex("00 00 00 00"));
+    EXPECT_EQ(byte.error(), FrameReader::Error::TooShort);
+
+    // A possible length still waits for its code.
+    FrameReader waiting(CodeWidth::Word, 100);
+    waiting.append(QByteArray::fromHex("04 00 00 00 01 00"));
+    EXPECT_EQ(waiting.error(), FrameReader::Error::None);
+    EXPECT_FALSE(waiting.next().has_value());
+    waiting.append(QByteArray::fromHex("00 00"));
+    const std::optional<Frame> frame = waiting.next();
+    ASSERT_TRUE(frame.has_value());
+    EXPECT_EQ(frame->code, 1U);
+    EXPECT_TRUE(frame->payload.isEmpty());
+}
+
 TEST(FrameReader, CapFunctionDecidesPerCode)
 {
     FrameReader reader(CodeWidth::Word, 0);
@@ -151,6 +174,21 @@ TEST(FrameReader, TakeBufferedReturnsWhatFollowsAFrame)
     EXPECT_EQ(init->code, 1U);
     EXPECT_EQ(reader.takeBuffered(), QByteArray::fromHex("2a 00 00 00"));
     EXPECT_EQ(reader.buffered(), 0);
+}
+
+TEST(FrameReader, TakeBufferedReturnsAZeroTokenAndStartsOver)
+{
+    // A token of 0 after the peer-init frame reads as an impossible frame length: the bytes still come back whole.
+    FrameReader reader(CodeWidth::Byte, 100);
+    reader.append(QByteArray(frame(peerinit::PeerInit{u"alice"_s, ConnectionType::File, 0}) +
+                             QByteArray::fromHex("00 00 00 00")));
+    const std::optional<Frame> init = reader.next();
+    ASSERT_TRUE(init.has_value());
+    EXPECT_TRUE(reader.hasError());
+    EXPECT_EQ(reader.takeBuffered(), QByteArray::fromHex("00 00 00 00"));
+    EXPECT_FALSE(reader.hasError());
+    reader.append(QByteArray::fromHex("00 00 00 00"));
+    EXPECT_EQ(reader.takeBuffered(), QByteArray::fromHex("00 00 00 00"));
 }
 
 TEST(FrameReader, CompactsConsumedBytes)

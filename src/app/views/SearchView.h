@@ -86,6 +86,11 @@ private:
     // "Not What I Have" and "Same as What I Have" for the selected results matched with an owned track (LIB-6).
     void addCorrections(QMenu &menu, const QList<int> &selected);
     QWidget *createFilterBar();
+    // Fits the bar's left side (what you want) into the width it has: the boxes' labels elide, unchecked and last
+    // first, and an unchecked box with no room left for a word is hidden (a checked one keeps a word); then the
+    // preset's name shortens; then Presets, "Want" and the preset are hidden. No control is ever cut by the bar's edge.
+    void fitWants();
+    void giveWay(); // fitWants' choices, before the layout
     QWidget *createFiltersPanel();
     void applyFilter(const core::SearchFilter &filter, bool customised);
     // The preset list changed (saved, renamed, deleted, a new default): the menu follows.
@@ -121,6 +126,8 @@ private:
     QPushButton *m_presetsButton; // save, rename, delete, default (SRCH-8)
     QCheckBox *m_onlyRelease;
     QCheckBox *m_grouped;
+    QWidget *m_wants = nullptr;    // the filter bar's left side; it gives way to the actions (fitWants)
+    QLabel *m_wantLabel = nullptr; // "Want"
     QToolButton *m_filtersButton;
     QPushButton *m_download;
     QPushButton *m_watch;               // Add to Wishlist (SRCH-14)

@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class QLabel;
+class QScrollArea;
 class QStackedWidget;
 
 namespace selecta::app {
@@ -24,6 +25,12 @@ public:
     // Shows the panel registered for this view, or the empty state.
     void showPanelFor(const QString &viewId);
     QWidget *currentPanel() const;
+
+    // Makes a panel's scrolling details fit the inspector's width: no horizontal scrolling, and every word-wrapped
+    // label in them wraps to the width it gets instead of widening the details to its longest word (beta notes:
+    // "Not in your collection, Inbox or download history" was cut). A word longer than the width is cut at the edge.
+    // Call it once the details are built; labels added later aren't covered. UI thread only.
+    static void fitToWidth(QScrollArea *scroll);
 
 private:
     QStackedWidget *m_stack;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/NavDelegate.h"
 
+#include "app/Appearance.h"
 #include "app/Icons.h"
 #include "app/NavModel.h"
 
@@ -86,7 +87,7 @@ void NavDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, c
     const bool focused =
         selected && option.state.testFlag(QStyle::State_Active) && option.widget && option.widget->hasFocus();
     QColor textColor = palette.color(QPalette::Text);
-    QColor iconColor = palette.color(QPalette::Accent);
+    QColor iconColor = symbolAccentColor(palette); // the system accent, lighter in dark mode
     if (selected) {
         const QColor fill = focused ? palette.color(QPalette::Active, QPalette::Highlight)
                                     : palette.color(QPalette::Inactive, QPalette::Highlight);

@@ -2,6 +2,7 @@
 #include "app/views/GetTracksInspector.h"
 
 #include "app/Format.h"
+#include "app/Inspector.h"
 #include "app/models/GetTracksModel.h"
 #include "meta/CoverFetcher.h"
 #include "meta/ServicePolicy.h"
@@ -287,6 +288,7 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(details);
+    Inspector::fitToWidth(scroll);
     m_pages->addWidget(scroll);
 
     auto *outer = new QVBoxLayout(this);

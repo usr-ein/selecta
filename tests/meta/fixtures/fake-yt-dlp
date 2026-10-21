@@ -82,7 +82,9 @@ fi
 start_child() {
     sleep 30 &
     if [ -n "${FAKE_YTDLP_PIDFILE:-}" ]; then
-        echo "$!" > "$FAKE_YTDLP_PIDFILE"
+        # Written aside, then renamed: a test that sees the file reads the whole pid, never an empty file.
+        echo "$!" > "$FAKE_YTDLP_PIDFILE.part"
+        mv "$FAKE_YTDLP_PIDFILE.part" "$FAKE_YTDLP_PIDFILE"
     fi
 }
 

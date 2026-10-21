@@ -72,6 +72,9 @@ QList<LibraryPeer> scanLibrary(const QString &root, QStringList *skipped)
     const QFileInfoList folders = QDir(root).entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const QFileInfo &folder : folders) {
         const QString name = folder.fileName();
+        if (name.startsWith(u'.')) {
+            continue; // hidden, as in scanPeer (Windows lists dot folders as ordinary ones)
+        }
         if (!slsk::isAcceptablePeerUsername(name)) {
             if (skipped != nullptr) {
                 skipped->append(name);

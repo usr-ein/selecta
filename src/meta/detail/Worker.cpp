@@ -3,7 +3,9 @@
 
 #include <QMetaObject>
 
+#ifdef Q_OS_MACOS
 #include <pthread.h>
+#endif
 
 namespace selecta::meta::detail {
 

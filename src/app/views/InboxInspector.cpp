@@ -2,6 +2,7 @@
 #include "app/views/InboxInspector.h"
 
 #include "app/Format.h"
+#include "app/Inspector.h"
 #include "app/SpectrogramView.h"
 #include "app/views/EditTagsDialog.h"
 #include "app/views/ReleasePickerDialog.h"
@@ -289,6 +290,7 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(details);
+    Inspector::fitToWidth(scroll);
     m_pages->addWidget(scroll);
 
     auto *outer = new QVBoxLayout(this);
@@ -477,6 +479,7 @@ void InboxInspector::refreshProvenance()
     }
     source.append(tr("In your Inbox as %1.").arg(QFileInfo(m_item->relativePath).fileName()));
     m_source->setText(source.join(u' '));
+    m_source->setToolTip(format::plainToolTip(source.join(u' '))); // a file name too long for the panel is cut
 }
 
 void InboxInspector::showSpectrum()

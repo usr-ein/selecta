@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ConverterInspector.h"
 
+#include "app/Inspector.h"
+
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -122,6 +124,7 @@ ConverterInspector::ConverterInspector(QWidget *parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(details);
+    Inspector::fitToWidth(scroll);
     m_pages->addWidget(scroll);
 
     auto *outer = new QVBoxLayout(this);

@@ -25,7 +25,6 @@ open build/dev/src/app/Selecta.app
 |---|---|
 | `dev` | Debug build with tests and developer tools |
 | `asan` | AddressSanitizer + UBSan |
-| `tsan` | ThreadSanitizer |
 | `lint` | clang-tidy on every compiled file |
 | `release` | Optimised, no tests, no developer tools |
 
@@ -37,7 +36,7 @@ leaves them out for a quicker build of the rest.
 ```sh
 tools/lint.sh [paths…]                     # clang-format check, clang-tidy, clazy, cppcheck
 tools/lint.sh --fix [paths…]               # apply formatting and automatic clang-tidy fixes
-ctest --preset asan                        # after building the asan preset; likewise tsan
+ctest --preset asan                        # after building the asan preset
 tests/fuzz/slsk/fuzz.sh [seconds] [target…] # libFuzzer on the protocol decoders (needs `brew install llvm`)
 ```
 

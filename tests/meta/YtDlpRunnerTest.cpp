@@ -138,7 +138,16 @@ protected:
     // Runs the event loop until `done()`, within the generous ceiling.
     static bool eventually(const std::function<bool()> &done) { return spinUntil(done, kCeilingMs); }
 
-    bool childPidWritten() const { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }
+    // The pid of the background child the fake started in a hang mode, once its pid file holds one; 0 before.
+    pid_t childPid() const
+    {
+        const QStringList lines = readLines(dir.filePath(u"child.pid"_s));
+        bool ok = false;
+        const int pid = lines.isEmpty() ? 0 : lines.first().toInt(&ok);
+        return ok && pid > 0 ? static_cast<pid_t>(pid) : 0;
+    }
+
+    bool childPidWritten() const { return childPid() > 0; }
 
     // Runs the event loop, moving the clock (gate spacing), until `done()`.
     bool spinAdvancing(const std::function<bool()> &done, int ms = kCeilingMs)
@@ -166,15 +175,10 @@ protected:
     // The background child the fake started in a hang mode is gone: the kill reached the whole process group.
     bool childGone()
     {
-        bool hasPid = false;
-        if (!eventually([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); })) {
+        if (!eventually([&] { return childPidWritten(); })) {
             return false;
         }
-        const QStringList pidLines = readLines(dir.filePath(u"child.pid"_s));
-        const pid_t pid = pidLines.isEmpty() ? 0 : static_cast<pid_t>(pidLines.first().toInt(&hasPid));
-        if (!hasPid || pid <= 0) {
-            return false;
-        }
+        const pid_t pid = childPid();
         return eventually([pid] { return ::kill(pid, 0) != 0 && errno == ESRCH; });
     }
 
@@ -443,7 +447,7 @@ TEST_F(YtDlpRunnerTest, CancellingASearchKillsItsProcessAndTheQueueGoesOn)
 {
     setMode(u"hang"_s);
     QFuture<Result<QList<YouTubeCandidate>>> hanging = runner().search(u"Kestrel Moon"_s);
-    ASSERT_TRUE(spinAdvancing([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
+    ASSERT_TRUE(spinAdvancing([&] { return childPidWritten(); }));
     hanging.cancel();
     EXPECT_TRUE(childGone());
     setMode(u"ok"_s);
@@ -595,7 +599,7 @@ TEST_F(YtDlpRunnerTest, ACancelledFetchCleansUpEvenBeforeTheFormatIsNamed)
     const std::unique_ptr<YtDlpFetch> job(runner().fetch(u"KmTopic00Ex"_s, cache()));
     const auto events = watch(job.get());
     const QString partial = QDir(cache()).filePath(u"KmTopic00Ex.m4a"_s);
-    ASSERT_TRUE(spinAdvancing([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
+    ASSERT_TRUE(spinAdvancing([&] { return childPidWritten(); }));
     ASSERT_TRUE(QFileInfo::exists(partial));
     job->cancel();
     ASSERT_TRUE(eventually([&] { return events->finished.has_value(); }));
@@ -623,7 +627,7 @@ TEST_F(YtDlpRunnerTest, DestroyingTheRunnerMidSearchOrMidVersionCheckLeavesNoChi
 {
     setMode(u"hang"_s);
     const QFuture<Result<QList<YouTubeCandidate>>> search = runner().search(u"Kestrel Moon"_s);
-    ASSERT_TRUE(spinAdvancing([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
+    ASSERT_TRUE(spinAdvancing([&] { return childPidWritten(); }));
     m_runner.reset();
     EXPECT_TRUE(childGone());
     ASSERT_TRUE(eventually([&] { return search.isFinished(); }));
@@ -632,7 +636,7 @@ TEST_F(YtDlpRunnerTest, DestroyingTheRunnerMidSearchOrMidVersionCheckLeavesNoChi
     QFile::remove(dir.filePath(u"child.pid"_s));
     setMode(u"versionhang"_s);
     const QFuture<Result<YtDlpInstall>> probe = runner().probe();
-    ASSERT_TRUE(eventually([&] { return QFileInfo::exists(dir.filePath(u"child.pid"_s)); }));
+    ASSERT_TRUE(eventually([&] { return childPidWritten(); }));
     m_runner.reset();
     EXPECT_TRUE(childGone());
     EXPECT_TRUE(probe.isCanceled());

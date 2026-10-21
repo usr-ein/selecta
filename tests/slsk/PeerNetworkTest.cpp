@@ -693,6 +693,22 @@ TEST_F(PeerNetworkTest, DistributedDialBackOnlyWhenWanted)
 
 // --- F and D connections ---------------------------------------------------------------------------------------------
 
+TEST_F(PeerNetworkTest, AnInboundFileConnectionHandsOverATokenOfZero)
+{
+    // PeerInit F and the FileTransferInit token in one write; a token of 0 looks like an impossible frame length to the
+    // peer-init reader, and must still reach the transfer intact.
+    const QSignalSpy taken(&peers, &PeerNetwork::fileConnectionReady);
+    QTcpSocket raw;
+    raw.connectToHost(QHostAddress::LocalHost, peers.listenPort());
+    ASSERT_TRUE(waitFor([&] { return raw.state() == QAbstractSocket::ConnectedState; }));
+    raw.write(frame(peerinit::PeerInit{u"alice"_s, ConnectionType::File, 0}) + QByteArray::fromHex("00 00 00 00"));
+    ASSERT_TRUE(waitFor([&] { return taken.size() == 1; }));
+    EXPECT_EQ(taken.at(0).at(0).toULongLong(), 0U);
+    EXPECT_EQ(taken.at(0).at(1).toString(), u"alice"_s);
+    EXPECT_EQ(taken.at(0).at(3).toByteArray(), QByteArray::fromHex("00 00 00 00"));
+    delete taken.at(0).at(2).value<QTcpSocket *>();
+}
+
 TEST_F(PeerNetworkTest, OpenFileConnectionHandsTheSocketOver)
 {
     const auto alice = makePeer(u"alice"_s);
@@ -768,6 +784,7 @@ TEST_F(PeerNetworkTest, FileConnectionFailuresComeAfterTheCall)
 TEST_F(PeerNetworkTest, DistributedConnectionToACandidate)
 {
     const auto parent = makePeer(u"parent"_s);
+    parent->answerIndirect = false; // the test talks over the connection the parent accepts: the direct half must win
     const QSignalSpy identified(parent.get(), &FakePeer::identified);
     const QSignalSpy connected(&peers, &PeerNetwork::distributedConnected);
     const QSignalSpy messages(&peers, &PeerNetwork::distributedMessageReceived);

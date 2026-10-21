@@ -9,8 +9,9 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 
+#include <filesystem>
 #include <gtest/gtest.h>
-#include <unistd.h>
+#include <system_error>
 
 using namespace Qt::StringLiterals;
 using selecta::library::FileOps;
@@ -30,6 +31,33 @@ QByteArray readFile(const QString &path)
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
+
+// Whether a folder without write permission refuses this user's writes: not on Windows, where the read-only attribute
+// doesn't apply to folders.
+#ifdef Q_OS_WIN
+constexpr bool kReadOnlyFoldersStopWrites = false;
+#else
+constexpr bool kReadOnlyFoldersStopWrites = true;
+#endif
+
+// Makes `link` a symbolic link to the folder `target`. On Windows QFile::link makes a shortcut (.lnk), which is no link
+// at all, and only an administrator or Developer Mode may make a real one: there a test without one skips.
+#ifdef Q_OS_WIN
+constexpr bool kLinksNeedPrivilege = true;
+bool linkFolder(const QString &target, const QString &link)
+{
+    std::error_code error;
+    std::filesystem::create_directory_symlink(QDir::toNativeSeparators(target).toStdWString(),
+                                              QDir::toNativeSeparators(link).toStdWString(), error);
+    return !error;
+}
+#else
+constexpr bool kLinksNeedPrivilege = false;
+bool linkFolder(const QString &target, const QString &link)
+{
+    return QFile::link(target, link);
+}
+#endif
 
 class FileOpsTest : public ::testing::Test
 {
@@ -96,7 +124,11 @@ TEST_F(FileOpsTest, PublishingRefusesPathsOutsideTheInbox)
 
 TEST_F(FileOpsTest, SymlinkCantEscapeTheInbox)
 {
-    ASSERT_TRUE(QFile::link(collection, inbox + u"/sneaky"_s));
+    const bool linked = linkFolder(collection, inbox + u"/sneaky"_s);
+    if (!linked && kLinksNeedPrivilege) {
+        GTEST_SKIP() << "this user can't make symbolic links";
+    }
+    ASSERT_TRUE(linked);
     ASSERT_TRUE(writeFile(incoming + u"/a.mp3"_s, "x"));
     EXPECT_FALSE(ops().publishIntoInbox(incoming + u"/a.mp3"_s, u"sneaky/a.mp3"_s).ok);
     EXPECT_FALSE(QFileInfo::exists(collection + u"/a.mp3"_s));
@@ -118,6 +150,23 @@ TEST_F(FileOpsTest, NeverOverwritesACollectionFile)
     const auto result = ops().fileIntoCollection(inbox + u"/Song.mp3"_s, collection, u"Singles/Song.mp3"_s);
     EXPECT_FALSE(result.ok);
     EXPECT_EQ(readFile(collection + u"/Singles/Song.mp3"_s), "precious");
+    EXPECT_TRUE(QFileInfo::exists(inbox + u"/Song.mp3"_s));
+}
+
+TEST_F(FileOpsTest, AFailedMoveSaysWhyInWords)
+{
+    if (!kReadOnlyFoldersStopWrites || selecta::testing::runningAsRoot()) {
+        GTEST_SKIP() << "needs a folder that refuses this user's writes";
+    }
+    ASSERT_TRUE(writeFile(inbox + u"/Song.mp3"_s, "new"));
+    const QString singles = collection + u"/Singles"_s;
+    ASSERT_TRUE(QDir().mkpath(singles));
+    ASSERT_TRUE(QFile::setPermissions(singles, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    const auto result = ops().fileIntoCollection(inbox + u"/Song.mp3"_s, collection, u"Singles/Song.mp3"_s);
+    QFile::setPermissions(singles, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    EXPECT_FALSE(result.ok);
+    // The system's words for EACCES, on Linux too (glibc's strerror_r returns its message rather than filling ours).
+    EXPECT_TRUE(result.error.contains(u"Permission denied"_s)) << result.error.toStdString();
     EXPECT_TRUE(QFileInfo::exists(inbox + u"/Song.mp3"_s));
 }
 
@@ -217,7 +266,11 @@ TEST_F(FileOpsTest, AlbumFilingNeverMergesIntoAnExistingFolder)
 TEST_F(FileOpsTest, AlbumWithASymlinkIsRefused)
 {
     ASSERT_TRUE(writeFile(inbox + u"/Albums/A/01.mp3"_s, "x"));
-    ASSERT_TRUE(QFile::link(collection, inbox + u"/Albums/A/escape"_s));
+    const bool linked = linkFolder(collection, inbox + u"/Albums/A/escape"_s);
+    if (!linked && kLinksNeedPrivilege) {
+        GTEST_SKIP() << "this user can't make symbolic links";
+    }
+    ASSERT_TRUE(linked);
     EXPECT_FALSE(ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, collection, u"Albums/A"_s).ok);
     EXPECT_FALSE(QFileInfo::exists(collection + u"/Albums/A"_s));
 }
@@ -315,7 +368,7 @@ TEST_F(FileOpsTest, AQuarantineAttributeAlreadyThereIsKeptOnTheWayIn)
 
 TEST_F(FileOpsTest, AFileThatCantBeQuarantinedStillArrives)
 {
-    if (!quarantine::isSupported() || ::geteuid() == 0) {
+    if (!quarantine::isSupported() || selecta::testing::runningAsRoot()) {
         GTEST_SKIP() << "needs the attribute, and a user that read-only files stop";
     }
     const QString temp = incoming + u"/locked.mp3"_s;

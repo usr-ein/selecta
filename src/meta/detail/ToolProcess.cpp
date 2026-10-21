@@ -3,9 +3,12 @@
 
 #include <QMetaObject>
 
+#include <utility>
+
+#ifdef Q_OS_UNIX
 #include <csignal>
 #include <sys/types.h>
-#include <utility>
+#endif
 
 namespace selecta::meta::detail {
 
@@ -13,6 +16,17 @@ namespace {
 
 // An unterminated line longer than this is cut and taken as a line (stderr, or stdout when streaming lines).
 constexpr qsizetype kMaxPendingBytes = qsizetype{64} * 1024;
+
+// Ends the process group the tool leads (Unix), so whatever it started ends too. Elsewhere there is no group: the
+// caller's QProcess::kill() ends the tool alone.
+void killProcessGroup([[maybe_unused]] qint64 pid)
+{
+#ifdef Q_OS_UNIX
+    if (pid > 0) {
+        ::kill(static_cast<pid_t>(-pid), SIGKILL);
+    }
+#endif
+}
 
 } // namespace
 
@@ -34,10 +48,7 @@ ToolProcess::~ToolProcess()
 {
     if (m_process.state() != QProcess::NotRunning) {
         m_process.disconnect(this);
-        const qint64 pid = m_process.processId();
-        if (pid > 0) {
-            ::kill(static_cast<pid_t>(-pid), SIGKILL);
-        }
+        killProcessGroup(m_process.processId());
         m_process.kill();
         m_process.waitForFinished(5000); // reaps it; SIGKILL can't be caught or ignored
     }
@@ -54,10 +65,12 @@ void ToolProcess::start()
     m_process.setProcessEnvironment(m_spec.environment);
     m_process.setWorkingDirectory(m_spec.workingDirectory);
     m_process.setStandardInputFile(QProcess::nullDevice());
+#ifdef Q_OS_UNIX
     QProcess::UnixProcessParameters parameters;
     parameters.flags = QProcess::UnixProcessFlag::CloseFileDescriptors | QProcess::UnixProcessFlag::CreateNewSession |
                        QProcess::UnixProcessFlag::ResetSignalHandlers;
     m_process.setUnixProcessParameters(parameters);
+#endif
     m_elapsed.start();
     if (m_spec.idleTimeout.count() > 0) {
         m_idleTimer.start(m_spec.idleTimeout);
@@ -88,10 +101,7 @@ void ToolProcess::killGroup(ToolOutcome::End reason)
     }
     // The tool leads its own session, so its process group holds everything it started (yt-dlp's JavaScript runtime,
     // ffmpeg). Then the leader itself, in case the group signal missed it.
-    const qint64 pid = m_process.processId();
-    if (pid > 0) {
-        ::kill(static_cast<pid_t>(-pid), SIGKILL);
-    }
+    killProcessGroup(m_process.processId());
     m_process.kill();
 }
 

@@ -25,7 +25,10 @@
 #include <cmath>
 #include <deque>
 #include <tuple>
+
+#ifdef Q_OS_UNIX
 #include <unistd.h>
+#endif
 
 using namespace Qt::StringLiterals;
 
@@ -72,7 +75,7 @@ FileStamp stampOf(const QString &path)
 }
 
 // A file Selecta may run (§12.1): a regular executable file once symlinks are resolved, not writable by group or
-// others, owned by the user or root. Returns the canonical path.
+// others, owned by the user or root (on Unix: Windows has no such owner). Returns the canonical path.
 Result<QString> checkExecutable(const QString &candidate, const QString &name)
 {
     const QFileInfo target(QFileInfo(candidate).canonicalFilePath());
@@ -83,11 +86,13 @@ Result<QString> checkExecutable(const QString &candidate, const QString &name)
         return ytError(ErrorCode::ToolUnsafe, u"%1 at %2 can be changed by other users, so Selecta won't run it."_s.arg(
                                                   name, target.filePath()));
     }
+#ifdef Q_OS_UNIX
     const uint owner = target.ownerId();
     if (owner != ::getuid() && owner != 0) {
         return ytError(ErrorCode::ToolUnsafe,
                        u"%1 at %2 belongs to another user, so Selecta won't run it."_s.arg(name, target.filePath()));
     }
+#endif
     return target.filePath();
 }
 

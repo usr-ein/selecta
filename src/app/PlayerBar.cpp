@@ -7,9 +7,11 @@
 #include "app/WaveformView.h"
 
 #include <QAction>
+#include <QEvent>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPainter>
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
@@ -25,14 +27,54 @@ using State = playback::Player::State;
 constexpr int kTickMs = 16; // playhead updates while playing: one per frame at 60 Hz
 constexpr double kSkipSeconds = 5.0;
 
+// A transport control as macOS players draw it: the symbol alone, in the label colour, with no bezel around it. It dims
+// while pressed, and when disabled.
+class GlyphButton : public QToolButton
+{
+    Q_OBJECT
+
+public:
+    explicit GlyphButton(QWidget *parent)
+        : QToolButton(parent)
+    {
+        setAutoRaise(true);
+        setCursor(Qt::ArrowCursor);
+    }
+
+    QSize sizeHint() const override { return iconSize() + QSize(kGlyphPadding, kGlyphPadding); }
+    QSize minimumSizeHint() const override { return sizeHint(); }
+
+protected:
+    void paintEvent(QPaintEvent * /*event*/) override
+    {
+        QColor color = palette().color(QPalette::Active, QPalette::WindowText);
+        if (!isEnabled()) {
+            color.setAlphaF(kDisabledAlpha);
+        } else if (isDown()) {
+            color.setAlphaF(kPressedAlpha);
+        }
+        const QPixmap glyph = icons::tinted(icon(), iconSize(), devicePixelRatioF(), color);
+        if (glyph.isNull()) {
+            return;
+        }
+        const QSizeF size = glyph.deviceIndependentSize();
+        QPainter painter(this);
+        painter.drawPixmap(QPointF((width() - size.width()) / 2.0, (height() - size.height()) / 2.0), glyph);
+    }
+
+private:
+    static constexpr int kGlyphPadding = 8;
+    static constexpr float kPressedAlpha = 0.55F;
+    static constexpr float kDisabledAlpha = 0.3F;
+};
+
 QToolButton *transportButton(const QString &name, const QString &symbol, const QString &fallback,
                              const QString &toolTip, int size, QWidget *parent)
 {
-    auto *button = new QToolButton(parent);
+    auto *button = new GlyphButton(parent);
     button->setObjectName(name);
     button->setIcon(icons::symbol(symbol, fallback));
     button->setIconSize(QSize(size, size));
-    button->setAutoRaise(true);
     button->setToolTip(toolTip);
     button->setAccessibleName(toolTip);
     button->setFocusPolicy(Qt::NoFocus); // Space belongs to the window's play/pause, not to a focused button
@@ -52,9 +94,12 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     , m_play(transportButton(u"player.play"_s, u"play.fill"_s, u"media-playback-start"_s, tr("Play (Space)"), 22, this))
     , m_forward(transportButton(u"player.forward"_s, u"goforward.5"_s, u"media-seek-forward"_s, tr("Forward 5 seconds"),
                                 18, this))
+    , m_left(new QWidget(this))
+    , m_right(new QWidget(this))
     , m_time(new QLabel(this))
     , m_actions(new QHBoxLayout)
     , m_volume(new QSlider(Qt::Horizontal, this))
+    , m_speaker(new QLabel(this))
     , m_waveform(new WaveformView(this))
     , m_ticker(new QTimer(this))
 {
@@ -82,6 +127,7 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     timeFont.setPointSizeF(m_time->font().pointSizeF());
     m_time->setFont(timeFont);
     m_time->setForegroundRole(QPalette::PlaceholderText);
+    m_time->setMinimumWidth(QFontMetrics(timeFont).horizontalAdvance(u"88:88 / 88:88"_s)); // steady while it ticks
 
     m_volume->setObjectName(u"player.volume"_s);
     m_volume->setRange(0, 100);
@@ -90,29 +136,50 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     m_volume->setFocusPolicy(Qt::NoFocus);
     m_volume->setToolTip(tr("Preview volume"));
     m_volume->setAccessibleName(tr("Preview volume"));
-    auto *speaker = new QLabel(this);
-    speaker->setPixmap(icons::symbol(u"speaker.wave.2.fill"_s, u"audio-volume-medium"_s).pixmap(QSize(14, 14)));
+    m_speaker->setObjectName(u"player.speaker"_s);
+    tintSpeaker();
 
     auto *texts = new QVBoxLayout;
     texts->setSpacing(0);
     texts->addWidget(m_title);
     texts->addWidget(m_subtitle);
 
-    auto *row = new QHBoxLayout;
-    row->setSpacing(6);
-    row->addLayout(texts, 1);
-    row->addWidget(m_quality);
-    row->addSpacing(8);
-    row->addWidget(m_back);
-    row->addWidget(m_play);
-    row->addWidget(m_forward);
-    row->addSpacing(8);
-    row->addWidget(m_time);
+    // Three parts, as macOS players have them: what is playing on the left, the transport in the middle of the bar,
+    // the time, the actions and the volume on the right. The two sides share what the transport leaves equally, so
+    // the transport stays centred; each is as wide as the right one needs at least (syncSides).
+    m_left->setObjectName(u"player.left"_s);
+    auto *left = new QHBoxLayout(m_left);
+    left->setContentsMargins(0, 0, 0, 0);
+    left->setSpacing(6);
+    left->addLayout(texts, 1);
+    left->addWidget(m_quality);
+
+    auto *transport = new QHBoxLayout;
+    transport->setSpacing(4);
+    transport->addWidget(m_back);
+    transport->addWidget(m_play);
+    transport->addWidget(m_forward);
+
+    m_right->setObjectName(u"player.right"_s);
+    auto *right = new QHBoxLayout(m_right);
+    right->setContentsMargins(0, 0, 0, 0);
+    right->setSpacing(6);
+    right->addStretch(1);
+    right->addWidget(m_time);
     m_actions->setSpacing(2);
-    row->addLayout(m_actions);
-    row->addSpacing(12);
-    row->addWidget(speaker);
-    row->addWidget(m_volume);
+    right->addLayout(m_actions);
+    right->addSpacing(12);
+    right->addWidget(m_speaker);
+    right->addWidget(m_volume);
+
+    for (QWidget *side : {m_left, m_right}) {
+        side->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    }
+    auto *row = new QHBoxLayout;
+    row->setSpacing(16);
+    row->addWidget(m_left, 1);
+    row->addLayout(transport);
+    row->addWidget(m_right, 1);
 
     m_waveform->setMinimumHeight(112);
     auto *layout = new QVBoxLayout(this);
@@ -153,6 +220,7 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     m_ticker->setTimerType(Qt::PreciseTimer);
     connect(m_ticker, &QTimer::timeout, this, &PlayerBar::tick);
     refresh();
+    syncSides();
 }
 
 void PlayerBar::showMessage(const QString &message)
@@ -163,15 +231,39 @@ void PlayerBar::showMessage(const QString &message)
 
 void PlayerBar::addPreviewAction(QAction *action, const QString &objectName)
 {
-    auto *button = new QToolButton(this);
+    auto *button = new GlyphButton(m_right);
     button->setObjectName(objectName);
     button->setDefaultAction(action);
     button->setIconSize(QSize(16, 16));
-    button->setAutoRaise(true);
     button->setToolButtonStyle(Qt::ToolButtonIconOnly);
     button->setAccessibleName(action->text());
     button->setFocusPolicy(Qt::NoFocus); // as the transport: keys belong to the window's shortcuts
     m_actions->addWidget(button);
+    syncSides();
+}
+
+void PlayerBar::syncSides()
+{
+    // Both sides as wide as the right one's content needs: equal minimums and equal stretch keep the transport in the
+    // middle; past that minimum the window is too narrow to centre it, and the left side's names elide first.
+    const int needed = m_right->layout()->sizeHint().width();
+    m_left->setMinimumWidth(needed);
+    m_right->setMinimumWidth(needed);
+}
+
+void PlayerBar::tintSpeaker()
+{
+    const QIcon speaker = icons::symbol(u"speaker.wave.2.fill"_s, u"audio-volume-medium"_s);
+    m_speaker->setPixmap(icons::tinted(speaker, QSize(14, 14), devicePixelRatioF(),
+                                       palette().color(QPalette::Active, QPalette::WindowText)));
+}
+
+void PlayerBar::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::DevicePixelRatioChange) {
+        tintSpeaker(); // light and dark; a Retina screen or not
+    }
 }
 
 double PlayerBar::volume() const
@@ -294,3 +386,5 @@ void PlayerBar::tick()
 }
 
 } // namespace selecta::app
+
+#include "PlayerBar.moc"

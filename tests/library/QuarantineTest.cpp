@@ -11,7 +11,6 @@
 
 #include <cstdlib>
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 #ifdef Q_OS_MACOS
 #include <CoreFoundation/CoreFoundation.h>
@@ -171,7 +170,7 @@ TEST_F(QuarantineTest, SaysWhyAFileCantBeMarked)
     EXPECT_FALSE(quarantine::mark(dir.filePath(u"missing.mp3"_s), &error));
     EXPECT_TRUE(error.contains(u"missing.mp3"_s)) << error.toStdString();
 
-    if (::geteuid() == 0) {
+    if (selecta::testing::runningAsRoot()) {
         GTEST_SKIP() << "root may change any file";
     }
     // A file Selecta may not change: refused, and said so; the rest of its folder is still marked.

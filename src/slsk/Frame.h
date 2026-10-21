@@ -84,7 +84,8 @@ public:
         return m_headerChecked ? std::min(m_pendingPayload, buffered() - header) : 0;
     }
     qsizetype buffered() const { return m_buffer.size() - m_offset; }
-    // Removes and returns every byte not yet consumed, e.g. what follows a peer-init frame on an `F` connection.
+    // Removes and returns every byte not yet consumed, e.g. what follows a peer-init frame on an `F` connection, and
+    // forgets any error those bytes caused: the reader starts over.
     QByteArray takeBuffered();
 
 private:
