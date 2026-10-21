@@ -532,3 +532,177 @@ TEST_F(GetTracksServiceTest, FilesOfAnotherTrackAreNoNearMisses)
     EXPECT_TRUE(line.nearMisses.isEmpty());
     EXPECT_EQ(line.message, u"1 file found, but not of this track."_s);
 }
+
+// --- Upgrades (P-010) ------------------------------------------------------------------------------------------------
+
+namespace {
+
+selecta::core::FileChoice choice(const QString &extension, std::optional<int> bitrate, std::optional<bool> vbr = false,
+                                 std::optional<int> bitDepth = std::nullopt)
+{
+    selecta::core::FileChoice file;
+    file.extension = extension;
+    file.bitrate = bitrate;
+    file.vbr = vbr;
+    file.bitDepth = bitDepth;
+    return file;
+}
+
+GetTracksService::UpgradeRequest upgrade(const QString &path, const QString &artist, const QString &title,
+                                         qint64 durationMs = 372'000)
+{
+    return GetTracksService::UpgradeRequest{
+        .path = path, .artist = artist, .title = title, .durationMs = durationMs, .isrc = u"GBXXX2400001"_s};
+}
+
+// A search harness: the lines' searches go to `network`, answered by hand.
+struct Finding
+{
+    explicit Finding(GetTracksService &service)
+    {
+        service.setSearch(&search, [] { return QStringList(); });
+    }
+
+    const selecta::base::ManualClock clock;
+    selecta::governor::Governor governor{clock};
+    FindNetwork network;
+    selecta::core::SearchService search{
+        governor, network, clock, {.idle = std::chrono::milliseconds(40), .total = std::chrono::milliseconds(1000)}};
+};
+
+} // namespace
+
+TEST(QualityTierOf, WhatAPeerDeclares)
+{
+    using selecta::core::QualityTier;
+    using selecta::core::qualityTierOf;
+    EXPECT_EQ(qualityTierOf(choice(u"mp3"_s, 320)), QualityTier::Top);
+    EXPECT_EQ(qualityTierOf(choice(u"mp3"_s, 245, true)), QualityTier::Top); // V0
+    EXPECT_EQ(qualityTierOf(choice(u"mp3"_s, 192)), QualityTier::From192);
+    EXPECT_EQ(qualityTierOf(choice(u"mp3"_s, std::nullopt)), QualityTier::Unknown);
+    EXPECT_EQ(qualityTierOf(choice(u"flac"_s, std::nullopt, std::nullopt)), QualityTier::Lossless);
+    EXPECT_EQ(qualityTierOf(choice(u"m4a"_s, std::nullopt, std::nullopt, 16)), QualityTier::Lossless); // ALAC
+    EXPECT_EQ(qualityTierOf(choice(u"m4a"_s, 256)), QualityTier::From256);                             // AAC
+}
+
+TEST_F(GetTracksServiceTest, UpgradesAreOneLinePerFileSearchedAtOnce)
+{
+    Finding finding(*service);
+    service->add(u"Okuma Drift - Neon Rain"_s); // an ordinary line for the same track doesn't stop an upgrade
+    const QSignalSpy reset(service.get(), &GetTracksService::linesReset);
+    const auto result = service->addUpgrades({
+        upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s),
+        upgrade(u"/Music/Albums/Nightfall/01 Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s), // the same, twice
+        upgrade(u"/Music/Tracks/untagged.mp3"_s, QString(), QString()),
+        upgrade(QString(), u"Nobody"_s, u"Nowhere"_s), // no file: nothing to upgrade
+    });
+    EXPECT_EQ(result.lines.size(), 3);
+    EXPECT_EQ(result.already, 0);
+    EXPECT_FALSE(reset.isEmpty());
+    const QList<GetLine> lines = service->lines();
+    ASSERT_EQ(lines.size(), 4);
+    EXPECT_TRUE(lines.at(0).upgradeOf.isEmpty());
+    EXPECT_EQ(lines.at(1).upgradeOf, u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s);
+    EXPECT_EQ(lines.at(1).raw, u"Okuma Drift - Neon Rain"_s);
+    EXPECT_EQ(lines.at(1).durationHintMs, 372'000);
+    EXPECT_EQ(lines.at(1).isrc, u"GBXXX2400001"_s);
+    EXPECT_EQ(lines.at(3).raw, u"untagged"_s); // named after the file
+    // Searched at once (no release lookup here), by name; the ordinary line waits for its lookup.
+    ASSERT_TRUE(QTest::qWaitFor([&finding] { return !finding.network.sent.isEmpty(); }, 3000));
+    EXPECT_TRUE(finding.network.sent.constFirst().contains(u"neon rain"_s, Qt::CaseInsensitive))
+        << finding.network.sent.constFirst().toStdString();
+    EXPECT_EQ(service->lines().at(0).findState, GetLine::FindState::Idle);
+
+    // Asked again for the same files: the list already looks for them.
+    const auto again = service->addUpgrades(
+        {upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s)});
+    EXPECT_TRUE(again.lines.isEmpty());
+    EXPECT_EQ(again.already, 1);
+
+    // The mark is saved with the line.
+    service.reset();
+    GetTracksService restarted(db);
+    EXPECT_EQ(restarted.lines().at(1).upgradeOf, u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s);
+}
+
+TEST_F(GetTracksServiceTest, AnUpgradeIsNeverYouHaveIt)
+{
+    selecta::match::MatchIndexInput input;
+    selecta::match::LibraryTrack owned;
+    owned.id = 1;
+    owned.artist = u"Okuma Drift"_s;
+    owned.title = u"Neon Rain"_s;
+    owned.durationMs = 372'000;
+    owned.quality.codec = selecta::match::Codec::Mp3;
+    owned.quality.bitrateKbps = 128;
+    input.tracks.append(owned);
+    service->setLibraryIndex(selecta::match::MatchIndex::build(input));
+    service->add(u"Okuma Drift - Neon Rain"_s);
+    service->addUpgrades({upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s)});
+    const QList<GetLine> lines = service->lines();
+    ASSERT_EQ(lines.size(), 2);
+    EXPECT_EQ(lines.at(0).findState, GetLine::FindState::Owned); // the ordinary line: you have it
+    EXPECT_NE(lines.at(1).findState, GetLine::FindState::Owned);
+    service->recheckOwnership();
+    EXPECT_NE(service->lines().at(1).findState, GetLine::FindState::Owned);
+}
+
+TEST_F(GetTracksServiceTest, AnUpgradeTakesOnlyAHigherTier)
+{
+    Finding finding(*service);
+    selecta::core::QualityTier floor = selecta::core::QualityTier::Top;
+    QStringList asked;
+    service->setTierLookup([&floor, &asked](const QString &path) -> std::optional<selecta::core::QualityTier> {
+        asked.append(path);
+        return floor;
+    });
+    const QString path = u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s;
+    service->addUpgrades({upgrade(path, u"Okuma Drift"_s, u"Neon Rain"_s)});
+    ASSERT_TRUE(QTest::qWaitFor([&finding] { return finding.network.sent.size() == 1; }, 3000));
+    selecta::core::SearchService &search = finding.search;
+    search.received(1, u"vinyl_ghost"_s, fileResponse(1, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, 320, 372));
+    search.received(1, u"flac_fiend"_s, fileResponse(1, u"@@b\\Okuma Drift - Neon Rain.flac"_s, 900, 372));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    EXPECT_EQ(asked, QStringList{path});
+    // Yours is a 320: only the FLAC is better.
+    GetLine line = service->lines().constFirst();
+    ASSERT_TRUE(line.best.has_value());
+    EXPECT_EQ(line.best->peer, u"flac_fiend"_s);
+    EXPECT_TRUE(line.alternatives.isEmpty());
+
+    // Yours is from lossless already: nothing found is better, and the line says so.
+    floor = selecta::core::QualityTier::Lossless;
+    service->find({line.id});
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    line = service->lines().constFirst();
+    EXPECT_EQ(line.findState, GetLine::FindState::NotFound);
+    EXPECT_FALSE(line.best.has_value());
+    EXPECT_TRUE(line.nearMisses.isEmpty());
+    EXPECT_EQ(line.message, u"2 files of this track found, none better than yours (From lossless)."_s);
+
+    // Yours is below 192: both are better, the best of them first.
+    floor = selecta::core::QualityTier::Below192;
+    service->find({line.id});
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    line = service->lines().constFirst();
+    ASSERT_TRUE(line.best.has_value());
+    EXPECT_EQ(line.alternatives.size(), 1);
+}
+
+// Near misses (files the preset turned down) are offered for an upgrade only when they are better than yours.
+TEST_F(GetTracksServiceTest, AnUpgradesNearMissesAreBetterThanYours)
+{
+    Finding finding(*service);
+    service->setTierLookup([](const QString &) { return std::optional(selecta::core::QualityTier::Below192); });
+    service->addUpgrades({upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s)});
+    ASSERT_TRUE(QTest::qWaitFor([&finding] { return finding.network.sent.size() == 1; }, 3000));
+    selecta::core::SearchService &search = finding.search;
+    search.received(1, u"vinyl_ghost"_s, fileResponse(1, u"@@a\\Okuma Drift - Neon Rain.mp3"_s, 256, 372));
+    search.received(1, u"bassbin"_s, fileResponse(1, u"@@b\\Okuma Drift - Neon Rain.mp3"_s, 128, 372));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    const GetLine line = service->lines().constFirst();
+    EXPECT_EQ(line.findState, GetLine::FindState::NotFound);
+    ASSERT_EQ(line.nearMisses.size(), 1); // the 256 is better than yours; the 128 isn't
+    EXPECT_EQ(line.nearMisses.constFirst().peer, u"vinyl_ghost"_s);
+    EXPECT_EQ(line.message, u"1 file of this track found, below the quality wanted."_s);
+}

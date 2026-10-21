@@ -200,6 +200,10 @@ public:
     void correctSearchMatch(qint64 searchId, int index, bool same);
     void notOwnedFindTracks(const QList<qint64> &ids);
     void notTheSameTrack(qint64 flagId);
+    // P-010, "Search for Better Quality": a Get tracks line for each of these collection tracks (CollectionTrack::id)
+    // that looks for a copy of a higher tier, searched at once (GetTracksService::addUpgrades()). Tracks already from
+    // lossless have nothing better; betterQualitySearched() says what happened.
+    void searchForBetterQuality(const QList<qint64> &trackIds);
     // NET-7: sends a message (messageSent() says if it went); a conversation's messages (conversationLoaded()).
     void sendMessage(const QString &peer, const QString &text);
     void loadConversation(const QString &peer);
@@ -264,6 +268,11 @@ Q_SIGNALS:
     void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    // The Collection view's listing, with every index build (CollectionService::listingChanged()).
+    void collectionListingChanged(const std::shared_ptr<const selecta::core::CollectionListing> &listing);
+    // What searchForBetterQuality() did: tracks searched for now, tracks the list already looks for a better copy of,
+    // tracks already from lossless (nothing is better), tracks no longer in the collection.
+    void betterQualitySearched(int searching, int already, int best, int gone);
     void shareStatusChanged(const selecta::core::ShareStatus &status);
     void uploadsChanged(const QList<selecta::core::UploadEntry> &uploads);
     // Searches typed by hand (ManualSearchService's signals, forwarded).

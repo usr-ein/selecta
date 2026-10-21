@@ -8,6 +8,9 @@
 namespace selecta::core {
 struct FileChoice;
 }
+namespace selecta::match {
+struct AudioQuality;
+}
 namespace selecta::meta {
 struct Release;
 }
@@ -21,10 +24,15 @@ QString length(std::optional<qint64> milliseconds);
 QString clock(double seconds, int decimals = 0);
 // "MP3 320", "MP3 V0", "FLAC 16/44.1", "WAV 24/48".
 QString quality(const core::FileChoice &file);
+// A local file's quality, as the collection read it: "MP3 320", "MP3 VBR 245", "FLAC 16/44.1", "AAC 256"; the codec
+// alone when that's all that is known.
+QString quality(const match::AudioQuality &quality);
 // "Neon Rain · Okuma Drift · 6:12": a release on one line.
 QString release(const meta::Release &release);
 // "+2 s", "−5 s": a file's length against the release.
 QString lengthDelta(qint64 deltaSeconds);
+// A file or folder as the Finder names it: the home folder as "~" ("~/Music/Tracks"), native separators.
+QString shownPath(const QString &path);
 // "9.4 MB", "820 KB", "1.2 GB" (decimal units, as the Finder shows them).
 QString size(qint64 bytes);
 // "1.2 MB/s", "340 KB/s"; an empty string for an unknown speed.

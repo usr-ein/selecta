@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/Engine.h"
 
+#include "SyntheticAudio.h"
 #include "base/Clock.h"
+#include "convert/TagWriter.h"
 #include "core/EngineHost.h"
+#include "core/GetTracksService.h"
 #include "core/InboxService.h"
 #include "core/ShareService.h"
 #include "slsk/PeerMessages.h"
@@ -302,4 +305,66 @@ TEST_F(EngineTest, SharesTheCollectionsTracksByTheirFoldersRolesAndNeverTheInbox
     }
     EXPECT_EQ(shared, QStringList({u"Tracks\\Loose.mp3"_s, u"Albums\\Okuma Drift - Neon Rain\\01 Neon Rain.mp3"_s}));
     EXPECT_EQ(engine.shares().status().roots, QStringList({config.tracksRoot, config.albumsRoot}));
+}
+
+// P-010, "Search for Better Quality": each track asked for becomes a Get tracks upgrade line, once; a track from
+// lossless has nothing better, and one no longer in the collection is gone.
+TEST_F(EngineTest, SearchingForBetterQualityAddsUpgradeLines)
+{
+    namespace synth = selecta::testing;
+    namespace keys = selecta::convert::keys;
+    const auto write = [this](const QString &relative, const QByteArray &bytes, const QString &title) {
+        const QString path = dir.filePath(relative);
+        QDir().mkpath(QFileInfo(path).path());
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+            return false;
+        }
+        file.close();
+        selecta::convert::MetadataModel tags;
+        tags.set(keys::Artist, u"Okuma Drift"_s, selecta::convert::Provenance::Embedded);
+        tags.set(keys::Title, title, selecta::convert::Provenance::Embedded);
+        return selecta::convert::writeTags(path, tags).ok();
+    };
+    ASSERT_TRUE(write(u"Tracks/Okuma Drift - Dusk.mp3"_s, synth::makeMp3(synth::sine(440.0, 3.0), {.bitrateKbps = 128}),
+                      u"Dusk"_s));
+    ASSERT_TRUE(write(u"Tracks/Okuma Drift - Dawn.flac"_s,
+                      synth::makeFlac(synth::quantised(synth::sine(440.0, 3.0), 16)), u"Dawn"_s));
+    EngineOptions opts = options();
+    opts.watchCollection = false;
+    Engine engine(opts);
+    ASSERT_TRUE(engine.start()) << engine.error().toStdString();
+    selecta::core::LibraryConfig config;
+    config.inboxRoot = dir.filePath(u"Inbox"_s);
+    config.tracksRoot = dir.filePath(u"Tracks"_s);
+    config.albumsRoot = dir.filePath(u"Albums"_s);
+    ASSERT_TRUE(QDir().mkpath(config.inboxRoot) && QDir().mkpath(config.albumsRoot));
+    engine.setLibraryConfig(config);
+    engine.collection().waitForIdle();
+    const std::shared_ptr<const selecta::core::CollectionListing> listing = engine.collection().listing();
+    ASSERT_TRUE(listing);
+    ASSERT_EQ(listing->tracks.size(), 2);
+    qint64 dusk = 0;
+    qint64 dawn = 0;
+    for (const selecta::core::CollectionTrack &track : listing->tracks) {
+        (track.title == u"Dusk"_s ? dusk : dawn) = track.id;
+    }
+
+    const QSignalSpy searched(&engine, &Engine::betterQualitySearched);
+    engine.searchForBetterQuality({dusk, dawn, dusk, 4242});
+    ASSERT_EQ(searched.size(), 1);
+    EXPECT_EQ(searched.at(0).at(0).toInt(), 1); // Dusk, once
+    EXPECT_EQ(searched.at(0).at(1).toInt(), 0);
+    EXPECT_EQ(searched.at(0).at(2).toInt(), 1); // Dawn is a FLAC: nothing is better
+    EXPECT_EQ(searched.at(0).at(3).toInt(), 1); // 4242 isn't in the collection
+    const QList<selecta::core::GetLine> lines = engine.getTracks().lines();
+    ASSERT_EQ(lines.size(), 1);
+    EXPECT_TRUE(lines.constFirst().upgradeOf.endsWith(u"Tracks/Okuma Drift - Dusk.mp3"_s))
+        << lines.constFirst().upgradeOf.toStdString();
+    EXPECT_EQ(lines.constFirst().title, u"Dusk"_s);
+
+    engine.searchForBetterQuality({dusk});
+    ASSERT_EQ(searched.size(), 2);
+    EXPECT_EQ(searched.at(1).at(0).toInt(), 0);
+    EXPECT_EQ(searched.at(1).at(1).toInt(), 1); // already looked for
 }

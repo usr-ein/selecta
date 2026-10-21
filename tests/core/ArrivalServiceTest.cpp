@@ -317,6 +317,35 @@ TEST_F(ArrivalServiceTest, AnMp3At320IsOnlyTaggedWithoutAWarning)
               u"Neon Rain - Extended Mix"_s); // but tagged
 }
 
+// P-010: what a Get tracks upgrade line downloads arrives marked as replacing its collection file; an ordinary line's
+// download and one of no line arrive unmarked.
+TEST_F(ArrivalServiceTest, AnUpgradeArrivesMarkedWithTheFileItReplaces)
+{
+    selecta::core::GetLine upgrade;
+    upgrade.raw = u"Okuma Drift - Neon Rain"_s;
+    upgrade.dedupeKey = u"upgrade:/music/tracks/okuma drift - neon rain.mp3"_s;
+    upgrade.upgradeOf = u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s;
+    selecta::core::GetLine ordinary;
+    ordinary.raw = u"Halden Rue - Tidewater"_s;
+    ordinary.dedupeKey = u"halden rue tidewater"_s;
+    const QList<selecta::core::GetLine> lines = selecta::core::GetTracksStore(db).append({upgrade, ordinary});
+    ASSERT_EQ(lines.size(), 2);
+
+    const QByteArray mp3 = synth::makeMp3(synth::sine(440.0, 5.0), {.bitrateKbps = 320});
+    Download first = downloaded(5, u"upgrade.mp3"_s, mp3);
+    first.getLine = lines.at(0).id;
+    Download second = downloaded(6, u"ordinary.mp3"_s, mp3);
+    second.getLine = lines.at(1).id;
+    Download third = downloaded(7, u"browsed.mp3"_s, mp3, std::nullopt);
+    for (const Download &download : {first, second, third}) {
+        const ArrivalResult result = arrive(download);
+        ASSERT_TRUE(result.ok) << result.message.toStdString();
+        const std::optional<selecta::library::InboxItem> item = selecta::library::InboxStore(db).find(result.inboxItem);
+        ASSERT_TRUE(item.has_value());
+        EXPECT_EQ(item->replaces, download.id == 5 ? upgrade.upgradeOf : QString()) << download.id;
+    }
+}
+
 // P-025, the maintainer's note: an Opus download failed with "Conversion failed: Selecta writes tags only to MP3,
 // AIFF, WAV, FLAC and M4A files". It now arrives as an MP3 320 with the release's tags; the Opus is never tagged.
 TEST_F(ArrivalServiceTest, AnOpusDownloadArrivesAsATaggedMp3_320)
@@ -511,6 +540,10 @@ TEST_F(ArrivalServiceTest, AFlacMadeFromAn128kbpsMp3SaysSo)
     EXPECT_EQ(item->qualityFindings, QStringList{u"from-lossy"_s});
     EXPECT_EQ(item->qualitySourceKbps, 128);
     EXPECT_EQ(selecta::core::spectrumBadge(*item), u"Likely from a ≈ 128 kbps MP3"_s);
+    // History keeps the verdict, so the file sits in its real quality tier once filed (P-010).
+    const QList<selecta::library::HistoryEntry> downloads = selecta::library::HistoryStore(db).downloads();
+    ASSERT_EQ(downloads.size(), 1);
+    EXPECT_EQ(downloads.constFirst().likelySourceKbps, 128);
 }
 
 TEST_F(ArrivalServiceTest, AGenuineLosslessFileArrivesCheckedWithoutFindings)

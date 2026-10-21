@@ -8,6 +8,7 @@ qt_add_library(selecta_core STATIC
     Albums.h Albums.cpp
     ArrivalService.h ArrivalService.cpp
     ClipPreviews.h ClipPreviews.cpp
+    CollectionBrowse.h CollectionBrowse.cpp
     CollectionService.h CollectionService.cpp
     CollectionStore.h CollectionStore.cpp
     CountryDatabase.h CountryDatabase.cpp

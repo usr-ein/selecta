@@ -45,6 +45,11 @@ struct LibraryConfig
 inline constexpr QStringView kInboxSinglesFolder = u"Singles";
 inline constexpr QStringView kInboxAlbumsFolder = u"Albums";
 
+// An upgrade (InboxItem::replaces, P-010): why filing it can't put it in its collection file's place, in words, from
+// the names alone; empty when it can, as far as they tell (filing checks the rest). The name stays exactly the same, so
+// the two must be files of the same type (PRD D41). Pure.
+QString upgradeMismatch(const library::InboxItem &item);
+
 // Why a library configuration can't be used, or an empty string when it can. The Inbox must be an absolute path. The
 // tracks and albums folders may be unset; a folder that is set must be an absolute path, and the two must stay apart
 // from each other and from the Inbox: not the same folder, neither inside the other.
@@ -96,7 +101,10 @@ public:
     std::optional<qint64> add(const library::InboxItem &item);
     // Files these items into the collection: singles into the tracks folder, albums into the albums folder, keeping
     // the names they got on arrival. Busy, unknown or still-processing items are skipped; an item whose folder isn't
-    // chosen yet stays, and finished() says so.
+    // chosen yet stays, and finished() says so. An upgrade (InboxItem::replaces, P-010) takes its collection file's
+    // place instead, under its exact path, and that file goes to the Trash (FileOps::replaceInCollection()); one that
+    // can't (another type of file, a folder no longer there or no longer in the collection) is filed as a new file,
+    // and finished() says why.
     void file(const QList<qint64> &ids);
     // Moves these items to the macOS Trash. trashed() reports each one that went.
     void trash(const QList<qint64> &ids);
@@ -126,7 +134,7 @@ Q_SIGNALS:
     void trashed(const selecta::core::TrashedItem &trashed);
 
 private:
-    enum class Work { File, Trash, Retag, Restore };
+    enum class Work { File, Trash, Retag, Restore, Replace };
     struct Outcome
     {
         qint64 id = 0;
@@ -136,9 +144,13 @@ private:
         QString tagSource;
         QString releaseJson;
         TrashedItem restored; // Work::Restore
+        QString note;         // Work::File: why an upgrade couldn't take its collection file's place
     };
 
     void start(qint64 id, Work work, std::function<library::FileResult()> job);
+    // Files an upgrade in its collection file's place, or as a new file when it can't be (Outcome::note says why).
+    void startUpgrade(qint64 id, const QString &source, const QString &replaces, const QString &tracksRoot,
+                      const QString &name);
     void post(Outcome outcome);
     void drain();
     void retagged(const Outcome &outcome);

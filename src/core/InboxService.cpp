@@ -33,6 +33,27 @@ bool overlap(const QString &first, const QString &second)
 
 } // namespace
 
+QString upgradeMismatch(const library::InboxItem &item)
+{
+    if (item.replaces.isEmpty()) {
+        return {};
+    }
+    if (item.kind != library::InboxItem::Kind::Single) {
+        return InboxService::tr("An album can't replace a track.");
+    }
+    const QString mine = QFileInfo(item.relativePath).suffix();
+    const QString theirs = QFileInfo(item.replaces).suffix();
+    if (mine.compare(theirs, Qt::CaseInsensitive) == 0) {
+        return {};
+    }
+    const auto type = [](const QString &suffix) {
+        return suffix.isEmpty() ? InboxService::tr("no type") : suffix.toUpper();
+    };
+    return InboxService::tr("The file it would replace is of another type (%1, not %2): Save to collection adds this "
+                            "one as a new file.")
+        .arg(type(theirs), type(mine));
+}
+
 QString checkLibraryConfig(const LibraryConfig &config)
 {
     if (config.inboxRoot.isEmpty() || !QDir::isAbsolutePath(config.inboxRoot)) {
@@ -164,6 +185,11 @@ void InboxService::file(const QList<qint64> &ids)
             continue;
         }
         const bool album = item->kind == InboxItem::Kind::Album;
+        if (!album && !item->replaces.isEmpty()) {
+            startUpgrade(id, absolutePath(*item), item->replaces, m_config.tracksRoot,
+                         QFileInfo(item->relativePath).fileName());
+            continue;
+        }
         const QString root = album ? m_config.albumsRoot : m_config.tracksRoot;
         if (root.isEmpty()) {
             Q_EMIT finished(id, false,
@@ -285,6 +311,27 @@ void InboxService::start(qint64 id, Work work, std::function<FileResult()> job)
     });
 }
 
+void InboxService::startUpgrade(qint64 id, const QString &source, const QString &replaces, const QString &tracksRoot,
+                                const QString &name)
+{
+    m_busy.insert(id);
+    m_pool.start([this, id, ops = m_fileOps, source, replaces, tracksRoot, name] {
+        Outcome outcome{.id = id, .work = Work::Replace};
+        const library::FileResult check = ops->checkReplace(source, replaces);
+        if (check.ok) {
+            outcome.result = ops->replaceInCollection(source, replaces);
+        } else {
+            // It can't take the file's place: a new file, like any single, and the message says why.
+            outcome.work = Work::File;
+            outcome.note = check.error;
+            outcome.result = tracksRoot.isEmpty()
+                                 ? library::FileResult::failure(tr("Choose your tracks folder in Settings first."))
+                                 : ops->fileIntoCollection(source, tracksRoot, name);
+        }
+        post(std::move(outcome));
+    });
+}
+
 void InboxService::post(Outcome outcome)
 {
     {
@@ -353,12 +400,16 @@ void InboxService::drain()
         const auto item = m_inbox.find(outcome.id);
         const QString name = item ? item->relativePath : QString::number(outcome.id);
         if (!outcome.result.ok) {
-            qCWarning(lcInbox).noquote() << "couldn't" << (outcome.work == Work::File ? "file" : "trash") << name << ':'
-                                         << outcome.result.error;
+            qCWarning(lcInbox).noquote() << "couldn't" << (outcome.work == Work::Trash ? "trash" : "file") << name
+                                         << ':' << outcome.result.error;
             Q_EMIT finished(outcome.id, false, outcome.result.error);
             continue;
         }
-        const bool filed = outcome.work == Work::File;
+        const bool replaced = outcome.work == Work::Replace;
+        const bool filed = outcome.work == Work::File || replaced;
+        if (replaced && m_history.trashFiledAt(outcome.result.path) < 0) {
+            qCWarning(lcInbox) << "couldn't record that the replaced file went to the Trash:" << m_db.lastError();
+        }
         const QList<qint64> history = filed ? QList<qint64>() : m_history.idsForInboxItem(outcome.id);
         const int recorded = m_history.setWhereaboutsForInboxItem(
             outcome.id, filed ? Whereabouts::Filed : Whereabouts::Trashed, filed ? outcome.result.path : QString());
@@ -366,9 +417,23 @@ void InboxService::drain()
             // The file already moved; reconcile() will drop the stale row on the next pass.
             qCWarning(lcInbox) << "moved" << name << "but couldn't update the Inbox:" << m_db.lastError();
         }
-        qCInfo(lcInbox).noquote() << (filed ? "filed" : "trashed") << name << "→" << outcome.result.path;
-        Q_EMIT finished(outcome.id, true,
-                        filed ? tr("Filed to %1").arg(outcome.result.path) : tr("Moved %1 to the Trash").arg(name));
+        const char *done = "trashed";
+        if (replaced) {
+            done = "replaced with";
+        } else if (filed) {
+            done = "filed";
+        }
+        qCInfo(lcInbox).noquote() << done << name << "→" << outcome.result.path;
+        QString message;
+        if (replaced) {
+            message = tr("Replaced %1. The old file is in the Trash.").arg(outcome.result.path);
+        } else if (filed && !outcome.note.isEmpty()) {
+            message = tr("Filed to %1 as a new file: it couldn't replace the old one (%2).")
+                          .arg(outcome.result.path, outcome.note);
+        } else {
+            message = filed ? tr("Filed to %1").arg(outcome.result.path) : tr("Moved %1 to the Trash").arg(name);
+        }
+        Q_EMIT finished(outcome.id, true, message);
         if (!filed && item) {
             Q_EMIT trashed(TrashedItem{.item = *item, .trashedPath = outcome.result.path, .history = history});
         }

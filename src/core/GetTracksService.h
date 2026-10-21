@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/CollectionBrowse.h"
 #include "core/Downloads.h"
 #include "core/FileRanking.h"
 #include "core/GetTracks.h"
@@ -118,6 +119,32 @@ public:
     // word: Selecta never switches by itself.
     void switchPeer(qint64 id, const QString &peer = {}, const QByteArray &remotePath = {});
 
+    // --- upgrades (P-010) ---
+    // A collection track to find a better copy of.
+    struct UpgradeRequest
+    {
+        QString path; // the collection file (CollectionTrack::path)
+        QString artist;
+        QString title;
+        qint64 durationMs = 0; // 0: unknown
+        QString isrc;
+    };
+    struct UpgradeResult
+    {
+        QList<qint64> lines; // the lines added, searched at once
+        int already = 0;     // the list already looks for a better copy of the file
+    };
+    // Adds a line for each of these collection tracks and searches for them at once (after their release lookup).
+    // A line only takes a copy of a higher quality tier than its file's (setTierLookup()): the others found are
+    // ignored, near misses included. A confident find downloads by itself; a doubtful one waits for the user, as any
+    // line. An upgrade line is never "You have it": it is about a track the user has. What arrives is marked as
+    // replacing the file in the Inbox (ArrivalService).
+    UpgradeResult addUpgrades(const QList<UpgradeRequest> &tracks);
+    // The quality tier of a collection file now, by path; nullopt when it isn't in the collection any more (an upgrade
+    // line then takes any copy of a known quality). Without a lookup, every file counts as of unknown quality.
+    using TierLookup = std::function<std::optional<QualityTier>(const QString &path)>;
+    void setTierLookup(TierLookup lookup) { m_tierOf = std::move(lookup); }
+
     // --- what the user owns (BATCH-3, DL-11) ---
     // The collection, Inbox and history snapshot. Lines found in the collection become "You have it", lines in the
     // Inbox "In your Inbox", and both are unticked; a line whose copy went away goes back to be found. Copies the user
@@ -178,6 +205,7 @@ private:
     QHash<qint64, quint64> m_peerSearches; // line id → its search for other peers' copies ("Try another peer")
     TransferService *m_transfers = nullptr;
     std::shared_ptr<const match::MatchIndex> m_index;
+    TierLookup m_tierOf;
 };
 
 } // namespace selecta::core

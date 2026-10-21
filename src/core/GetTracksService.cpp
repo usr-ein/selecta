@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/GetTracksService.h"
 
+#include "collection/Scanner.h"
 #include "core/MatchCorrections.h"
 #include "core/SearchService.h"
 #include "core/TransferService.h"
@@ -10,6 +11,7 @@
 #include "storage/Database.h"
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QLoggingCategory>
 #include <QPointer>
 
@@ -43,6 +45,18 @@ TrackIdentity lineIdentity(const GetLine &line)
 }
 
 using ReleaseState = GetLine::ReleaseState;
+
+// An upgrade line takes only files of a higher tier than its file's (P-010): drops the others, near misses included.
+// Returns how many of the files that passed the preset went.
+int keepBetterThan(RankedChoices &choices, QualityTier floor)
+{
+    const auto notBetter = [floor](const FileChoice &choice) { return qualityTierOf(choice) <= floor; };
+    const auto dropped = choices.files.removeIf(notBetter);
+    if (choices.nearMisses.removeIf(notBetter) > 0) {
+        choices.belowQuality = static_cast<int>(choices.nearMisses.size());
+    }
+    return static_cast<int>(dropped);
+}
 
 // The key that makes "the same track twice" one line. Free text without artist falls back to its normalised words.
 QString dedupeKeyFor(const QString &artist, const QString &title, const QString &raw)
@@ -203,6 +217,50 @@ GetTracksService::AddResult GetTracksService::addReleases(const QList<meta::Rele
         }
         Q_EMIT linesReset(m_lines);
     }
+    return result;
+}
+
+GetTracksService::UpgradeResult GetTracksService::addUpgrades(const QList<UpgradeRequest> &tracks)
+{
+    UpgradeResult result;
+    QList<GetLine> candidates;
+    for (const UpgradeRequest &track : tracks) {
+        if (track.path.isEmpty()) {
+            continue;
+        }
+        GetLine line;
+        line.artist = track.artist.trimmed();
+        line.title = track.title.trimmed();
+        line.raw = line.artist.isEmpty() ? line.title : line.artist + u" - "_s + line.title;
+        if (line.raw.isEmpty()) {
+            line.raw = QFileInfo(track.path).completeBaseName(); // nothing tagged: what it's called
+        }
+        if (track.durationMs > 0) {
+            line.durationHintMs = track.durationMs;
+        }
+        line.isrc = track.isrc.trimmed();
+        line.upgradeOf = track.path;
+        // One line per file: the same track twice in the collection is two upgrades, and an ordinary line for the track
+        // doesn't stop one.
+        line.dedupeKey = u"upgrade:"_s + collection::comparisonKey(track.path);
+        line.addedAt = m_now();
+        candidates.append(line);
+    }
+    const QList<GetLine> added = m_store.append(candidates);
+    if (added.isEmpty() && !candidates.isEmpty() && m_store.count() == 0) {
+        qCWarning(lcGetTracks) << "couldn't save the upgrade lines:" << m_db.lastError();
+    }
+    result.already = static_cast<int>(candidates.size() - added.size());
+    if (added.isEmpty()) {
+        return result;
+    }
+    m_lines.append(added);
+    for (const GetLine &line : added) {
+        result.lines.append(line.id);
+    }
+    Q_EMIT linesReset(m_lines);
+    resolveNext();
+    find(result.lines); // each searched once its release lookup is done
     return result;
 }
 
@@ -492,7 +550,13 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
         store(*line);
         return;
     }
-    const RankedChoices choices = FileRanking::rank(*line, outcome, m_filter, m_peerLoad);
+    RankedChoices choices = FileRanking::rank(*line, outcome, m_filter, m_peerLoad);
+    int notBetter = 0;
+    QualityTier floor = QualityTier::Unknown;
+    if (!line->upgradeOf.isEmpty()) {
+        floor = m_tierOf ? m_tierOf(line->upgradeOf).value_or(QualityTier::Unknown) : QualityTier::Unknown;
+        notBetter = keepBetterThan(choices, floor);
+    }
     line->message.clear();
     if (choices.files.isEmpty()) {
         line->best.reset();
@@ -506,6 +570,12 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
                 choices.belowQuality == 1
                     ? tr("1 file of this track found, below the quality wanted.")
                     : tr("%1 files of this track found, below the quality wanted.").arg(choices.belowQuality);
+        } else if (notBetter > 0) {
+            line->message = notBetter == 1
+                                ? tr("1 file of this track found, none better than yours (%1).").arg(tierName(floor))
+                                : tr("%1 files of this track found, none better than yours (%2).")
+                                      .arg(notBetter)
+                                      .arg(tierName(floor));
         } else if (choices.considered > 0) {
             line->message = choices.considered == 1
                                 ? tr("1 file found, but not of this track.")
@@ -519,6 +589,11 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
         line->ticked = confident; // confident matches are pre-ticked (BATCH-5)
     }
     store(*line);
+    // P-010: the user asked for a better copy of a track they have: a confident one comes by itself.
+    if (!line->upgradeOf.isEmpty() && line->findState == GetLine::FindState::Ready &&
+        line->downloadState == GetLine::DownloadState::None) {
+        download({id});
+    }
 }
 
 void GetTracksService::stopFinding()
@@ -947,8 +1022,9 @@ void GetTracksService::setLibraryIndex(std::shared_ptr<const match::MatchIndex> 
 bool GetTracksService::checkOwnership(GetLine &line)
 {
     using FindState = GetLine::FindState;
-    if (!m_index || line.downloadState != GetLine::DownloadState::None || line.findState == FindState::Queued ||
-        line.findState == FindState::Searching) {
+    // An upgrade is about a track the user has: never "You have it".
+    if (!m_index || !line.upgradeOf.isEmpty() || line.downloadState != GetLine::DownloadState::None ||
+        line.findState == FindState::Queued || line.findState == FindState::Searching) {
         return false;
     }
     if (const std::optional<OwnedCopy> copy = ownedCopy(line)) {

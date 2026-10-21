@@ -7,6 +7,7 @@
 #include "app/views/EmptyStateView.h"
 #include "app/views/InboxInspector.h"
 #include "core/EngineHost.h"
+#include "core/InboxService.h"
 #include "core/SpectrumCheck.h"
 
 #include <QDir>
@@ -85,6 +86,10 @@ QString statusText(const core::InboxEntry &entry)
         if (const QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
             return InboxView::tr("⚠ %1").arg(badge);
         }
+        if (!entry.item.replaces.isEmpty()) { // P-010: a better copy of a collection file
+            return core::upgradeMismatch(entry.item).isEmpty() ? InboxView::tr("Upgrade")
+                                                               : InboxView::tr("⚠ Upgrade, can't replace");
+        }
         if (!entry.item.belowWanted.isEmpty()) {
             return InboxView::tr("Below your quality"); // got anyway (Get tracks)
         }
@@ -104,6 +109,11 @@ QString accessibleStatus(const core::InboxEntry &entry)
     }
     if (QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
         return InboxView::tr("Warning: %1").arg(badge.replace(u"≈ "_s, InboxView::tr("roughly ")));
+    }
+    if (!entry.item.replaces.isEmpty()) {
+        return core::upgradeMismatch(entry.item).isEmpty()
+                   ? InboxView::tr("Ready, an upgrade")
+                   : InboxView::tr("Warning: an upgrade that can't replace its file");
     }
     if (!entry.item.belowWanted.isEmpty()) {
         return InboxView::tr("Ready, below your quality");
@@ -127,6 +137,15 @@ QString statusToolTip(const core::InboxEntry &entry)
                                                 .arg(badge)
                                                 .arg(*item.qualityCutoffHz / 1000.0, 0, 'f', 1)
                                           : badge + u'.');
+    }
+    if (!item.replaces.isEmpty()) {
+        const QString mismatch = core::upgradeMismatch(item);
+        lines.append(
+            mismatch.isEmpty()
+                ? InboxView::tr("A better copy of %1: Save to collection puts it in that file's "
+                                "place, under the same name, and moves that file to the Trash.")
+                      .arg(QDir::toNativeSeparators(item.replaces))
+                : InboxView::tr("A better copy of %1. %2").arg(QDir::toNativeSeparators(item.replaces), mismatch));
     }
     if (!item.belowWanted.isEmpty()) {
         lines.append(InboxView::tr("Below the quality you wanted (%1): you got it anyway.").arg(item.belowWanted));
@@ -463,19 +482,30 @@ void InboxView::refreshActions()
     const QSet<qint64> selectedSet(selected.cbegin(), selected.cend());
     bool singles = false;
     bool albums = false;
+    bool upgrades = false; // P-010: singles that take a collection file's place, wherever it is
     for (const core::InboxEntry &entry : std::as_const(m_entries)) {
-        if (selectedSet.contains(entry.item.id)) {
-            (entry.item.kind == InboxItem::Kind::Album ? albums : singles) = true;
+        if (!selectedSet.contains(entry.item.id)) {
+            continue;
+        }
+        if (entry.item.kind == InboxItem::Kind::Album) {
+            albums = true;
+        } else if (!entry.item.replaces.isEmpty() && core::upgradeMismatch(entry.item).isEmpty()) {
+            upgrades = true;
+        } else {
+            singles = true;
         }
     }
     const bool tracksChosen = !m_config.tracksRoot.isEmpty();
     const bool albumsChosen = !m_config.albumsRoot.isEmpty();
     const QString tracksFolder = QDir::toNativeSeparators(m_config.tracksRoot);
     const QString albumsFolder = QDir::toNativeSeparators(m_config.albumsRoot);
-    m_file->setEnabled((singles && tracksChosen) || (albums && albumsChosen));
+    m_file->setEnabled((singles && tracksChosen) || (albums && albumsChosen) || upgrades);
     m_file->setText(selected.size() > 1 ? tr("Save %1 to collection").arg(selected.size()) : tr("Save to collection"));
     QString tip;
-    if ((singles || selected.isEmpty()) && !tracksChosen && (albums || selected.isEmpty()) && !albumsChosen) {
+    if (upgrades && !singles && !albums) {
+        tip = tr("Put the selection in the place of the files it upgrades, under the same names: those files go to the "
+                 "Trash");
+    } else if ((singles || selected.isEmpty()) && !tracksChosen && (albums || selected.isEmpty()) && !albumsChosen) {
         tip = tr("Choose your tracks folder and your albums folder in Settings → Library first");
     } else if (singles && !tracksChosen) {
         tip = tr("Choose your tracks folder in Settings → Library first: singles are filed there");
@@ -487,6 +517,9 @@ void InboxView::refreshActions()
         tip = tr("Move the selection into %1").arg(albums ? albumsFolder : tracksFolder);
     } else {
         tip = tr("Move singles into your tracks folder and albums into your albums folder");
+    }
+    if (upgrades && (singles || albums)) {
+        tip += u'\n' + tr("The upgrades take the place of the files they upgrade, which go to the Trash");
     }
     m_file->setToolTip(format::plainToolTip(tip)); // folder names
     m_trash->setEnabled(!selected.isEmpty());

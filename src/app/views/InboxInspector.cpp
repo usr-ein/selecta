@@ -10,6 +10,7 @@
 #include "convert/ArtworkFinder.h"
 #include "convert/TagReader.h"
 #include "core/EngineHost.h"
+#include "core/InboxService.h"
 #include "core/ReleaseJson.h"
 #include "core/SpectrumCheck.h"
 
@@ -426,6 +427,15 @@ void InboxInspector::setAlsoOn(const QStringList &albums)
     QStringList lines;
     if (const QString badge = m_item ? core::spectrumBadge(*m_item) : QString(); !badge.isEmpty()) {
         lines.append(tr("⚠ %1.").arg(badge));
+    }
+    // P-010: a better copy of a collection file, asked for from the Collection view.
+    if (m_item && !m_item->replaces.isEmpty()) {
+        const QString file = format::shownPath(m_item->replaces);
+        const QString mismatch = core::upgradeMismatch(*m_item);
+        lines.append(mismatch.isEmpty() ? tr("An upgrade of %1: Save to collection puts it in that file's place, under "
+                                             "the same name, and moves that file to the Trash.")
+                                              .arg(file)
+                                        : tr("An upgrade of %1. %2").arg(file, mismatch));
     }
     if (m_item && !m_item->belowWanted.isEmpty()) {
         lines.append(tr("Below the quality you wanted (%1): you got it anyway.").arg(m_item->belowWanted));

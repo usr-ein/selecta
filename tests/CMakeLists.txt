@@ -70,6 +70,7 @@ if(SELECTA_WITH_MEDIA)
             core/AlbumServiceTest.cpp
             core/ArrivalServiceTest.cpp
             core/BrowseServiceTest.cpp
+            core/CollectionBrowseTest.cpp
             core/CollectionServiceTest.cpp
             core/CountryDatabaseTest.cpp
             core/ConverterServiceTest.cpp
@@ -113,6 +114,7 @@ if(SELECTA_WITH_MEDIA)
             app/AppearanceTest.cpp
             app/ActivityModelTest.cpp
             app/AppIconTest.cpp
+            app/CollectionViewTest.cpp
             app/DiagnosticsTest.cpp
             app/ConverterViewTest.cpp
             app/FormatTest.cpp

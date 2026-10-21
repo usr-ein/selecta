@@ -330,21 +330,17 @@ TEST(InboxAfterTheMove, TheOldItemsLeaveAndHistoryStaysAsItWas)
     const auto beforeTheMove = static_cast<std::size_t>(selecta::storage::kInboxMovedVersion - 1);
     ASSERT_TRUE(selecta::storage::migrate(db, all.first(beforeTheMove)).ok()); // the schema of earlier builds
 
-    // Before the update: one single in an earlier build's Inbox, with its History entry.
+    // Before the update: one single in an earlier build's Inbox, with its History entry, as that build wrote them
+    // (the stores write the newest schema).
     const QString oldFile = dir.filePath(u"Music/Selecta/Inbox/Singles/Okuma Drift - Neon Rain.mp3"_s);
     ASSERT_TRUE(writeFile(oldFile, "audio"));
-    InboxItem item;
-    item.relativePath = u"Singles/Okuma Drift - Neon Rain.mp3"_s;
-    item.state = InboxItem::State::Ready;
-    item.createdAt = 1000;
-    const auto id = selecta::library::InboxStore(db).add(item);
-    ASSERT_TRUE(id.has_value());
-    HistoryEntry entry;
-    entry.completedAt = 1000;
-    entry.peer = u"vinyl_ghost"_s;
-    entry.remotePath = item.relativePath.toUtf8();
-    entry.inboxItem = id;
-    ASSERT_TRUE(selecta::library::HistoryStore(db).add(entry).has_value());
+    ASSERT_TRUE(db.exec(uR"sql(
+        INSERT INTO inbox_items (id, kind, relative_path, state, created_at)
+        VALUES (1, 'single', 'Singles/Okuma Drift - Neon Rain.mp3', 'ready', 1000);
+        INSERT INTO history (completed_at, kind, peer, remote_path, size_bytes, inbox_item, whereabouts)
+        VALUES (1000, 'single', 'vinyl_ghost', CAST('Singles/Okuma Drift - Neon Rain.mp3' AS BLOB), 0, 1, 'inbox');
+    )sql"_s))
+        << db.lastError().toStdString();
 
     // The update: the database's migrations, then the Inbox in Selecta's data folder.
     ASSERT_TRUE(selecta::storage::migrate(db, all).ok());
@@ -360,4 +356,112 @@ TEST(InboxAfterTheMove, TheOldItemsLeaveAndHistoryStaysAsItWas)
     EXPECT_EQ(after.first().whereabouts, HistoryEntry::Whereabouts::Inbox);
     EXPECT_FALSE(after.first().inboxItem.has_value());
     EXPECT_TRUE(QFileInfo::exists(oldFile)); // Selecta never touches it
+}
+
+// --- Upgrades (P-010, PRD D41) ---------------------------------------------------------------------------------------
+
+namespace {
+
+void markUpgrade(selecta::library::InboxStore &inbox, qint64 id, const QString &replaces)
+{
+    std::optional<InboxItem> item = inbox.find(id);
+    ASSERT_TRUE(item.has_value());
+    item->replaces = replaces;
+    ASSERT_TRUE(inbox.update(*item));
+}
+
+} // namespace
+
+TEST_F(InboxServiceTest, AnUpgradeTakesItsFilesPlaceAndTheOldOneGoesToTheTrash)
+{
+    // The old file, downloaded and filed once before.
+    const QString old = config.albumsRoot + u"/Okuma Drift - Nightfall/01 Dusk.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old 128"));
+    HistoryEntry before;
+    before.completedAt = 500;
+    before.peer = u"bassbin"_s;
+    before.remotePath = "@@b\\Dusk.mp3";
+    before.whereabouts = HistoryEntry::Whereabouts::Filed;
+    before.filedPath = QFileInfo(old).canonicalFilePath();
+    const auto beforeId = history.add(before);
+    ASSERT_TRUE(beforeId.has_value());
+
+    const qint64 id = arrive(u"Singles/Okuma Drift - Dusk.mp3"_s);
+    markUpgrade(inbox, id, old);
+    const QSignalSpy finished(service.get(), &InboxService::finished);
+    service->file({id});
+    service->waitForIdle();
+
+    ASSERT_EQ(finished.size(), 1);
+    EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
+    EXPECT_TRUE(finished.at(0).at(2).toString().startsWith(u"Replaced "_s))
+        << finished.at(0).at(2).toString().toStdString();
+    QFile replaced(old);
+    ASSERT_TRUE(replaced.open(QIODevice::ReadOnly));
+    EXPECT_EQ(replaced.readAll(), "audio");                                            // the upgrade, at the exact path
+    EXPECT_FALSE(QFileInfo::exists(config.tracksRoot + u"/Okuma Drift - Dusk.mp3"_s)); // not a new file
+    EXPECT_TRUE(QFileInfo::exists(dir.filePath(u"Trash/01 Dusk.mp3"_s)));
+    EXPECT_EQ(inbox.count(), 0);
+    // History: the upgrade is filed there, the file it replaced went to the Trash.
+    EXPECT_EQ(history.recent(1).constFirst().whereabouts, HistoryEntry::Whereabouts::Filed);
+    EXPECT_EQ(history.recent(1).constFirst().filedPath, QFileInfo(old).canonicalFilePath());
+    EXPECT_EQ(history.find(*beforeId)->whereabouts, HistoryEntry::Whereabouts::Trashed);
+}
+
+TEST_F(InboxServiceTest, AnUpgradeOfAnotherTypeIsFiledAsANewFileAndSaysWhy)
+{
+    const QString old = config.tracksRoot + u"/Okuma Drift - Dusk.m4a"_s;
+    ASSERT_TRUE(writeFile(old, "aac"));
+    const qint64 id = arrive(u"Singles/Okuma Drift - Dusk.mp3"_s);
+    markUpgrade(inbox, id, old);
+    const std::optional<InboxItem> item = inbox.find(id);
+    ASSERT_TRUE(item.has_value());
+    EXPECT_EQ(selecta::core::upgradeMismatch(*item),
+              u"The file it would replace is of another type (M4A, not MP3): Save to collection adds this one as a new "
+              "file."_s);
+
+    const QSignalSpy finished(service.get(), &InboxService::finished);
+    service->file({id});
+    service->waitForIdle();
+    ASSERT_EQ(finished.size(), 1);
+    EXPECT_TRUE(finished.at(0).at(1).toBool());
+    EXPECT_TRUE(finished.at(0).at(2).toString().contains(u"couldn't replace"_s))
+        << finished.at(0).at(2).toString().toStdString();
+    EXPECT_TRUE(QFileInfo::exists(old)); // untouched
+    EXPECT_TRUE(QFileInfo::exists(config.tracksRoot + u"/Okuma Drift - Dusk.mp3"_s));
+    EXPECT_FALSE(QFileInfo::exists(dir.filePath(u"Trash"_s)));
+}
+
+TEST_F(InboxServiceTest, AnUpgradeWhoseFolderWentIsFiledAsANewFile)
+{
+    const qint64 id = arrive(u"Singles/Okuma Drift - Dusk.mp3"_s);
+    markUpgrade(inbox, id, config.albumsRoot + u"/Gone/01 Dusk.mp3"_s);
+    const QSignalSpy finished(service.get(), &InboxService::finished);
+    service->file({id});
+    service->waitForIdle();
+    ASSERT_EQ(finished.size(), 1);
+    EXPECT_TRUE(finished.at(0).at(1).toBool()) << finished.at(0).at(2).toString().toStdString();
+    EXPECT_TRUE(QFileInfo::exists(config.tracksRoot + u"/Okuma Drift - Dusk.mp3"_s));
+}
+
+// An upgrade needs no tracks folder to take an album track's place; filed as a new file, it would.
+TEST_F(InboxServiceTest, AnUpgradeNeedsTheTracksFolderOnlyAsANewFile)
+{
+    config.tracksRoot.clear();
+    service->setConfig(config);
+    const QString old = config.albumsRoot + u"/Okuma Drift - Nightfall/01 Dusk.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old"));
+    const qint64 replacing = arrive(u"Singles/Okuma Drift - Dusk.mp3"_s);
+    markUpgrade(inbox, replacing, old);
+    const qint64 mismatched = arrive(u"Singles/Okuma Drift - Dawn.mp3"_s);
+    markUpgrade(inbox, mismatched, config.albumsRoot + u"/Okuma Drift - Nightfall/02 Dawn.flac"_s);
+    const QSignalSpy finished(service.get(), &InboxService::finished);
+    service->file({replacing, mismatched});
+    service->waitForIdle();
+    ASSERT_EQ(finished.size(), 2);
+    for (const QList<QVariant> &result : finished) {
+        const bool ok = result.at(1).toBool();
+        EXPECT_EQ(ok, result.at(0).toLongLong() == replacing) << result.at(2).toString().toStdString();
+    }
+    EXPECT_EQ(inbox.count(), 1); // the mismatched one waits for a tracks folder
 }

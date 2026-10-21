@@ -3,14 +3,19 @@
 
 #include "app/Format.h"
 #include "app/Icons.h"
+#include "app/models/CollectionWallModel.h"
+#include "app/views/CollectionAlbumView.h"
+#include "app/views/CollectionCovers.h"
+#include "app/views/CollectionWall.h"
 #include "app/views/EmptyStateView.h"
 #include "core/EngineHost.h"
-#include "library/HistoryStore.h"
 
+#include <QComboBox>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 #include <QHBoxLayout>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QListWidget>
 #include <QLocale>
@@ -18,20 +23,36 @@
 #include <QProcess>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QStackedWidget>
+#include <QTreeView>
 #include <QVBoxLayout>
 
 using namespace Qt::StringLiterals;
 
 namespace selecta::app {
+namespace {
 
-CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, QWidget *parent)
+constexpr int kWallPage = 0;
+constexpr int kAlbumPage = 1;
+
+QString tracksText(int count)
+{
+    return count == 1 ? CollectionView::tr("1 track") : CollectionView::tr("%1 tracks").arg(QLocale().toString(count));
+}
+
+} // namespace
+
+CollectionView::CollectionView(core::EngineHost &engine, QWidget *parent)
     : QWidget(parent)
     , m_engine(engine)
-    , m_db(db)
+    , m_listing(std::make_shared<const core::CollectionListing>())
+    , m_covers(new CollectionCovers(this))
     , m_pages(new QStackedWidget(this))
     , m_headline(new QLabel(this))
+    , m_order(new QComboBox(this))
     , m_details(new QLabel(this))
+    , m_folders(new QLabel(this))
     , m_message(new QLabel(this))
     , m_progress(new QProgressBar(this))
     , m_scan(new QPushButton(tr("Scan Now"), this))
@@ -40,10 +61,16 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
     , m_flagsTitle(new QLabel(this))
     , m_flags(new QListWidget(this))
     , m_formats(new QLabel(this))
+    , m_inboxRow(new QWidget(this))
     , m_inbox(new QLabel(this))
     , m_openInbox(new QPushButton(tr("Open Inbox"), this))
-    , m_filedTitle(new QLabel(tr("Recently filed"), this))
-    , m_filed(new QListWidget(this))
+    , m_browse(new QStackedWidget(this))
+    , m_wallModel(new CollectionWallModel(this))
+    , m_wall(new CollectionWall(*m_covers, this))
+    , m_album(new CollectionAlbumView(*m_covers, this))
+    , m_result(new QLabel(this))
+    , m_selection(new QLabel(this))
+    , m_betterQuality(new QPushButton(tr("Search for Better Quality"), this))
 {
     setObjectName(u"view.collection"_s);
 
@@ -70,18 +97,43 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
     emptyLayout->addSpacing(48);
     m_pages->addWidget(empty);
 
-    // The index.
+    // The collection.
     auto *page = new QWidget(m_pages);
     m_headline->setObjectName(u"collection.headline"_s);
     QFont headlineFont = m_headline->font();
     headlineFont.setPointSizeF(headlineFont.pointSizeF() + 3.0);
     headlineFont.setWeight(QFont::DemiBold);
     m_headline->setFont(headlineFont);
+    m_order->setObjectName(u"collection.order"_s);
+    m_order->setAccessibleName(tr("Group the covers by"));
+    m_order->addItem(tr("Date Downloaded"), static_cast<int>(core::CollectionOrder::Added));
+    m_order->addItem(tr("Artist"), static_cast<int>(core::CollectionOrder::Artist));
+    m_order->addItem(tr("Genre"), static_cast<int>(core::CollectionOrder::Genre));
+    m_order->addItem(tr("Quality"), static_cast<int>(core::CollectionOrder::Quality));
+    m_order->setToolTip(tr("Group the covers by month downloaded (newest first; a file Selecta didn't download goes by "
+                           "its date), by artist, by genre, or by quality (worst first)"));
+    connect(m_order, &QComboBox::currentIndexChanged, this, [this] {
+        const QList<qint64> tracks = selectedTracks();
+        const QSet<qint64> selected(tracks.cbegin(), tracks.cend());
+        m_wallModel->setOrder(static_cast<core::CollectionOrder>(m_order->currentData().toInt()));
+        const QList<int> rows = m_wallModel->rowsWithAny(selected);
+        for (const int row : rows) {
+            m_wall->selectionModel()->select(m_wallModel->index(row), QItemSelectionModel::Select);
+        }
+        m_wall->verticalScrollBar()->setValue(0);
+    });
+    auto *orderLabel = new QLabel(tr("Group by"), this);
+    orderLabel->setBuddy(m_order);
     m_details->setObjectName(u"collection.details"_s);
-    m_details->setTextFormat(Qt::PlainText); // folder names
+    m_details->setTextFormat(Qt::PlainText);
     m_details->setForegroundRole(QPalette::PlaceholderText);
     m_details->setWordWrap(true);
     m_details->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_folders->setObjectName(u"collection.folders"_s);
+    m_folders->setTextFormat(Qt::PlainText); // folder names
+    m_folders->setForegroundRole(QPalette::PlaceholderText);
+    m_folders->setWordWrap(true);
+    m_folders->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_message->setObjectName(u"collection.message"_s);
     m_message->setTextFormat(Qt::PlainText); // may name a file or folder
     m_message->setWordWrap(true);
@@ -94,34 +146,28 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
     m_scan->setToolTip(tr("Look through the folders again now. Changes are also picked up as they happen."));
     connect(m_scan, &QPushButton::clicked, &m_engine, &core::EngineHost::scanCollection);
     auto *folders = new QPushButton(tr("Folders…"), page);
-    folders->setObjectName(u"collection.folders"_s);
+    folders->setObjectName(u"collection.folders.choose"_s);
     connect(folders, &QPushButton::clicked, this, &CollectionView::settingsRequested);
     m_unreadableTitle->setObjectName(u"collection.unreadableTitle"_s);
     m_unreadable->setObjectName(u"collection.unreadable"_s);
     m_unreadable->setAccessibleName(tr("Files that couldn't be read"));
     m_unreadable->setSelectionMode(QAbstractItemView::NoSelection);
     m_unreadable->setFrameShape(QFrame::NoFrame);
+    m_unreadable->setMaximumHeight(110);
     m_formats->setObjectName(u"collection.formats"_s);
     m_formats->setTextFormat(Qt::PlainText); // the files' types
     m_formats->setWordWrap(true);
+    m_formats->setForegroundRole(QPalette::PlaceholderText);
     m_inbox->setObjectName(u"collection.inbox"_s);
     m_openInbox->setObjectName(u"collection.openInbox"_s);
     connect(m_openInbox, &QPushButton::clicked, this, &CollectionView::inboxRequested);
-    m_filedTitle->setObjectName(u"collection.filedTitle"_s);
-    QFont sectionFont = m_filedTitle->font();
-    sectionFont.setWeight(QFont::DemiBold);
-    m_filedTitle->setFont(sectionFont);
-    m_filed->setObjectName(u"collection.filed"_s);
-    m_filed->setAccessibleName(tr("Recently filed"));
-    m_filed->setFrameShape(QFrame::NoFrame);
-    m_filed->setSelectionMode(QAbstractItemView::NoSelection);
-    m_filed->setMaximumHeight(200);
     m_flagsTitle->setObjectName(u"collection.flagsTitle"_s);
+    m_flagsTitle->setWordWrap(true);
     m_flags->setObjectName(u"collection.flags"_s);
     m_flags->setAccessibleName(tr("Singles also on an album"));
     m_flags->setFrameShape(QFrame::NoFrame);
     m_flags->setContextMenuPolicy(Qt::CustomContextMenu);
-    m_flags->setMaximumHeight(180);
+    m_flags->setMaximumHeight(110);
     connect(m_flags, &QListWidget::customContextMenuRequested, this, [this](QPoint position) {
         const QListWidgetItem *item = m_flags->itemAt(position);
         if (!item) {
@@ -138,66 +184,95 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database &db, 
         menu.exec(m_flags->viewport()->mapToGlobal(position));
     });
 
-    auto *buttons = new QHBoxLayout;
-    buttons->addWidget(m_headline, 1);
-    buttons->addWidget(folders);
-    buttons->addWidget(m_scan);
+    // The wall, or an album opened from it.
+    m_wall->setObjectName(u"collection.wall"_s);
+    m_wall->setAccessibleName(tr("Covers"));
+    m_wall->setModel(m_wallModel);
+    connect(m_wall, &CollectionWall::albumOpened, this, &CollectionView::openAlbum);
+    connect(m_wall->selectionModel(), &QItemSelectionModel::selectionChanged, this, &CollectionView::refreshSelection);
+    connect(m_wall, &QWidget::customContextMenuRequested, this, &CollectionView::showWallMenu);
+    connect(m_album, &CollectionAlbumView::backRequested, this, &CollectionView::closeAlbum);
+    connect(m_album, &CollectionAlbumView::selectionChanged, this, &CollectionView::refreshSelection);
+    m_browse->addWidget(m_wall);  // kWallPage
+    m_browse->addWidget(m_album); // kAlbumPage
+
+    // The selection, and what can be done with it.
+    m_result->setObjectName(u"collection.result"_s);
+    m_result->setTextFormat(Qt::PlainText);
+    m_result->setWordWrap(true);
+    m_selection->setObjectName(u"collection.selection"_s);
+    m_selection->setForegroundRole(QPalette::PlaceholderText);
+    m_betterQuality->setObjectName(u"collection.betterQuality"_s);
+    connect(m_betterQuality, &QPushButton::clicked, this, [this] { searchForBetterQuality(selectedTracks()); });
+    connect(this, &CollectionView::betterQualityRequested, &m_engine, &core::EngineHost::searchForBetterQuality);
+    connect(&m_engine, &core::EngineHost::betterQualitySearched, this, &CollectionView::showSearched);
+
+    auto *top = new QHBoxLayout;
+    top->addWidget(m_headline, 1);
+    top->addWidget(orderLabel);
+    top->addWidget(m_order);
+    top->addSpacing(12);
+    top->addWidget(folders);
+    top->addWidget(m_scan);
+    auto *inboxLayout = new QHBoxLayout(m_inboxRow);
+    inboxLayout->setContentsMargins(0, 0, 0, 0);
+    inboxLayout->addWidget(m_inbox, 1);
+    inboxLayout->addWidget(m_openInbox);
+    auto *header = new QVBoxLayout;
+    header->setContentsMargins(24, 20, 24, 4);
+    header->setSpacing(6);
+    header->addLayout(top);
+    header->addWidget(m_details);
+    header->addWidget(m_folders);
+    header->addWidget(m_formats);
+    header->addWidget(m_progress);
+    header->addWidget(m_message);
+    header->addWidget(m_inboxRow);
+    header->addWidget(m_flagsTitle);
+    header->addWidget(m_flags);
+    header->addWidget(m_unreadableTitle);
+    header->addWidget(m_unreadable);
+    auto *line = new QFrame(page);
+    line->setFrameShape(QFrame::HLine);
+    line->setFrameShadow(QFrame::Plain);
+    line->setForegroundRole(QPalette::Mid);
+    auto *bar = new QHBoxLayout;
+    bar->setContentsMargins(24, 8, 24, 12);
+    bar->setSpacing(16);
+    bar->addWidget(m_result, 1);
+    bar->addWidget(m_selection);
+    bar->addWidget(m_betterQuality);
     auto *layout = new QVBoxLayout(page);
-    layout->setContentsMargins(24, 20, 24, 16);
-    layout->setSpacing(8);
-    layout->addLayout(buttons);
-    layout->addWidget(m_details);
-    layout->addWidget(m_formats);
-    layout->addWidget(m_progress);
-    layout->addWidget(m_message);
-    layout->addSpacing(8);
-    auto *inboxRow = new QHBoxLayout;
-    inboxRow->addWidget(m_inbox, 1);
-    inboxRow->addWidget(m_openInbox);
-    layout->addLayout(inboxRow);
-    layout->addSpacing(8);
-    layout->addWidget(m_filedTitle);
-    layout->addWidget(m_filed);
-    layout->addSpacing(8);
-    layout->addWidget(m_flagsTitle);
-    layout->addWidget(m_flags);
-    layout->addWidget(m_unreadableTitle);
-    layout->addWidget(m_unreadable, 1);
-    layout->addStretch(0);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addLayout(header);
+    layout->addWidget(m_browse, 1);
+    layout->addWidget(line);
+    layout->addLayout(bar);
     m_pages->addWidget(page);
 
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->addWidget(m_pages);
 
-    connect(&m_engine, &core::EngineHost::collectionStatusChanged, this, &CollectionView::show);
+    connect(&m_engine, &core::EngineHost::collectionStatusChanged, this, &CollectionView::showStatus);
+    connect(&m_engine, &core::EngineHost::collectionListingChanged, this, &CollectionView::showListing);
     connect(&m_engine, &core::EngineHost::supersedeFlagsChanged, this, &CollectionView::showFlags);
-    // Filing moves Inbox items into the collection: both lists change together.
-    connect(&m_engine, &core::EngineHost::inboxChanged, this, &CollectionView::showInboxAndFiled);
-    show(m_engine.collectionStatus());
+    connect(&m_engine, &core::EngineHost::inboxChanged, this, &CollectionView::showInbox);
+    showStatus(m_engine.collectionStatus());
+    showListing(m_engine.collectionListing());
     showFlags(m_engine.supersedeFlags());
-    showInboxAndFiled();
+    showInbox();
 }
 
-void CollectionView::showInboxAndFiled()
+CollectionView::~CollectionView() = default;
+
+void CollectionView::showInbox()
 {
     const QList<core::InboxEntry> entries = m_engine.inboxEntries();
-    if (entries.isEmpty()) {
-        m_inbox->setText(tr("Nothing waiting in the Inbox."));
-    } else {
-        m_inbox->setText(entries.size() == 1 ? tr("1 item waiting in the Inbox to be filed.")
-                                             : tr("%1 items waiting in the Inbox to be filed.").arg(entries.size()));
-    }
-    m_openInbox->setVisible(!entries.isEmpty());
-    m_filed->clear();
-    const QList<library::HistoryEntry> filed = library::HistoryStore(m_db).recentlyFiled(8);
-    for (const library::HistoryEntry &entry : filed) {
-        const QString name = entry.artist.isEmpty() ? entry.title : entry.artist + u" – "_s + entry.title;
-        auto *item = new QListWidgetItem(name.isEmpty() ? QFileInfo(entry.filedPath).fileName() : name, m_filed);
-        item->setToolTip(format::plainToolTip(QDir::toNativeSeparators(entry.filedPath)));
-    }
-    m_filedTitle->setVisible(!filed.isEmpty());
-    m_filed->setVisible(!filed.isEmpty());
+    m_inbox->setText(entries.size() == 1 ? tr("1 item waiting in the Inbox to be filed.")
+                                         : tr("%1 items waiting in the Inbox to be filed.").arg(entries.size()));
+    m_inboxRow->setVisible(!entries.isEmpty());
 }
 
 void CollectionView::showFlags(const QList<core::SupersedeFlag> &flags)
@@ -218,7 +293,6 @@ void CollectionView::showFlags(const QList<core::SupersedeFlag> &flags)
                                      : tr("%1 singles in your collection are also on an album. Selecta never "
                                           "changes them: keep both, or remove the singles yourself.")
                                            .arg(count));
-    m_flagsTitle->setWordWrap(true);
     m_flagsTitle->setVisible(count > 0);
     m_flags->setVisible(count > 0);
 }
@@ -231,10 +305,10 @@ QString CollectionView::summary() const
     if (m_status.scanning) {
         return tr("Scanning…");
     }
-    return m_status.tracks == 1 ? tr("1 track") : tr("%1 tracks").arg(QLocale().toString(m_status.tracks));
+    return tracksText(m_status.tracks);
 }
 
-void CollectionView::show(const core::CollectionStatus &status)
+void CollectionView::showStatus(const core::CollectionStatus &status)
 {
     m_status = status;
     QStringList formats;
@@ -245,7 +319,7 @@ void CollectionView::show(const core::CollectionStatus &status)
     m_formats->setVisible(!formats.isEmpty());
     m_pages->setCurrentIndex(status.roots.isEmpty() ? 0 : 1);
     const QLocale locale;
-    m_headline->setText(status.tracks == 1 ? tr("1 track") : tr("%1 tracks").arg(locale.toString(status.tracks)));
+    m_headline->setText(tracksText(status.tracks));
 
     QStringList details;
     if (status.albums > 0) {
@@ -254,13 +328,6 @@ void CollectionView::show(const core::CollectionStatus &status)
     if (status.bytes > 0) {
         details.append(format::size(status.bytes));
     }
-    QStringList folders;
-    for (const QString &root : status.roots) {
-        folders.append(QDir::toNativeSeparators(root));
-    }
-    details.append(folders.size() == 1
-                       ? tr("in %1").arg(folders.constFirst())
-                       : tr("in %1 folders: %2").arg(QString::number(folders.size()), folders.join(u", "_s)));
     if (status.scanning) {
         details.append(status.total > 0 ? tr("reading %1 of %2 new or changed files")
                                               .arg(locale.toString(status.done), locale.toString(status.total))
@@ -271,6 +338,18 @@ void CollectionView::show(const core::CollectionStatus &status)
                 .arg(locale.toString(QDateTime::fromMSecsSinceEpoch(status.lastScanMs), QLocale::ShortFormat)));
     }
     m_details->setText(details.join(u" · "_s));
+    m_details->setVisible(!details.isEmpty());
+    // Each folder by its role (PRD LIB-1).
+    const auto folder = [](const QString &path) { return path.isEmpty() ? tr("not chosen") : format::shownPath(path); };
+    m_folders->setText(
+        tr("Tracks folder: %1 · Albums folder: %2").arg(folder(status.tracksFolder), folder(status.albumsFolder)));
+    QStringList chosen;
+    for (const QString &path : {status.tracksFolder, status.albumsFolder}) {
+        if (!path.isEmpty()) {
+            chosen.append(QDir::toNativeSeparators(path));
+        }
+    }
+    m_folders->setToolTip(format::plainToolTip(chosen.join(u'\n'))); // folder names
 
     m_progress->setVisible(status.scanning);
     m_progress->setRange(0, status.total > 0 ? status.total : 0); // 0…0: busy
@@ -289,7 +368,170 @@ void CollectionView::show(const core::CollectionStatus &status)
                                    : tr("%1 files couldn't be read").arg(locale.toString(status.unreadable)));
     m_unreadableTitle->setVisible(status.unreadable > 0);
     m_unreadable->setVisible(status.unreadable > 0);
+    showEmptyText();
     Q_EMIT summaryChanged();
+}
+
+void CollectionView::showEmptyText()
+{
+    m_wall->setEmptyText(m_status.scanning ? tr("Reading your folders…") : tr("No tracks in these folders yet."));
+}
+
+void CollectionView::showListing(const std::shared_ptr<const core::CollectionListing> &listing)
+{
+    if (!listing) {
+        return;
+    }
+    // What was selected stays selected, where it is now; the wall stays where it was.
+    const QList<qint64> before = selectedTracks();
+    const QSet<qint64> selected(before.cbegin(), before.cend());
+    const int scroll = m_wall->verticalScrollBar()->value();
+    m_listing = listing;
+    m_tiers.clear();
+    m_tiers.reserve(listing->tracks.size());
+    for (const core::CollectionTrack &track : listing->tracks) {
+        m_tiers.insert(track.id, track.tier);
+    }
+    m_wallModel->setListing(listing);
+    m_wall->doItemsLayout();
+    const QList<int> rows = m_wallModel->rowsWithAny(selected);
+    for (const int row : rows) {
+        m_wall->selectionModel()->select(m_wallModel->index(row), QItemSelectionModel::Select);
+    }
+    m_wall->verticalScrollBar()->setValue(scroll);
+    if (m_browse->currentIndex() == kAlbumPage && !m_album->showAlbum(listing, m_album->albumId())) {
+        closeAlbum(); // gone from the collection
+    }
+    refreshSelection();
+}
+
+void CollectionView::openAlbum(quint64 albumId)
+{
+    if (m_album->showAlbum(m_listing, albumId)) {
+        m_browse->setCurrentIndex(kAlbumPage);
+        m_album->trackList()->setFocus();
+        refreshSelection();
+    }
+}
+
+void CollectionView::closeAlbum()
+{
+    const quint64 album = m_album->albumId();
+    m_browse->setCurrentIndex(kWallPage);
+    if (const int row = m_wallModel->rowOfAlbum(album); row >= 0) {
+        m_wall->setCurrentIndex(m_wallModel->index(row));
+        m_wall->scrollTo(m_wallModel->index(row));
+    }
+    m_wall->setFocus();
+    refreshSelection();
+}
+
+QList<qint64> CollectionView::selectedTracks() const
+{
+    if (m_browse->currentIndex() == kAlbumPage) {
+        return m_album->selectedTracks();
+    }
+    return m_wallModel->tracksOf(m_wall->selectionModel()->selectedIndexes());
+}
+
+QList<qint64> CollectionView::upgradable(const QList<qint64> &tracks) const
+{
+    QList<qint64> result;
+    for (const qint64 id : tracks) {
+        if (m_tiers.value(id, core::QualityTier::Lossless) != core::QualityTier::Lossless) {
+            result.append(id);
+        }
+    }
+    return result;
+}
+
+void CollectionView::refreshSelection()
+{
+    const QList<qint64> tracks = selectedTracks();
+    const QList<qint64> better = upgradable(tracks);
+    if (tracks.isEmpty()) {
+        m_selection->clear();
+    } else if (m_browse->currentIndex() == kWallPage) {
+        const auto tiles = static_cast<int>(m_wall->selectionModel()->selectedIndexes().size());
+        m_selection->setText(tiles == static_cast<int>(tracks.size())
+                                 ? tracksText(static_cast<int>(tracks.size())) + tr(" selected")
+                                 : tr("%1 selected · %2").arg(tiles).arg(tracksText(static_cast<int>(tracks.size()))));
+    } else {
+        m_selection->setText(tracksText(static_cast<int>(tracks.size())) + tr(" selected"));
+    }
+    m_betterQuality->setEnabled(!better.isEmpty());
+    if (tracks.isEmpty()) {
+        m_betterQuality->setToolTip(
+            tr("Select tracks or albums first: Selecta looks for a better copy of each one, and "
+               "a copy it finds takes the old file's place once you save it to the collection "
+               "from the Inbox"));
+    } else if (better.isEmpty()) {
+        m_betterQuality->setToolTip(tr("Everything selected is from lossless already: nothing is better"));
+    } else {
+        m_betterQuality->setToolTip(
+            tr("Look for a better copy of each track selected, in Get tracks. What it finds arrives in the Inbox "
+               "marked Upgrade; saved to the collection, it takes the old file's place, and the old file goes to the "
+               "Trash"));
+    }
+}
+
+void CollectionView::searchForBetterQuality(const QList<qint64> &tracks)
+{
+    if (tracks.isEmpty()) {
+        return;
+    }
+    m_result->setText(tr("Asking Get tracks for better copies…"));
+    Q_EMIT betterQualityRequested(tracks);
+}
+
+void CollectionView::showSearched(int searching, int already, int best, int gone)
+{
+    QStringList parts;
+    if (searching > 0) {
+        parts.append(searching == 1 ? tr("Looking for a better copy of 1 track in Get tracks; the Inbox marks what "
+                                         "comes as an upgrade.")
+                                    : tr("Looking for better copies of %1 tracks in Get tracks; the Inbox marks what "
+                                         "comes as an upgrade.")
+                                          .arg(searching));
+    }
+    if (already > 0) {
+        parts.append(already == 1 ? tr("1 is looked for already.") : tr("%1 are looked for already.").arg(already));
+    }
+    if (best > 0) {
+        parts.append(best == 1 ? tr("1 is from lossless already.") : tr("%1 are from lossless already.").arg(best));
+    }
+    if (gone > 0) {
+        parts.append(gone == 1 ? tr("1 is no longer in your collection.")
+                               : tr("%1 are no longer in your collection.").arg(gone));
+    }
+    m_result->setText(parts.join(u' '));
+}
+
+void CollectionView::showWallMenu(QPoint position)
+{
+    const QModelIndex index = m_wall->indexAt(position);
+    if (!index.isValid() || (index.flags() & Qt::ItemIsSelectable) == 0) {
+        return;
+    }
+    // As in the Finder: a tile not selected becomes the selection.
+    if (!m_wall->selectionModel()->isSelected(index)) {
+        m_wall->selectionModel()->select(index, QItemSelectionModel::ClearAndSelect);
+    }
+    m_wall->setCurrentIndex(index);
+    const quint64 album = index.data(CollectionWallModel::AlbumIdRole).toULongLong();
+    const QString path = album != 0 ? index.data(CollectionWallModel::CoverFolderRole).toString()
+                                    : index.data(CollectionWallModel::CoverFileRole).toString();
+    QMenu menu(this);
+    if (album != 0) {
+        menu.addAction(tr("Open Album"), this, [this, album] { openAlbum(album); });
+    }
+    menu.addAction(tr("Show in Finder"), this,
+                   [path] { QProcess::startDetached(u"/usr/bin/open"_s, {u"-R"_s, path}); });
+    menu.addSeparator();
+    QAction *better =
+        menu.addAction(tr("Search for Better Quality"), this, [this] { searchForBetterQuality(selectedTracks()); });
+    better->setEnabled(!upgradable(selectedTracks()).isEmpty());
+    menu.exec(m_wall->viewport()->mapToGlobal(position));
 }
 
 } // namespace selecta::app
