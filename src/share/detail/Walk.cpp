@@ -123,6 +123,12 @@ public:
     Walk run(const QList<WalkRoot> &roots)
     {
         for (const WalkRoot &root : roots) {
+            struct stat status{};
+            if (::stat(QFile::encodeName(root.path).constData(), &status) == 0 && S_ISDIR(status.st_mode)) {
+                m_rootNodes.insert(nodeOf(status));
+            }
+        }
+        for (const WalkRoot &root : roots) {
             if (stopped()) {
                 break;
             }
@@ -140,8 +146,20 @@ private:
         qsizetype virtualBytes = 0; // UTF-8 bytes of virtualPath
         QString segment;
         qsizetype parent = -1;
-        int depth = 0;
+        int depth = 0; // 0 for the root, 1 for an album
+        Layout layout = Layout::Tracks;
     };
+
+    // Where tracks lie (build()'s layouts): in a tracks folder itself, and in each album of an albums folder.
+    static bool sharesFilesOf(const Pending &folder)
+    {
+        return folder.depth == 0 ? folder.layout != Layout::Albums : folder.depth == 1;
+    }
+    // Only an albums folder is walked into, one level: its albums. Nothing below an album is ever listed.
+    static bool walksSubfoldersOf(const Pending &folder)
+    {
+        return folder.depth == 0 && folder.layout != Layout::Tracks;
+    }
 
     // What one folder listing collects.
     struct Listing
@@ -196,7 +214,7 @@ private:
         }
         m_root = root.path;
         const QByteArray aliasBytes = root.alias.toUtf8();
-        std::vector<Pending> stack{{native, root.path, root.alias, aliasBytes.size(), root.alias, -1, 0}};
+        std::vector<Pending> stack{{native, root.path, root.alias, aliasBytes.size(), root.alias, -1, 0, root.layout}};
         while (!stack.empty() && !stopped()) {
             const Pending folder = std::move(stack.back());
             stack.pop_back();
@@ -260,11 +278,16 @@ private:
             m_options.afterStat(folder.nativePath + '/' + name, status);
         }
         if (S_ISDIR(status.st_mode)) {
-            visitFolder(folder, index, name, status, listing);
+            if (walksSubfoldersOf(folder)) {
+                visitFolder(folder, index, name, status, listing);
+            }
         } else if (S_ISREG(status.st_mode)) {
-            visitFile(folder, name, status, listing);
+            if (sharesFilesOf(folder)) {
+                visitFile(folder, name, status, listing);
+            }
         }
-        // Symlinks are never followed; FIFOs, sockets and devices are never shared.
+        // Symlinks are never followed; FIFOs, sockets and devices are never shared. Whatever lies where the layout
+        // holds no tracks is not part of the collection: never shared, never reported.
     }
 
     void visitFolder(const Pending &folder, qsizetype index, const QByteArray &name, const struct stat &status,
@@ -273,6 +296,9 @@ private:
         if (hasHiddenFlag(status) || m_excludedNodes.contains(nodeOf(status))) {
             return;
         }
+        if (m_rootNodes.contains(nodeOf(status))) {
+            return; // another root (the tracks folder inside the albums folder): shared as itself, never as an album
+        }
         const QByteArray nativePath = folder.nativePath + '/' + name;
         const LocalName local = localName(name);
         if (!local.problem.isEmpty()) {
@@ -280,10 +306,6 @@ private:
             return;
         }
         if (isJunkFolderName(local.virtualName)) {
-            return;
-        }
-        if (folder.depth + 1 > m_options.maxDepth) {
-            report(displayPath(nativePath), u"nested more than %1 folders deep"_s.arg(m_options.maxDepth));
             return;
         }
         const qsizetype virtualBytes = folder.virtualBytes + 1 + local.virtualName.toUtf8().size();
@@ -301,7 +323,7 @@ private:
         listing.folderNames.insert(local.virtualName);
         listing.children.push_back({nativePath, folder.keyPath + u'/' + local.key,
                                     folder.virtualPath + u'\\' + local.virtualName, virtualBytes, local.virtualName,
-                                    index, folder.depth + 1});
+                                    index, folder.depth + 1, folder.layout});
     }
 
     void visitFile(const Pending &folder, const QByteArray &name, const struct stat &status, Listing &listing)
@@ -309,10 +331,10 @@ private:
         if (hasHiddenFlag(status) || status.st_size <= 0) {
             return;
         }
-        // The kind first, from a lenient decoding: a file that wouldn't be shared anyway is never reported.
+        // The kind first, from a lenient decoding: a file that wouldn't be shared anyway is never reported. Only
+        // tracks are shared: covers, playlists, text and the rest are not part of the collection.
         const QString lenient = QString::fromUtf8(name);
-        const FileKind kind = fileKind(lenient);
-        if (kind == FileKind::Other || isTemporaryName(lenient)) {
+        if (fileKind(lenient) != FileKind::Audio || isTemporaryName(lenient)) {
             return;
         }
         const QByteArray nativePath = folder.nativePath + '/' + name;
@@ -343,11 +365,8 @@ private:
         }
         listing.fileNames.insert(virtualName);
         const FileIdentity identity{deviceOf(status), inodeOf(status), static_cast<quint64>(status.st_size)};
-        Attributes attributes;
-        if (kind == FileKind::Audio) {
-            attributes =
-                m_attributes.audio(folder.keyPath + u'/' + local.key, nativePath, identity, modifiedMs(status));
-        }
+        const Attributes attributes =
+            m_attributes.audio(folder.keyPath + u'/' + local.key, nativePath, identity, modifiedMs(status));
         m_poolBytes += virtualName.size() + name.size();
         listing.files.push_back({name, std::move(virtualName), identity, attributes});
         ++m_walk.files;
@@ -358,6 +377,7 @@ private:
     const WalkOptions &m_options;
     std::unordered_set<NodeId, NodeIdHash> m_excludedNodes;
     QStringList m_excludedKeys;
+    std::unordered_set<NodeId, NodeIdHash> m_rootNodes; // every root's folder, to share each as itself only
     std::unordered_set<NodeId, NodeIdHash> m_visitedFolders;
     std::unordered_set<NodeId, NodeIdHash> m_visitedFiles;
     QString m_root; // the root being walked, for messages

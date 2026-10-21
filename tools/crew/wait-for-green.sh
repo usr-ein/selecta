@@ -15,10 +15,10 @@ if ! GH_TOKEN=$(gh auth token --user "$owner" 2>/dev/null); then
 fi
 export GH_TOKEN
 
-# The gating jobs: all but the experimental ones (Windows, and TSan), as in merge-pr.sh.
+# The gating jobs: the Linux ones only, as in merge-pr.sh (macOS and Windows are for main).
 gating() {
     gh pr checks "$1" --json name,bucket \
-        --jq '.[] | select(.name | test("Windows|tsan"; "i") | not) | "\(.bucket) \(.name)"' 2>/dev/null || true
+        --jq '.[] | select(.name | test("^Linux"; "i")) | "\(.bucket) \(.name)"' 2>/dev/null || true
 }
 
 deadline=$((SECONDS + 7200))

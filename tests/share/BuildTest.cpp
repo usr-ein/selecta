@@ -24,6 +24,7 @@ using namespace Qt::StringLiterals;
 using selecta::share::build;
 using selecta::share::BuildOptions;
 using selecta::share::BuildResult;
+using selecta::share::Layout;
 using selecta::share::ShareIndex;
 using selecta::share::ShareRoot;
 using selecta::share::test::buildTree;
@@ -58,24 +59,126 @@ struct ModeGuard
 
 // --- What is shared --------------------------------------------------------------------------------------------------
 
-TEST(ShareBuild, SharesAudioCoversAndCompanionsAndNothingElse)
+// The collection's two folders (PRD LIB-1, SHARE-1): peers get <tracks folder>\<track> and
+// <albums folder>\<album>\<track>, nothing else.
+
+TEST(ShareBuild, TheTracksFolderSharesTheTracksLyingInItAndNothingInItsSubfolders)
 {
     Tree tree;
-    for (const QString &name : {u"01 Track.mp3"_s, u"02 Track.FLAC"_s, u"cover.jpg"_s, u"back.jpeg"_s, u"cd.png"_s,
-                                u"album.cue"_s, u"rip.log"_s, u"info.nfo"_s, u"notes.txt"_s, u"booklet.pdf"_s,
-                                u"setup.exe"_s, u"list.m3u"_s, u"archive.zip"_s, u"anim.gif"_s, u"README"_s}) {
-        tree.file(u"Artist/Album/"_s + name);
-    }
-    const BuildResult result = buildTree(tree);
-    EXPECT_FALSE(result.cancelled);
+    tree.file(u"01 Loose.mp3"_s);
+    tree.file(u"02 Loose.flac"_s);
+    tree.file(u"Old Rips/03 Kept Aside.mp3"_s);
+    tree.file(u"Old Rips/Deeper/04 Further.mp3"_s);
+    tree.file(u"Some Album/05 Track.mp3"_s);
+    const BuildResult result = buildTree(tree, {}, {}, Layout::Tracks);
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\01 Loose.mp3"_s, u"Music\\02 Loose.flac"_s}));
+    EXPECT_EQ(listedFolders(*result.index), QStringList({u"Music"_s}));
+    EXPECT_EQ(result.index->counts(), (ShareIndex::Counts{1, 2}));
     EXPECT_TRUE(result.unreadable.isEmpty());
-    const QStringList files = listedFiles(*result.index);
-    const QString album = u"Music\\Artist\\Album\\"_s;
-    EXPECT_EQ(files, QStringList({album + u"01 Track.mp3"_s, album + u"02 Track.FLAC"_s, album + u"album.cue"_s,
-                                  album + u"back.jpeg"_s, album + u"booklet.pdf"_s, album + u"cd.png"_s,
-                                  album + u"cover.jpg"_s, album + u"info.nfo"_s, album + u"notes.txt"_s,
-                                  album + u"rip.log"_s}));
-    EXPECT_EQ(result.index->counts(), (ShareIndex::Counts{3, 10}));
+    // Nothing below the tracks folder answers a search, a folder listing or an upload request.
+    EXPECT_TRUE(result.index->search(u"Kept Aside"_s, {}).isEmpty());
+    EXPECT_TRUE(result.index->search(u"Track"_s, {}).isEmpty());
+    EXPECT_TRUE(result.index->folderContents(slsk::RemotePath::fromText(u"Music\\Old Rips"_s)).isEmpty());
+    EXPECT_FALSE(result.index->lookup(slsk::RemotePath::fromText(u"Music\\Old Rips\\03 Kept Aside.mp3"_s)));
+    EXPECT_TRUE(result.index->lookup(slsk::RemotePath::fromText(u"Music\\01 Loose.mp3"_s)));
+}
+
+TEST(ShareBuild, TheAlbumsFolderSharesTheTracksOfEachAlbumAndNothingLooseOrDeeper)
+{
+    Tree tree;
+    tree.file(u"Loose On Top.mp3"_s);
+    tree.file(u"Kel Varo - Amber Engine/01 Amber Engine.flac"_s);
+    tree.file(u"Kel Varo - Amber Engine/02 Night Ferry.flac"_s);
+    tree.file(u"Kel Varo - Amber Engine/Disc 2/01 Bonus.flac"_s);
+    tree.file(u"Kel Varo - Amber Engine/Scans/Hidden Track.mp3"_s);
+    tree.file(u"Okuma Drift - Neon Rain/01 Neon Rain.mp3"_s);
+    tree.folder(u"Empty Album"_s);
+    tree.file(u"Only Subfolders/CD1/01.mp3"_s);
+    const BuildResult result = buildTree(tree, {}, {}, Layout::Albums);
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Kel Varo - Amber Engine\\01 Amber Engine.flac"_s,
+                                                       u"Music\\Kel Varo - Amber Engine\\02 Night Ferry.flac"_s,
+                                                       u"Music\\Okuma Drift - Neon Rain\\01 Neon Rain.mp3"_s}));
+    EXPECT_EQ(listedFolders(*result.index),
+              QStringList({u"Music"_s, u"Music\\Kel Varo - Amber Engine"_s, u"Music\\Okuma Drift - Neon Rain"_s}));
+    EXPECT_EQ(result.index->counts(), (ShareIndex::Counts{3, 3}));
+    EXPECT_TRUE(result.unreadable.isEmpty());
+    EXPECT_TRUE(result.index->search(u"Loose"_s, {}).isEmpty());
+    EXPECT_TRUE(result.index->search(u"Bonus"_s, {}).isEmpty());
+    EXPECT_TRUE(result.index->folderContents(slsk::RemotePath::fromText(u"Music\\Kel Varo - Amber Engine\\Disc 2"_s))
+                    .isEmpty());
+    EXPECT_FALSE(result.index->lookup(slsk::RemotePath::fromText(u"Music\\Loose On Top.mp3"_s)));
+    EXPECT_FALSE(
+        result.index->lookup(slsk::RemotePath::fromText(u"Music\\Kel Varo - Amber Engine\\Disc 2\\01 Bonus.flac"_s)));
+}
+
+TEST(ShareBuild, AFolderInBothRolesSharesItsLooseTracksAndItsAlbums)
+{
+    Tree tree;
+    tree.file(u"Loose.mp3"_s);
+    tree.file(u"Album/01.mp3"_s);
+    tree.file(u"Album/CD2/02.mp3"_s);
+    const BuildResult result = buildTree(tree, {}, {}, Layout::TracksAndAlbums);
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Loose.mp3"_s, u"Music\\Album\\01.mp3"_s}));
+}
+
+TEST(ShareBuild, OnlyTracksAreSharedInBothFolders)
+{
+    Tree tracks;
+    Tree albums;
+    const QStringList others{u"cover.jpg"_s, u"back.jpeg"_s,   u"cd.png"_s,      u"album.cue"_s, u"rip.log"_s,
+                             u"info.nfo"_s,  u"notes.txt"_s,   u"booklet.pdf"_s, u"setup.exe"_s, u"list.m3u"_s,
+                             u"list.m3u8"_s, u"archive.zip"_s, u"anim.gif"_s,    u"README"_s,    u".DS_Store"_s};
+    for (const QString &name : others) {
+        tracks.file(name);
+        albums.file(u"Album/"_s + name);
+    }
+    for (const QString &name :
+         {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s, u"07.opus"_s}) {
+        tracks.file(name);
+        albums.file(u"Album/"_s + name);
+    }
+    const BuildResult result =
+        build({{tracks.root(), u"Tracks"_s, Layout::Tracks}, {albums.root(), u"Albums"_s, Layout::Albums}}, {});
+    EXPECT_TRUE(result.unreadable.isEmpty());
+    QStringList expected;
+    for (const QString &name :
+         {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s, u"07.opus"_s}) {
+        expected.append(u"Tracks\\"_s + name);
+    }
+    for (const QString &name :
+         {u"01.mp3"_s, u"02.FLAC"_s, u"03.wav"_s, u"04.aiff"_s, u"05.m4a"_s, u"06.ogg"_s, u"07.opus"_s}) {
+        expected.append(u"Albums\\Album\\"_s + name);
+    }
+    EXPECT_EQ(listedFiles(*result.index), expected);
+    EXPECT_TRUE(result.index->search(u"cover"_s, {}).isEmpty());
+    EXPECT_FALSE(result.index->lookup(slsk::RemotePath::fromText(u"Albums\\Album\\cover.jpg"_s)));
+}
+
+TEST(ShareBuild, AFolderOfCoversAloneIsNoAlbum)
+{
+    Tree tree;
+    tree.file(u"Artwork/cover.jpg"_s);
+    tree.file(u"Album/01.mp3"_s);
+    EXPECT_EQ(listedFolders(*buildTree(tree).index), QStringList({u"Music"_s, u"Music\\Album"_s}));
+}
+
+TEST(ShareBuild, WhatALayoutLeavesOutIsNeitherListedNorReported)
+{
+    if (::geteuid() == 0) {
+        GTEST_SKIP() << "permissions don't apply to root";
+    }
+    // A folder the layout never walks is never listed, so it can't be reported as unreadable; names that couldn't be
+    // shared are only reported where tracks are shared.
+    Tree tree;
+    tree.file(u"Album/01.mp3"_s);
+    tree.file(u"Album/Locked/02.mp3"_s);
+    const ModeGuard guard{tree.path(u"Album/Locked"_s)};
+    ASSERT_TRUE(test::setMode(guard.path, 0));
+    tree.nativeFile("line\nbreak.mp3");
+    tree.file(u"Album/Bad\tSub/03.mp3"_s);
+    const BuildResult result = buildTree(tree);
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Album\\01.mp3"_s}));
+    EXPECT_TRUE(result.unreadable.isEmpty());
 }
 
 TEST(ShareBuild, SkipsHiddenAppleDoubleAndTemporaryFiles)
@@ -189,7 +292,7 @@ TEST(ShareBuild, ARootThatIsASymlinkIsFollowed)
     real.file(u"Album/01.mp3"_s);
     Tree links;
     ASSERT_TRUE(links.symlink(real.root(), u"Music Link"_s));
-    const BuildResult result = build({{links.path(u"Music Link"_s), u"Music"_s}}, {});
+    const BuildResult result = build({{links.path(u"Music Link"_s), u"Music"_s, Layout::Albums}}, {});
     EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\Album\\01.mp3"_s}));
 }
 
@@ -203,17 +306,25 @@ TEST(ShareBuild, SharesAHardLinkedFileOnce)
     EXPECT_EQ(listedFiles(*buildTree(tree).index), QStringList({u"Music\\A\\01.mp3"_s}));
 }
 
-TEST(ShareBuild, OverlappingRootsShareEachFileOnceUnderTheFirstPathMet)
+TEST(ShareBuild, ARootInsideAnotherIsSharedAsItselfOnly)
 {
+    // The tracks folder inside the albums folder (core refuses that layout, the build stays sensible): its tracks are
+    // loose tracks, never an album's, whatever the order of the roots.
     Tree tree;
-    tree.file(u"Top.mp3"_s);
-    tree.file(u"Techno/01.mp3"_s);
-    const BuildResult outerFirst = build({{tree.root(), u"Music"_s}, {tree.path(u"Techno"_s), u"Techno"_s}}, {});
-    EXPECT_EQ(listedFiles(*outerFirst.index), QStringList({u"Music\\Top.mp3"_s, u"Music\\Techno\\01.mp3"_s}));
-    const BuildResult innerFirst = build({{tree.path(u"Techno"_s), u"Techno"_s}, {tree.root(), u"Music"_s}}, {});
-    EXPECT_EQ(listedFiles(*innerFirst.index), QStringList({u"Techno\\01.mp3"_s, u"Music\\Top.mp3"_s}));
-    const BuildResult twice = build({{tree.root(), u"Music"_s}, {tree.root(), u"Again"_s}}, {});
-    EXPECT_EQ(twice.index->counts(), (ShareIndex::Counts{2, 2}));
+    tree.file(u"Album/01.mp3"_s);
+    tree.file(u"Singles/02.mp3"_s);
+    const ShareRoot albums{tree.root(), u"Albums"_s, Layout::Albums};
+    const ShareRoot tracks{tree.path(u"Singles"_s), u"Tracks"_s, Layout::Tracks};
+    const QStringList expected{u"Albums\\Album\\01.mp3"_s, u"Tracks\\02.mp3"_s};
+    QStringList outerFirst = listedFiles(*build({albums, tracks}, {}).index);
+    QStringList innerFirst = listedFiles(*build({tracks, albums}, {}).index);
+    outerFirst.sort();
+    innerFirst.sort();
+    EXPECT_EQ(outerFirst, expected);
+    EXPECT_EQ(innerFirst, expected);
+    // The same folder twice: shared once, under the first.
+    const BuildResult twice = build({albums, {tree.root(), u"Again"_s, Layout::Albums}}, {});
+    EXPECT_EQ(twice.index->counts(), (ShareIndex::Counts{3, 2}));
 }
 
 // --- Roots and aliases -----------------------------------------------------------------------------------------------
@@ -309,7 +420,7 @@ TEST(ShareBuild, TheThreadsMaterialisationPolicyIsRestored)
     }
     Tree tree;
     tree.file(u"a.mp3"_s, test::mp3Cbr320());
-    EXPECT_EQ(buildTree(tree).index->counts().files, 1);
+    EXPECT_EQ(buildTree(tree, {}, {}, Layout::Tracks).index->counts().files, 1);
     EXPECT_EQ(::getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD),
               IOPOL_MATERIALIZE_DATALESS_FILES_ON);
     (void)::setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, before);
@@ -323,14 +434,14 @@ TEST(ShareBuild, TheThreadsMaterialisationPolicyIsRestored)
 TEST(ShareBuild, LeavesEmptyFoldersOutAndKeepsParents)
 {
     Tree tree;
-    tree.file(u"A/B/C/x.mp3"_s);
-    tree.folder(u"Empty/Deeper"_s);
+    tree.file(u"A/x.mp3"_s);
+    tree.folder(u"Empty"_s);
     tree.file(u"Unshared/setup.exe"_s);
-    tree.file(u"A/Hidden Only/.x.mp3"_s);
+    tree.file(u"Hidden Only/.x.mp3"_s);
     const BuildResult result = buildTree(tree);
-    EXPECT_EQ(listedFolders(*result.index),
-              QStringList({u"Music"_s, u"Music\\A"_s, u"Music\\A\\B"_s, u"Music\\A\\B\\C"_s}));
-    EXPECT_EQ(result.index->counts(), (ShareIndex::Counts{4, 1}));
+    // The albums folder holds no track of its own: it stays, as the parent of its albums.
+    EXPECT_EQ(listedFolders(*result.index), QStringList({u"Music"_s, u"Music\\A"_s}));
+    EXPECT_EQ(result.index->counts(), (ShareIndex::Counts{2, 1}));
 }
 
 TEST(ShareBuild, WalksFoldersBeforeTheirSubfoldersInNameOrder)
@@ -339,14 +450,12 @@ TEST(ShareBuild, WalksFoldersBeforeTheirSubfoldersInNameOrder)
     tree.file(u"b.mp3"_s);
     tree.file(u"B/1.mp3"_s);
     tree.file(u"A/2.mp3"_s);
-    tree.file(u"A/Z/3.mp3"_s);
-    tree.file(u"A/Y/4.mp3"_s);
+    tree.file(u"A/1.mp3"_s);
     tree.file(u"a.mp3"_s);
-    EXPECT_EQ(listedFolders(*buildTree(tree).index),
-              QStringList({u"Music"_s, u"Music\\A"_s, u"Music\\A\\Y"_s, u"Music\\A\\Z"_s, u"Music\\B"_s}));
-    EXPECT_EQ(listedFiles(*buildTree(tree).index),
-              QStringList({u"Music\\a.mp3"_s, u"Music\\b.mp3"_s, u"Music\\A\\2.mp3"_s, u"Music\\A\\Y\\4.mp3"_s,
-                           u"Music\\A\\Z\\3.mp3"_s, u"Music\\B\\1.mp3"_s}));
+    const BuildResult result = buildTree(tree, {}, {}, Layout::TracksAndAlbums);
+    EXPECT_EQ(listedFolders(*result.index), QStringList({u"Music"_s, u"Music\\A"_s, u"Music\\B"_s}));
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\a.mp3"_s, u"Music\\b.mp3"_s, u"Music\\A\\1.mp3"_s,
+                                                       u"Music\\A\\2.mp3"_s, u"Music\\B\\1.mp3"_s}));
 }
 
 TEST(ShareBuild, NfdNamesAreSharedInNfc)
@@ -383,21 +492,6 @@ TEST(ShareBuild, NamesThatCantBeSharedAreReported)
     EXPECT_TRUE(unreadablePaths(result).contains(QFile::decodeName(controlName)));
 }
 
-TEST(ShareBuild, NestingDeeperThanTheLimitIsReported)
-{
-    Tree tree;
-    QString relative;
-    for (int depth = 0; depth <= selecta::share::kMaxDepth; ++depth) {
-        relative += u"d/"_s;
-    }
-    tree.file(relative + u"deep.mp3"_s);
-    tree.file(u"d/shallow.mp3"_s);
-    const BuildResult result = buildTree(tree);
-    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\d\\shallow.mp3"_s}));
-    ASSERT_EQ(result.unreadable.size(), 1);
-    EXPECT_TRUE(result.unreadable.at(0).second.contains(u"deep"_s));
-}
-
 // --- Limits, placeholders and cancellation (the walk itself)
 // ----------------------------------------------------------
 
@@ -406,7 +500,7 @@ detail::Walk walkTree(const Tree &tree, const detail::WalkOptions &options,
 {
     const QHash<QString, collection::ScannedFile> none;
     detail::AttributeSource attributes(none);
-    return detail::walk({{tree.root(), u"Music"_s}}, {}, attributes, cancel, options);
+    return detail::walk({{tree.root(), u"Music"_s, Layout::TracksAndAlbums}}, {}, attributes, cancel, options);
 }
 
 TEST(ShareBuild, PathsTooLongForPeersAreReported)
@@ -535,7 +629,7 @@ TEST(ShareBuild, AudioAttributesComeFromTheCollection)
     known.insert(lossy, scanned(lossy, {selecta::match::Codec::Mp3, 123, true, 44100, 0}, 61'999));
     known.insert(lossless, scanned(lossless, {selecta::match::Codec::Flac, 2300, std::nullopt, 96000, 24}, 300'000));
     known.insert(unknownVbr, scanned(unknownVbr, {selecta::match::Codec::Vorbis, 160, std::nullopt, 48000, 0}, 1'000));
-    const BuildResult result = buildTree(tree, known);
+    const BuildResult result = buildTree(tree, known, {}, Layout::Tracks);
 
     const std::optional<slsk::FileEntry> mp3 = listedEntry(*result.index, u"Music\\lossy.mp3"_s);
     ASSERT_TRUE(mp3.has_value());
@@ -581,7 +675,7 @@ TEST(ShareBuild, AStaleCollectionEntryIsProbedInstead)
     collection::ScannedFile older = scanned(path, {selecta::match::Codec::Mp3, 64, false, 22050, 0}, 9'000);
     older.file.modifiedMs -= 5'000;
     for (const collection::ScannedFile &entry : {stale, older}) {
-        const BuildResult result = buildTree(tree, {{path, entry}});
+        const BuildResult result = buildTree(tree, {{path, entry}}, {}, Layout::Tracks);
         const std::optional<slsk::FileEntry> listed = listedEntry(*result.index, u"Music\\a.mp3"_s);
         ASSERT_TRUE(listed.has_value());
         EXPECT_EQ(listed->attributes.bitrate, 320U);
@@ -597,7 +691,7 @@ TEST(ShareBuild, AudioOutsideTheCollectionIsProbed)
     tree.file(u"16.flac"_s, test::flac(16));
     tree.file(u"24.flac"_s, test::flac(24));
     tree.file(u"wave.wav"_s, selecta::testing::makeWav(selecta::testing::sine(440.0, 3.0, 48000)));
-    const BuildResult result = buildTree(tree);
+    const BuildResult result = buildTree(tree, {}, {}, Layout::Tracks);
 
     const std::optional<slsk::FileEntry> cbr = listedEntry(*result.index, u"Music\\cbr.mp3"_s);
     ASSERT_TRUE(cbr.has_value());
@@ -632,14 +726,12 @@ TEST(ShareBuild, UnreadableAudioIsSharedWithoutAttributes)
 {
     Tree tree;
     tree.file(u"broken.mp3"_s, QByteArray(4096, 'x'));
-    tree.file(u"cover.jpg"_s, test::mp3Cbr320()); // not audio by name: never probed
-    const BuildResult result = buildTree(tree);
+    tree.file(u"cover.jpg"_s, test::mp3Cbr320()); // not audio by name: neither probed nor shared
+    const BuildResult result = buildTree(tree, {}, {}, Layout::Tracks);
     const std::optional<slsk::FileEntry> broken = listedEntry(*result.index, u"Music\\broken.mp3"_s);
     ASSERT_TRUE(broken.has_value());
     EXPECT_TRUE(broken->attributes.isEmpty());
-    const std::optional<slsk::FileEntry> cover = listedEntry(*result.index, u"Music\\cover.jpg"_s);
-    ASSERT_TRUE(cover.has_value());
-    EXPECT_TRUE(cover->attributes.isEmpty());
+    EXPECT_EQ(listedFiles(*result.index), QStringList({u"Music\\broken.mp3"_s}));
 }
 
 TEST(ShareBuild, AttributesOutsideTheWireRangeAreLeftOut)
@@ -656,9 +748,10 @@ TEST(ShareBuild, AttributesOutsideTheWireRangeAreLeftOut)
 TEST(ShareBuild, TheShareListDecodesToExactlyWhatWasIndexed)
 {
     Tree tree;
-    const QString track = tree.file(u"Artist/Album/01 Track.MP3"_s, test::mp3Cbr320());
-    tree.file(u"Artist/Album/cover.jpg"_s, QByteArray(1234, 'j'));
-    tree.file(u"Artist/notes.txt"_s, QByteArray(10, 't'));
+    const QString track = tree.file(u"Album/01 Track.MP3"_s, test::mp3Cbr320());
+    tree.file(u"Album/02 Track.flac"_s, QByteArray(1234, 'f'));
+    tree.file(u"Album/cover.jpg"_s, QByteArray(1234, 'j'));
+    tree.file(u"notes.txt"_s, QByteArray(10, 't'));
     QHash<QString, collection::ScannedFile> known;
     known.insert(track, scanned(track, {selecta::match::Codec::Mp3, 320, false, 44100, 0}, 125'400));
     const BuildResult result = buildTree(tree, known);
@@ -673,11 +766,10 @@ TEST(ShareBuild, TheShareListDecodesToExactlyWhatWasIndexed)
     trackAttributes.vbr = false;
     expected.directories = {
         slsk::SharedDirectory{slsk::RemotePath::fromText(u"Music"_s), {}},
-        slsk::SharedDirectory{slsk::RemotePath::fromText(u"Music\\Artist"_s), {entry("notes.txt", 10, u"txt"_s, {})}},
         slsk::SharedDirectory{
-            slsk::RemotePath::fromText(u"Music\\Artist\\Album"_s),
+            slsk::RemotePath::fromText(u"Music\\Album"_s),
             {entry("01 Track.MP3", static_cast<quint64>(test::mp3Cbr320().size()), u"mp3"_s, trackAttributes),
-             entry("cover.jpg", 1234, u"jpg"_s, {})}},
+             entry("02 Track.flac", 1234, u"flac"_s, {})}},
     };
     EXPECT_EQ(decodedList(*result.index), expected);
 }
@@ -686,14 +778,14 @@ TEST(ShareBuild, TheShareListIsWhatSlsksOwnEncoderWrites)
 {
     // build() writes the list a folder at a time; the bytes must be SharedFileListResponse::encode()'s, to the byte.
     Tree tree;
+    tree.file(u"Loose.mp3"_s, test::mp3Cbr320());
     tree.file(u"A/01.mp3"_s, test::mp3Cbr320());
-    tree.file(u"A/B/cover.jpg"_s);
     tree.file(u"C/notes.txt"_s);
     tree.file(u"C/Ünïcödé.flac"_s, test::flac(24));
-    const BuildResult result = buildTree(tree);
+    const BuildResult result = buildTree(tree, {}, {}, Layout::TracksAndAlbums);
     slsk::peer::SharedFileListResponse response;
     response.list = decodedList(*result.index);
-    ASSERT_EQ(response.list.directories.size(), 4);
+    ASSERT_EQ(response.list.directories.size(), 3);
     EXPECT_EQ(response.encode(), result.index->sharedFileList());
     EXPECT_EQ(ShareIndex().sharedFileList(), slsk::peer::SharedFileListResponse{}.encode());
 }

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "base/Clock.h"
+#include "collection/FolderRoles.h"
 #include "governor/TokenBucket.h"
 #include "share/ShareIndex.h"
 #include "share/UploadQueue.h"
@@ -110,8 +111,10 @@ public:
     ShareService(ShareService &&) = delete;
     ShareService &operator=(ShareService &&) = delete;
 
-    // The shared folders (the collection's, D12), and Selecta's own folders under them, never shared. Builds again.
-    void setRoots(const QStringList &roots, const QStringList &excluded);
+    // The shared folders: the collection's two (D12), each by its role, so peers get exactly the collection's tracks
+    // (SHARE-1): `<tracks folder>\<track>` and `<albums folder>\<album>\<track>`, nothing else (share::build()).
+    // `excluded`: Selecta's own folders (its Inbox, caches), never shared even when they lie in one. Builds again.
+    void setFolders(const collection::FolderRoles &folders, const QStringList &excluded);
     // The collection was scanned again: the index is built again from it, shortly.
     void collectionChanged();
     // A download arrived: the ratio moves.
@@ -199,7 +202,7 @@ private:
     ActivityLog &m_activity;
     std::optional<qint64> m_session;
     WallClock m_now;
-    QStringList m_roots;
+    QList<share::ShareRoot> m_roots;
     QStringList m_excluded;
     std::shared_ptr<const share::ShareIndex> m_index;
     share::UploadQueue m_queue;

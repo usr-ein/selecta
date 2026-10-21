@@ -251,7 +251,7 @@ welcome (it's open source), but v1 spends no effort on onboarding polish or on W
 
 | ID | Pri | Requirement |
 |---|---|---|
-| SHARE-1 | P0 | Choose shared folders. The whole collection is shared by default (D12); the Inbox and the preview cache never are. Scan and index the shares, excluding hidden and system files. |
+| SHARE-1 | P0 | Share the collection (D12), by its folders' roles (D40): peers get **`<tracks folder>/<track>`** and **`<albums folder>/<album>/<track>`**, and nothing else. Nothing at any other depth (not the tracks folder's subfolders, not files lying in the albums folder, not folders inside an album), and only tracks (audio files: no covers, playlists, text or anything else). Selecta's Inbox and the preview cache are never shared. Scan and index the shares, excluding hidden and system files. |
 | SHARE-2 | P0 | Answer browse, folder-contents and search requests from the index. Honour the server's excluded search phrases. Never reveal full local paths. |
 | SHARE-3 | P0 | Upload queue: 3 slots, one active upload per user, **privileged users first**, round-robin between users, per-user limits (100 files / 10 000 MB) answered with the standard denial strings, optional bandwidth limit. |
 | SHARE-4 | P1 | Ban / ignore users (NET-8). Buddy-only shared folders are out of v1 (D34). |
@@ -403,7 +403,7 @@ Answers given by the maintainer on 2026-10-19.
 | D9 | Look and feel | **macOS-native** ("not too crazy, but native"), **with a dark theme**. |
 | D10 | Collection layout on disk | **`Singles/` + `Albums/<album>/`** under one collection root (revised by D39: a tracks folder and an albums folder, chosen separately). |
 | D11 | Lossless original after filing as MP3 320 | **Move it to the Trash** (after the converted copy is verified). |
-| D12 | What to share by default | **The whole collection** (read-only). |
+| D12 | What to share by default | **The whole collection** (read-only). Revised by D40: the collection's tracks, by the folders' roles. |
 | D13 | Preview skipped before its transfer finishes | **Cancel the transfer.** |
 | D14 | Licence | **GPL-3.0-or-later.** |
 | D15 | Hosting | **GitHub** (CI on GitHub Actions). |
@@ -430,7 +430,8 @@ Answers given by the maintainer on 2026-10-19.
 | D36 | App logo, 2026-10-20 | **A round vinyl disc** in the spirit of the old djay icon, whose centre label is the **Jamaican flag** (gold saltire, green and black triangles), with a spindle hole. It is the app icon (a circle) and the window icon. |
 | D37 | How the work is run, 2026-10-20 | Up to five teammates work in parallel in their own worktrees; the head implementer merges their branches into `main` locally and pushes. No pull requests. The CI teammate may push its own branch so GitHub Actions can run. |
 | D38 | Automatic port mapping in v1, 2026-10-20 | **NET-3 is in v1** (the maintainer): UPnP IGD and NAT-PMP/PCP map the listening port, with a reachability check that uses no outside service. Isolated runs and tests never touch the real router. |
-| D39 | Collection folders and the Inbox, 2026-10-20 (beta feedback, P-001) | **Two folders with roles**, one picker each in Settings: a **tracks folder** of loose files (subfolders ignored, nothing in it is an album) and an **albums folder** where each subfolder is one album (loose files ignored). They must be separate: not the same folder, neither inside the other. The **Inbox is Selecta's own**, in its data folder and hidden: no picker, no nesting rule. After the update the old single folder isn't guessed into the two; Settings asks for both. Shares keep sharing both folders whole. |
+| D39 | Collection folders and the Inbox, 2026-10-20 (beta feedback, P-001) | **Two folders with roles**, one picker each in Settings: a **tracks folder** of loose files (subfolders ignored, nothing in it is an album) and an **albums folder** where each subfolder is one album (loose files ignored). They must be separate: not the same folder, neither inside the other. The **Inbox is Selecta's own**, in its data folder and hidden: no picker, no nesting rule. After the update the old single folder isn't guessed into the two; Settings asks for both. Shares keep sharing both folders whole (revised by D40). |
+| D40 | What shares offer, 2026-10-21 (P-016) | **Only the collection's tracks, where the folders' roles put them:** "It's simple. The structure is always this: albums/{album name}/{track.mp3} and tracks/{track.mp3}. No files outside of that exist or should be shared. The Inbox is not shared." Peers see `<tracks folder>\<track>` and `<albums folder>\<album>\<track>`, audio files only (SHARE-1). |
 
 ## Appendix B — Raw brief (verbatim)
 
