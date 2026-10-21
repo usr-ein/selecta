@@ -22,7 +22,6 @@ namespace selecta::app {
 namespace {
 
 using Kind = CollectionWallModel::Kind;
-using core::QualityTier;
 
 constexpr int kTopMargin = 12;
 constexpr int kBottomMargin = 24;

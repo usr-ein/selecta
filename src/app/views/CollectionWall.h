@@ -13,8 +13,8 @@ class CollectionCovers;
 
 // Draws the cover wall's rows (CollectionWallModel): a header's title and track count; a tile's cover (an album's with
 // a stack of plates above it), title, artist, and quality with a dot of its tier's colour (the words say it too, PRD
-// UI-4; the colours are Appearance's). Covers come from CollectionCovers, asked for as tiles are drawn; until one is read, a placeholder. Main
-// thread.
+// UI-4; the colours are Appearance's). Covers come from CollectionCovers, asked for as tiles are drawn; until one is
+// read, a placeholder. Main thread.
 class CollectionTileDelegate : public QStyledItemDelegate
 {
     Q_OBJECT

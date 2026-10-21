@@ -6,6 +6,8 @@
 #include <QStyleHints>
 
 #include <array>
+#include <cstddef>
+#include <utility>
 
 using namespace Qt::StringLiterals;
 
@@ -75,7 +77,8 @@ QColor qualityTierColor(int tier, const QPalette &palette)
         {QColor(0x34, 0xC7, 0x59), QColor(0x30, 0xD1, 0x58)}, // green
         {QColor(0x00, 0x7A, 0xFF), QColor(0x0A, 0x84, 0xFF)}, // blue
     }};
-    const Pair &pair = kColours.at(tier >= 0 && tier < static_cast<int>(kColours.size()) ? tier : 0);
+    const std::size_t index = tier > 0 && std::cmp_less(tier, kColours.size()) ? static_cast<std::size_t>(tier) : 0;
+    const Pair &pair = kColours.at(index);
     return isDarkPalette(palette) ? pair.dark : pair.light;
 }
 
