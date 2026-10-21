@@ -19,24 +19,26 @@ cancelling uploads through `slsk::TransferManager`, recording upload statistics,
 
 Decisions taken for the maintainer's open questions in the note (§9.3), use these:
 
-- D-S1: share audio files, cover images (`jpg`, `jpeg`, `png`) and text companions (`cue`, `log`, `nfo`, `txt`,
-  `pdf`), nothing else;
+- D-S1: share audio files, nothing else (PRD D40, P-016; it first also shared cover images and text companions);
 - D-S2: a banned user is answered `Banned` (core decides who is banned; the queue only carries the string);
 - D-S4: no buddy-only folders in v1 (one public access level, but keep the level in the design so P1 can add one);
 - D-S7: incoming queries match with diacritics folded.
 
 ## API (namespace `selecta::share`)
 
-1. `struct ShareRoot { QString path; QString alias; }`. `path` is absolute. `alias` is the virtual root name peers
-   see; core passes the folder's base name and the library makes aliases unique (`Music`, `Music (2)`).
+1. `struct ShareRoot { QString path; QString alias; Layout layout; }`. `path` is absolute. `alias` is the virtual root
+   name peers see; core passes the folder's base name and the library makes aliases unique (`Music`, `Music (2)`).
+   `layout` is the folder's role in the collection (PRD LIB-1, SHARE-1, D40): `Tracks` shares the tracks lying in the
+   folder, `Albums` the tracks lying in each of its subfolders (one album each), `TracksAndAlbums` both. Nothing else
+   is ever shared: no deeper folder, no loose file in an albums folder, no file that isn't audio.
 2. `struct BuildOptions { QStringList excludedFolders; }`: folders under a root that are never shared (Selecta's
    Inbox, preview cache, incoming and staging folders when they live under a root).
 3. `struct BuildResult { std::shared_ptr<const ShareIndex> index; QList<QPair<QString, QString>> unreadable;
    bool cancelled = false; }`
 4. `BuildResult build(const QList<ShareRoot> &roots, const QHash<QString, collection::ScannedFile> &knownAudio,
    const BuildOptions &options = {}, const audio::CancellationFlag *cancel = nullptr)`
-   - Blocking, reentrant; call it from a worker. Walks the roots (stat only), never follows symlinks, visits each
-     (device, inode) once, skips hidden files and folders, AppleDouble files, temporary and partial files
+   - Blocking, reentrant; call it from a worker. Walks the roots (stat only) as far as their layouts reach, never
+     follows symlinks, visits each (device, inode) once, shares a root met inside another as itself only, skips hidden files and folders, AppleDouble files, temporary and partial files
      (`*.selecta-part`, `*.part`), excluded folders, and iCloud placeholders whose data isn't on disk (never opened).
    - Audio files take their attributes (bitrate, duration in seconds, VBR, sample rate, bit depth) from `knownAudio`
      (core passes the collection scan, keyed by absolute path). An audio file missing from it is shared with what
