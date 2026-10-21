@@ -259,12 +259,14 @@ QJsonObject DebugServer::handle(const QJsonObject &request)
     } else if (command == u"drop") {
         result = drop(args, &error);
     } else if (command == u"browse") {
-        // browse peer=<name>: opens that peer's shares, as "Browse <peer>'s Files" does.
+        // browse peer=<name> [path=<remote path>]: opens that peer's shares, as "Browse <peer>'s Files" does; with a
+        // path, on that file, as the transfers' and the search results' menus do.
         const QString peer = args.value("peer"_L1).toString();
+        const QString path = args.value("path"_L1).toString();
         if (peer.isEmpty()) {
             error = u"missing \"peer\""_s;
         } else {
-            m_window.browsePeer(peer);
+            m_window.browseFile(peer, path.toUtf8());
             result = peer;
         }
     } else if (command == u"play-pause") {

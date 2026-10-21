@@ -84,4 +84,4 @@ that created it, which must run an event loop; `changed` is emitted there.
   roots and loops, corrupt and empty files, files without tags, every format's stream facts, albums by folder role
   and album grouping (tags, folder names, disc folders, various artists), cancellation and progress, the Watcher on
   create, modify and delete.
-- Lint clean (`tools/lint.sh src/collection tests/collection`), tests green under `dev` and `asan`.
+- Lint clean (`tools/lint.sh src/collection tests/collection`), tests green under `dev`.

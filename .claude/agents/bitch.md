@@ -42,7 +42,8 @@ The coordinator is the session named **selecta-nightman**.
 - **The user's side:** UI text says plainly what happens, in the project's style, and nothing is half-built.
 - **Screenshots:** if the pitch changes the UI, the PR shows the changed screens from `docs/screens/`. Open them with Read and check them against the pitch. A UI change with no screenshot is BLOCKING. A pitch that doesn't change the UI needs none.
 - **Lint and CI:**
-  - the PR states the full suite and lint ran;
+  - the PR states the targeted tests and lint ran, and CI's Linux jobs pass (CI runs the tests a change can reach;
+    no local full suite is required, F-006);
   - CI isn't red on a gating job: on a pull request only the Linux jobs gate (macOS and Windows run on main;
     there is no TSan).
 

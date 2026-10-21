@@ -16,15 +16,19 @@
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QRandomGenerator>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimer>
 
+#include <chrono>
 #include <gtest/gtest.h>
 #include <memory>
 
@@ -60,6 +64,31 @@ QByteArray readFile(const QString &path)
 {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+}
+
+// Waits for a transfer to get somewhere: the event loop blocks until something happens, and the condition is checked
+// after each batch of events. waitFor() (QTest::qWaitFor) sleeps 10 ms between passes of the event loop, which lets a
+// transfer move on by one socket read per pass: a 14.88 MB download took 3.5 s on a Mac and over 15 s on a loaded
+// macOS runner. The timeout is only reached when a test fails.
+// The expiry timer alone decides the timeout: it is what wakes a loop that nothing else wakes, and a coarse timer may
+// fire before a clock-based deadline has passed, which would leave the loop blocked with no wake-up to come.
+template <typename Condition>
+bool arrives(Condition condition, std::chrono::milliseconds timeout = 15s)
+{
+    bool expired = false;
+    QTimer expiry;
+    expiry.setSingleShot(true);
+    expiry.setTimerType(Qt::PreciseTimer);
+    QObject::connect(&expiry, &QTimer::timeout, [&expired] { expired = true; });
+    expiry.start(timeout);
+    while (!condition()) {
+        if (expired) {
+            return false;
+        }
+        QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents);
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    }
+    return true;
 }
 
 class TransferServiceTest : public ::testing::Test
@@ -193,7 +222,7 @@ TEST_F(TransferServiceTest, DownloadsAFileAndHandsItOn)
     QSignalSpy completed(service.get(), &TransferService::completed);
     const std::optional<qint64> id = service->enqueue(spec(*ghost, path, bytes.size()));
     ASSERT_TRUE(id.has_value());
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
     const auto done = completed.at(0).at(0).value<Download>();
     EXPECT_EQ(done.id, *id);
     EXPECT_EQ(done.state, State::Converting);
@@ -213,6 +242,31 @@ TEST_F(TransferServiceTest, DownloadsAFileAndHandsItOn)
     EXPECT_EQ(arrived->state, State::Arrived);
     EXPECT_EQ(arrived->inboxItem, inboxItem);
     EXPECT_TRUE(service->unfinished().isEmpty());
+}
+
+// The wait for a download fails at its timeout when the download never arrives, rather than hanging: nothing else
+// wakes the event loop while the peer sends nothing. 1 s takes Qt's coarse-timer path, which may fire early.
+TEST_F(TransferServiceTest, AWaitForADownloadThatNeverArrivesEndsAtItsTimeout)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    const QByteArray path = "Music\\Okuma Drift\\01 Neon Rain.flac";
+    ghost->files.insert(path, FakePeer::Upload{.content = content(300'000, 2)});
+    ghost->stallUploads = true; // the connection opens, then no byte comes
+
+    QSignalSpy completed(service.get(), &TransferService::completed);
+    const std::optional<qint64> id = service->enqueue(spec(*ghost, path, 300'000));
+    ASSERT_TRUE(id.has_value());
+    QElapsedTimer elapsed;
+    elapsed.start();
+    EXPECT_FALSE(arrives([&] { return !completed.isEmpty(); }, 1s));
+    EXPECT_GE(elapsed.elapsed(), 900);
+    EXPECT_LT(elapsed.elapsed(), 3000);
+    EXPECT_EQ(service->download(*id)->state, State::Queued); // still connecting: asked for, nothing received
+    EXPECT_EQ(service->download(*id)->received, 0);
+
+    elapsed.restart();
+    EXPECT_FALSE(arrives([] { return false; }, 1s)); // with nothing at all going on
+    EXPECT_LT(elapsed.elapsed(), 3000);
 }
 
 TEST_F(TransferServiceTest, AFileAlreadyWantedIsTheSameDownload)
@@ -258,7 +312,7 @@ TEST_F(TransferServiceTest, AFullQueueWaitsAndTriesAgain)
     clock.advance(10min);
     now += 600'000;
     QSignalSpy completed(service.get(), &TransferService::completed);
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 10s));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
 }
 
 TEST_F(TransferServiceTest, ADroppedTransferResumesWhereItStopped)
@@ -270,7 +324,7 @@ TEST_F(TransferServiceTest, ADroppedTransferResumesWhereItStopped)
     QSignalSpy completed(service.get(), &TransferService::completed);
     QSignalSpy changes(service.get(), &TransferService::changed);
     const std::optional<qint64> id = service->enqueue(spec(*ghost, path, bytes.size()));
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 10s));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
     const auto done = completed.at(0).at(0).value<Download>();
     EXPECT_EQ(readFile(done.localPath), bytes); // the second attempt continued from the partial file
     EXPECT_EQ(done.attempts, 1);
@@ -313,7 +367,7 @@ TEST_F(TransferServiceTest, OfflineDownloadsWaitForTheConnection)
 
     QSignalSpy completed(service.get(), &TransferService::completed);
     network->connectNow();
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 10s));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
 }
 
 TEST_F(TransferServiceTest, PausedDownloadsStartWhenResumed)
@@ -325,7 +379,7 @@ TEST_F(TransferServiceTest, PausedDownloadsStartWhenResumed)
     EXPECT_EQ(service->download(*id)->state, State::Waiting);
     QSignalSpy completed(service.get(), &TransferService::completed);
     governor.setPaused(false);
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
 }
 
 TEST_F(TransferServiceTest, UnfinishedDownloadsComeBackAfterARestart)
@@ -347,7 +401,7 @@ TEST_F(TransferServiceTest, UnfinishedDownloadsComeBackAfterARestart)
     QSignalSpy completed(service.get(), &TransferService::completed);
     ASSERT_TRUE(waitFor([&] { return ghost->heldCount() > 0; }));
     ASSERT_TRUE(ghost->startUpload(u"selecta_test"_s, selecta::slsk::RemotePath(QByteArray("held.flac"))));
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
 }
 
 TEST_F(TransferServiceTest, AConversionAQuitInterruptedRunsAgain)
@@ -356,7 +410,7 @@ TEST_F(TransferServiceTest, AConversionAQuitInterruptedRunsAgain)
     ghost->files.insert("done.mp3", FakePeer::Upload{.content = content(2000, 8)});
     QSignalSpy completed(service.get(), &TransferService::completed);
     const std::optional<qint64> id = service->enqueue(spec(*ghost, "done.mp3", 2000));
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
 
     stopService(); // quit while converting
     connectNetwork();
@@ -427,7 +481,7 @@ TEST_F(TransferServiceTest, AQueuedDownloadSaysItsPlaceAndIsStuckWithoutProgress
     holder->files.insert("held.flac", FakePeer::Upload{.content = content(1000, 20)});
     QSignalSpy completed(service.get(), &TransferService::completed);
     ASSERT_TRUE(holder->startUpload(u"selecta_test"_s, selecta::slsk::RemotePath(QByteArray("held.flac"))));
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
     const auto done = completed.at(0).at(0).value<Download>();
     EXPECT_FALSE(done.placeInQueue.has_value());
     EXPECT_EQ(done.queue.kind, Verdict::Waiting);
@@ -549,7 +603,7 @@ TEST_F(TransferServiceTest, GetTracksMovesOnToTheNextPeersCopy)
 
     QSignalSpy completed(service.get(), &TransferService::completed);
     getTracks.download({line.id});
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
     EXPECT_EQ(completed.at(0).at(0).value<Download>().peer, sharer.username());
     line = getTracks.lines().constFirst();
     EXPECT_EQ(line.downloadState, selecta::core::GetLine::DownloadState::Converting);
@@ -643,7 +697,7 @@ TEST_F(TransferServiceTest, TryingAnotherPeerLeavesTheOldQueueAndGetsTheOtherCop
     // Try another peer: the other copy is asked for, and the queue place at the holder given back.
     QSignalSpy completed(service.get(), &TransferService::completed);
     rig.getTracks.switchPeer(line.id);
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
     EXPECT_EQ(completed.at(0).at(0).value<Download>().peer, sharer->username());
     line = rig.line();
     EXPECT_EQ(line.best->peer, sharer->username());
@@ -700,7 +754,7 @@ TEST_F(TransferServiceTest, TryingAnotherPeerAfterARestartFindsTheOtherCopiesAga
     QSignalSpy completed(service.get(), &TransferService::completed);
     restarted.switchPeer(id);
     EXPECT_TRUE(restarted.lines().constFirst().lookingForPeers);
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
     EXPECT_EQ(completed.at(0).at(0).value<Download>().peer, sharer->username());
     EXPECT_EQ(rig->network.sent, 1);
     EXPECT_FALSE(restarted.lines().constFirst().lookingForPeers);
@@ -795,7 +849,7 @@ TEST_F(TransferServiceTest, GettingANearMissAnywayDownloadsItBelowTheQualityWant
     // The user picks the second (radio buttons): exactly that file is got, not spread elsewhere.
     QSignalSpy completed(service.get(), &TransferService::completed);
     rig.getTracks.getAnyway(line.id, line.nearMisses[1].peer, line.nearMisses[1].remotePath);
-    ASSERT_TRUE(waitFor([&] { return !completed.isEmpty(); }, 15s));
+    ASSERT_TRUE(arrives([&] { return !completed.isEmpty(); }));
     const auto done = completed.at(0).at(0).value<Download>();
     EXPECT_EQ(done.peer, lower->username());
     ASSERT_TRUE(done.file.has_value());
@@ -832,7 +886,7 @@ TEST_F(TransferServiceTest, APreviewPlaysTheFileWhileItArrives)
     ASSERT_EQ(started->source->read(0, head.data(), head.size()), head.size());
     EXPECT_EQ(head, bytes.left(1000));
     // …and complete at the end.
-    ASSERT_TRUE(waitFor([&] { return started->source->snapshot().isComplete(); }, 10s));
+    ASSERT_TRUE(arrives([&] { return started->source->snapshot().isComplete(); }));
     ASSERT_TRUE(service->preview(started->id).has_value());
     EXPECT_EQ(service->preview(started->id)->state, selecta::core::Preview::State::Complete);
     EXPECT_EQ(governor.peerToday(u"vinyl_ghost"_s).files, 1); // previews count towards the peer's totals
@@ -847,7 +901,7 @@ TEST_F(TransferServiceTest, GettingAFilePreviewedToTheEndDoesntDownloadItAgain)
     const std::optional<TransferService::PreviewStart> started =
         service->startPreview(spec(*ghost, "again.mp3", bytes.size()));
     ASSERT_TRUE(started.has_value());
-    ASSERT_TRUE(waitFor([&] { return started->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return started->source->snapshot().isComplete(); }));
 
     const QSignalSpy completed(service.get(), &TransferService::completed);
     const std::optional<qint64> id = service->enqueue(spec(*ghost, "again.mp3", bytes.size()));
@@ -893,7 +947,7 @@ TEST_F(TransferServiceTest, ANewPreviewReplacesTheOneThatWasPlaying)
     ASSERT_TRUE(second.has_value());
     EXPECT_NE(second->id, first->id);
     EXPECT_FALSE(service->preview(first->id).has_value()); // stopped, then forgotten
-    ASSERT_TRUE(waitFor([&] { return second->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return second->source->snapshot().isComplete(); }));
 }
 
 TEST_F(TransferServiceTest, APreviewNeedsTheConnectionAndAKnownSize)
@@ -928,7 +982,7 @@ TEST_F(TransferServiceTest, KeepingAPreviewStillArrivingMakesItTheDownload)
     // Skipping to another preview no longer cancels the kept one.
     ASSERT_TRUE(service->startPreview(spec(*lena, "next.flac", 20'000)).has_value());
 
-    ASSERT_TRUE(waitFor([&] { return completed.size() == 1; }, 10s));
+    ASSERT_TRUE(arrives([&] { return completed.size() == 1; }));
     const auto done = completed.at(0).at(0).value<Download>();
     EXPECT_EQ(done.id, *id);
     EXPECT_EQ(readFile(done.localPath), bytes);
@@ -959,7 +1013,7 @@ TEST_F(TransferServiceTest, APreviewHeardBeforePlaysFromTheCacheAfterARestart)
     const std::optional<TransferService::PreviewStart> first =
         service->startPreview(spec(*ghost, "heard.flac", bytes.size()));
     ASSERT_TRUE(first.has_value());
-    ASSERT_TRUE(waitFor([&] { return first->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return first->source->snapshot().isComplete(); }));
 
     restart();
     QString why;
@@ -984,7 +1038,7 @@ TEST_F(TransferServiceTest, AGetAfterARestartTakesThePreviewHeardBefore)
     const std::optional<TransferService::PreviewStart> started =
         service->startPreview(spec(*ghost, "kept.mp3", bytes.size()));
     ASSERT_TRUE(started.has_value());
-    ASSERT_TRUE(waitFor([&] { return started->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return started->source->snapshot().isComplete(); }));
 
     restart();
     const QSignalSpy completed(service.get(), &TransferService::completed);
@@ -1013,7 +1067,7 @@ TEST_F(TransferServiceTest, APreviewAQuitCutShortIsntKept)
         service->startPreview(spec(*ghost, "cut.flac", 2'000'000), &why);
     ASSERT_TRUE(again.has_value()) << why.toStdString();
     EXPECT_FALSE(again->source->snapshot().isComplete()); // asked for again
-    ASSERT_TRUE(waitFor([&] { return again->source->snapshot().isComplete(); }, 10s));
+    ASSERT_TRUE(arrives([&] { return again->source->snapshot().isComplete(); }));
     EXPECT_EQ(ghost->receivedOf<selecta::slsk::peer::QueueUpload>().size(), 2);
 }
 
@@ -1024,7 +1078,7 @@ TEST_F(TransferServiceTest, ACachedPreviewOfAnotherSizeIsAskedForAgain)
     const std::optional<TransferService::PreviewStart> first =
         service->startPreview(spec(*ghost, "changed.flac", 30'000));
     ASSERT_TRUE(first.has_value());
-    ASSERT_TRUE(waitFor([&] { return first->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return first->source->snapshot().isComplete(); }));
 
     // The peer replaced the file since: the copy heard before is of no use.
     const QByteArray replaced = content(40'000, 34);
@@ -1033,7 +1087,7 @@ TEST_F(TransferServiceTest, ACachedPreviewOfAnotherSizeIsAskedForAgain)
     const std::optional<TransferService::PreviewStart> again =
         service->startPreview(spec(*ghost, "changed.flac", replaced.size()));
     ASSERT_TRUE(again.has_value());
-    ASSERT_TRUE(waitFor([&] { return again->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return again->source->snapshot().isComplete(); }));
     EXPECT_EQ(again->source->totalSize(), replaced.size());
     EXPECT_EQ(ghost->receivedOf<selecta::slsk::peer::QueueUpload>().size(), 2);
     EXPECT_EQ(previewFiles().size(), 1); // the old copy went
@@ -1050,7 +1104,7 @@ TEST_F(TransferServiceTest, TheCacheKeepsTheLatestPreviewsWithinItsBound)
         ghost->files.insert(name, FakePeer::Upload{.content = content(40'000, 35)});
         const std::optional<TransferService::PreviewStart> started = service->startPreview(spec(*ghost, name, 40'000));
         ASSERT_TRUE(started.has_value());
-        ASSERT_TRUE(waitFor([&] { return started->source->snapshot().isComplete(); }));
+        ASSERT_TRUE(arrives([&] { return started->source->snapshot().isComplete(); }));
         now += 1000; // heard one after the other
     }
     // 120 000 bytes in a 100 000-byte cache: the least recently heard went.
@@ -1094,7 +1148,7 @@ TEST_F(TransferServiceTest, DiscardingAPreviewNearItsEndStillCancelsIt)
     const std::optional<TransferService::PreviewStart> started =
         service->startPreview(spec(*ghost, "almost.flac", bytes.size()));
     ASSERT_TRUE(started.has_value());
-    ASSERT_TRUE(waitFor([&] { return started->source->available() >= 860'000; }, 10s));
+    ASSERT_TRUE(arrives([&] { return started->source->available() >= 860'000; }));
     ghost->uploadRate = 1; // the last bytes crawl: it stays near its end
     ASSERT_TRUE(waitFor([&] { return service->preview(started->id)->received >= 860'000; }));
     // Past kPreviewFinishPercent, stopping lets it finish for a Get…
@@ -1116,7 +1170,7 @@ TEST_F(TransferServiceTest, DiscardingACompletePreviewDeletesItFromTheCache)
     const std::optional<TransferService::PreviewStart> started =
         service->startPreview(spec(*ghost, "heard.mp3", bytes.size()));
     ASSERT_TRUE(started.has_value());
-    ASSERT_TRUE(waitFor([&] { return started->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return started->source->snapshot().isComplete(); }));
     ASSERT_EQ(previewCache->totalBytes(), bytes.size());
 
     ASSERT_TRUE(service->discardPreview(started->id));
@@ -1127,7 +1181,7 @@ TEST_F(TransferServiceTest, DiscardingACompletePreviewDeletesItFromTheCache)
     const std::optional<TransferService::PreviewStart> again =
         service->startPreview(spec(*ghost, "heard.mp3", bytes.size()));
     ASSERT_TRUE(again.has_value());
-    ASSERT_TRUE(waitFor([&] { return again->source->snapshot().isComplete(); }));
+    ASSERT_TRUE(arrives([&] { return again->source->snapshot().isComplete(); }));
     EXPECT_EQ(ghost->receivedOf<selecta::slsk::peer::QueueUpload>().size(), 2);
 }
 
@@ -1146,7 +1200,7 @@ TEST_F(TransferServiceTest, DiscardingAKeptPreviewLetsItsDownloadFinish)
     ASSERT_TRUE(id.has_value());
 
     ASSERT_TRUE(service->discardPreview(started->id));
-    ASSERT_TRUE(waitFor([&] { return completed.size() == 1; }, 10s));
+    ASSERT_TRUE(arrives([&] { return completed.size() == 1; }));
     EXPECT_EQ(completed.at(0).at(0).value<Download>().id, *id);
     EXPECT_EQ(readFile(completed.at(0).at(0).value<Download>().localPath), bytes); // the download has its copy…
     EXPECT_EQ(ghost->receivedOf<selecta::slsk::peer::QueueUpload>().size(), 1);

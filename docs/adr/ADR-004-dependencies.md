@@ -32,7 +32,8 @@
 - **Homebrew is for tools only,** listed in `Brewfile`: CMake, Ninja, clang-format, LLVM (clang-tidy, libFuzzer),
   clazy, cppcheck, ccache.
 - **CMake ≥ 3.28, Ninja and `CMakePresets.json`.**
-  - Presets: `dev`, `asan`, `tsan`, `lint`, `release` and `ci`, all through the vcpkg toolchain.
+  - Presets: `dev`, `asan`, `lint`, `release` and `ci`, all through the vcpkg toolchain (no `tsan` since 2026-10-21:
+    ThreadSanitizer doesn't run).
   - Settings: `qt_standard_project_setup(REQUIRES 6.11)`, `QT_NO_KEYWORDS`, `QT_NO_CAST_FROM_ASCII`.
   - C++20.
 - **CI matrix (GitHub Actions)** runs on macOS: the static vcpkg build (cached), unit and UI tests, and the lint

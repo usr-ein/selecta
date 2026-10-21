@@ -6,6 +6,7 @@
 
 #include <QAbstractItemModel>
 #include <QColor>
+#include <QIcon>
 #include <QList>
 #include <QString>
 
@@ -81,6 +82,8 @@ public:
     QList<int> resultsUnder(const QModelIndex &folder) const;
 
     static QString statusText(core::Ownership ownership);
+    // The ownership badge's symbol (none for Ownership::None).
+    static QIcon statusIcon(core::Ownership ownership);
     static QString qualityText(const core::SearchResult &result);
     static QString titleText(const core::SearchResult &result);
     // A country's flag as text: the two regional indicator symbols of its ISO code ("FR" → 🇫🇷); empty for anything

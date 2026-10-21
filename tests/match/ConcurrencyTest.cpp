@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Thread safety (contract "Threading"): one immutable MatchIndex shared by many threads, snapshots swapped while
-// readers keep using the old one. Run under the tsan preset, this proves the claims in the headers.
+// readers keep using the old one. The tests run several threads at once against the claims in the headers.
 #include "MatchTestSupport.h"
 #include "match/AlbumMatcher.h"
 #include "match/ArtistDictionary.h"

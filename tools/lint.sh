@@ -207,16 +207,23 @@ export build resource_dir
 if [[ -s "$clazy_out" ]]; then cat "$clazy_out"; exit 1; fi
 
 echo "== cppcheck"
+# cppcheck doesn't read Objective-C++: .mm units are clang-tidy's and clazy's alone.
+cpp_units=()
+for unit in "${units[@]}"; do [[ "$unit" == *.mm ]] || cpp_units+=("$unit"); done
 # A folder takes every translation unit under it; a file, --changed or --shard, only the units themselves.
 filters=()
 if [[ -n "$changed" || $shard_count -gt 1 ]]; then
-    for unit in "${units[@]}"; do filters+=("--file-filter=$root/$unit"); done
+    for unit in "${cpp_units[@]}"; do filters+=("--file-filter=$root/$unit"); done
 else
     for path in "${paths[@]}"; do
-        if [[ -f "$path" ]]; then filters+=("--file-filter=$root/$path"); else filters+=("--file-filter=$root/${path%/}/*"); fi
+        if [[ -f "$path" ]]; then
+            [[ "$path" == *.mm ]] || filters+=("--file-filter=$root/$path")
+        else
+            filters+=("--file-filter=$root/${path%/}/*")
+        fi
     done
 fi
-[[ ${#units[@]} -eq 0 ]] || cppcheck -j "$jobs" --project="$build/compile_commands.json" --library=qt --library=googletest --enable=warning,performance,portability --inline-suppr \
+[[ ${#cpp_units[@]} -eq 0 || ${#filters[@]} -eq 0 ]] || cppcheck -j "$jobs" --project="$build/compile_commands.json" --library=qt --library=googletest --enable=warning,performance,portability --inline-suppr \
     --suppress=missingIncludeSystem --suppress=returnByReference --suppress='*:*/vcpkg_installed/*' --suppress='*:*/_deps/*' \
     --suppress='*:*_autogen/*' --error-exitcode=1 --quiet "${filters[@]}"
 
