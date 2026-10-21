@@ -96,17 +96,19 @@ void BrowseTreeModel::rebuild()
         const QStringList parts = result.path.split(separators, Qt::SkipEmptyParts);
         int parent = kRoot;
         for (qsizetype p = 0; p + 1 < parts.size(); ++p) {
-            auto found = folders.constFind({parent, parts.at(p)});
-            if (found == folders.cend()) {
-                Node folder;
-                folder.name = parts.at(p);
-                folder.parent = parent;
-                const auto id = static_cast<int>(m_nodes.size());
-                m_nodes.append(folder);
-                m_nodes[parent].children.append(id);
-                found = folders.insert({parent, parts.at(p)}, id);
+            const std::pair<int, QString> key{parent, parts.at(p)};
+            if (const auto found = folders.constFind(key); found != folders.cend()) {
+                parent = found.value();
+                continue;
             }
-            parent = found.value();
+            Node folder;
+            folder.name = parts.at(p);
+            folder.parent = parent;
+            const auto id = static_cast<int>(m_nodes.size());
+            m_nodes.append(folder);
+            m_nodes[parent].children.append(id);
+            folders.insert(key, id);
+            parent = id;
         }
         Node file;
         file.name = parts.isEmpty() ? result.path : parts.constLast();
@@ -136,7 +138,7 @@ void BrowseTreeModel::sortChildren(int node)
     while (!pending.isEmpty()) {
         const int current = pending.takeLast();
         QList<int> &children = m_nodes[current].children;
-        std::stable_sort(children.begin(), children.end(), [this](int a, int b) { return lessThan(a, b); });
+        std::ranges::stable_sort(children, [this](int a, int b) { return lessThan(a, b); });
         for (qsizetype row = 0; row < children.size(); ++row) {
             Node &child = m_nodes[children.at(row)];
             child.row = static_cast<int>(row);
@@ -250,9 +252,8 @@ QString BrowseTreeModel::pathOf(int node) const
 
 QModelIndex BrowseTreeModel::indexOfResult(int resultIndex, int column) const
 {
-    return resultIndex >= 0 && resultIndex < m_nodeOfResult.size()
-               ? indexOfNode(m_nodeOfResult.at(resultIndex), column)
-               : QModelIndex();
+    return resultIndex >= 0 && resultIndex < m_nodeOfResult.size() ? indexOfNode(m_nodeOfResult.at(resultIndex), column)
+                                                                   : QModelIndex();
 }
 
 QModelIndex BrowseTreeModel::indexOfPath(const QByteArray &rawPath, int column) const

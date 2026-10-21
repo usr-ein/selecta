@@ -303,8 +303,7 @@ QList<int> BrowseView::selectedResults() const
         const QList<int> indexes = picked != nullptr ? QList<int>{picked->index} : m_model->filesIn(row);
         for (const int index : indexes) {
             const core::SearchResult *result = m_model->result(index);
-            const bool wanted =
-                picked != nullptr || m_model->hiddenReason(index) == core::HiddenReason::None;
+            const bool wanted = picked != nullptr || m_model->hiddenReason(index) == core::HiddenReason::None;
             if (result && result->isAudio() && wanted && !seen.contains(index)) {
                 seen.insert(index);
                 results.append(index);

@@ -272,7 +272,8 @@ TEST(PeerMessages, MalformedShareListIsNotTooLarge)
             .has_value());
     EXPECT_FALSE(tooLarge);
     tooLarge = true;
-    EXPECT_FALSE(peer::SharedFileListResponse::decode("not zlib", protocol::kShareListInflatedMax, &tooLarge).has_value());
+    EXPECT_FALSE(
+        peer::SharedFileListResponse::decode("not zlib", protocol::kShareListInflatedMax, &tooLarge).has_value());
     EXPECT_FALSE(tooLarge);
 }
 

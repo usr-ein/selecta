@@ -20,8 +20,8 @@
 #include <QSignalSpy>
 #include <QtEndian>
 
-#include <gtest/gtest.h>
 #include <algorithm>
+#include <gtest/gtest.h>
 #include <memory>
 
 using namespace Qt::StringLiterals;
@@ -211,8 +211,12 @@ TEST_F(BrowseServiceTest, ANestedTreeIsListedWhole)
     peer->answerIndirect = false;
     // Folders inside folders, files at every level, odd and non-audio files too: every one of them is listed.
     QList<selecta::slsk::SharedDirectory> directories;
-    const QList<QByteArray> paths = {"@@music", "@@music\\Artist", "@@music\\Artist\\Album (2001)",
-                                     "@@music\\Artist\\Album (2001)\\CD1", "@@music\\SPEEDTEST", "@@other\\Ünïcödé"};
+    const QList<QByteArray> paths = {"@@music",
+                                     "@@music\\Artist",
+                                     "@@music\\Artist\\Album (2001)",
+                                     R"(@@music\Artist\Album (2001)\CD1)",
+                                     "@@music\\SPEEDTEST",
+                                     "@@other\\Ünïcödé"};
     int expected = 0;
     for (const QByteArray &path : paths) {
         selecta::slsk::SharedDirectory directory;
@@ -230,8 +234,8 @@ TEST_F(BrowseServiceTest, ANestedTreeIsListedWhole)
     EXPECT_EQ(state->folders, paths.size());
     const QList<selecta::core::SearchResult> results = browse->results(peer->username());
     ASSERT_EQ(results.size(), expected);
-    EXPECT_EQ(results.at(3 * 3 + 1).hit.path, QByteArray("@@music\\Artist\\Album (2001)\\CD1\\10MB.bin"));
-    EXPECT_EQ(results.at(3 * 3 + 1).folder, u"@@music\\Artist\\Album (2001)\\CD1"_s);
+    EXPECT_EQ(results.at((3 * 3) + 1).hit.path, QByteArray("@@music\\Artist\\Album (2001)\\CD1\\10MB.bin"));
+    EXPECT_EQ(results.at((3 * 3) + 1).folder, u"@@music\\Artist\\Album (2001)\\CD1"_s);
 }
 
 TEST_F(BrowseServiceTest, APeerWhoSharesNothingSaysSo)

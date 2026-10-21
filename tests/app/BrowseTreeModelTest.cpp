@@ -65,10 +65,10 @@ QModelIndex child(const BrowseTreeModel &model, const QModelIndex &parent, const
 QList<SearchResult> nested()
 {
     return analysed({
-        hit("@@music\\Okuma Drift\\Night Signals\\10 - Okuma Drift - Coda.mp3"),
-        hit("@@music\\Okuma Drift\\Night Signals\\2 - Okuma Drift - Low Tide.mp3"),
-        hit("@@music\\Okuma Drift\\Night Signals\\cover.jpg"),
-        hit("@@music\\Okuma Drift\\Night Signals\\CD2\\01 - Okuma Drift - Encore.mp3"),
+        hit(R"(@@music\Okuma Drift\Night Signals\10 - Okuma Drift - Coda.mp3)"),
+        hit(R"(@@music\Okuma Drift\Night Signals\2 - Okuma Drift - Low Tide.mp3)"),
+        hit(R"(@@music\Okuma Drift\Night Signals\cover.jpg)"),
+        hit(R"(@@music\Okuma Drift\Night Signals\CD2\01 - Okuma Drift - Encore.mp3)"),
         hit("@@music\\Okuma Drift\\loose single.mp3", 128),
         hit("@@music\\SPEEDTEST\\10MB.bin"),
         hit("@@music\\SPEEDTEST\\100MB.bin"),
@@ -128,7 +128,7 @@ TEST(BrowseTreeModel, EveryFileIsListedAndTheFilteredOnesAreDimmed)
     const QModelIndex single = model.indexOfPath("@@music\\Okuma Drift\\loose single.mp3");
     ASSERT_TRUE(single.isValid());
     EXPECT_EQ(single.data(BrowseTreeModel::HiddenReasonRole).toInt(), static_cast<int>(HiddenReason::Bitrate));
-    const QModelIndex good = model.indexOfPath("@@music\\Okuma Drift\\Night Signals\\2 - Okuma Drift - Low Tide.mp3");
+    const QModelIndex good = model.indexOfPath(R"(@@music\Okuma Drift\Night Signals\2 - Okuma Drift - Low Tide.mp3)");
     ASSERT_TRUE(good.isValid());
     EXPECT_FALSE(good.data(Qt::ForegroundRole).isValid());
     EXPECT_FALSE(model.index(good.row(), BrowseTreeModel::QualityColumn, good.parent()).data().toString().isEmpty());
@@ -155,7 +155,8 @@ TEST(BrowseTreeModel, FindsAFileByThePathThePeerSent)
 {
     BrowseTreeModel model;
     model.reset(nested());
-    const QModelIndex found = model.indexOfPath("@@music\\Okuma Drift\\Night Signals\\CD2\\01 - Okuma Drift - Encore.mp3");
+    const QModelIndex found =
+        model.indexOfPath(R"(@@music\Okuma Drift\Night Signals\CD2\01 - Okuma Drift - Encore.mp3)");
     ASSERT_TRUE(found.isValid());
     EXPECT_EQ(found.data().toString(), u"01 - Okuma Drift - Encore.mp3"_s);
     EXPECT_EQ(found.parent().data().toString(), u"CD2"_s);
@@ -166,8 +167,9 @@ TEST(BrowseTreeModel, FindsAFileByThePathThePeerSent)
     EXPECT_FALSE(model.indexOfPath({}).isValid());
     // Still found after a sort.
     model.sort(BrowseTreeModel::SizeColumn, Qt::DescendingOrder);
-    EXPECT_EQ(model.indexOfPath("@@music\\Okuma Drift\\Night Signals\\CD2\\01 - Okuma Drift - Encore.mp3").data().toString(),
-              u"01 - Okuma Drift - Encore.mp3"_s);
+    EXPECT_EQ(
+        model.indexOfPath("@@music\\Okuma Drift\\Night Signals\\CD2\\01 - Okuma Drift - Encore.mp3").data().toString(),
+        u"01 - Okuma Drift - Encore.mp3"_s);
 }
 
 TEST(BrowseTreeModel, AnEmptyListIsAnEmptyTree)
@@ -189,13 +191,14 @@ TEST(BrowseTreeModel, OddPathsAllLandSomewhere)
     BrowseTreeModel model;
     const QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::Fatal);
     model.reset(analysed({
-        hit("no folder.mp3"),                        // at the top
-        hit("\\\\leading\\\\\\doubled\\a.mp3"),     // empty parts skipped
-        hit("mixed/slashes\\b.mp3"),                 // either separator
-        hit("trailing\\"),                           // a "file" with no name
-        hit("dup\\same.mp3"), hit("dup\\same.mp3"), // the same path twice: two rows
-        hit("<b>bold & \x01weird\\c.mp3"),           // markup and control characters stay text
-        hit("\xff\xfe latin1\\d.mp3"),               // not UTF-8
+        hit("no folder.mp3"),                // at the top
+        hit(R"(\\leading\\\doubled\a.mp3)"), // empty parts skipped
+        hit("mixed/slashes\\b.mp3"),         // either separator
+        hit("trailing\\"),                   // a "file" with no name
+        hit("dup\\same.mp3"),
+        hit("dup\\same.mp3"),              // the same path twice: two rows
+        hit("<b>bold & \x01weird\\c.mp3"), // markup and control characters stay text
+        hit("\xff\xfe latin1\\d.mp3"),     // not UTF-8
     }));
     EXPECT_EQ(model.fileCount(), 8);
     const QStringList top = namesUnder(model);

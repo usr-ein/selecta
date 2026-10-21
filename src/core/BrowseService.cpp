@@ -219,8 +219,8 @@ void BrowseService::listReceived(const QString &peer, const slsk::SharedFileList
     if (files > kMaxFiles) {
         // Too big to list: said plainly, nothing kept, and an older list of theirs isn't shown as if it were this one.
         found->files = static_cast<int>(std::min<qsizetype>(files, std::numeric_limits<int>::max()));
-        found->folders = static_cast<int>(
-            std::min<qsizetype>(list.directories.size() + list.privateDirectories.size(), std::numeric_limits<int>::max()));
+        found->folders = static_cast<int>(std::min<qsizetype>(list.directories.size() + list.privateDirectories.size(),
+                                                              std::numeric_limits<int>::max()));
         found->privateFolders = 0;
         found->fromCache = false;
         ++m_generation[peer]; // an analysis in flight is dropped

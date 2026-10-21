@@ -1260,8 +1260,7 @@ void PeerNetworkPrivate::handleShareList(const QString &username, const QByteArr
     const auto promise = std::make_shared<QPromise<ShareListResult>>();
     auto *watcher = new QFutureWatcher<ShareListResult>(q);
     QObject::connect(watcher, &QFutureWatcherBase::finished, q, [this, watcher, username] {
-        const ShareListResult result =
-            watcher->future().resultCount() > 0 ? watcher->result() : ShareListResult{};
+        const ShareListResult result = watcher->future().resultCount() > 0 ? watcher->result() : ShareListResult{};
         watcher->deleteLater();
         if (result.list) {
             Q_EMIT q->sharedFileListReceived(username, *result.list);

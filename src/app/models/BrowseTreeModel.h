@@ -73,12 +73,12 @@ private:
     struct Node
     {
         QString name;
-        int parent = -1;  // node id; -1 for the root
-        int row = 0;      // among the parent's children
-        int result = -1;  // files: the result's index
+        int parent = -1; // node id; -1 for the root
+        int row = 0;     // among the parent's children
+        int result = -1; // files: the result's index
         QList<int> children;
-        qint64 size = 0;  // folders: every file under them
-        int files = 0;    // folders: every file under them
+        qint64 size = 0; // folders: every file under them
+        int files = 0;   // folders: every file under them
     };
 
     void rebuild();
@@ -91,13 +91,13 @@ private:
     QVariant fileData(const core::SearchResult &result, int column, int role) const;
     QVariant folderData(int node, int column, int role) const;
 
-    QList<core::SearchResult> m_results;      // by index
-    QList<core::HiddenReason> m_hidden;       // by result index
+    QList<core::SearchResult> m_results; // by index
+    QList<core::HiddenReason> m_hidden;  // by result index
     core::SearchFilter m_filter;
     core::FilterCounts m_counts;
-    QList<Node> m_nodes;                      // 0 is the invisible root
-    QList<int> m_nodeOfResult;                // by result index
-    QHash<QByteArray, int> m_resultOfPath;    // raw path → result index
+    QList<Node> m_nodes;                   // 0 is the invisible root
+    QList<int> m_nodeOfResult;             // by result index
+    QHash<QByteArray, int> m_resultOfPath; // raw path → result index
     int m_folderCount = 0;
     int m_sortColumn = NameColumn;
     Qt::SortOrder m_sortOrder = Qt::AscendingOrder;
