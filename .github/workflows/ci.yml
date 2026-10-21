@@ -7,7 +7,6 @@
 #                                             three shares
 #   push to main       the pull request's jobs, with the whole suite (lint: the files the push changes), and
 #   or ci/**           macOS · build, tests, static linking
-#                      macOS · lint           tools/lint.sh over the whole tree, .mm files and macOS-only code included
 #                      Windows · build, tests
 #   nightly, and       all of the above (Linux lint: the whole tree, in three shares), and
 #   on request         Linux · asan           the whole suite under AddressSanitizer + UBSan
@@ -15,6 +14,8 @@
 # Pull requests run on Linux only (maintainer, 2026-10-21): macOS and Windows run on main, ASan at night, and a red
 # main gets a fix-forward minion (docs/CREW.md). Before its pull request, a minion builds and runs the targeted tests on
 # the Mac, which covers the macOS-only code. ThreadSanitizer doesn't run (maintainer, 2026-10-21).
+# Lint runs on Linux only (maintainer, 2026-10-21); macOS on main is build and tests. Linux can't analyse the macOS-only
+# code (.mm files, Q_OS_MACOS branches): the minion's own tools/lint.sh on the Mac is what checks it.
 #
 # Network safety (CLAUDE.md): nothing here talks to the Soulseek network or to the metadata services. Tests use
 # loopback fakes only (on Linux they run in a network namespace that has nothing but loopback), and the live-server
@@ -360,48 +361,6 @@ jobs:
         with:
           name: macos-test-log
           path: build/dev/Testing/Temporary/LastTest*.log
-          if-no-files-found: ignore
-          retention-days: 14
-
-  macos-lint:
-    name: macOS · lint
-    if: github.event_name != 'pull_request'
-    runs-on: macos-26
-    timeout-minutes: 120
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-    steps:
-      - uses: actions/checkout@v7
-
-      # bash: lint.sh needs bash 4 or later (macOS ships 3.2).
-      - name: Tools
-        run: brew install autoconf autoconf-archive automake libtool bash llvm clazy cppcheck clang-format
-
-      - name: vcpkg
-        uses: ./.github/actions/vcpkg
-        with:
-          triplet: arm64-osx-selecta
-
-      - name: Configure
-        run: >-
-          cmake --preset dev -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build
-          -DCMAKE_AUTOGEN_ORIGIN_DEPENDS=OFF -DCMAKE_GLOBAL_AUTOGEN_TARGET=ON
-
-      - name: Generated sources
-        run: cmake --build --preset dev --target autogen
-
-      - name: Lint
-        run: tools/lint.sh
-
-      - name: Keep the analyser logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: macos-lint-logs
-          path: |
-            build/dev/clang-tidy.log
-            build/dev/clazy.log
           if-no-files-found: ignore
           retention-days: 14
 
