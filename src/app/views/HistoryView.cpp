@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/HistoryView.h"
 
+#include "app/Status.h"
 #include "app/Style.h"
 
 #include "app/Format.h"
@@ -69,14 +70,38 @@ QString whereText(const HistoryEntry &entry)
     case HistoryEntry::Whereabouts::Inbox:
         return HistoryView::tr("In the Inbox");
     case HistoryEntry::Whereabouts::Filed:
-        return entry.filedPath.isEmpty() ? HistoryView::tr("Filed")
-                                         : HistoryView::tr("Filed: %1").arg(QDir::toNativeSeparators(entry.filedPath));
+        return HistoryView::tr("In your collection"); // where exactly: the tooltip
     case HistoryEntry::Whereabouts::Trashed:
         return HistoryView::tr("Moved to the Trash");
     case HistoryEntry::Whereabouts::Preview:
         return HistoryView::tr("Preview only");
     }
     return {};
+}
+
+// Where the file is now, as a status (P-003): a symbol in its kind's colour, then the words.
+status::Status whereSymbol(const HistoryEntry &entry)
+{
+    using status::Kind;
+    switch (entry.whereabouts) {
+    case HistoryEntry::Whereabouts::Inbox:
+        return {u"tray.full.fill"_s, Kind::Inbox};
+    case HistoryEntry::Whereabouts::Filed:
+        return {u"checkmark.seal.fill"_s, Kind::Have};
+    case HistoryEntry::Whereabouts::Trashed:
+        return {u"trash"_s, Kind::Waiting};
+    case HistoryEntry::Whereabouts::Preview:
+        return {u"clock"_s, Kind::Waiting};
+    }
+    return {};
+}
+
+QString whereToolTip(const HistoryEntry &entry)
+{
+    if (entry.whereabouts == HistoryEntry::Whereabouts::Filed && !entry.filedPath.isEmpty()) {
+        return QDir::toNativeSeparators(entry.filedPath);
+    }
+    return whereText(entry);
 }
 
 QStandardItem *readOnly(const QString &text, const QString &toolTip = {})
@@ -104,7 +129,7 @@ HistoryView::HistoryView(storage::Database &db, int currentSession, QWidget *par
     m_summary->setForegroundRole(QPalette::PlaceholderText);
     m_summary->setWordWrap(true);
 
-    m_model->setHorizontalHeaderLabels({tr("Session or download"), tr("Quality"), tr("From"), tr("Where it is now")});
+    m_model->setHorizontalHeaderLabels({tr("Session or download"), tr("Quality"), tr("From"), tr("Now")});
     m_table->setObjectName(u"history.sessions"_s);
     m_table->setAccessibleName(tr("Sessions and their downloads"));
     m_table->setModel(m_model);
@@ -117,6 +142,9 @@ HistoryView::HistoryView(storage::Database &db, int currentSession, QWidget *par
     m_table->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_table->setColumnWidth(0, 420);
     m_table->setAttribute(Qt::WA_MacShowFocusRect, false);
+    // Fewer columns (P-003): the peer is in the download's tooltip; where it is now, as a status.
+    m_table->header()->setSectionHidden(2, true);
+    m_table->setItemDelegateForColumn(3, new status::StatusDelegate(m_table));
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -170,9 +198,14 @@ void HistoryView::refresh()
         row->setFont(bold);
         const QList<QStandardItem *> sessionRow{row, readOnly({}), readOnly({}), readOnly({})};
         for (const HistoryEntry &entry : entries) {
-            const QString where = whereText(entry);
-            row->appendRow({readOnly(itemText(entry), QString::fromUtf8(entry.remotePath)), readOnly(entry.quality),
-                            readOnly(entry.peer), readOnly(where, where)});
+            QStandardItem *where = readOnly(whereText(entry), whereToolTip(entry));
+            const status::Status symbol = whereSymbol(entry);
+            where->setData(symbol.symbol, status::kSymbolRole);
+            where->setData(static_cast<int>(symbol.kind), status::kKindRole);
+            const QString from = entry.peer.isEmpty() ? QString() : tr("From %1").arg(entry.peer);
+            const QString path = QString::fromUtf8(entry.remotePath);
+            row->appendRow({readOnly(itemText(entry), from.isEmpty() ? path : from + u'\n' + path),
+                            readOnly(entry.quality), readOnly(entry.peer), where});
         }
         m_model->appendRow(sessionRow);
     }
@@ -182,10 +215,10 @@ void HistoryView::refresh()
             m_table->expand(m_model->index(row, 0));
         }
     }
-    m_summary->setText(total == 0
-                           ? tr("One session per launch. Downloads appear under the session they finished in, "
-                                "with where each file is now.")
-                           : tr("%1 across the last %2 sessions.").arg(downloadsText(total)).arg(records.size()));
+    m_summary->setText(total == 0 ? tr("One session per launch. Downloads appear under the session they finished in, "
+                                       "with where each file is now.")
+                                  : QString());
+    m_summary->setVisible(total == 0); // the counts are in the toolbar's subtitle
 }
 
 } // namespace selecta::app
