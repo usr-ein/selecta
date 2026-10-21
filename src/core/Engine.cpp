@@ -121,6 +121,7 @@ bool Engine::start()
     metaOptions.openUrl = m_options.openUrl;
     metaOptions.endpoints = m_options.metaEndpoints;
     metaOptions.spotifyAllowed = m_options.spotifyAllowed;
+    metaOptions.coverCacheDir = m_options.coverCacheDir;
     m_meta = std::make_unique<MetaServices>(*m_governor, *m_activity, *m_clock, std::move(metaOptions));
     connect(m_meta.get(), &MetaServices::spotifyStatusChanged, this, &Engine::spotifyStatusChanged);
 
@@ -962,6 +963,25 @@ void Engine::applyInboxRelease(qint64 itemId, const meta::Release &release)
             if (m_started) {
                 withCover(result.ok() ? meta::MusicBrainzClient::applied(release, result.value()) : release);
             }
+        });
+}
+
+void Engine::fetchCover(const QString &key, const meta::Release &release)
+{
+    meta::CoverFetcher *covers = m_started ? m_meta->covers() : nullptr;
+    if (covers == nullptr) {
+        Q_EMIT coverFetched(key, {}); // not started, or cover downloads are off
+        return;
+    }
+    covers->fetch(release, meta::Priority::Interactive)
+        .then(this, [this, key](const meta::Result<meta::CoverImage> &cover) {
+            if (!m_started) {
+                return;
+            }
+            if (!cover.ok()) {
+                qCDebug(lcEngine).noquote() << "no cover for the inspector:" << cover.error().message;
+            }
+            Q_EMIT coverFetched(key, cover.ok() ? cover.value().bytes : QByteArray());
         });
 }
 

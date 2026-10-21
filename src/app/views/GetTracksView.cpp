@@ -255,6 +255,9 @@ GetTracksView::GetTracksView(core::EngineHost &engine, Presets &presets, QWidget
         [this](qint64 id, const QString &peer, const QByteArray &path) { m_engine.switchTrackPeer(id, peer, path); });
     connect(m_inspector, &GetTracksInspector::findAgainRequested, this,
             [this](qint64 id) { m_engine.findTracks({id}); });
+    // The cover of the line shown (P-021).
+    connect(m_inspector, &GetTracksInspector::coverWanted, &m_engine, &core::EngineHost::fetchCover);
+    connect(&m_engine, &core::EngineHost::coverFetched, m_inspector, &GetTracksInspector::showCover);
     m_model->reset(m_engine.getLines());
     refresh();
 }
