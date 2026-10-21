@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Jobs to run: any of build, tsan, lint, windows (empty: all)"
+        description: "Jobs to run: any of build, replay, tsan, lint, windows (empty: all)"
         type: string
         default: ''
 
@@ -71,8 +71,6 @@ jobs:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
       CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache-exp
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
       UBSAN_OPTIONS: print_stacktrace=1
     steps:
       - uses: actions/checkout@v7
@@ -100,6 +98,7 @@ jobs:
           start=$SECONDS
           cmake --preset linux -B build/exp -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DVCPKG_INSTALL_OPTIONS=--clean-after-build \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             ${{ matrix.linker && format('-DCMAKE_LINKER_TYPE={0}', matrix.linker) || '' }} \
             "-DSELECTA_SANITIZE=${{ matrix.sanitize }}" > configure.log 2>&1 || { cat configure.log; exit 1; }
           echo "configure: $((SECONDS - start)) s"
@@ -140,6 +139,7 @@ jobs:
           start=$SECONDS
           cmake --preset linux -B build/exp -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
             ${{ matrix.linker && format('-DCMAKE_LINKER_TYPE={0}', matrix.linker) || '' }} \
             "-DSELECTA_SANITIZE=${{ matrix.sanitize }}" > configure.log 2>&1 || { cat configure.log; exit 1; }
           echo "configure: $((SECONDS - start)) s"
@@ -173,6 +173,84 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: exp-linux-${{ matrix.name }}
+          path: |
+            *.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # What a pull request's build costs with main's ccache: a cold build at 31c7e94, then 22bba78 (P-022: base and
+  # governor headers) and d7a1a2a (P-019: app-wide), each in a fresh build folder with the ccache of the one before.
+  replay:
+    name: exp · replay ${{ matrix.name }}
+    if: inputs.only == '' || contains(inputs.only, 'replay')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            flags: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD
+          - name: clang
+            flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD
+          - name: gcc-unity
+            flags: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD -DCMAKE_UNITY_BUILD=ON
+          - name: clang-unity
+            flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD -DCMAKE_UNITY_BUILD=ON
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
+      CCACHE_DIR: ${{ github.workspace }}/../ccache-replay
+      CCACHE_COMPILERCHECK: content
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache libgl-dev libegl-dev \
+            libglu1-mesa-dev mold lld
+
+      - name: vcpkg
+        uses: ./.github/actions/vcpkg
+        with:
+          triplet: x64-linux-selecta
+
+      - name: Replay
+        run: |
+          for commit in 31c7e94 22bba78 d7a1a2a; do
+            git checkout -q "$commit"
+            rm -rf build/r
+            cmake --preset linux -B build/r -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ${{ matrix.flags }} > configure.log 2>&1 || { cat configure.log; exit 1; }
+            ccache -z > /dev/null
+            start=$SECONDS
+            status=0
+            cmake --build build/r -- -k 0 > "build-$commit.log" 2>&1 || status=$?
+            echo "build $commit: $((SECONDS - start)) s (exit $status)"
+            ccache --print-stats | grep -E '^(direct_cache_hit|preprocessed_cache_hit|cache_miss)\s' | tr '\n' ' '; echo
+            [[ $status -eq 0 ]] || grep -E 'error|Error' "build-$commit.log" | head -20
+          done
+          du -sh "$CCACHE_DIR"
+
+      - name: Tests (loopback only)
+        run: |
+          start=$SECONDS
+          sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
+            --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
+            QT_QPA_PLATFORM=minimal ctest --test-dir build/r --output-on-failure --parallel 16 --timeout 300" \
+            > test.log 2>&1 || true
+          echo "tests -j16: $((SECONDS - start)) s"
+          grep -E 'tests passed|Total Test time' test.log
+          grep -A20 'FAILED' test.log | head -24 || true
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: exp-replay-${{ matrix.name }}
           path: |
             *.log
           if-no-files-found: ignore
