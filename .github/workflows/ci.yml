@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       only:
-        description: "Jobs to run: any of build, replay, tsan, lint, windows (empty: all)"
+        description: "Jobs to run: any of build, replay, lint, windows (empty: all)"
         type: string
         default: ''
       replay:
@@ -261,83 +261,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: exp-replay-${{ matrix.name }}
-          path: |
-            *.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-  linux-tsan:
-    name: exp · linux tsan-qt
-    if: inputs.only == '' || contains(inputs.only, 'tsan')
-    runs-on: ubuntu-26.04
-    timeout-minutes: 240
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
-      CCACHE_DIR: ${{ github.workspace }}/build/cache/ccache-exp
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Tools
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends autoconf-archive nasm ccache libgl-dev libegl-dev \
-            libglu1-mesa-dev mold
-          # ThreadSanitizer's shadow memory needs the classic mmap layout; newer kernels randomise more address bits.
-          sudo sysctl vm.mmap_rnd_bits=28
-
-      - name: vcpkg
-        id: vcpkg
-        uses: ./.github/actions/vcpkg
-        with:
-          triplet: x64-linux-selecta-tsan
-
-      - name: Configure (builds the dependencies, Qt with TSan)
-        id: configure
-        run: |
-          start=$SECONDS
-          cmake --preset linux -B build/linux-tsan -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF \
-            -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_LINKER_TYPE=MOLD -DSELECTA_SANITIZE=thread \
-            -DVCPKG_TARGET_TRIPLET=x64-linux-selecta-tsan -DVCPKG_HOST_TRIPLET=x64-linux-selecta-tsan
-          echo "configure (dependencies): $((SECONDS - start)) s"
-          grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/linux-tsan/CMakeCache.txt
-
-      - name: Save the vcpkg binary cache
-        if: always() && steps.vcpkg.outcome == 'success'
-        uses: ./.github/actions/vcpkg-save
-        with:
-          key: ${{ steps.vcpkg.outputs.cache-key }}
-          installed: build/linux-tsan/vcpkg_installed
-          complete: ${{ steps.configure.outcome == 'success' }}
-
-      - name: Build
-        run: |
-          du -sh "$VCPKG_DEFAULT_BINARY_CACHE"
-          start=$SECONDS
-          cmake --build build/linux-tsan -- -k 0 > build.log 2>&1 || { tail -100 build.log; exit 1; }
-          echo "cold build: $((SECONDS - start)) s"
-          ccache -s
-
-      - name: Tests (loopback only)
-        run: |
-          for jobs in 4 8; do
-            start=$SECONDS
-            sudo unshare --net -- sh -c "ip link set lo up && exec setpriv --reuid=$(id -u) --regid=$(id -g) \
-              --init-groups env USER='$USER' LOGNAME='$USER' HOME='$HOME' PATH='$PATH' LANG=C.UTF-8 \
-              QT_QPA_PLATFORM=minimal TSAN_OPTIONS='suppressions=$PWD/tests/tsan-suppressions.txt' \
-              ctest --test-dir build/linux-tsan --output-on-failure --parallel $jobs --timeout 900" \
-              > "test-$jobs.log" 2>&1 || true
-            echo "tests -j$jobs: $((SECONDS - start)) s"
-            tail -5 "test-$jobs.log"
-            grep -E 'Failed|Timeout|\*\*\*' "test-$jobs.log" | head -40 || true
-          done
-
-      - name: Keep the logs
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: exp-linux-tsan-qt
           path: |
             *.log
           if-no-files-found: ignore
