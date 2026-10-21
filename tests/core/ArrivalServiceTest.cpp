@@ -317,6 +317,58 @@ TEST_F(ArrivalServiceTest, AnMp3At320IsOnlyTaggedWithoutAWarning)
               u"Neon Rain - Extended Mix"_s); // but tagged
 }
 
+// P-025, the maintainer's note: an Opus download failed with "Conversion failed: Selecta writes tags only to MP3,
+// AIFF, WAV, FLAC and M4A files". It now arrives as an MP3 320 with the release's tags; the Opus is never tagged.
+TEST_F(ArrivalServiceTest, AnOpusDownloadArrivesAsATaggedMp3_320)
+{
+    const Download download = downloaded(9, u"00 - 2a_foundU_switchup_WIP (_leg!_).opus"_s,
+                                         synth::makeOpus(synth::sine(440.0, 6.0, 48000), 160));
+    const ArrivalResult result = arrive(download);
+    ASSERT_TRUE(result.ok) << result.message.toStdString();
+    EXPECT_TRUE(result.warning.isEmpty()) << result.warning.toStdString();
+    EXPECT_EQ(result.message, u"Singles/Okuma_Drift_Halden_Rue_-_Neon_Rain_-_Extended_Mix.mp3"_s);
+    const QString file = inboxPath(result.message);
+    const auto quality = selecta::convert::probeSourceQuality(file, false);
+    ASSERT_TRUE(quality.ok());
+    EXPECT_EQ(quality.value().codec, selecta::audio::Codec::Mp3);
+    EXPECT_EQ(quality.value().bitrateKbps, 320);
+    EXPECT_TRUE(quality.value().constantBitrate);
+    EXPECT_EQ(quality.value().sampleRate, 48000); // Opus's own rate, which MP3 stores: nothing resampled
+    const auto tags = selecta::convert::readTags(file);
+    ASSERT_TRUE(tags.ok());
+    EXPECT_EQ(tags.value().value(keys::Title), u"Neon Rain - Extended Mix"_s);
+    EXPECT_EQ(tags.value().value(keys::Label), u"Tidal Records"_s);
+    EXPECT_EQ(tags.value().value(keys::EncodedBy), u"Selecta 9.9.9"_s);
+
+    // The lossy original is deleted, not trashed (D11 is for lossless originals); the item says what it was.
+    EXPECT_TRUE(trashed.isEmpty());
+    EXPECT_FALSE(QFileInfo::exists(download.localPath));
+    const std::optional<InboxItem> item = selecta::library::InboxStore(db).find(result.inboxItem);
+    ASSERT_TRUE(item.has_value());
+    EXPECT_EQ(item->format, u"MP3"_s);
+    EXPECT_EQ(item->bitrate, 320);
+    EXPECT_TRUE(item->sourceFormat.startsWith(u"Opus"_s)) << item->sourceFormat.toStdString();
+    EXPECT_NEAR(static_cast<double>(item->durationMs), 6000.0, 100.0);
+}
+
+TEST_F(ArrivalServiceTest, VorbisAndAacDownloadsArriveAsTaggedMp3_320)
+{
+    const ArrivalResult vorbis =
+        arrive(downloaded(10, u"track.ogg"_s, synth::makeOggVorbis(synth::sine(440.0, 5.0), 192)));
+    const ArrivalResult aac = arrive(downloaded(11, u"track.m4a"_s, synth::makeM4a(synth::sine(330.0, 5.0))));
+    for (const ArrivalResult &result : {vorbis, aac}) {
+        ASSERT_TRUE(result.ok) << result.message.toStdString();
+        EXPECT_TRUE(result.warning.isEmpty()) << result.warning.toStdString(); // no "Kept as AAC" any more
+        ASSERT_TRUE(result.message.endsWith(u".mp3"_s)) << result.message.toStdString();
+        const auto quality = selecta::convert::probeSourceQuality(inboxPath(result.message), false);
+        ASSERT_TRUE(quality.ok());
+        EXPECT_EQ(quality.value().codec, selecta::audio::Codec::Mp3);
+        EXPECT_EQ(quality.value().bitrateKbps, 320);
+        EXPECT_EQ(selecta::convert::readTags(inboxPath(result.message)).value().value(keys::Title),
+                  u"Neon Rain - Extended Mix"_s);
+    }
+}
+
 TEST_F(ArrivalServiceTest, WithoutAReleaseTheFilesOwnTagsAreUsed)
 {
     const Download download =

@@ -655,6 +655,28 @@ QByteArray makeOggFlac(const Pcm &pcm)
     return encodeWithFfmpeg(pcm, spec);
 }
 
+QByteArray makeOpus(const Pcm &pcm, int bitrateKbps)
+{
+    FfmpegFile spec;
+    spec.muxer = "ogg";
+    spec.extension = "opus";
+    spec.codec = AV_CODEC_ID_OPUS;
+    spec.format = AV_SAMPLE_FMT_FLTP;
+    spec.bitRate = qint64{bitrateKbps} * 1000;
+    return encodeWithFfmpeg(pcm, spec);
+}
+
+QByteArray makeOggVorbis(const Pcm &pcm, int bitrateKbps)
+{
+    FfmpegFile spec;
+    spec.muxer = "ogg";
+    spec.extension = "ogg";
+    spec.codec = AV_CODEC_ID_VORBIS;
+    spec.format = AV_SAMPLE_FMT_FLTP;
+    spec.bitRate = qint64{bitrateKbps} * 1000;
+    return encodeWithFfmpeg(pcm, spec);
+}
+
 double rmsDifference(const Pcm &a, const Pcm &b, qint64 skip)
 {
     const qint64 frames = std::min(a.frames(), b.frames());

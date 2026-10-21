@@ -112,6 +112,11 @@ TEST(GetTracksInspector, NotFoundListsTheNearMissesToGetAnyway)
     EXPECT_TRUE(shown(inspector, u"inspector.get.nearMisses"_s));
     EXPECT_FALSE(shown(inspector, u"inspector.get.otherFiles"_s));
     EXPECT_FALSE(shown(inspector, u"inspector.get.wayOut"_s));
+    // What arrives (P-025): an MP3 as it is, any other lossy file as MP3 320.
+    const auto *note = child<QLabel>(inspector, u"inspector.get.nearMisses.note"_s);
+    ASSERT_NE(note, nullptr);
+    EXPECT_EQ(note->text(), u"An MP3 is kept as it is; other lossy files become MP3 320. Either way it gets its tags "
+                            "and cover, and your Inbox marks it below your quality."_s);
     const auto *first = child<QRadioButton>(inspector, u"inspector.get.nearMiss.0"_s);
     auto *second = child<QRadioButton>(inspector, u"inspector.get.nearMiss.1"_s);
     ASSERT_TRUE(first && second);

@@ -263,7 +263,15 @@ Decision lossySource(const SourceQuality &source, SourceClass sourceClass, Targe
         decision.action = Action::Refuse; // ⛔: a lossy file can't fill a higher rate or depth
         return decision;
     }
-    if (sourceClass == SourceClass::LossyUnplayable) {
+    if (context == AdviceContext::Filing && toMp3 && source.codec != Codec::Mp3) {
+        // P-025: the Inbox is MP3 (D29), and only MP3s are kept as they are. AAC, Vorbis, Opus, WMA… become the
+        // target MP3, so they arrive in one format with Selecta's tags; the notices say what that costs.
+        decision.action = Action::Convert;
+        if (sourceClass == SourceClass::LossyUnplayable) {
+            decision.notices.append(Notice::NotPlayable);
+        }
+        decision.notices.append(Notice::Generation);
+    } else if (sourceClass == SourceClass::LossyUnplayable) {
         // rekordbox can't play it: converting is the only way in, with confirmation either way (D-5).
         decision.action = Action::Ask;
         decision.notices = {Notice::NotPlayable, toMp3 ? Notice::Generation : Notice::LossyToLossless};
