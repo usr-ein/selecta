@@ -5,7 +5,7 @@
 
 #include <algorithm>
 
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
 #include <climits> // OPEN_MAX on Darwin
 #include <sys/resource.h>
 #endif
@@ -13,7 +13,7 @@
 namespace selecta::base {
 namespace {
 
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
 // macOS's default for an app: what's assumed when the limit can't be read.
 constexpr qint64 kAssumedOpenFiles = 256;
 
@@ -33,7 +33,7 @@ rlim_t toRlimit(qint64 value)
 // The most a soft RLIMIT_NOFILE may be, whatever the hard limit says.
 qint64 systemCeiling()
 {
-#if defined(Q_OS_DARWIN)
+#ifdef Q_OS_DARWIN
     return OPEN_MAX; // setrlimit(2): "use rlim_cur = min(OPEN_MAX, rlim_max)"
 #else
     return kNoOpenFileLimit; // the hard limit is the bound
@@ -54,7 +54,7 @@ std::optional<qint64> detail::raisedOpenFileLimit(qint64 soft, qint64 hard, qint
 
 qint64 openFileLimit()
 {
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
     rlimit limit{};
     if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
         return kAssumedOpenFiles;
@@ -67,7 +67,7 @@ qint64 openFileLimit()
 
 qint64 raiseOpenFileLimit(qint64 wanted)
 {
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
     rlimit limit{};
     if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
         return kAssumedOpenFiles;

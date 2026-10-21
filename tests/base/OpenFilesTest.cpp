@@ -33,7 +33,7 @@ TEST(OpenFiles, StopsAtTheHardLimitAndTheSystemCeiling)
 
 // --- The process's own limit -----------------------------------------------------------------------------------------
 
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
 
 TEST(OpenFiles, TheProcessLimitIsRaisedButNeverLowered)
 {

@@ -3,7 +3,7 @@
 
 #include <QtGlobal>
 
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
 #include <dirent.h>
 #include <sys/resource.h>
 #endif
@@ -15,7 +15,7 @@ namespace selecta::testing {
 // Descriptors open in this process (from /dev/fd), or -1 where that can't be read.
 inline int openDescriptorCount()
 {
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
     DIR *dir = opendir("/dev/fd");
     if (dir == nullptr) {
         return -1;
@@ -39,7 +39,7 @@ class ScopedOpenFileLimit
 public:
     explicit ScopedOpenFileLimit(qint64 soft)
     {
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
         if (getrlimit(RLIMIT_NOFILE, &m_saved) == 0) {
             rlimit lowered = m_saved;
             lowered.rlim_cur = static_cast<rlim_t>(soft);
@@ -51,7 +51,7 @@ public:
     }
     ~ScopedOpenFileLimit()
     {
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
         if (m_ok) {
             (void)setrlimit(RLIMIT_NOFILE, &m_saved);
         }
@@ -65,7 +65,7 @@ public:
     bool ok() const { return m_ok; }
 
 private:
-#if defined(Q_OS_UNIX)
+#ifdef Q_OS_UNIX
     rlimit m_saved{};
 #endif
     bool m_ok = false;

@@ -267,7 +267,7 @@ public:
 
 TEST(NetworkServiceDescriptors, ADialBackStormLeavesDescriptorsForNewThreads)
 {
-#if !defined(Q_OS_UNIX)
+#ifndef Q_OS_UNIX
     GTEST_SKIP() << "sockets don't count against an open-file limit on this system";
 #else
     // "Find Them" on the live network brought ~1,100 relayed ConnectToPeer requests in two seconds (P-022). Each
@@ -294,7 +294,7 @@ TEST(NetworkServiceDescriptors, ADialBackStormLeavesDescriptorsForNewThreads)
     const selecta::testing::ScopedOpenFileLimit limit(openFiles);
     ASSERT_TRUE(limit.ok());
 
-    selecta::base::ManualClock clock;
+    const selecta::base::ManualClock clock;
     selecta::governor::Governor governor{clock, {.today = {}, .random01 = [] { return 0.0; }}};
     selecta::storage::Database db;
     ASSERT_TRUE(db.open(u":memory:"_s));
