@@ -90,7 +90,9 @@ private:
 // The connection to the Soulseek network on the engine thread: the server session (login, keepalive, reconnecting
 // through the governor's ReconnectPolicy), the peer network with its listening port, and the search tokens. Every
 // budgeted step goes through the Governor (ADR-006): the login, each new peer connection (as slsk's PermitSource) and,
-// through the callers, every search.
+// through the callers, every search. Peer sockets are capped below the process's open-file limit as it is when the
+// service is made (governor::limits::socketsFor()), so a burst of them can't take the descriptors the rest of the app
+// needs (P-022): raise the limit first (base::raiseOpenFileLimit()).
 //
 // Threading: engine thread. Ownership: owns the slsk components; the Governor, activity log and token store outlive it.
 class NetworkService : public QObject
