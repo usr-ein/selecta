@@ -9,12 +9,19 @@
 #include "fixtures/TestUtil.h"
 #include "governor/Governor.h"
 #include "meta/TokenStore.h"
+#include "slsk/Codec.h"
+#include "slsk/Frame.h"
+#include "slsk/PeerMessages.h"
+#include "slsk/Protocol.h"
+#include "slsk/Zlib.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
 #include <QSignalSpy>
+#include <QtEndian>
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <memory>
 
 using namespace Qt::StringLiterals;
@@ -195,4 +202,157 @@ TEST_F(BrowseServiceTest, APeerWhoCantBeReachedSaysSo)
     ASSERT_TRUE(state.has_value());
     EXPECT_EQ(state->state, Browse::State::Failed);
     EXPECT_FALSE(state->message.isEmpty());
+}
+
+TEST_F(BrowseServiceTest, ANestedTreeIsListedWhole)
+{
+    auto peer = std::make_unique<FakePeer>(u"deep_digger"_s, &server);
+    ASSERT_TRUE(peer->start());
+    peer->answerIndirect = false;
+    // Folders inside folders, files at every level, odd and non-audio files too: every one of them is listed.
+    QList<selecta::slsk::SharedDirectory> directories;
+    const QList<QByteArray> paths = {"@@music", "@@music\\Artist", "@@music\\Artist\\Album (2001)",
+                                     "@@music\\Artist\\Album (2001)\\CD1", "@@music\\SPEEDTEST", "@@other\\Ünïcödé"};
+    int expected = 0;
+    for (const QByteArray &path : paths) {
+        selecta::slsk::SharedDirectory directory;
+        directory.path = selecta::slsk::RemotePath{path};
+        directory.files = {file("01 - Track.flac"), file("10MB.bin", 10'000'000), file("notes.txt", 100)};
+        expected += static_cast<int>(directory.files.size());
+        directories.append(directory);
+    }
+    peer->shares.directories = directories;
+    browse->browse(peer->username());
+    const std::optional<Browse> state = settled(peer->username());
+    ASSERT_TRUE(state.has_value());
+    ASSERT_EQ(state->state, Browse::State::Ready) << state->message.toStdString();
+    EXPECT_EQ(state->files, expected);
+    EXPECT_EQ(state->folders, paths.size());
+    const QList<selecta::core::SearchResult> results = browse->results(peer->username());
+    ASSERT_EQ(results.size(), expected);
+    EXPECT_EQ(results.at(3 * 3 + 1).hit.path, QByteArray("@@music\\Artist\\Album (2001)\\CD1\\10MB.bin"));
+    EXPECT_EQ(results.at(3 * 3 + 1).folder, u"@@music\\Artist\\Album (2001)\\CD1"_s);
+}
+
+TEST_F(BrowseServiceTest, APeerWhoSharesNothingSaysSo)
+{
+    auto peer = std::make_unique<FakePeer>(u"empty_shelf"_s, &server);
+    ASSERT_TRUE(peer->start());
+    peer->answerIndirect = false;
+    browse->browse(peer->username());
+    const std::optional<Browse> state = settled(peer->username());
+    ASSERT_TRUE(state.has_value());
+    ASSERT_EQ(state->state, Browse::State::Ready);
+    EXPECT_EQ(state->files, 0);
+    EXPECT_TRUE(state->message.contains(u"shares nothing"_s)) << state->message.toStdString();
+    EXPECT_TRUE(browse->results(peer->username()).isEmpty());
+}
+
+TEST_F(BrowseServiceTest, AMalformedListSaysItCouldntBeRead)
+{
+    auto peer = std::make_unique<FakePeer>(u"garbled"_s, &server);
+    ASSERT_TRUE(peer->start());
+    peer->answerIndirect = false;
+    peer->ignoreRequests = true;
+    FakePeer *raw = peer.get();
+    peer->onMessage = [raw](quint64 connection, const QString & /*from*/, const selecta::slsk::PeerMessage &message) {
+        if (std::holds_alternative<selecta::slsk::peer::GetShareFileList>(message)) {
+            selecta::slsk::Writer body;
+            body.u32(1000); // a thousand folders announced, none follows
+            raw->send(connection,
+                      selecta::slsk::encodeFrame(selecta::slsk::CodeWidth::Word,
+                                                 static_cast<quint32>(selecta::slsk::PeerCode::SharedFileListResponse),
+                                                 selecta::slsk::zlib::deflate(body.data())));
+        }
+    };
+    browse->browse(peer->username());
+    const std::optional<Browse> state = settled(peer->username());
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->state, Browse::State::Failed);
+    EXPECT_EQ(state->message, u"garbled's answer couldn't be read."_s);
+    EXPECT_EQ(browse->cachedPeers(), 0);
+}
+
+TEST_F(BrowseServiceTest, AListTooBigForItsFrameSaysSo)
+{
+    auto peer = std::make_unique<FakePeer>(u"hoarder"_s, &server);
+    ASSERT_TRUE(peer->start());
+    peer->answerIndirect = false;
+    peer->ignoreRequests = true;
+    FakePeer *raw = peer.get();
+    peer->onMessage = [raw](quint64 connection, const QString & /*from*/, const selecta::slsk::PeerMessage &message) {
+        if (std::holds_alternative<selecta::slsk::peer::GetShareFileList>(message)) {
+            QByteArray header(8, '\0');
+            qToLittleEndian<quint32>(static_cast<quint32>(selecta::slsk::protocol::kShareListFrameMax + 5),
+                                     header.data());
+            qToLittleEndian<quint32>(static_cast<quint32>(selecta::slsk::PeerCode::SharedFileListResponse),
+                                     header.data() + 4);
+            raw->send(connection, header);
+        }
+    };
+    browse->browse(peer->username());
+    const std::optional<Browse> state = settled(peer->username());
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->state, Browse::State::Failed);
+    EXPECT_EQ(state->message, u"hoarder's list of shared files is too big for Selecta to read."_s);
+}
+
+TEST_F(BrowseServiceTest, AListOverTheFileCapIsRefusedAndAtTheCapIsListed)
+{
+    // Direct from the network: the cap is checked on what arrives, whatever its frame size.
+    const auto listOf = [](int files) {
+        selecta::slsk::SharedFileList list;
+        constexpr int kPerFolder = 1000;
+        for (int first = 0; first < files; first += kPerFolder) {
+            selecta::slsk::SharedDirectory directory;
+            directory.path = selecta::slsk::RemotePath{"Music\\Folder " + QByteArray::number(first)};
+            for (int i = first; i < std::min(files, first + kPerFolder); ++i) {
+                directory.files.append(file("Track " + QByteArray::number(i) + ".mp3"));
+            }
+            list.directories.append(directory);
+        }
+        return list;
+    };
+    browse->browse(u"big_one"_s); // not online at the fake server: fails, but the browse is open
+    settled(u"big_one"_s);
+    const QSignalSpy reset(browse.get(), &BrowseService::resultsReset);
+    browse->listReceived(u"big_one"_s, listOf(BrowseService::kMaxFiles + 1));
+    std::optional<Browse> state = browse->browseOf(u"big_one"_s);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->state, Browse::State::Failed);
+    EXPECT_EQ(state->files, BrowseService::kMaxFiles + 1);
+    EXPECT_TRUE(state->message.contains(u"too big"_s)) << state->message.toStdString();
+    browse->waitForIdle();
+    EXPECT_TRUE(reset.isEmpty()); // nothing analysed
+    EXPECT_TRUE(browse->results(u"big_one"_s).isEmpty());
+    EXPECT_EQ(browse->cachedPeers(), 0); // nor kept
+
+    browse->listReceived(u"big_one"_s, listOf(BrowseService::kMaxFiles));
+    state = settled(u"big_one"_s);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->state, Browse::State::Ready) << state->message.toStdString();
+    EXPECT_EQ(state->files, BrowseService::kMaxFiles);
+    EXPECT_EQ(browse->results(u"big_one"_s).size(), BrowseService::kMaxFiles);
+
+    // A list too big after one that wasn't: the old one isn't shown as if it were the new one.
+    browse->listReceived(u"big_one"_s, listOf(BrowseService::kMaxFiles + 1));
+    EXPECT_EQ(browse->browseOf(u"big_one"_s)->state, Browse::State::Failed);
+    EXPECT_TRUE(browse->results(u"big_one"_s).isEmpty());
+    ASSERT_FALSE(reset.isEmpty());
+    EXPECT_TRUE(reset.constLast().at(1).value<QList<selecta::core::SearchResult>>().isEmpty());
+}
+
+TEST(BrowseServiceText, EveryFailureSaysWhy)
+{
+    using selecta::slsk::PeerError;
+    const QString peer = u"vinyl_ghost"_s;
+    EXPECT_EQ(selecta::core::describePeerError(peer, PeerError::UserOffline), u"vinyl_ghost is offline."_s);
+    EXPECT_TRUE(selecta::core::describePeerError(peer, PeerError::Timeout).contains(u"in time"_s));
+    EXPECT_TRUE(selecta::core::describePeerError(peer, PeerError::Unreachable).contains(u"couldn't be reached"_s));
+    EXPECT_TRUE(selecta::core::describePeerError(peer, PeerError::TooLarge).contains(u"too big"_s));
+    for (const PeerError error :
+         {PeerError::None, PeerError::NotLoggedIn, PeerError::NotPermitted, PeerError::SocketLimit,
+          PeerError::ConnectionClosed, PeerError::ProtocolError, PeerError::Cancelled}) {
+        EXPECT_FALSE(selecta::core::describePeerError(peer, error).isEmpty());
+    }
 }

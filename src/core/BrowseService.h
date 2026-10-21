@@ -79,6 +79,9 @@ public:
 
     static constexpr qint64 kCacheLifetimeMs = qint64{24} * 3600 * 1000;
     static constexpr int kCachedPeers = 50;
+    // The most files a browse lists: a bigger list fails, saying it's too big (each file is analysed and kept like a
+    // search result, so this bounds the memory and the work one peer's list can cost).
+    static constexpr int kMaxFiles = 100'000;
 
     BrowseService(storage::Database &db, governor::Governor &governor, NetworkService &network, WallClock now = {},
                   QObject *parent = nullptr);

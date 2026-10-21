@@ -70,6 +70,7 @@ TEST(FrameReader, OversizeFrameIsRefusedBeforeItsPayloadArrives)
     reader.append(QByteArray::fromHex("0f 00 00 00 01 00 00 00"));
     EXPECT_FALSE(reader.next().has_value());
     EXPECT_EQ(reader.error(), FrameReader::Error::Oversize);
+    EXPECT_EQ(reader.errorCode(), 1U); // which message was too big, for the owner to say so
     // Nothing more is accepted.
     reader.append(QByteArray(100, 'x'));
     EXPECT_FALSE(reader.next().has_value());
@@ -140,6 +141,11 @@ TEST(FrameReader, CapFunctionDecidesPerCode)
     reader.append(encodeFrame(CodeWidth::Word, 5, {}));
     EXPECT_FALSE(reader.next().has_value());
     EXPECT_EQ(reader.error(), FrameReader::Error::Unsolicited);
+    EXPECT_EQ(reader.errorCode(), 5U);
+    // Starting over forgets the verdict and its code.
+    reader.takeBuffered();
+    EXPECT_FALSE(reader.hasError());
+    EXPECT_EQ(reader.errorCode(), 0U);
 }
 
 TEST(FrameReader, EmptyPayloadUnderAZeroCap)

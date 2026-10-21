@@ -13,6 +13,7 @@
 #include <QRandomGenerator>
 #include <QSignalSpy>
 #include <QTcpSocket>
+#include <QtEndian>
 
 #include <gtest/gtest.h>
 
@@ -507,6 +508,48 @@ TEST_F(PeerNetworkTest, OversizeFrameClosesTheConnection)
     // A QueueUpload announcing 2 MiB: over the 1 MiB cap for ordinary peer messages.
     alice->send(c, QByteArray::fromHex("04 00 20 00 2b 00 00 00"));
     EXPECT_TRUE(waitFor([&] { return !alice->isOpen(c); }));
+}
+
+TEST_F(PeerNetworkTest, ShareListOverItsCapFailsAsTooLarge)
+{
+    const auto alice = makePeer(u"alice"_s);
+    alice->ignoreRequests = true;
+    // Asked for its list, it announces one a byte over the cap (only the header: nothing more is read).
+    alice->onMessage = [&alice](quint64 connection, const QString & /*from*/, const PeerMessage &message) {
+        if (std::holds_alternative<peer::GetShareFileList>(message)) {
+            QByteArray header(8, '\0');
+            qToLittleEndian<quint32>(static_cast<quint32>(protocol::kShareListFrameMax + 4 + 1), header.data());
+            qToLittleEndian<quint32>(static_cast<quint32>(PeerCode::SharedFileListResponse), header.data() + 4);
+            alice->send(connection, header);
+        }
+    };
+    const QSignalSpy failed(&peers, &PeerNetwork::requestFailed);
+    const QSignalSpy lists(&peers, &PeerNetwork::sharedFileListReceived);
+    ASSERT_TRUE(peers.requestSharedFileList(u"alice"_s, permit(Operation::Browse)));
+    ASSERT_TRUE(waitFor([&] { return !failed.isEmpty(); }));
+    ASSERT_EQ(failed.size(), 1); // once: not also as "connection closed"
+    EXPECT_EQ(failed.at(0).at(0).toString(), u"alice"_s);
+    EXPECT_EQ(failed.at(0).at(1).value<PeerRequest>(), PeerRequest::SharedFileList);
+    EXPECT_EQ(failed.at(0).at(3).value<PeerError>(), PeerError::TooLarge);
+    settle(100ms);
+    EXPECT_EQ(failed.size(), 1);
+    EXPECT_TRUE(lists.isEmpty());
+}
+
+TEST_F(PeerNetworkTest, MalformedShareListFailsAsAProtocolError)
+{
+    const auto alice = makePeer(u"alice"_s);
+    alice->ignoreRequests = true;
+    alice->onMessage = [&alice](quint64 connection, const QString & /*from*/, const PeerMessage &message) {
+        if (std::holds_alternative<peer::GetShareFileList>(message)) {
+            alice->send(connection, encodeFrame(CodeWidth::Word, static_cast<quint32>(PeerCode::SharedFileListResponse),
+                                                "not a zlib stream"));
+        }
+    };
+    const QSignalSpy failed(&peers, &PeerNetwork::requestFailed);
+    ASSERT_TRUE(peers.requestSharedFileList(u"alice"_s, permit(Operation::Browse)));
+    ASSERT_TRUE(waitFor([&] { return !failed.isEmpty(); }));
+    EXPECT_EQ(failed.at(0).at(3).value<PeerError>(), PeerError::ProtocolError);
 }
 
 TEST_F(PeerNetworkTest, MalformedAndUnknownMessagesAreSkipped)

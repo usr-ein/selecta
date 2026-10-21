@@ -91,10 +91,12 @@ bool FrameReader::checkHeader()
     const qsizetype cap = m_caps ? m_caps(code) : m_maxPayload;
     if (cap < 0) {
         m_error = Error::Unsolicited;
+        m_errorCode = code;
         return false;
     }
     if (payload > cap) {
         m_error = Error::Oversize;
+        m_errorCode = code;
         return false;
     }
     m_pendingCode = code;
@@ -138,6 +140,7 @@ QByteArray FrameReader::takeBuffered()
     // A verdict only ever concerns bytes not yet consumed: they leave with the caller, so the reader starts over. After
     // a peer-init frame on an F connection, for one, a token of 0 reads as an impossible frame length.
     m_error = Error::None;
+    m_errorCode = 0;
     return rest;
 }
 
