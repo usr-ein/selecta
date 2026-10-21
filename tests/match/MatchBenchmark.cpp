@@ -331,7 +331,13 @@ long maxResidentKilobytes()
 #else
     rusage usage{};
     getrusage(RUSAGE_SELF, &usage);
-    return usage.ru_maxrss / 1024; // bytes on macOS
+    // glibc declares ru_maxrss in an anonymous union with a padding word.
+    const long peak = usage.ru_maxrss; // NOLINT(cppcoreguidelines-pro-type-union-access)
+#ifdef __APPLE__
+    return peak / 1024; // bytes on macOS
+#else
+    return peak; // kilobytes on Linux
+#endif
 #endif
 }
 
