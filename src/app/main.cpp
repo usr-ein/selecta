@@ -8,9 +8,11 @@
 #include "audio/AnalysisCache.h"
 #include "base/DebugProtocol.h"
 #include "base/Logging.h"
+#include "base/OpenFiles.h"
 #include "base/Paths.h"
 #include "base/Version.h"
 #include "core/EngineHost.h"
+#include "governor/Limits.h"
 #include "governor/ServerGuard.h"
 #include "meta/KeychainTokenStore.h"
 #include "meta/TokenStore.h"
@@ -174,8 +176,23 @@ std::optional<selecta::core::CountryDatabaseOptions> countryDatabase(const Optio
         .totalMs = 180'000};
 }
 
+// The open-file limit raised at launch (P-022): a warning when it stays below what the full socket cap needs.
+void logOpenFileLimit(qint64 atLaunch, qint64 raised)
+{
+    if (raised < selecta::governor::limits::kWantedOpenFiles) {
+        qCWarning(lcApp) << "the system allows only" << raised << "open files: peer sockets are capped at"
+                         << selecta::governor::limits::socketCapFor(raised);
+    } else if (raised != atLaunch) {
+        qCInfo(lcApp) << "open-file limit raised from" << atLaunch << "to" << raised;
+    }
+}
+
 int runSelecta(int argc, char **argv)
 {
+    // Sockets, files and threads all take descriptors, and macOS gives an app 256: ask for more before anything opens
+    // one. The network sizes its socket cap to the limit this gets (P-022).
+    const qint64 openFilesAtLaunch = selecta::base::openFileLimit();
+    const qint64 openFiles = selecta::base::raiseOpenFileLimit(selecta::governor::limits::kWantedOpenFiles);
     const QApplication app(argc, argv);
     // Cover art comes from untrusted files and services: cap what any single image decode may allocate (process-wide;
     // the artwork code also checks dimensions before decoding).
@@ -215,6 +232,7 @@ int runSelecta(int argc, char **argv)
     }
     qCInfo(lcApp).noquote() << u"Selecta %1 starting; Qt %2 on %3; data in %4"_s.arg(
         QString(selecta::base::kVersion), QString::fromLatin1(qVersion()), QGuiApplication::platformName(), dataDir);
+    logOpenFileLimit(openFilesAtLaunch, openFiles);
 
     selecta::storage::Database database;
     if (!database.open(paths::databaseFile())) {

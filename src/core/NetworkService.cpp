@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/NetworkService.h"
 
+#include "base/OpenFiles.h"
 #include "core/ActivityLog.h"
 #include "governor/Governor.h"
+#include "governor/Limits.h"
 #include "governor/ServerGuard.h"
 #include "meta/TokenStore.h"
 
@@ -103,6 +105,15 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
     qRegisterMetaType<NetworkStatus>();
     m_permits = std::make_unique<GovernorPermits>(m_governor, m_activity, this);
     m_peers = std::make_unique<slsk::PeerNetwork>(*m_server, *m_permits);
+    // Sockets that take every descriptor make Qt abort when it next starts a thread (P-022): leave the reserve alone.
+    const qint64 openFiles = base::openFileLimit();
+    const int sockets = governor::limits::socketCapFor(openFiles);
+    m_peers->setSocketLimit(sockets);
+    if (openFiles == base::kNoOpenFileLimit) {
+        qCInfo(lcNetwork) << "at most" << sockets << "peer sockets; no open-file limit";
+    } else {
+        qCInfo(lcNetwork) << "at most" << sockets << "peer sockets, under an open-file limit of" << openFiles;
+    }
     m_transfers = std::make_unique<slsk::TransferManager>(*m_peers, *m_server);
     m_distributed = std::make_unique<slsk::DistributedNode>(*m_server, *m_peers);
     connect(m_server.get(), &slsk::ServerSession::searchRequestReceived, this,

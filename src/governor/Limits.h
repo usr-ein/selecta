@@ -3,7 +3,9 @@
 
 #include <QtTypes>
 
+#include <algorithm>
 #include <chrono>
+#include <limits>
 
 // The governor's numbers (ADR-006; rationale and sources in docs/RESEARCH-SYNTHESIS.md §3).
 //
@@ -65,6 +67,35 @@ inline constexpr std::chrono::seconds kPeerIndirectTimeout = 20s;
 inline constexpr std::chrono::seconds kPeerIdleTimeout = 60s;
 inline constexpr int kSocketsMax = 512;
 static_assert(kPeerLookupsPerMinute <= kPeerLookupsPerMinuteCeiling);
+
+// --- Open files (P-022) ---------------------------------------------------------------------------------------------
+// Every socket, file and pipe takes one of the process's descriptors, and a macOS app gets 256 unless it asks for more.
+// When they run out, sockets fail with "Out of resources" and Qt aborts the next time it starts a thread (a thread's
+// event loop needs descriptors of its own). Selecta asks for kWantedOpenFiles at start-up. Peer sockets get the limit
+// in force minus a reserve for everything else (the database, logs, files being transferred or converted, worker
+// threads, HTTP, child processes), never more than kSocketsMax: the open-file limit can only lower the socket cap.
+inline constexpr int kReservedDescriptors = 256;
+// Room for kSocketsMax and the reserve, with some to spare (Linux's usual soft limit).
+inline constexpr int kWantedOpenFiles = 1024;
+static_assert(kSocketsMax + kReservedDescriptors <= kWantedOpenFiles);
+
+// The descriptors kept for everything but peer sockets under a limit of `openFiles`: kReservedDescriptors, or three
+// quarters of a limit too low to leave peer sockets a quarter after it.
+constexpr qint64 reservedDescriptors(qint64 openFiles)
+{
+    const qint64 limit = std::max<qint64>(openFiles, 0);
+    return limit >= qint64{kReservedDescriptors} * 4 / 3 ? kReservedDescriptors : limit * 3 / 4;
+}
+
+// The peer socket cap under a limit of `openFiles` descriptors (the soft RLIMIT_NOFILE): the limit minus the reserve,
+// at least 1, at most kSocketsMax.
+constexpr int socketCapFor(qint64 openFiles)
+{
+    return static_cast<int>(std::clamp<qint64>(openFiles - reservedDescriptors(openFiles), 1, kSocketsMax));
+}
+static_assert(socketCapFor(kWantedOpenFiles) == kSocketsMax);
+static_assert(socketCapFor(std::numeric_limits<qint64>::max()) == kSocketsMax); // no limit: still the ceiling
+static_assert(socketCapFor(256) == 64); // macOS's default leaves 192 descriptors for the rest
 
 // --- Downloads (FAIR-2, DL-2) ---------------------------------------------------------------------------------------
 inline constexpr int kPeerActiveDownloads = 1;

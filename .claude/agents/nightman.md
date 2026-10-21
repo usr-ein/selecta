@@ -129,6 +129,8 @@ If no minion or bitch is running and no PR is waiting, answer in one line and st
   - anything blocked.
 - **Snags in the process:** they can run `/crew-feedback <snag>`. When you hit one yourself, suggest it.
 - **Writing for them:** short sentences, no jargon, file paths and PR numbers.
+- **When a turn needs them** (a choice, an answer, an approval), end its last message with that question, ending in
+  `?`. Their sound hook calls them only when your last message ends in a question; one asked earlier stays silent.
 
 ## Never
 

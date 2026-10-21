@@ -4,6 +4,7 @@
 #include "base/Clock.h"
 #include "core/ActivityLog.h"
 #include "core/FakeRouter.h"
+#include "fixtures/FakeServer.h"
 #include "governor/Governor.h"
 #include "governor/Limits.h"
 #include "meta/TokenStore.h"
@@ -11,12 +12,15 @@
 #include "slsk/PeerMessages.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
+#include "support/OpenFiles.h"
 
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTest>
+#include <QThreadPool>
 
+#include <atomic>
 #include <gtest/gtest.h>
 
 using namespace Qt::StringLiterals;
@@ -244,4 +248,95 @@ TEST_F(NetworkServiceTest, ARefusedPeerLookupIsLoggedWithItsReason)
                                                  u"search results"_s.arg(asks - 1)))
         << newest[0].explanation.toStdString();
     EXPECT_TRUE(newest[0].explanation.contains(u"Selecta held it back: "_s));
+}
+
+// --- P-022: peer sockets leave descriptors for the rest of the app ---------------------------------------------------
+
+namespace {
+
+// Peers that only ever ask, through the server, to be dialled back.
+class DialBackOnly : public selecta::slsk::testing::FakeServer::VirtualUser
+{
+public:
+    void connectToPeerRequested(const selecta::slsk::fromserver::ConnectToPeerRequest & /*request*/) override {}
+    void searchRequested(const selecta::slsk::fromserver::SearchRequest & /*request*/) override {}
+    void cantConnectToPeer(quint32 /*token*/) override {}
+};
+
+} // namespace
+
+TEST(NetworkServiceDescriptors, ADialBackStormLeavesDescriptorsForNewThreads)
+{
+#ifndef Q_OS_UNIX
+    GTEST_SKIP() << "sockets don't count against an open-file limit on this system";
+#else
+    // "Find Them" on the live network brought ~1,100 relayed ConnectToPeer requests in two seconds (P-022). Each
+    // dial-back took a descriptor until none was left, then a thread pool started a thread: Qt couldn't make the
+    // thread's pipe and aborted the app.
+    selecta::slsk::testing::FakeServer server;
+    ASSERT_TRUE(server.start());
+    // The peers never answer, so every dial-back keeps its descriptor, as it does while a real one connects.
+    QTcpServer silentPeers;
+    silentPeers.setListenBacklogSize(1024);
+    ASSERT_TRUE(silentPeers.listen(QHostAddress::LocalHost, 0));
+    silentPeers.pauseAccepting();
+    DialBackOnly peer;
+    constexpr int kStorm = 300;
+    for (int i = 0; i < kStorm; ++i) {
+        server.addVirtualUser(u"storm%1"_s.arg(i), QHostAddress::LocalHost, silentPeers.serverPort(), &peer);
+    }
+
+    // A low open-file limit, as macOS gives an app. The headroom stays under the listener's backlog (128 or more), so
+    // the kernel completes every dial-back the limit allows and none is refused.
+    const int openAtStart = selecta::testing::openDescriptorCount();
+    ASSERT_GT(openAtStart, 0);
+    const qint64 openFiles = openAtStart + 64;
+    const selecta::testing::ScopedOpenFileLimit limit(openFiles);
+    ASSERT_TRUE(limit.ok());
+
+    const selecta::base::ManualClock clock;
+    selecta::governor::Governor governor{clock, {.today = {}, .random01 = [] { return 0.0; }}};
+    selecta::storage::Database db;
+    ASSERT_TRUE(db.open(u":memory:"_s));
+    ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
+    selecta::core::ActivityLog log{db};
+    selecta::meta::InMemoryTokenStore tokens;
+    NetworkService network(governor, log, tokens, [] { return qint64{1'800'000'000'000}; });
+    NetworkConfig config;
+    config.host = server.address().toString();
+    config.port = server.port();
+    config.username = u"selecta_test"_s;
+    config.listenPort = 0;
+    network.start(config);
+    network.setPassword(u"pw"_s);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return network.isOnline(); }, 5000));
+
+    const int openBeforeStorm = selecta::testing::openDescriptorCount();
+    for (int i = 0; i < kStorm; ++i) {
+        ASSERT_TRUE(server.relayConnectToPeer(u"storm%1"_s.arg(i), u"selecta_test"_s,
+                                              selecta::slsk::ConnectionType::Peer, static_cast<quint32>(1000 + i)));
+    }
+    // Every request gets its answer: a dial-back holding its socket, or CantConnectToPeer.
+    const auto answered = [&] {
+        return server.receivedOf<selecta::slsk::toserver::CantConnectToPeer>(u"selecta_test"_s).size() +
+               network.peers().socketCount();
+    };
+    ASSERT_TRUE(QTest::qWaitFor([&] { return answered() >= kStorm; }, 10'000)) << answered();
+
+    // The storm took no more descriptors than the cap the limit allows, and that cap left the reserve alone. A few
+    // more may be Qt's own, open meanwhile (QNetworkInterface's probes, say); before the fix the storm took them all.
+    const int socketCap = selecta::governor::limits::socketCapFor(openFiles);
+    constexpr int kQtDescriptors = 8;
+    EXPECT_GT(network.peers().socketCount(), 0);
+    EXPECT_LE(network.peers().socketCount(), socketCap);
+    EXPECT_LE(selecta::testing::openDescriptorCount() - openBeforeStorm, socketCap + kQtDescriptors);
+
+    // What aborted the app: a pool starting a thread, which needs a pipe of its own.
+    QThreadPool pool;
+    std::atomic<bool> ran{false};
+    pool.start([&ran] { ran = true; });
+    ASSERT_TRUE(pool.waitForDone(5000));
+    EXPECT_TRUE(ran);
+    network.disconnectNow();
+#endif
 }

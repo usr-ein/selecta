@@ -123,8 +123,10 @@ exactly once per session.
 - **Short-lived search connections**: a `P` connection a peer opened only to deliver search results is closed once
   they're read (if nothing else is pending with that user); the one we open to deliver our answer is closed once it
   is written.
-- **Socket cap**: 512 (`protocol::kSocketsMax`) including `F` sockets; new attempts fail with `SocketLimit` and new
-  inbound sockets are closed at the cap.
+- **Socket cap**: at most 512 (`protocol::kSocketsMax`) including `F` sockets. core/ lowers it to what the process's
+  open-file limit leaves after a reserve for the rest of the app (`governor::limits::socketCapFor()`, P-022): sockets
+  that take every descriptor make Qt abort on its next thread. At the cap new attempts fail with `SocketLimit`,
+  relayed `ConnectToPeer` requests get `CantConnectToPeer`, and new inbound sockets are closed.
 - **No report from inside the call that started the work**: a failure known at once (no session, the socket cap, a
   permit refused synchronously) is reported on the next event-loop turn, so a caller always holds the id it was
   given before hearing of it. `cancelFileConnection()` is silent: nothing more is heard of that id. `closeAll()` is
