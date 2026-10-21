@@ -119,14 +119,26 @@ void BrowseTreeModel::rebuild()
         m_nodes[parent].children.append(id);
         m_nodeOfResult.append(id);
         m_resultOfPath.insert(result.hit.path, static_cast<int>(i)); // a duplicate path keeps its last file
-        // Every folder above it counts it.
-        const auto size = static_cast<qint64>(result.hit.size);
-        for (int up = parent; up != kRoot; up = m_nodes.at(up).parent) {
-            m_nodes[up].size += size;
-            ++m_nodes[up].files;
-        }
     }
     m_folderCount = static_cast<int>(folders.size());
+    // Every folder counts the files under it, in one pass: a node always comes after its parent.
+    for (auto id = static_cast<int>(m_nodes.size()) - 1; id > kRoot; --id) {
+        Node &node = m_nodes[id];
+        if (node.result >= 0) {
+            node.size = static_cast<qint64>(m_results.at(node.result).hit.size);
+            node.files = 1;
+        }
+        if (node.parent != kRoot) {
+            m_nodes[node.parent].size += node.size;
+            m_nodes[node.parent].files += node.files;
+        }
+    }
+    // The names' sort keys, once: sorting compares them often.
+    m_sortKeys.clear();
+    m_sortKeys.reserve(m_nodes.size());
+    for (const Node &node : std::as_const(m_nodes)) {
+        m_sortKeys.append(collator().sortKey(node.name));
+    }
     restyle();
     sortChildren(kRoot);
 }
@@ -160,14 +172,14 @@ bool BrowseTreeModel::lessThan(int a, int b) const
     }
     const bool ascending = m_sortOrder == Qt::AscendingOrder;
     const auto byName = [&] {
-        const int compared = collator().compare(left.name, right.name);
+        const int compared = m_sortKeys.at(a).compare(m_sortKeys.at(b));
         return ascending ? compared < 0 : compared > 0;
     };
     const auto by = [&](auto key) {
         const auto l = key(left);
         const auto r = key(right);
         if (l == r) {
-            return collator().compare(left.name, right.name) < 0; // ties by name, always A to Z
+            return m_sortKeys.at(a).compare(m_sortKeys.at(b)) < 0; // ties by name, always A to Z
         }
         return ascending ? l < r : l > r;
     };

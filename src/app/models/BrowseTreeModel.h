@@ -6,6 +6,7 @@
 
 #include <QAbstractItemModel>
 #include <QByteArray>
+#include <QCollatorSortKey>
 #include <QHash>
 #include <QList>
 #include <QString>
@@ -77,8 +78,8 @@ private:
         int row = 0;     // among the parent's children
         int result = -1; // files: the result's index
         QList<int> children;
-        qint64 size = 0; // folders: every file under them
-        int files = 0;   // folders: every file under them
+        qint64 size = 0; // a file's size; a folder's: every file under it
+        int files = 0;   // 1 for a file; a folder's: every file under it
     };
 
     void rebuild();
@@ -95,7 +96,8 @@ private:
     QList<core::HiddenReason> m_hidden;  // by result index
     core::SearchFilter m_filter;
     core::FilterCounts m_counts;
-    QList<Node> m_nodes;                   // 0 is the invisible root
+    QList<Node> m_nodes;                   // 0 is the invisible root; a node comes after its parent
+    QList<QCollatorSortKey> m_sortKeys;    // by node: its name's
     QList<int> m_nodeOfResult;             // by result index
     QHash<QByteArray, int> m_resultOfPath; // raw path → result index
     int m_folderCount = 0;

@@ -35,7 +35,8 @@ public:
     // Shows this peer's shares (as browsed so far), or nothing for an empty name.
     void showPeer(const QString &peer);
     // The next time this peer's shares show, the file at `remotePath` (as the peer sent it) is selected, its folders
-    // open, as soon as the list has it; if the list comes without it, the view says so.
+    // open, as soon as the list has it; if the list comes without it, the view says so. An empty path forgets one asked
+    // for before.
     void revealFile(const QString &peer, const QByteArray &remotePath);
     QString peer() const { return m_peer; }
     QString title() const;
@@ -60,6 +61,9 @@ Q_SIGNALS:
 private:
     void refresh();
     void openFolders();
+    void updateButtons();
+    // The current file's path, as the peer sent it; empty on a folder or nothing.
+    QByteArray currentPath() const;
     // Opens the file's folders, selects it and scrolls to it.
     void select(const QModelIndex &file);
     // Selects the file revealFile() asked for, if the list has it. `final`: this list is the answer, so a file it

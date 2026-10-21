@@ -95,7 +95,10 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
             Q_EMIT previewRequested();
         }
     });
-    connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &BrowseView::selectionMoved);
+    connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, [this] {
+        updateButtons();
+        Q_EMIT selectionMoved();
+    });
     connect(m_model, &QAbstractItemModel::modelReset, this, &BrowseView::openFolders);
 
     m_waiting->setObjectName(u"browse.waiting"_s);
@@ -138,8 +141,7 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
             [this](const QString &peer, const QList<core::SearchResult> &results) {
                 if (peer == m_peer) {
                     // The file picked in the list shown so far stays picked in the fresh one.
-                    const core::SearchResult *current = m_model->resultAt(m_table->currentIndex());
-                    const QByteArray kept = current != nullptr ? current->hit.path : QByteArray();
+                    const QByteArray kept = currentPath();
                     m_model->reset(results);
                     if (!m_revealPath.isEmpty()) {
                         revealPending(true);
@@ -154,13 +156,25 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
 
 void BrowseView::showPeer(const QString &peer)
 {
+    // Shown again (from the sidebar, or a menu): the file picked stays picked.
+    const QByteArray kept = peer == m_peer ? currentPath() : QByteArray();
     m_peer = peer;
     m_missing.clear();
     m_table->selectionModel()->clear();
     m_model->setFilter(m_settings.searchViewState().filter); // the filters may have changed in a search
     m_model->reset(m_engine.browseResults(peer));
-    revealPending(false); // the list shown may be an older one: the fresh one may still have the file
+    if (!m_revealPath.isEmpty()) {
+        revealPending(false); // the list shown may be an older one: the fresh one may still have the file
+    } else if (!kept.isEmpty()) {
+        select(m_model->indexOfPath(kept));
+    }
     refresh();
+}
+
+QByteArray BrowseView::currentPath() const
+{
+    const core::SearchResult *current = m_model->resultAt(m_table->currentIndex());
+    return current != nullptr ? current->hit.path : QByteArray();
 }
 
 void BrowseView::revealFile(const QString &peer, const QByteArray &remotePath)
@@ -287,9 +301,19 @@ void BrowseView::refresh()
     m_details->setText(details.join(u" · "_s));
     m_refresh->setEnabled(
         browse && (browse->state == core::Browse::State::Ready || browse->state == core::Browse::State::Failed));
-    m_download->setEnabled(ready);
-    m_downloadFolder->setEnabled(ready);
+    updateButtons();
     Q_EMIT summaryChanged();
+}
+
+void BrowseView::updateButtons()
+{
+    const std::optional<core::Browse> browse = m_engine.browseOf(m_peer);
+    const bool ready = browse && browse->state == core::Browse::State::Ready;
+    m_download->setEnabled(ready);
+    // A folder with only subfolders has no album of its own.
+    m_downloadFolder->setEnabled(ready && folderAnchor().has_value());
+    m_downloadFolder->setToolTip(ready && !folderAnchor() ? tr("Pick a folder that holds files, or one of its files")
+                                                          : QString());
 }
 
 QList<int> BrowseView::selectedResults() const

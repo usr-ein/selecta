@@ -360,3 +360,53 @@ TEST(BrowseServiceText, EveryFailureSaysWhy)
         EXPECT_FALSE(selecta::core::describePeerError(peer, error).isEmpty());
     }
 }
+
+TEST_F(BrowseServiceTest, AListWhosePathsComeToTooMuchIsRefused)
+{
+    browse->browse(u"long_names"_s); // not at the fake server: fails, but the browse is open
+    settled(u"long_names"_s);
+    const QSignalSpy reset(browse.get(), &BrowseService::resultsReset);
+
+    // A few files under one huge folder name: few files, but every one carries the whole name.
+    selecta::slsk::SharedFileList huge;
+    selecta::slsk::SharedDirectory folder;
+    folder.path = selecta::slsk::RemotePath{QByteArray(1024 * 1024, 'x')};
+    for (int i = 0; i < 65; ++i) {
+        folder.files.append(file("Track " + QByteArray::number(i) + ".mp3"));
+    }
+    huge.directories.append(folder);
+    browse->listReceived(u"long_names"_s, huge);
+    std::optional<Browse> state = browse->browseOf(u"long_names"_s);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->state, Browse::State::Failed);
+    EXPECT_TRUE(state->message.contains(u"too big"_s)) << state->message.toStdString();
+    browse->waitForIdle();
+    EXPECT_TRUE(reset.isEmpty()); // nothing analysed
+    EXPECT_EQ(browse->cachedPeers(), 0);  // nor kept
+
+    // The same name with fewer files is listed.
+    huge.directories.first().files.resize(10);
+    browse->listReceived(u"long_names"_s, huge);
+    state = settled(u"long_names"_s);
+    ASSERT_TRUE(state.has_value());
+    EXPECT_EQ(state->state, Browse::State::Ready) << state->message.toStdString();
+    EXPECT_EQ(browse->results(u"long_names"_s).size(), 10);
+
+    // Folders nested a level per letter: short paths, but more folders than the tree would show.
+    selecta::slsk::SharedFileList deep;
+    QByteArray path = "a";
+    for (int level = 1; level < 600; ++level) {
+        path += "\\a";
+    }
+    for (int i = 0; i < 2000; ++i) {
+        selecta::slsk::SharedDirectory directory;
+        directory.path = selecta::slsk::RemotePath{QByteArray::number(i) + '\\' + path};
+        directory.files = {file("t.mp3")};
+        deep.directories.append(directory);
+    }
+    browse->listReceived(u"long_names"_s, deep);
+    state = browse->browseOf(u"long_names"_s);
+    EXPECT_EQ(state->state, Browse::State::Failed);
+    EXPECT_TRUE(state->message.contains(u"too big"_s)) << state->message.toStdString();
+    EXPECT_TRUE(browse->results(u"long_names"_s).isEmpty());
+}

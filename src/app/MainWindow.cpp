@@ -570,19 +570,18 @@ void MainWindow::createBrowseView()
     });
 }
 
-void MainWindow::browseFile(const QString &peer, const QByteArray &remotePath)
+void MainWindow::browsePeer(const QString &peer)
 {
-    if (!peer.isEmpty() && !remotePath.isEmpty()) {
-        m_browseView->revealFile(peer, remotePath);
-    }
-    browsePeer(peer);
+    browseFile(peer, {});
 }
 
-void MainWindow::browsePeer(const QString &peer)
+void MainWindow::browseFile(const QString &peer, const QByteArray &remotePath)
 {
     if (peer.isEmpty()) {
         return;
     }
+    // Without a file, a file asked for earlier isn't selected later either.
+    m_browseView->revealFile(peer, remotePath);
     m_navModel->setBrowse(peer, 0, true);
     m_services.engine.browse(peer);
     navigateTo(NavModel::browseItemId(peer));

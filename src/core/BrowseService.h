@@ -79,9 +79,15 @@ public:
 
     static constexpr qint64 kCacheLifetimeMs = qint64{24} * 3600 * 1000;
     static constexpr int kCachedPeers = 50;
-    // The most files a browse lists: a bigger list fails, saying it's too big (each file is analysed and kept like a
-    // search result, so this bounds the memory and the work one peer's list can cost).
+    // What a browse lists at most: a bigger list fails, saying it's too big. Each file is analysed and kept like a
+    // search result, with its whole path, so the files and the bytes their paths come to bound the memory and the work
+    // one peer's list can cost (slsk caps the inflated list, not one string in it: a huge folder name times every file
+    // in it would otherwise pass).
     static constexpr int kMaxFiles = 100'000;
+    static constexpr qint64 kMaxPathBytes = qint64{64} * 1024 * 1024;
+    // And the folders the tree may have to show: every level of every folder that holds files, counted once per
+    // folder (a real list of 100,000 files has some hundred thousand; one-letter levels could make tens of millions).
+    static constexpr qint64 kMaxFolderLevels = 1'000'000;
 
     BrowseService(storage::Database &db, governor::Governor &governor, NetworkService &network, WallClock now = {},
                   QObject *parent = nullptr);
@@ -135,6 +141,8 @@ private:
     };
 
     void accept(const QString &peer, const slsk::SharedFileList &list, qint64 fetchedAtMs, bool fromCache);
+    // Why this list is too big to show (kMaxFiles, kMaxPathBytes), or nothing.
+    static std::optional<QString> tooBig(const QString &peer, const slsk::SharedFileList &list);
     void store(const QString &peer, const slsk::SharedFileList &list);
     std::optional<std::pair<slsk::SharedFileList, qint64>> cached(const QString &peer);
     void setState(Browse &browse, Browse::State state, const QString &message = {});

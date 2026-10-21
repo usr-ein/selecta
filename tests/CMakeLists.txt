@@ -135,7 +135,7 @@ if(SELECTA_WITH_MEDIA)
             app/TickDelegateTest.cpp
             app/TransfersModelTest.cpp
             app/WaveformViewTest.cpp
-        LIBRARIES selecta_app selecta_media_test_support)
+        LIBRARIES selecta_app selecta_media_test_support selecta_slsk_testing)
     if(APPLE)
         # The built bundle's icon (D36): Selecta.icns, and Assets.car when actool compiled the Icon Composer icon.
         add_test(NAME selecta_app_bundle_icon COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/app/check-bundle-icon.sh"
