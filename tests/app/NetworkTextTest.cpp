@@ -132,29 +132,41 @@ QMenu *openMenu()
     return nullptr;
 }
 
-// The menu a view opens on a right-click at `position`: what its items show. The menu is closed as soon as it is
-// up (looked for every 10 ms, for 5 s at most).
-QStringList contextMenu(QWidget *view, QPoint position)
+// The menu a view opens on a right-click at `position`: what its items show. The menu is closed as soon as it is up,
+// and the item that shows `choose`, if any, triggered. A menu not found within 5 s fails the test, and whatever popup
+// is up then is closed, so a menu that opens unseen can't hang it.
+QStringList contextMenu(QWidget *view, QPoint position, const QString &choose = {})
 {
     QStringList texts;
+    QAction *chosen = nullptr;
     QTimer poll;
     int tries = 0;
     QObject::connect(&poll, &QTimer::timeout, view, [&] {
         QMenu *menu = openMenu();
         if (menu == nullptr) {
-            if (++tries > 500) {
-                poll.stop();
+            if (++tries == 500) {
+                ADD_FAILURE() << "no menu found in 5 s";
+                if (QWidget *popup = QApplication::activePopupWidget()) {
+                    popup->close();
+                }
             }
             return;
         }
         poll.stop();
         const QList<QAction *> actions = menu->actions();
-        for (const QAction *action : actions) {
-            if (!action->isSeparator()) {
-                texts.append(shownMenuText(action->text()));
+        for (QAction *action : actions) {
+            if (action->isSeparator()) {
+                continue;
+            }
+            texts.append(shownMenuText(action->text()));
+            if (!choose.isEmpty() && shownMenuText(action->text()) == choose) {
+                chosen = action;
             }
         }
         menu->close();
+        if (chosen != nullptr) {
+            chosen->trigger(); // while the menu, and so the action, still exists
+        }
     });
     poll.start(10);
     Q_EMIT view->customContextMenuRequested(position);
@@ -167,6 +179,27 @@ QStringList contextMenuOn(QAbstractItemView *view, const QModelIndex &row)
     view->setCurrentIndex(row);
     view->selectionModel()->select(row, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     return contextMenu(view, view->visualRect(row).center());
+}
+
+// The message box open now whose text starts so: a box on its way out (deleted on close) is passed over.
+QMessageBox *openBox(const QWidget &root, const QString &textStart)
+{
+    const QList<QMessageBox *> boxes = root.findChildren<QMessageBox *>();
+    for (QMessageBox *box : boxes) {
+        if (box->isVisible() && box->text().startsWith(textStart)) {
+            return box;
+        }
+    }
+    ADD_FAILURE() << "no box saying " << textStart.toStdString();
+    return nullptr;
+}
+
+// What a message box shows: its text and its informative text, in its format.
+QString shown(const QMessageBox *box)
+{
+    return box == nullptr
+               ? QString()
+               : rendered(box->text(), box->textFormat()) + u'\n' + rendered(box->informativeText(), box->textFormat());
 }
 
 // The peer menu names the peer as it is.
@@ -748,4 +781,86 @@ TEST_F(NetworkTextTest, History)
     const auto *table = child<QAbstractItemView>(*window, u"history.sessions"_s);
     ASSERT_NE(table, nullptr);
     EXPECT_GE(expectToolTipsShowTheName(*table->model()), 2); // the peer's path, where it was filed
+}
+
+// The boxes Search asks with before downloading: the album offer, the album, and what you already have (DL-11, DL-12).
+TEST_F(NetworkTextTest, SearchsQuestionsNameThePeerAndTheFolderAsTheyAre)
+{
+    QSignalSpy started(engine.get(), &core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    auto *field = child<QLineEdit>(*window, u"sidebar.search"_s);
+    ASSERT_NE(field, nullptr);
+    field->setText(u"Okuma Drift"_s);
+    QTest::keyClick(field, Qt::Key_Return);
+    ASSERT_TRUE(QTest::qWaitFor([&] { return window->currentViewId().startsWith(u"search:"_s); }, 5000));
+    const qint64 searchId = window->currentViewId().mid(7).toLongLong();
+
+    // Three tracks of one folder, from a peer named kName; the first one owned. A folder's name is its path's last
+    // part, so it has no "/".
+    const QString folder = u"<i>x&y %1"_s;
+    QList<core::SearchResult> results;
+    for (int i = 0; i < 3; ++i) {
+        core::SearchHit hit;
+        hit.peer = kName;
+        hit.path = (u"@@x\\"_s + folder + u"\\0%1 Okuma Drift - Neon Rain.flac"_s.arg(i + 1)).toUtf8();
+        hit.extension = u"flac"_s;
+        hit.size = 40'000'000;
+        hit.attributes.duration = 372;
+        core::SearchResult result = core::filterableResult(hit);
+        result.index = i;
+        result.peerFilesToday = 1'000; // past the warning: the album's box says so, naming the peer
+        if (i == 0) {
+            result.ownership = core::Ownership::InCollection;
+            result.ownershipDetail = kName;
+        }
+        results.append(result);
+    }
+    ASSERT_EQ(results.constFirst().folder, u"@@x\\"_s + folder);
+    auto *table = child<QTreeView>(*window, u"search.results"_s);
+    ASSERT_NE(table, nullptr);
+    const auto allShown = [&] {
+        int files = 0;
+        for (int row = 0; row < table->model()->rowCount(); ++row) {
+            const QModelIndex index = table->model()->index(row, 0);
+            files += table->model()->rowCount(index) > 0 ? table->model()->rowCount(index) : 1;
+        }
+        if (files == 3) {
+            return true;
+        }
+        Q_EMIT engine->searchResultsReset(searchId, results);
+        return false;
+    };
+    ASSERT_TRUE(QTest::qWaitFor(allShown, 5000));
+    QTest::qWait(200);
+    ASSERT_TRUE(QTest::qWaitFor(allShown, 5000));
+    table->setCurrentIndex(table->model()->index(0, 0));
+    table->selectAll();
+
+    // Download: three tracks of one folder, so the folder is offered as an album.
+    child<QPushButton>(*window, u"search.download"_s)->click();
+    QMessageBox *offer = openBox(*window, u"Download the whole folder as an album?"_s);
+    ASSERT_NE(offer, nullptr);
+    EXPECT_TRUE(shown(offer).contains(u"These 3 tracks are all in “%1” from %2."_s.arg(folder, kName)))
+        << shown(offer).toStdString();
+
+    // Just these files: one of them is yours already.
+    child<QPushButton>(*offer, u"search.albumOffer.files"_s)->click();
+    QMessageBox *owned = openBox(*window, u"You already have"_s);
+    ASSERT_NE(owned, nullptr);
+    EXPECT_TRUE(shown(owned).endsWith(u": "_s + kName)) << shown(owned).toStdString();
+    owned->reject();
+
+    // The folder as an album: what it takes from the peer today.
+    table->setCurrentIndex(table->model()->index(0, 0));
+    table->selectAll();
+    contextMenu(table, table->visualRect(table->model()->index(0, 0)).center(), u"Download Folder as Album…"_s);
+    QMessageBox *album = openBox(*window, u"Download “"_s);
+    ASSERT_NE(album, nullptr);
+    EXPECT_TRUE(shown(album).startsWith(u"Download “%1” as an album?"_s.arg(folder))) << shown(album).toStdString();
+    EXPECT_TRUE(shown(album).contains(u"This takes you to 1003 files from %1 today"_s.arg(kName)))
+        << shown(album).toStdString();
+    album->reject();
+    engine->stop();
 }
