@@ -102,6 +102,8 @@ public:
         MetaEndpoints endpoints;
         // Whether Spotify may be used from the start: the user accepted the terms notice in an earlier run.
         bool spotifyAllowed = false;
+        // Where the cover fetcher keeps covers on disk (CoverFetcher::Config::cacheDir); empty: no disk cache.
+        QString coverCacheDir;
     };
 
     // Token-store accounts for the credentials. Spotify Client IDs are 32 hex digits, so these can't collide with the

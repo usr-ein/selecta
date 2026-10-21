@@ -96,6 +96,10 @@ public:
     void findInboxReleases(qint64 itemId);
     void applyInboxRelease(qint64 itemId, const meta::Release &release);
 
+    // --- the Get tracks inspector's cover (P-021) ---
+    // coverFetched() answers with `key` and the image's bytes (empty: none). See Engine::fetchCover().
+    void fetchCover(const QString &key, const meta::Release &release);
+
     // --- searches typed by hand (SRCH-1) ---
     // Opens a search, or finds the open one with the same text: searchOpened() answers with the returned request
     // number.
@@ -264,6 +268,7 @@ Q_SIGNALS:
     void shareStatusChanged(const selecta::core::ShareStatus &status);
     void uploadsChanged(const QList<selecta::core::UploadEntry> &uploads);
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
+    void coverFetched(const QString &key, const QByteArray &bytes);
     void ytDlpChecked(bool ok, const QString &description);
     void searchOpened(quint64 request, qint64 searchId);
     void manualSearchChanged(const selecta::core::ManualSearch &search);

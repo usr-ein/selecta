@@ -61,6 +61,7 @@ MetaServices::MetaServices(governor::Governor &governor, ActivityLog &activity, 
         options.endpoints.ytDlp ? meta::YtDlpRunner::Config{} : meta::YtDlpRunner::Config::disabled(), m_pacer, clock);
     if (options.endpoints.coverDownloads) {
         meta::CoverFetcher::Config covers;
+        covers.cacheDir = options.coverCacheDir;
         if (!options.endpoints.coverArtArchive.isEmpty()) {
             covers.coverArtArchiveUrl = options.endpoints.coverArtArchive;
         }

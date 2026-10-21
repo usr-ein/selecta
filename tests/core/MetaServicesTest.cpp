@@ -8,7 +8,9 @@
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
+#include <QDir>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 #include <gtest/gtest.h>
@@ -218,4 +220,29 @@ TEST_F(MetaServicesTest, TheSignInPageOpensAgainWhileTheSignInWaits)
     ASSERT_TRUE(settle([this] { return services->spotifyStatus().state == State::SignedOut; }));
     services->reopenSpotifySignIn();
     EXPECT_EQ(opens, 3);
+}
+
+TEST_F(MetaServicesTest, CoversAreKeptInTheCoverCacheGiven)
+{
+    const QTemporaryDir dir;
+    ASSERT_TRUE(dir.isValid());
+    const QString covers = dir.filePath(u"Covers"_s);
+    MetaServices::Options options;
+    options.tokens = std::make_unique<selecta::meta::InMemoryTokenStore>();
+    options.endpoints = selecta::core::MetaEndpoints::unreachable();
+    options.endpoints.coverDownloads = true;
+    options.coverCacheDir = covers;
+    MetaServices withCache(governor, log, clock, std::move(options));
+    ASSERT_NE(withCache.covers(), nullptr);
+    EXPECT_TRUE(QDir(covers).exists()); // the cover fetcher made its folder
+
+    // Cover downloads off (isolated runs): no fetcher, and no folder either.
+    const QString unused = dir.filePath(u"Unused"_s);
+    MetaServices::Options off;
+    off.tokens = std::make_unique<selecta::meta::InMemoryTokenStore>();
+    off.endpoints = selecta::core::MetaEndpoints::unreachable();
+    off.coverCacheDir = unused;
+    MetaServices withoutCovers(governor, log, clock, std::move(off));
+    EXPECT_EQ(withoutCovers.covers(), nullptr);
+    EXPECT_FALSE(QDir(unused).exists());
 }
