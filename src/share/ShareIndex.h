@@ -36,14 +36,21 @@ inline constexpr qsizetype kMaxQueryChars = 256;
 inline constexpr qsizetype kMaxRequestPathBytes = 4096;
 // Files beyond this many are left out of the index and reported (memory stays bounded on any disk).
 inline constexpr int kMaxFiles = 1'000'000;
-// Folders nested deeper than this under a root are left out and reported.
-inline constexpr int kMaxDepth = 64;
+
+// What a shared folder holds, as the collection's two folders hold it (PRD LIB-1, SHARE-1): build() shares its tracks
+// and nothing else.
+enum class Layout : quint8 {
+    Tracks,          // the tracks folder: the tracks lying in it; nothing in its subfolders
+    Albums,          // the albums folder: one album per subfolder, the tracks lying in it; nothing deeper, nothing loose
+    TracksAndAlbums, // one folder in both roles: its loose tracks and its albums' tracks
+};
 
 // A shared folder.
 struct ShareRoot
 {
     QString path;  // absolute; may itself be a symlink to a folder, but nothing below it is ever followed
     QString alias; // the virtual root name peers see; core passes the folder's base name, build() makes it unique
+    Layout layout = Layout::Tracks; // the narrowest by default
 
     friend bool operator==(const ShareRoot &, const ShareRoot &) = default;
 };
@@ -62,7 +69,7 @@ struct BuildResult
     // Never null. When the build was cancelled it is empty (nothing shared): never publish a cancelled build.
     std::shared_ptr<const ShareIndex> index;
     // (local path, reason), for the user and the local log, never for peers: roots that aren't there (an unplugged
-    // drive), folders that can't be listed or are nested too deep, iCloud placeholders whose data isn't on this Mac,
+    // drive), folders that can't be listed, iCloud placeholders whose data isn't on this Mac,
     // names that can't be shared (not UTF-8, control characters, the same virtual name as a sibling), files beyond
     // kMaxFiles. Sorted by nothing: in the order met.
     QList<QPair<QString, QString>> unreadable;
@@ -71,27 +78,32 @@ struct BuildResult
 
 // Builds the index of `roots`, in the order given.
 //
-// The walk: stat only (lstat on every entry, one listing per folder), names sorted. Symlinks below a root are never
-// followed (a root itself may be one). Every (device, inode) is visited once, folders and files alike, so hard links,
-// loops and a root inside another root share each thing once, under the first path met.
+// What is shared (PRD SHARE-1): tracks, in two places only. `<tracks folder>\<track>` for a root laid out as Tracks,
+// `<albums folder>\<album>\<track>` for one laid out as Albums, both for TracksAndAlbums. Nothing at any other depth:
+// not the tracks folder's subfolders, not files lying in the albums folder, not folders inside an album (disc folders
+// included). A track is an audio file (the collection's audio extensions: mp3 flac wav aif aiff m4a alac aac ogg opus
+// wma wv ape); covers, playlists, text and every other file are never shared.
 //
-// Shared: audio files (the collection's audio extensions: mp3 flac wav aif aiff m4a alac aac ogg opus wma wv ape),
-// cover images (jpg jpeg png) and text companions (cue log nfo txt pdf), sharing note decision D-S1. Skipped silently:
-// other extensions, empty files, hidden names (dot files, AppleDouble "._x") and the macOS hidden flag, temporary and
+// The walk: stat only (lstat on every entry, one listing per folder), names sorted. Symlinks below a root are never
+// followed (a root itself may be one). Every (device, inode) is visited once, folders and files alike, so hard links
+// and a root listed twice share each thing once, under the first path met. A root met inside another root (an album
+// folder that is also the tracks folder) is shared as its own root only, whatever the order of `roots`.
+//
+// Skipped silently: empty files, hidden names (dot files, AppleDouble "._x") and the macOS hidden flag, temporary and
 // partial files (*.selecta-part, *.part, *.tmp, …), folders in options.excludedFolders, system junk folders
 // ($RECYCLE.BIN, System Volume Information, @eaDir, #recycle, #snapshot, Network Trash Folder, Temporary Items).
-// Skipped and reported in `unreadable`: iCloud placeholders whose data isn't on disk (never opened: opening one
-// starts a download), names that aren't valid UTF-8 or contain control characters, a name whose virtual form equals a
-// sibling's (NFC/NFD twins on a volume that keeps both).
+// Skipped and reported in `unreadable`, among the tracks that would be shared: iCloud placeholders whose data isn't on
+// disk (never opened: opening one starts a download), names that aren't valid UTF-8 or contain control characters, a
+// name whose virtual form equals a sibling's (NFC/NFD twins on a volume that keeps both).
 //
-// Attributes of audio files (bitrate, duration in whole seconds, VBR flag, or sample rate and bit depth for lossless
+// Attributes of tracks (bitrate, duration in whole seconds, VBR flag, or sample rate and bit depth for lossless
 // files, as Nicotine+ packs them) come from `knownAudio`: the collection scan, keyed by absolute path as
 // collection::scan() reports it (another normalisation of the same path is found too). An entry whose size or
 // modification time differs from the file's is stale and not used. A file without a usable entry gets what
 // audio::probeStreamInfo() reads from its header (the file opened with O_NOFOLLOW and checked to be the walked file),
-// or no attributes when that fails. Other files have no attributes.
+// or no attributes when that fails.
 //
-// Virtual paths: `<alias>\<folders…>\<name>`, NFC, never revealing anything above the root. A `\` inside a local name
+// Virtual paths: `<alias>\<name>` or `<alias>\<album>\<name>`, NFC, never revealing anything above the root. A `\` inside a local name
 // becomes `＼` (U+FF3C) in its virtual name. Aliases are cleaned (`\` and `/` become `_`, control characters go, empty,
 // "." and ".." become "Shared") and made unique case-insensitively in root order: "Music", "Music (2)". A root that
 // isn't there (an unplugged drive) or isn't a folder is reported, keeps its alias (so aliases don't shift while a

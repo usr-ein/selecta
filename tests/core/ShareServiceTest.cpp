@@ -71,7 +71,7 @@ protected:
         listenPort = config.listenPort;
 
         service = std::make_unique<ShareService>(db, governor, *network, log, clock, session, [] { return kNow; });
-        service->setRoots({root}, {});
+        service->setFolders(selecta::collection::FolderRoles({}, root), {});
         service->waitForIdle();
     }
 

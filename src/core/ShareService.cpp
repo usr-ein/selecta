@@ -187,11 +187,21 @@ ShareService::~ShareService()
     m_pool.waitForDone();
 }
 
-void ShareService::setRoots(const QStringList &roots, const QStringList &excluded)
+void ShareService::setFolders(const collection::FolderRoles &folders, const QStringList &excluded)
 {
-    m_roots = roots;
+    m_roots.clear();
+    m_status.roots = folders.roots();
+    for (const QString &root : std::as_const(m_status.roots)) {
+        const bool tracks = root == folders.tracks();
+        // roots() lists a folder in both roles once, as the tracks folder.
+        const bool albums = !folders.albums().isEmpty() &&
+                            collection::comparisonKey(root) == collection::comparisonKey(folders.albums());
+        const share::Layout layout = tracks && albums ? share::Layout::TracksAndAlbums
+                                     : tracks         ? share::Layout::Tracks
+                                                      : share::Layout::Albums;
+        m_roots.append(share::ShareRoot{.path = root, .alias = QFileInfo(root).fileName(), .layout = layout});
+    }
     m_excluded = excluded;
-    m_status.roots = roots;
     rebuild();
 }
 
@@ -210,10 +220,7 @@ void ShareService::rebuild()
         }
         return;
     }
-    QList<share::ShareRoot> roots;
-    for (const QString &root : std::as_const(m_roots)) {
-        roots.append(share::ShareRoot{.path = root, .alias = QFileInfo(root).fileName()});
-    }
+    QList<share::ShareRoot> roots = m_roots;
     // The collection scan already read every audio file's facts: the build reuses them instead of probing.
     QHash<QString, collection::ScannedFile> known;
     const QList<CollectionFile> files = CollectionStore(m_db).all();
