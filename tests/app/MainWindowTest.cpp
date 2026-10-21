@@ -4,6 +4,7 @@
 #include "SyntheticAudio.h"
 #include "app/AppSettings.h"
 #include "app/Notifications.h"
+#include "app/PlayerBar.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/SpectrogramView.h"
@@ -1487,6 +1488,81 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
     EXPECT_TRUE(grouped->isHidden()); // unchecked, it gives way first
     onlyRelease->setChecked(releaseWasChecked);
     engine->stop();
+}
+
+TEST_F(MainWindowTest, ThePlayerWaitsForTheFirstPreview)
+{
+    // P-003 (maintainer): hidden until something is played, then there for good.
+    auto window = makeWindow();
+    auto *player = window->findChild<selecta::app::PlayerBar *>();
+    auto *separator = window->findChild<QWidget *>(u"playerSeparator"_s);
+    ASSERT_NE(player, nullptr);
+    ASSERT_NE(separator, nullptr);
+    EXPECT_FALSE(player->isVisibleTo(window.get()));
+    EXPECT_FALSE(separator->isVisibleTo(window.get()));
+    const int contentHeight = window->findChild<QWidget *>(u"contentSplitter"_s)->height();
+
+    player->showMessage(u"Asking vinyl_ghost…"_s); // a preview asked for
+    QCoreApplication::processEvents();
+    EXPECT_TRUE(player->isVisibleTo(window.get()));
+    EXPECT_TRUE(separator->isVisibleTo(window.get()));
+    EXPECT_LT(window->findChild<QWidget *>(u"contentSplitter"_s)->height(), contentHeight); // it takes its room
+
+    for (const QString &id : {u"inbox"_s, u"history"_s, u"get"_s}) { // and keeps it, whatever the view
+        window->navigateTo(id);
+        QCoreApplication::processEvents();
+        EXPECT_TRUE(player->isVisibleTo(window.get())) << id.toStdString();
+    }
+    player->showMessage(QString()); // a message cleared doesn't hide it
+    EXPECT_TRUE(player->isVisibleTo(window.get()));
+}
+
+TEST_F(MainWindowTest, TheSidebarStartsAtItsWidthWhateverTheViews)
+{
+    // A view that needs room (the Converter's bar) widens only its own page, not the window's minimum: the sidebar
+    // gets its width at the default window size, on every view.
+    auto window = makeWindow();
+    window->resize(1280, 800);
+    auto *splitter = window->findChild<QSplitter *>(u"mainSplitter"_s);
+    auto *sidebar = window->findChild<QWidget *>(u"sidebar"_s);
+    ASSERT_NE(splitter, nullptr);
+    ASSERT_NE(sidebar, nullptr);
+    splitter->setSizes({236, 1280 - 236});
+    QCoreApplication::processEvents();
+    for (const QString &id : {u"get"_s, u"inbox"_s, u"history"_s, u"settings"_s}) {
+        window->navigateTo(id);
+        QCoreApplication::processEvents();
+        EXPECT_EQ(sidebar->width(), 236) << id.toStdString();
+    }
+}
+
+TEST_F(MainWindowTest, ToolbarButtonsStayOnScreenAtAnySidebarWidth)
+{
+    // The beta's note: dragging the sidebar pushed a top-right button off the window. The toolbar's capsules keep
+    // their place whatever the sidebar's width, at the smallest window.
+    auto window = makeWindow();
+    auto *splitter = window->findChild<QSplitter *>(u"mainSplitter"_s);
+    ASSERT_NE(splitter, nullptr);
+    const QStringList buttons{u"toolbar.sidebar"_s, u"toolbar.budget"_s, u"toolbar.ratio"_s,
+                              u"toolbar.pause"_s,   u"toolbar.appearance"_s, u"toolbar.inspector"_s};
+    for (const QString &id : {u"get"_s, u"inbox"_s, u"settings"_s}) {
+        window->navigateTo(id);
+        for (const QList<int> &sizes : {QList<int>{1, 10000}, QList<int>{10000, 1}}) { // narrowest, then widest
+            window->resize(window->minimumSize());
+            QCoreApplication::processEvents();
+            splitter->setSizes(sizes);
+            QCoreApplication::processEvents();
+            for (const QString &name : buttons) {
+                const auto *button = window->findChild<QAbstractButton *>(name);
+                ASSERT_NE(button, nullptr) << name.toStdString();
+                ASSERT_TRUE(button->isVisible()) << name.toStdString();
+                const QRect shown(button->mapTo(window.get(), QPoint(0, 0)), button->size());
+                EXPECT_TRUE(window->rect().contains(shown))
+                    << name.toStdString() << " on " << id.toStdString() << ", sidebar " << sizes.first();
+                EXPECT_GE(button->width(), button->minimumSizeHint().width()) << name.toStdString();
+            }
+        }
+    }
 }
 
 TEST_F(MainWindowTest, PresetsAreSharedBySearchGetTracksAndTheWishlist)

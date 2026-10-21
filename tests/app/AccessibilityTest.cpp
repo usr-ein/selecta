@@ -3,6 +3,7 @@
 // keyboard reaches them.
 #include "app/AppSettings.h"
 #include "app/MainWindow.h"
+#include "app/PlayerBar.h"
 #include "app/Preview.h"
 #include "app/Toasts.h"
 #include "app/WaveformView.h"
@@ -218,7 +219,8 @@ TEST_F(AccessibilityTest, TheKeyboardReachesEveryControl)
     auto window = makeWindow();
     const QList<QWidget *> found = controls(*window);
     for (QWidget *control : found) {
-        if (outOfTheChain.contains(control->objectName()) || control->parentWidget()->objectName() == u"toolbar"_s ||
+        if (outOfTheChain.contains(control->objectName()) ||
+            control->parentWidget()->objectName().startsWith(u"toolbar"_s) || // the toolbar and its capsules
             qobject_cast<QLineEdit *>(control->parentWidget()) != nullptr) {
             continue;
         }
@@ -261,6 +263,12 @@ TEST(Accessibility, ToastsAreReadOutAndWaitForTheKeyboard)
 TEST_F(AccessibilityTest, TabGoesFromTheSidebarToTheViewThenThePlayer)
 {
     auto window = makeWindow();
+    // The player shows once something has been asked for (P-003); until then it isn't in the chain at all.
+    auto *player = window->findChild<selecta::app::PlayerBar *>();
+    ASSERT_NE(player, nullptr);
+    EXPECT_FALSE(player->isVisibleTo(window.get()));
+    player->showMessage(u"Asking the peer…"_s);
+    ASSERT_TRUE(player->isVisibleTo(window.get()));
     for (const QString &id : {u"get"_s, u"wishlist"_s, u"rooms"_s}) {
         window->navigateTo(id);
         QApplication::processEvents();

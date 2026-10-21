@@ -5,6 +5,7 @@
 #include "app/MainWindow.h"
 #include "app/Notifications.h"
 #include "app/Preview.h"
+#include "app/Style.h"
 #include "audio/AnalysisCache.h"
 #include "base/DebugProtocol.h"
 #include "base/Logging.h"
@@ -201,6 +202,8 @@ int runSelecta(int argc, char **argv)
     QApplication::setApplicationDisplayName(u"Selecta"_s);
     QApplication::setOrganizationDomain(u"usr-ein.github.io"_s);
     QApplication::setApplicationVersion(QString(selecta::base::kVersion));
+    // Tables, splitters and headers in the look of P-003 (Style.h), over the platform's own style.
+    QApplication::setStyle(new selecta::app::style::SelectaStyle);
 #ifndef Q_OS_MACOS
     // macOS takes the app icon from the bundle: there this would replace the Dock icon with the bare record.
     QApplication::setWindowIcon(selecta::app::icons::applicationIcon());
@@ -353,7 +356,7 @@ int runSelecta(int argc, char **argv)
                          : selecta::app::createSystemNotificationSink();
 
     selecta::app::MainWindow window(
-        {database, sessions, settings, engine, preview, build, startedAt, notifications.get()});
+        {database, sessions, settings, engine, preview, build, startedAt, notifications.get(), !options.headless});
     if (options.headless) {
         window.setAttribute(Qt::WA_DontShowOnScreen);
     }

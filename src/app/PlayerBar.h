@@ -29,7 +29,7 @@ public:
     // playing. Cleared by the next track, and when playing starts.
     void showMessage(const QString &message);
 
-    // A button for one of the window's preview actions (Discard…), after the time as the mock has it; named
+    // A button for one of the window's preview actions (Discard…), before the volume as the mock has it; named
     // `objectName`. It follows the action: its icon, tooltip and whether it is enabled.
     void addPreviewAction(QAction *action, const QString &objectName);
 
@@ -38,6 +38,9 @@ public:
 
 Q_SIGNALS:
     void volumeChanged(double volume);
+    // Something to show: a track loaded, or a message about one being asked for. The window shows the bar from the
+    // first one on (P-003: hidden until something is played).
+    void activity();
 
 protected:
     void changeEvent(QEvent *event) override;
@@ -58,8 +61,7 @@ private:
     QToolButton *m_play;
     QToolButton *m_forward;
     QWidget *m_left;  // the title, the subtitle and the quality badge
-    QWidget *m_right; // the time, the preview actions and the volume
-    QLabel *m_time;
+    QWidget *m_right; // the preview actions and the volume
     QHBoxLayout *m_actions; // the preview actions' buttons
     QSlider *m_volume;
     QLabel *m_speaker;

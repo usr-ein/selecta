@@ -33,6 +33,7 @@ namespace selecta::app {
 class ActivityView;
 class BrowseView;
 class AppSettings;
+class CapsuleButton;
 class ConverterView;
 class GetTracksView;
 class InboxView;
@@ -49,6 +50,7 @@ class PreviewController;
 class SearchView;
 class Sidebar;
 class Toasts;
+class Toolbar;
 
 // What the main window needs from the rest of the app. The referenced objects outlive the window.
 struct AppServices
@@ -68,6 +70,8 @@ struct AppServices
     // Where system notifications go (UI-6): macOS's Notification Center, a list in headless runs, a fake in tests;
     // null when there are none. Outlives the window like the rest.
     NotificationSink *notifications = nullptr;
+    // The system's glass behind the window (WindowChrome.h): for a window on screen, not for headless runs and tests.
+    bool windowGlass = false;
 };
 
 // The single main window (PRD 8.2): toolbar, sidebar, content views, inspector and player. Main thread only.
@@ -122,6 +126,7 @@ Q_SIGNALS:
 protected:
     void closeEvent(QCloseEvent *event) override;
     void changeEvent(QEvent *event) override;
+    void showEvent(QShowEvent *event) override;
 
 private:
     struct View
@@ -180,6 +185,8 @@ private:
     SettingsView *m_settingsView = nullptr;
     QSplitter *m_mainSplitter = nullptr;
     QSplitter *m_contentSplitter = nullptr;
+    Toolbar *m_toolbar = nullptr;
+    CapsuleButton *m_inspectorButton = nullptr;
     QLabel *m_title = nullptr;
     QLabel *m_subtitle = nullptr;
     QAction *m_toggleSidebar = nullptr;

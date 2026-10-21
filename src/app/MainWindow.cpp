@@ -11,8 +11,11 @@
 #include "app/Presets.h"
 #include "app/Preview.h"
 #include "app/Sidebar.h"
+#include "app/Style.h"
 #include "app/Toasts.h"
+#include "app/Toolbar.h"
 #include "app/WaveformView.h"
+#include "app/WindowChrome.h"
 #include "app/views/ActivityView.h"
 #include "app/views/BrowseView.h"
 #include "app/views/CollectionView.h"
@@ -59,7 +62,6 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QTimer>
-#include <QToolBar>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -80,7 +82,7 @@ constexpr int kDefaultWidth = 1280;
 constexpr int kDefaultHeight = 800;
 constexpr int kMinimumWidth = 900;
 constexpr int kMinimumHeight = 560;
-constexpr int kSidebarWidth = 220;
+constexpr int kSidebarWidth = 236; // the panel and the kSpace2 of glass around it
 constexpr int kInspectorWidth = 300;
 
 const QString kDefaultView = u"get"_s;
@@ -101,6 +103,24 @@ Appearance nextAppearance(Appearance appearance)
 }
 
 // Audio the preview cache holds: a peer's file or YouTube's (a Deezer clip lives in memory; a file is the user's).
+// The views, one at a time: the window's minimum width is the current view's, not the widest one's, so a view that
+// needs room (the Converter's bar) doesn't squeeze the sidebar everywhere else.
+class ViewStack : public QStackedWidget
+{
+public:
+    explicit ViewStack(QWidget *parent)
+        : QStackedWidget(parent)
+    {
+        connect(this, &QStackedWidget::currentChanged, this, [this] { updateGeometry(); });
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        const QWidget *current = currentWidget();
+        return current ? current->minimumSizeHint().expandedTo(current->minimumSize()) : QSize();
+    }
+};
+
 bool isCachedPreview(const QString &identity)
 {
     return identity.startsWith(u"peer|"_s) || identity.startsWith(u"youtube|"_s);
@@ -117,7 +137,9 @@ MainWindow::MainWindow(AppServices services, QWidget *parent)
     setObjectName(u"mainWindow"_s);
     setWindowTitle(u"Selecta"_s);
     setMinimumSize(kMinimumWidth, kMinimumHeight);
-    setUnifiedTitleAndToolBarOnMac(true);
+    // The content runs under the title bar (the sidebar reaches the top, holding the traffic lights) and, on screen,
+    // the system's glass shows behind the sidebar (P-003).
+    chrome::prepare(this, m_services.windowGlass);
 
     // System notifications and the Dock badge (UI-6). The user is away while this window isn't the active one: Selecta
     // is in the background or its window in the Dock. (With one of Selecta's dialogs in front, macOS keeps a
@@ -163,9 +185,9 @@ MainWindow::~MainWindow() = default;
 void MainWindow::createCentralArea()
 {
     m_sidebar = new Sidebar(m_navModel, this);
-    m_stack = new QStackedWidget(this);
+    m_stack = new ViewStack(this);
     m_stack->setObjectName(u"content"_s);
-    m_stack->setAutoFillBackground(true); // content panes use the content colour, the sidebar the window colour
+    m_stack->setAutoFillBackground(true); // content panes use the content colour
     m_stack->setBackgroundRole(QPalette::Base);
     m_inspector = new Inspector(this);
     m_player = new PlayerBar(m_services.preview, this);
@@ -187,12 +209,24 @@ void MainWindow::createCentralArea()
     separator->setFrameShape(QFrame::HLine);
     separator->setFrameShadow(QFrame::Plain);
     separator->setForegroundRole(QPalette::Mid);
+    // The player waits for the first preview (maintainer, P-003): until then the views have its room.
+    m_player->hide();
+    separator->hide();
+    connect(m_player, &PlayerBar::activity, this, [this, separator] {
+        separator->show();
+        m_player->show();
+    });
 
+    // The main column: the toolbar over the content, opaque, beside the sidebar's glass.
+    m_toolbar = new Toolbar(this);
     auto *main = new QWidget(this);
     main->setObjectName(u"main"_s);
+    main->setAutoFillBackground(true);
+    main->setBackgroundRole(QPalette::Base);
     auto *mainLayout = new QVBoxLayout(main);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     mainLayout->setSpacing(0);
+    mainLayout->addWidget(m_toolbar);
     mainLayout->addWidget(m_contentSplitter, 1);
     mainLayout->addWidget(separator);
     mainLayout->addWidget(m_player);
@@ -206,7 +240,8 @@ void MainWindow::createCentralArea()
     m_mainSplitter->setStretchFactor(0, 0);
     m_mainSplitter->setStretchFactor(1, 1);
     m_mainSplitter->setChildrenCollapsible(false);
-    m_mainSplitter->setHandleWidth(1);
+    m_mainSplitter->setHandleWidth(1); // the sidebar's own glass margin is the gap
+    style::SelectaStyle::hideHandles(m_mainSplitter);
     setCentralWidget(m_mainSplitter);
 
     connect(m_sidebar, &Sidebar::navigationRequested, this, [this](const QString &id) { navigateTo(id); });
@@ -1015,59 +1050,18 @@ void MainWindow::createMenus()
 
 void MainWindow::createToolBar()
 {
-    QToolBar *bar = addToolBar(tr("Toolbar"));
-    bar->setObjectName(u"toolbar"_s);
-    bar->setMovable(false);
-    bar->setFloatable(false);
-    bar->setIconSize(QSize(18, 18));
-    bar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    bar->setContextMenuPolicy(Qt::PreventContextMenu);
+    m_toolbar->setLeadingAction(m_toggleSidebar, u"toolbar.sidebar"_s);
+    m_title = m_toolbar->title();
+    m_subtitle = m_toolbar->subtitle();
 
-    bar->addAction(m_toggleSidebar);
-
-    auto *titleBox = new QWidget(bar);
-    titleBox->setObjectName(u"toolbar.titleBox"_s);
-    auto *titleLayout = new QVBoxLayout(titleBox);
-    titleLayout->setContentsMargins(10, 0, 10, 0);
-    titleLayout->setSpacing(0);
-    m_title = new QLabel(titleBox);
-    m_title->setObjectName(u"toolbar.title"_s);
-    m_title->setTextFormat(Qt::PlainText); // a peer's name, a search as typed
-    QFont titleFont = m_title->font();
-    titleFont.setWeight(QFont::DemiBold);
-    m_title->setFont(titleFont);
-    m_subtitle = new QLabel(titleBox);
-    m_subtitle->setObjectName(u"toolbar.subtitle"_s);
-    m_subtitle->setTextFormat(Qt::PlainText); // may be a peer's or the server's words
-    QFont subtitleFont = m_subtitle->font();
-    subtitleFont.setPointSizeF(subtitleFont.pointSizeF() - 2.0);
-    m_subtitle->setFont(subtitleFont);
-    m_subtitle->setForegroundRole(QPalette::PlaceholderText);
-    titleLayout->addWidget(m_title);
-    titleLayout->addWidget(m_subtitle);
-    bar->addWidget(titleBox);
-
-    auto *spacer = new QWidget(bar);
-    spacer->setObjectName(u"toolbar.spacer"_s);
-    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    bar->addWidget(spacer);
-
-    auto *budgetButton = new QToolButton(bar);
+    auto *budgetButton = new CapsuleButton(m_budget, true, false);
     budgetButton->setObjectName(u"toolbar.budget"_s);
-    budgetButton->setDefaultAction(m_budget);
-    budgetButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    budgetButton->setAutoRaise(true);
-    bar->addWidget(budgetButton);
     // The ratio, always in sight (FAIR-3): what went out against what came in, over 30 days.
     m_ratio = new QAction(icons::symbol(u"arrow.up.arrow.down"_s, u"network-transmit-receive"_s), QString(), this);
     m_ratio->setObjectName(u"action.ratio"_s);
     connect(m_ratio, &QAction::triggered, this, [this] { navigateTo(u"shares"_s); });
-    auto *ratioButton = new QToolButton(bar);
+    auto *ratioButton = new CapsuleButton(m_ratio, true, false);
     ratioButton->setObjectName(u"toolbar.ratio"_s);
-    ratioButton->setDefaultAction(m_ratio);
-    ratioButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    ratioButton->setAutoRaise(true);
-    bar->addWidget(ratioButton);
     const auto showRatio = [this](const core::ShareStatus &status) {
         const core::RatioAssessment ratio = core::assessRatio(status);
         m_ratio->setText(ratio.level == core::RatioAssessment::Level::Low ? ratio.summary + u" !"_s : ratio.summary);
@@ -1075,15 +1069,20 @@ void MainWindow::createToolBar()
     };
     connect(&m_services.engine, &core::EngineHost::shareStatusChanged, this, showRatio);
     showRatio(m_services.engine.shareStatus());
-    bar->addAction(m_togglePause);
+    m_toolbar->addCapsule(u"toolbar.network"_s, {budgetButton, ratioButton});
 
     auto *cycleAppearance =
         new QAction(icons::symbol(u"circle.lefthalf.filled"_s, u"weather-clear-night"_s), tr("Appearance"), this);
     cycleAppearance->setObjectName(u"action.cycleAppearance"_s);
     cycleAppearance->setToolTip(tr("Switch between System, Light and Dark"));
     connect(cycleAppearance, &QAction::triggered, this, [this] { setAppearance(nextAppearance(m_appearance)); });
-    bar->addAction(cycleAppearance);
-    bar->addAction(m_toggleInspector);
+    auto *pauseButton = new CapsuleButton(m_togglePause, false, true);
+    pauseButton->setObjectName(u"toolbar.pause"_s);
+    auto *appearanceButton = new CapsuleButton(cycleAppearance, false, false);
+    appearanceButton->setObjectName(u"toolbar.appearance"_s);
+    m_inspectorButton = new CapsuleButton(m_toggleInspector, false, false);
+    m_inspectorButton->setObjectName(u"toolbar.inspector"_s);
+    m_toolbar->addCapsule(u"toolbar.window"_s, {pauseButton, appearanceButton, m_inspectorButton});
 }
 
 void MainWindow::restoreSavedState()
@@ -1301,6 +1300,12 @@ void MainWindow::closeEvent(QCloseEvent *event)
     event->accept();
 }
 
+void MainWindow::showEvent(QShowEvent *event)
+{
+    QMainWindow::showEvent(event);
+    chrome::install(this); // the native window exists now: the title bar and, on screen, the glass
+}
+
 void MainWindow::changeEvent(QEvent *event)
 {
     QMainWindow::changeEvent(event);
@@ -1463,6 +1468,7 @@ void MainWindow::setSidebarShown(bool shown)
 {
     m_sidebar->setVisible(shown);
     m_toggleSidebar->setText(shown ? tr("Hide Sidebar") : tr("Show Sidebar"));
+    m_toolbar->setLeavesRoomForTrafficLights(!shown); // the traffic lights move over the toolbar
 }
 
 bool MainWindow::isInspectorShown() const
@@ -1474,6 +1480,7 @@ void MainWindow::setInspectorShown(bool shown)
 {
     m_inspector->setVisible(shown);
     m_toggleInspector->setText(shown ? tr("Hide Inspector") : tr("Show Inspector"));
+    m_inspectorButton->setTinted(shown);
 }
 
 void MainWindow::setAppearance(Appearance appearance)

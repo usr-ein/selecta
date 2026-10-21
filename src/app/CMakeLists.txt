@@ -22,9 +22,11 @@ qt_add_library(selecta_app STATIC
     Status.h Status.cpp
     Style.h Style.cpp
     TickDelegate.h TickDelegate.cpp
+    Toolbar.h Toolbar.cpp
     Toasts.h Toasts.cpp
     TwoLineDelegate.h TwoLineDelegate.cpp
     WaveformView.h WaveformView.cpp
+    WindowChrome.h
     models/ActivityModel.h models/ActivityModel.cpp
     models/ConverterModel.h models/ConverterModel.cpp
     models/GetTracksModel.h models/GetTracksModel.cpp
@@ -56,10 +58,14 @@ add_library(Selecta::App ALIAS selecta_app)
 if(APPLE)
     # System notifications (UI-6): UNUserNotificationCenter, in Objective-C++ with ARC. System frameworks only.
     # The system accent colour in light and dark (Appearance.h), from AppKit.
-    target_sources(selecta_app PRIVATE MacNotifications.mm AppearanceMac.mm)
-    set_source_files_properties(MacNotifications.mm AppearanceMac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    # The window's chrome (WindowChrome.h): the title bar the content runs under, and the glass behind the window.
+    target_sources(selecta_app PRIVATE MacNotifications.mm AppearanceMac.mm WindowChromeMac.mm)
+    set_source_files_properties(MacNotifications.mm AppearanceMac.mm WindowChromeMac.mm PROPERTIES COMPILE_OPTIONS
+        "-fobjc-arc")
     target_link_libraries(selecta_app PRIVATE "-framework UserNotifications" "-framework AppKit"
         "-framework Foundation")
+else()
+    target_sources(selecta_app PRIVATE WindowChrome.cpp)
 endif()
 if(SELECTA_DEVTOOLS)
     target_sources(selecta_app PRIVATE devtools/DebugServer.h devtools/DebugServer.cpp)

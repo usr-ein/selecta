@@ -4,6 +4,7 @@
 #include "app/Appearance.h"
 #include "app/Icons.h"
 #include "app/NavModel.h"
+#include "app/Style.h"
 
 #include <QApplication>
 #include <QMouseEvent>
@@ -84,26 +85,14 @@ void NavDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, c
     }
 
     const bool selected = option.state.testFlag(QStyle::State_Selected);
-    const bool focused =
-        selected && option.state.testFlag(QStyle::State_Active) && option.widget && option.widget->hasFocus();
-    QColor textColor = palette.color(QPalette::Text);
-    QColor iconColor = symbolAccentColor(palette); // the system accent, lighter in dark mode
+    // macOS 26's source list: the selected item on a neutral squircle; the text keeps the label colour and the symbol
+    // the accent (the system's, lighter in dark mode). No hover, as in the Finder.
+    const QColor textColor = palette.color(QPalette::Text);
+    const QColor iconColor = symbolAccentColor(palette);
     if (selected) {
-        const QColor fill = focused ? palette.color(QPalette::Active, QPalette::Highlight)
-                                    : palette.color(QPalette::Inactive, QPalette::Highlight);
-        QPainterPath path;
-        path.addRoundedRect(QRectF(rect.adjusted(kSideInset, 1, -kSideInset, -1)), 6.0, 6.0);
-        painter->fillPath(path, fill);
-        if (focused) {
-            textColor = palette.color(QPalette::Active, QPalette::HighlightedText);
-            iconColor = textColor;
-        }
-    } else if (option.state.testFlag(QStyle::State_MouseOver)) {
-        QColor hover = palette.color(QPalette::Text);
-        hover.setAlphaF(0.06F);
-        QPainterPath path;
-        path.addRoundedRect(QRectF(rect.adjusted(kSideInset, 1, -kSideInset, -1)), 6.0, 6.0);
-        painter->fillPath(path, hover);
+        QColor fill = palette.color(QPalette::Text);
+        fill.setAlphaF(isDarkPalette(palette) ? 0.14F : 0.09F);
+        painter->fillPath(style::squircle(QRectF(rect.adjusted(kSideInset, 1, -kSideInset, -1)), 8.0), fill);
     }
 
     const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : qApp->devicePixelRatio();
@@ -146,7 +135,7 @@ void NavDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, c
         const QString countText = QLocale().toString(count);
         const int countWidth = QFontMetrics(countFont).horizontalAdvance(countText);
         QColor countColor = textColor;
-        countColor.setAlphaF(selected && focused ? 0.85F : 0.55F);
+        countColor.setAlphaF(0.55F);
         painter->setPen(countColor);
         painter->drawText(QRect(right - countWidth, rect.top(), countWidth, rect.height()),
                           Qt::AlignRight | Qt::AlignVCenter, countText);

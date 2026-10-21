@@ -6,6 +6,7 @@
 #include <QAbstractItemView>
 #include <QHeaderView>
 #include <QPainter>
+#include <QSplitter>
 #include <QStyleOptionHeader>
 #include <QStyleOptionViewItem>
 
@@ -36,6 +37,7 @@ void addCorner(QPainterPath &path, QPointF vertex, QPointF in, QPointF out, qrea
 }
 
 const char *const kPlatformRows = "selectaPlatformRows"; // set by SelectaStyle::keepPlatformRows()
+const char *const kHiddenHandles = "selectaHiddenHandles"; // set by SelectaStyle::hideHandles()
 
 } // namespace
 
@@ -188,6 +190,13 @@ void SelectaStyle::keepPlatformRows(QAbstractItemView *view)
     }
 }
 
+void SelectaStyle::hideHandles(QSplitter *splitter)
+{
+    if (splitter) {
+        splitter->setProperty(kHiddenHandles, true);
+    }
+}
+
 bool SelectaStyle::drawsRowsOf(const QWidget *widget)
 {
     const auto *view = qobject_cast<const QAbstractItemView *>(widget);
@@ -259,6 +268,14 @@ void SelectaStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *o
 void SelectaStyle::drawControl(ControlElement element, const QStyleOption *option, QPainter *painter,
                                const QWidget *widget) const
 {
+    if (element == CE_Splitter) {
+        // A hairline between panes, as AppKit's thin dividers; nothing where the sidebar's glass is the gap.
+        const QWidget *splitter = widget ? widget->parentWidget() : nullptr;
+        if (!splitter || !splitter->property(kHiddenHandles).toBool()) {
+            painter->fillRect(option->rect, hairlineColor(option->palette));
+        }
+        return;
+    }
     const auto *header = qstyleoption_cast<const QStyleOptionHeader *>(option);
     const QWidget *view = widget ? widget->parentWidget() : nullptr;
     if (header && drawsRowsOf(view) && (element == CE_Header || element == CE_HeaderSection ||

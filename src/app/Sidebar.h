@@ -13,13 +13,19 @@ class NavModel;
 class SourceListView;
 class StatusDot;
 
-// The left column: the source list and, at the bottom, the connection status.
+// The left column (P-003): a floating glass panel, inset from the window's edges, with the search field, the source
+// list and, at the bottom, the connection status. On macOS its top holds the traffic lights, and pressing that space
+// moves the window. It paints only the panel: the window's glass shows around it (WindowChrome.h).
 class Sidebar : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit Sidebar(NavModel *model, QWidget *parent = nullptr);
+
+    // The panel's place in the sidebar, its fill and its rim, for a given appearance (tests).
+    QRect panelRect() const;
+    static QColor panelFill(bool dark);
 
     // Selects the item without emitting navigationRequested. Unknown ids clear the selection.
     void select(const QString &id);
@@ -31,6 +37,11 @@ public:
     // SRCH-15: the searches typed lately, newest first, offered as the user types.
     void setRecentSearches(const QStringList &searches);
 
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+
 Q_SIGNALS:
     // The user picked an item (click or keyboard).
     void navigationRequested(const QString &id);
@@ -41,6 +52,7 @@ Q_SIGNALS:
 
 private:
     NavModel *m_model;
+    QWidget *m_searchBox = nullptr; // the capsule around the field
     QLineEdit *m_search;
     QStringListModel *m_recent;
     SourceListView *m_list;

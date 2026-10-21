@@ -4,6 +4,7 @@
 #include "app/Format.h"
 #include "app/Icons.h"
 #include "app/Preview.h"
+#include "app/Style.h"
 #include "app/WaveformView.h"
 
 #include <QAction>
@@ -96,7 +97,6 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
                                 18, this))
     , m_left(new QWidget(this))
     , m_right(new QWidget(this))
-    , m_time(new QLabel(this))
     , m_actions(new QHBoxLayout)
     , m_volume(new QSlider(Qt::Horizontal, this))
     , m_speaker(new QLabel(this))
@@ -122,12 +122,6 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     m_quality->setTextFormat(Qt::PlainText);
     m_quality->hide();
 
-    m_time->setObjectName(u"player.time"_s);
-    QFont timeFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    timeFont.setPointSizeF(m_time->font().pointSizeF());
-    m_time->setFont(timeFont);
-    m_time->setForegroundRole(QPalette::PlaceholderText);
-    m_time->setMinimumWidth(QFontMetrics(timeFont).horizontalAdvance(u"88:88 / 88:88"_s)); // steady while it ticks
 
     m_volume->setObjectName(u"player.volume"_s);
     m_volume->setRange(0, 100);
@@ -155,7 +149,7 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     left->addWidget(m_quality);
 
     auto *transport = new QHBoxLayout;
-    transport->setSpacing(4);
+    transport->setSpacing(style::kSpace4);
     transport->addWidget(m_back);
     transport->addWidget(m_play);
     transport->addWidget(m_forward);
@@ -164,11 +158,11 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     auto *right = new QHBoxLayout(m_right);
     right->setContentsMargins(0, 0, 0, 0);
     right->setSpacing(6);
+    // No clock here: the waveform shows the time played and the time left (mock, P-003).
     right->addStretch(1);
-    right->addWidget(m_time);
-    m_actions->setSpacing(2);
+    m_actions->setSpacing(style::kSpace2);
     right->addLayout(m_actions);
-    right->addSpacing(12);
+    right->addSpacing(style::kSpace3);
     right->addWidget(m_speaker);
     right->addWidget(m_volume);
 
@@ -176,15 +170,15 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
         side->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     }
     auto *row = new QHBoxLayout;
-    row->setSpacing(16);
+    row->setSpacing(style::kSpace4);
     row->addWidget(m_left, 1);
     row->addLayout(transport);
     row->addWidget(m_right, 1);
 
     m_waveform->setMinimumHeight(112);
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(12, 8, 12, 12);
-    layout->setSpacing(8);
+    layout->setContentsMargins(style::kSpace5, style::kSpace3, style::kSpace5, style::kSpace4);
+    layout->setSpacing(style::kSpace3);
     layout->addLayout(row);
     layout->addWidget(m_waveform, 1);
 
@@ -227,6 +221,9 @@ void PlayerBar::showMessage(const QString &message)
 {
     m_message = message;
     refresh();
+    if (!message.isEmpty()) {
+        Q_EMIT activity();
+    }
 }
 
 void PlayerBar::addPreviewAction(QAction *action, const QString &objectName)
@@ -288,6 +285,9 @@ void PlayerBar::trackChanged()
         m_waveform->setBuffered(-1.0);
     }
     refresh();
+    if (player.isActive() || player.state() == State::Ended) {
+        Q_EMIT activity();
+    }
 }
 
 void PlayerBar::refresh()
@@ -373,16 +373,7 @@ void PlayerBar::refreshQuality()
 
 void PlayerBar::tick()
 {
-    const playback::Player &player = m_preview.player();
-    const double position = player.position();
-    m_waveform->setPosition(position);
-    const double duration = player.duration();
-    if (!player.isActive() && player.state() != State::Ended) {
-        m_time->clear();
-        return;
-    }
-    const QString length = duration > 0.0 ? format::clock(duration) : u"–:––"_s;
-    m_time->setText(format::clock(position) + u" / "_s + length);
+    m_waveform->setPosition(m_preview.player().position());
 }
 
 } // namespace selecta::app

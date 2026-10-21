@@ -8,6 +8,7 @@
 class QAbstractItemView;
 class QPainter;
 class QPalette;
+class QSplitter;
 
 // The look of P-003 (mock/README.md, "The look"): one spacing scale, continuous corners, inset tables.
 namespace selecta::app::style {
@@ -70,6 +71,9 @@ public:
     static bool drawsRowsOf(const QWidget *widget);
     // A view that paints its own rows keeps the platform's: call before it is shown.
     static void keepPlatformRows(QAbstractItemView *view);
+    // A splitter whose handles are invisible (the sidebar's: its glass margin is the gap). Other splitters' handles are
+    // a hairline.
+    static void hideHandles(QSplitter *splitter);
 };
 
 // Fills a cell's share of a selected row: the row is one inset squircle across its cells. `position` is the cell's
