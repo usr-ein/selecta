@@ -110,6 +110,7 @@ if(SELECTA_WITH_MEDIA)
     selecta_add_test_suite(selecta_ui_tests GUI
         SOURCES
             app/AccessibilityTest.cpp
+            app/AppearanceTest.cpp
             app/ActivityModelTest.cpp
             app/AppIconTest.cpp
             app/DiagnosticsTest.cpp
