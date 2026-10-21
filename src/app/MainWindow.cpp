@@ -235,9 +235,9 @@ void MainWindow::createNotifications()
     // The wishlist found files it hadn't seen (SRCH-14).
     connect(&m_services.engine, &core::EngineHost::wishlistFound, this,
             [this](const core::WishlistItem &item, int newFiles) {
-                const QString title = newFiles == 1
-                                          ? tr("Wishlist: 1 new file for “%1”").arg(item.text)
-                                          : tr("Wishlist: %1 new files for “%2”").arg(QString::number(newFiles), item.text);
+                const QString title =
+                    newFiles == 1 ? tr("Wishlist: 1 new file for “%1”").arg(item.text)
+                                  : tr("Wishlist: %1 new files for “%2”").arg(QString::number(newFiles), item.text);
                 m_toasts->show(title, {}, Toasts::Kind::Good,
                                {{tr("Show"),
                                  [this, item] {
@@ -302,8 +302,9 @@ void MainWindow::albumReported(const core::AlbumReport &report)
 {
     QStringList lines;
     if (report.arrival) {
-        lines.append(report.tracks == 1 ? tr("1 track in Inbox/%1/").arg(report.where)
-                                        : tr("%1 tracks in Inbox/%2/").arg(QString::number(report.tracks), report.where));
+        lines.append(report.tracks == 1
+                         ? tr("1 track in Inbox/%1/").arg(report.where)
+                         : tr("%1 tracks in Inbox/%2/").arg(QString::number(report.tracks), report.where));
         if (!report.warning.isEmpty()) {
             lines.append(report.warning);
         }

@@ -258,8 +258,9 @@ void CollectionView::show(const core::CollectionStatus &status)
     for (const QString &root : status.roots) {
         folders.append(QDir::toNativeSeparators(root));
     }
-    details.append(folders.size() == 1 ? tr("in %1").arg(folders.constFirst())
-                                       : tr("in %1 folders: %2").arg(QString::number(folders.size()), folders.join(u", "_s)));
+    details.append(folders.size() == 1
+                       ? tr("in %1").arg(folders.constFirst())
+                       : tr("in %1 folders: %2").arg(QString::number(folders.size()), folders.join(u", "_s)));
     if (status.scanning) {
         details.append(status.total > 0 ? tr("reading %1 of %2 new or changed files")
                                               .arg(locale.toString(status.done), locale.toString(status.total))

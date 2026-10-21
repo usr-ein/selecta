@@ -28,6 +28,7 @@ QLabel *text(const QString &name, QWidget *parent)
     auto *label = new QLabel(parent);
     label->setObjectName(name);
     label->setWordWrap(true);
+    label->setTextFormat(Qt::PlainText); // folder names; the ratio's table is set rich
     label->setTextInteractionFlags(Qt::TextSelectableByMouse);
     return label;
 }
@@ -198,7 +199,7 @@ void SharesView::showUploads(const QList<core::UploadEntry> &uploads)
         auto *row = new QTreeWidgetItem(m_uploads);
         row->setText(0, upload.user);
         row->setText(1, upload.path.section(u'\\', -1));
-        row->setToolTip(1, upload.path);
+        row->setToolTip(1, format::plainToolTip(upload.path)); // as the peer asked for it
         row->setText(2, u"%1 % of %2"_s.arg(percent).arg(format::size(static_cast<qint64>(upload.size))));
     }
     m_uploads->setVisible(!uploads.isEmpty());

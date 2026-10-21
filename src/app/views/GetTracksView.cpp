@@ -575,9 +575,10 @@ void GetTracksView::exportUnresolved()
             m_note->show();
             return;
         }
-        m_note->setText(lines.size() == 1
-                            ? tr("Saved 1 line to %1.").arg(QDir::toNativeSeparators(path))
-                            : tr("Saved %1 lines to %2.").arg(QString::number(lines.size()), QDir::toNativeSeparators(path)));
+        m_note->setText(
+            lines.size() == 1
+                ? tr("Saved 1 line to %1.").arg(QDir::toNativeSeparators(path))
+                : tr("Saved %1 lines to %2.").arg(QString::number(lines.size()), QDir::toNativeSeparators(path)));
         m_note->show();
     });
     dialog->open();

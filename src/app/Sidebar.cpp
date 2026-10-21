@@ -125,6 +125,7 @@ Sidebar::Sidebar(NavModel *model, QWidget *parent)
 
     m_statusDot->setObjectName(u"sidebar.statusDot"_s);
     m_statusText->setObjectName(u"sidebar.status"_s);
+    m_statusText->setTextFormat(Qt::PlainText); // a username, the server's words
     m_statusText->setForegroundRole(QPalette::PlaceholderText);
 
     auto *status = new QHBoxLayout;

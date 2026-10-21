@@ -60,6 +60,8 @@ public:
     static QString statusText(const core::GetLine &line);
     static StatusKind statusKind(const core::GetLine &line);
     static QString subtitle(const core::GetLine &line);
+    // A cell's tooltip as written (the raw line, the message, the peer's path); data() escapes it for Qt.
+    static QString toolTip(const core::GetLine &line, int column);
     // What VoiceOver reads for a cell where it differs from the display text: the tick, both lines of the track.
     static QVariant accessibleText(const core::GetLine &line, int column);
 

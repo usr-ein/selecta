@@ -10,6 +10,7 @@
 #include "app/Preview.h"
 #include "app/Toasts.h"
 #include "app/models/ActivityModel.h"
+#include "app/models/ConverterModel.h"
 #include "app/models/GetTracksModel.h"
 #include "app/models/PeersModel.h"
 #include "app/models/SearchResultsModel.h"
@@ -17,6 +18,7 @@
 #include "app/views/EditTagsDialog.h"
 #include "app/views/ReleasePickerDialog.h"
 #include "convert/MetadataModel.h"
+#include "library/HistoryStore.h"
 #include "core/EngineHost.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
@@ -39,6 +41,7 @@
 #include <QTextDocument>
 #include <QTimer>
 #include <QTreeView>
+#include <QTreeWidget>
 
 #include <gtest/gtest.h>
 #include <memory>
@@ -107,8 +110,8 @@ void expectLabelsShowTheName(const QWidget &root, int atLeast)
             continue;
         }
         ++seen;
-        EXPECT_TRUE(shown(label).contains(kName)) << label->objectName().toStdString() << ": "
-                                                  << label->text().toStdString();
+        EXPECT_TRUE(shown(label).contains(kName))
+            << label->objectName().toStdString() << ": " << label->text().toStdString();
         EXPECT_EQ(label->buddy(), nullptr) << label->objectName().toStdString();
     }
     EXPECT_GE(seen, atLeast);
@@ -175,8 +178,8 @@ protected:
         ASSERT_TRUE(db.open(u":memory:"_s));
         ASSERT_TRUE(selecta::storage::migrate(db, selecta::storage::selectaMigrations()).ok());
         session = sessions.start(1'000);
-        settings = std::make_unique<selecta::app::AppSettings>(dir.filePath(u"settings.ini"_s),
-                                                               dir.filePath(u"Inbox"_s));
+        settings =
+            std::make_unique<selecta::app::AppSettings>(dir.filePath(u"settings.ini"_s), dir.filePath(u"Inbox"_s));
         core::EngineOptions options;
         options.databasePath = dir.filePath(u"engine.sqlite3"_s);
         options.metaEndpoints = core::MetaEndpoints::unreachable(); // tests never reach real services
@@ -190,8 +193,8 @@ protected:
         selecta::app::BuildInfo build;
         build.version = u"0.0.0-test"_s;
         build.session = session;
-        auto window = std::make_unique<MainWindow>(selecta::app::AppServices{
-            db, sessions, *settings, *engine, *preview, build, 1'000, &notifications});
+        auto window = std::make_unique<MainWindow>(
+            selecta::app::AppServices{db, sessions, *settings, *engine, *preview, build, 1'000, &notifications});
         window->setAttribute(Qt::WA_DontShowOnScreen);
         window->show();
         return window;
@@ -216,8 +219,8 @@ TEST(NetworkTextFormat, APlainToolTipShowsItsTextAsItIs)
     // Lines stay lines.
     EXPECT_EQ(shownToolTip(format::plainToolTip(kName + u"\nsecond line"_s)), kName + u"\nsecond line"_s);
     // Text Qt shows as it is anyway is kept: it looks the same as before.
-    for (const QString &plain : {u"vinyl_ghost"_s, u"Drum & Bass"_s, u"@@x\\Music\\01 Neon Rain.flac"_s,
-                                 u"a < b\nsecond line"_s, QString()}) {
+    for (const QString &plain :
+         {u"vinyl_ghost"_s, u"Drum & Bass"_s, u"@@x\\Music\\01 Neon Rain.flac"_s, u"a < b\nsecond line"_s, QString()}) {
         EXPECT_EQ(format::plainToolTip(plain), plain);
     }
 }
@@ -316,7 +319,7 @@ TEST_F(NetworkTextTest, Messages)
     expectLabelsShowTheName(*window, 2);
 
     // Deleting it names the peer as it is.
-    auto *more = child<QPushButton>(*window, u"messages.more"_s);
+    const auto *more = child<QPushButton>(*window, u"messages.more"_s);
     ASSERT_TRUE(more && more->menu());
     Q_EMIT more->menu()->aboutToShow();
     QAction *remove = nullptr;
@@ -391,6 +394,8 @@ TEST_F(NetworkTextTest, Search)
     hit.attributes.duration = 372;
     core::SearchResult result = core::filterableResult(hit);
     result.index = 0;
+    result.ownership = core::Ownership::InCollection;
+    result.ownershipDetail = kName;
     const QList<core::SearchResult> results{result};
     auto *table = child<QTreeView>(*window, u"search.results"_s);
     ASSERT_NE(table, nullptr);
@@ -413,6 +418,11 @@ TEST_F(NetworkTextTest, Search)
     const QVariant titleTip = row.data(Qt::ToolTipRole);
     EXPECT_TRUE(shownToolTip(titleTip).contains(kName)) << titleTip.toString().toStdString();
     expectPeerMenu(contextMenuOn(table, row));
+    // The inspector: what of it you have.
+    auto *ownership = child<QLabel>(*window, u"inspector.search.ownership"_s);
+    ASSERT_NE(ownership, nullptr);
+    EXPECT_EQ(shownToolTip(ownership->toolTip()), kName);
+    expectLabelsShowTheName(*window, 2);
     engine->stop();
 }
 
@@ -454,7 +464,11 @@ TEST_F(NetworkTextTest, Activity)
         shownToolTip(log->model()->index(0, selecta::app::ActivityModel::Details).data(Qt::ToolTipRole));
     EXPECT_TRUE(sentence.contains(kName)) << sentence.toStdString();
     // Spoken as written.
-    EXPECT_FALSE(log->model()->index(0, selecta::app::ActivityModel::Details).data(Qt::AccessibleDescriptionRole).toString().contains(u"&lt;"_s));
+    EXPECT_FALSE(log->model()
+                     ->index(0, selecta::app::ActivityModel::Details)
+                     .data(Qt::AccessibleDescriptionRole)
+                     .toString()
+                     .contains(u"&lt;"_s));
 }
 
 TEST(NetworkTextModels, PeersShowNamesAsTheyAre)
@@ -482,8 +496,8 @@ TEST(NetworkTextModels, TransfersShowNamesAsTheyAre)
     download.message = kName;
     selecta::app::TransfersModel model;
     model.reset({download}, {});
-    model.setUploads({core::UploadEntry{.transfer = 0, .user = kName, .path = kName, .size = 10, .sent = 0,
-                                        .active = false}});
+    model.setUploads(
+        {core::UploadEntry{.transfer = 0, .user = kName, .path = kName, .size = 10, .sent = 0, .active = false}});
     model.flush();
     EXPECT_GE(expectToolTipsShowTheName(model), 3); // the file's path, why it failed, the upload's path
 }
@@ -518,7 +532,7 @@ TEST_F(NetworkTextTest, GetTracks)
     auto window = makeWindow();
     ASSERT_TRUE(window->navigateTo(u"get"_s));
     Q_EMIT engine->tracksAdded(0, 0, 0, kName);
-    auto *note = child<QLabel>(*window, u"get.note"_s);
+    const auto *note = child<QLabel>(*window, u"get.note"_s);
     EXPECT_TRUE(shown(note).contains(kName)) << note->text().toStdString();
     expectLabelsShowTheName(*window, 1);
 }
@@ -547,12 +561,13 @@ TEST_F(NetworkTextTest, Collection)
     EXPECT_EQ(shown(child<QLabel>(*window, u"collection.formats"_s)), u"%1: 1"_s.arg(kName));
     expectLabelsShowTheName(*window, 3);
 
-    auto *unreadable = child<QListWidget>(*window, u"collection.unreadable"_s);
+    const auto *unreadable = child<QListWidget>(*window, u"collection.unreadable"_s);
     ASSERT_TRUE(unreadable && unreadable->count() == 1);
     EXPECT_EQ(shownToolTip(unreadable->item(0)->toolTip()), kName);
-    auto *flags = child<QListWidget>(*window, u"collection.flags"_s);
+    const auto *flags = child<QListWidget>(*window, u"collection.flags"_s);
     ASSERT_TRUE(flags && flags->count() == 1);
-    EXPECT_TRUE(shownToolTip(flags->item(0)->toolTip()).endsWith(u'\n' + kName)) << flags->item(0)->toolTip().toStdString();
+    EXPECT_TRUE(shownToolTip(flags->item(0)->toolTip()).endsWith(u'\n' + kName))
+        << flags->item(0)->toolTip().toStdString();
 }
 
 TEST_F(NetworkTextTest, InboxAndItsInspector)
@@ -595,7 +610,7 @@ TEST_F(NetworkTextTest, InboxAndItsInspector)
 
 TEST_F(NetworkTextTest, AnAlbumsReportNamesItsFolderAsItIs)
 {
-    auto window = makeWindow();
+    const auto window = makeWindow();
     core::AlbumReport report;
     report.albumId = 1;
     report.album = kName;
@@ -617,7 +632,7 @@ TEST_F(NetworkTextTest, AnAlbumsReportNamesItsFolderAsItIs)
 
 TEST_F(NetworkTextTest, TheReleasePickerShowsTheTrackAndWhatTheServicesSay)
 {
-    selecta::app::ReleasePickerDialog dialog(*engine, 7, kName);
+    const selecta::app::ReleasePickerDialog dialog(*engine, 7, kName);
     EXPECT_EQ(shown(child<QLabel>(dialog, u"dialog.releasePicker.heading"_s)), u"Which release is “%1”?"_s.arg(kName));
     Q_EMIT engine->inboxReleasesFound(7, {}, kName);
     EXPECT_EQ(shown(child<QLabel>(dialog, u"dialog.releasePicker.status"_s)), kName);
@@ -627,7 +642,7 @@ TEST_F(NetworkTextTest, TheReleasePickerShowsTheTrackAndWhatTheServicesSay)
     candidate.release.artists = {kName};
     candidate.reasons = {kName, u"same length"_s};
     Q_EMIT engine->inboxReleasesFound(7, {candidate}, {});
-    auto *list = child<QListWidget>(dialog, u"dialog.releasePicker.list"_s);
+    const auto *list = child<QListWidget>(dialog, u"dialog.releasePicker.list"_s);
     ASSERT_TRUE(list && list->count() == 1);
     EXPECT_EQ(shownToolTip(list->item(0)->toolTip()), kName + u"\nsame length"_s);
 }
@@ -636,4 +651,77 @@ TEST_F(NetworkTextTest, EditTagsNamesTheFileAsItIs)
 {
     const selecta::app::EditTagsDialog dialog(kName, selecta::convert::MetadataModel{});
     EXPECT_EQ(shown(child<QLabel>(dialog, u"dialog.editTags.heading"_s)), u"Tags of “%1”"_s.arg(kName));
+}
+
+TEST_F(NetworkTextTest, Shares)
+{
+    auto window = makeWindow();
+    core::ShareStatus status;
+    status.roots = {dir.filePath(kName)};
+    status.folders = 1;
+    status.files = 1;
+    status.message = kName;
+    Q_EMIT engine->shareStatusChanged(status);
+    Q_EMIT engine->uploadsChanged({core::UploadEntry{
+        .transfer = 0, .user = kName, .path = u"@@x\\"_s + kName, .size = 10, .sent = 0, .active = false}});
+    ASSERT_TRUE(window->navigateTo(u"shares"_s));
+    EXPECT_TRUE(shown(child<QLabel>(*window, u"shares.folders"_s)).contains(kName));
+    EXPECT_EQ(shown(child<QLabel>(*window, u"shares.message"_s)), kName);
+    expectLabelsShowTheName(*window, 2);
+    auto *uploads = child<QTreeWidget>(*window, u"shares.uploads"_s);
+    ASSERT_TRUE(uploads && uploads->topLevelItemCount() == 1);
+    EXPECT_EQ(shownToolTip(uploads->topLevelItem(0)->toolTip(1)), u"@@x\\"_s + kName);
+    expectPeerMenu(contextMenuOn(uploads, uploads->model()->index(0, 0)));
+}
+
+TEST_F(NetworkTextTest, SettingsAndTheSidebarSayWhatTheServerSays)
+{
+    auto window = makeWindow();
+    core::NetworkStatus status;
+    status.state = core::NetworkStatus::State::NeedsUser;
+    status.username = kName;
+    status.detail = kName;
+    Q_EMIT engine->networkStatusChanged(status);
+    ASSERT_TRUE(window->navigateTo(u"settings"_s));
+    EXPECT_EQ(shown(child<QLabel>(*window, u"settings.network.state"_s)), kName);
+    for (const QString &name :
+         {u"settings.network.portMappingState"_s, u"settings.network.reachability"_s, u"settings.preview.ytDlp.state"_s,
+          u"settings.spotify.state"_s, u"settings.preview"_s, u"settings.libraryError"_s, u"sidebar.status"_s}) {
+        EXPECT_EQ(child<QLabel>(*window, name)->textFormat(), Qt::PlainText) << name.toStdString();
+    }
+    expectLabelsShowTheName(*window, 1);
+}
+
+TEST(NetworkTextModels, ConverterShowsNamesAsTheyAre)
+{
+    core::ConverterItem item;
+    item.id = 1;
+    item.path = u"/tmp/"_s + kName + u".flac"_s;
+    item.state = core::ConverterItem::State::Failed;
+    item.message = kName;
+    item.notices = {kName};
+    selecta::app::ConverterModel model;
+    model.setItems({item});
+    ASSERT_EQ(model.rowCount(), 1);
+    EXPECT_GE(expectToolTipsShowTheName(model), 2); // the file, what came of it
+}
+
+TEST_F(NetworkTextTest, History)
+{
+    selecta::library::HistoryEntry entry;
+    entry.session = session;
+    entry.completedAt = 2'000;
+    entry.peer = kName;
+    entry.remotePath = (u"@@x\\"_s + kName + u".flac"_s).toUtf8();
+    entry.quality = u"FLAC 16/44.1"_s;
+    entry.artist = kName;
+    entry.title = kName;
+    entry.whereabouts = selecta::library::HistoryEntry::Whereabouts::Filed;
+    entry.filedPath = dir.filePath(kName + u".flac"_s);
+    ASSERT_TRUE(selecta::library::HistoryStore(db).add(entry).has_value());
+    auto window = makeWindow();
+    ASSERT_TRUE(window->navigateTo(u"history"_s));
+    const auto *table = child<QAbstractItemView>(*window, u"history.sessions"_s);
+    ASSERT_NE(table, nullptr);
+    EXPECT_GE(expectToolTipsShowTheName(*table->model()), 2); // the peer's path, where it was filed
 }
