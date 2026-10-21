@@ -9,7 +9,9 @@
 #include <QFileInfo>
 #include <QTemporaryDir>
 
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <system_error>
 
 using namespace Qt::StringLiterals;
 using selecta::library::FileOps;
@@ -29,6 +31,25 @@ QByteArray readFile(const QString &path)
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
+
+// Makes `link` a symbolic link to the folder `target`. On Windows QFile::link makes a shortcut (.lnk), which is no link
+// at all, and only an administrator or Developer Mode may make a real one: there a test without one skips.
+#ifdef Q_OS_WIN
+constexpr bool kLinksNeedPrivilege = true;
+bool linkFolder(const QString &target, const QString &link)
+{
+    std::error_code error;
+    std::filesystem::create_directory_symlink(QDir::toNativeSeparators(target).toStdWString(),
+                                              QDir::toNativeSeparators(link).toStdWString(), error);
+    return !error;
+}
+#else
+constexpr bool kLinksNeedPrivilege = false;
+bool linkFolder(const QString &target, const QString &link)
+{
+    return QFile::link(target, link);
+}
+#endif
 
 class FileOpsTest : public ::testing::Test
 {
@@ -95,7 +116,11 @@ TEST_F(FileOpsTest, PublishingRefusesPathsOutsideTheInbox)
 
 TEST_F(FileOpsTest, SymlinkCantEscapeTheInbox)
 {
-    ASSERT_TRUE(QFile::link(collection, inbox + u"/sneaky"_s));
+    const bool linked = linkFolder(collection, inbox + u"/sneaky"_s);
+    if (!linked && kLinksNeedPrivilege) {
+        GTEST_SKIP() << "this user can't make symbolic links";
+    }
+    ASSERT_TRUE(linked);
     ASSERT_TRUE(writeFile(incoming + u"/a.mp3"_s, "x"));
     EXPECT_FALSE(ops().publishIntoInbox(incoming + u"/a.mp3"_s, u"sneaky/a.mp3"_s).ok);
     EXPECT_FALSE(QFileInfo::exists(collection + u"/a.mp3"_s));
@@ -216,7 +241,11 @@ TEST_F(FileOpsTest, AlbumFilingNeverMergesIntoAnExistingFolder)
 TEST_F(FileOpsTest, AlbumWithASymlinkIsRefused)
 {
     ASSERT_TRUE(writeFile(inbox + u"/Albums/A/01.mp3"_s, "x"));
-    ASSERT_TRUE(QFile::link(collection, inbox + u"/Albums/A/escape"_s));
+    const bool linked = linkFolder(collection, inbox + u"/Albums/A/escape"_s);
+    if (!linked && kLinksNeedPrivilege) {
+        GTEST_SKIP() << "this user can't make symbolic links";
+    }
+    ASSERT_TRUE(linked);
     EXPECT_FALSE(ops().fileFolderIntoCollection(inbox + u"/Albums/A"_s, collection, u"Albums/A"_s).ok);
     EXPECT_FALSE(QFileInfo::exists(collection + u"/Albums/A"_s));
 }
