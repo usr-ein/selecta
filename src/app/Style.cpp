@@ -8,6 +8,7 @@
 #include <QTreeView>
 #include <QPainter>
 #include <QSplitter>
+#include <QStyleOptionComplex>
 #include <QStyleOptionHeader>
 #include <QStyleOptionViewItem>
 
@@ -397,6 +398,64 @@ QSize SelectaStyle::sizeFromContents(ContentsType type, const QStyleOption *opti
     return result;
 }
 
+namespace {
+
+QFont groupTitleFont(const QWidget *widget)
+{
+    QFont font = widget ? widget->font() : QFont();
+    font.setWeight(QFont::DemiBold);
+    return font;
+}
+
+} // namespace
+
+QRect SelectaStyle::subControlRect(ComplexControl control, const QStyleOptionComplex *option, SubControl subControl,
+                                   const QWidget *widget) const
+{
+    const auto *box = qstyleoption_cast<const QStyleOptionGroupBox *>(option);
+    if (control == CC_GroupBox && box && !box->subControls.testFlag(SC_GroupBoxCheckBox)) {
+        const QFontMetrics metrics(groupTitleFont(widget));
+        const int titleHeight = box->text.isEmpty() ? 0 : metrics.height() + kSpace2;
+        const QRect frame = box->rect.adjusted(0, titleHeight, 0, 0);
+        switch (subControl) {
+        case SC_GroupBoxFrame:
+            return frame;
+        case SC_GroupBoxContents:
+            return frame.adjusted(kSpace4, kSpace3, -kSpace4, -kSpace3);
+        case SC_GroupBoxLabel:
+            return {box->rect.left() + kSpace1, box->rect.top(), metrics.horizontalAdvance(box->text) + 2,
+                    metrics.height()};
+        default:
+            return {};
+        }
+    }
+    return QProxyStyle::subControlRect(control, option, subControl, widget);
+}
+
+void SelectaStyle::drawComplexControl(ComplexControl control, const QStyleOptionComplex *option, QPainter *painter,
+                                      const QWidget *widget) const
+{
+    const auto *box = qstyleoption_cast<const QStyleOptionGroupBox *>(option);
+    if (control == CC_GroupBox && box && !box->subControls.testFlag(SC_GroupBoxCheckBox)) {
+        // The title above in the label colour, semibold; the group on a soft rounded fill (mock: .sec-h, .group).
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        QColor fill = box->palette.color(QPalette::Text);
+        fill.setAlphaF(box->palette.color(QPalette::Base).lightness() < 128 ? 0.05F : 0.035F);
+        painter->fillPath(squircle(QRectF(subControlRect(CC_GroupBox, box, SC_GroupBoxFrame, widget)), kRadiusMedium),
+                          fill);
+        if (!box->text.isEmpty()) {
+            painter->setFont(groupTitleFont(widget));
+            painter->setPen(box->palette.color(QPalette::Text));
+            painter->drawText(subControlRect(CC_GroupBox, box, SC_GroupBoxLabel, widget),
+                              Qt::AlignLeft | Qt::AlignVCenter | Qt::TextSingleLine, box->text);
+        }
+        painter->restore();
+        return;
+    }
+    QProxyStyle::drawComplexControl(control, option, painter, widget);
+}
+
 int SelectaStyle::styleHint(StyleHint hint, const QStyleOption *option, const QWidget *widget,
                             QStyleHintReturn *returnData) const
 {
@@ -405,6 +464,9 @@ int SelectaStyle::styleHint(StyleHint hint, const QStyleOption *option, const QW
     }
     if (hint == SH_ItemView_PaintAlternatingRowColorsForEmptyArea && drawsRowsOf(widget)) {
         return 0;
+    }
+    if (hint == SH_FormLayoutFormAlignment) {
+        return static_cast<int>(Qt::AlignLeft | Qt::AlignTop); // forms start at their group's edge, as System Settings
     }
     return QProxyStyle::styleHint(hint, option, widget, returnData);
 }

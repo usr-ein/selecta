@@ -46,9 +46,13 @@ QColor Inspector::panelColor(const QPalette &palette)
 
 void Inspector::applyPanelPalette()
 {
-    // From the application's palette, not this widget's own: this one is set here.
+    // From the application's palette, not this widget's own: this one is set here. Only on a change, as setting it
+    // sends another PaletteChange.
     QPalette panel = QApplication::palette(this);
     const QColor colour = panelColor(panel);
+    if (palette().color(QPalette::Window) == colour && palette().color(QPalette::Text) == panel.color(QPalette::Text)) {
+        return;
+    }
     panel.setColor(QPalette::Window, colour);
     panel.setColor(QPalette::Base, colour); // the panels' scroll areas
     setPalette(panel);
@@ -57,7 +61,9 @@ void Inspector::applyPanelPalette()
 void Inspector::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
-    if (event->type() == QEvent::ApplicationPaletteChange || event->type() == QEvent::ThemeChange) {
+    const QEvent::Type type = event->type();
+    if (type == QEvent::ApplicationPaletteChange || type == QEvent::PaletteChange || type == QEvent::ThemeChange ||
+        type == QEvent::StyleChange) {
         applyPanelPalette(); // light and dark
     }
 }

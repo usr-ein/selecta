@@ -52,7 +52,7 @@ enum class Corners : quint8 { All, Left, Right, None };
 QPainterPath squircle(const QRectF &rect, qreal radius, Corners corners);
 
 // The rows of a table: the selection as an inset squircle, no stripes, no grid, no focus ring, and a quiet header with
-// one hairline under it. It applies to every QTreeView, QListView and QTableView in the app except those that paint
+// one hairline under it. Group boxes as System Settings' groups. Splitters as hairlines. It applies to every QTreeView, QListView and QTableView in the app except those that paint
 // their own rows (the sidebar's source list). Installed once on the application (main.cpp); widgets built in tests
 // without it keep the platform's look. Main thread only, like every style.
 class SelectaStyle : public QProxyStyle
@@ -73,6 +73,11 @@ public:
                            const QWidget *widget = nullptr) const override;
     int styleHint(StyleHint hint, const QStyleOption *option = nullptr, const QWidget *widget = nullptr,
                   QStyleHintReturn *returnData = nullptr) const override;
+    // Group boxes as System Settings draws its groups: the title above, the controls on a rounded fill.
+    void drawComplexControl(ComplexControl control, const QStyleOptionComplex *option, QPainter *painter,
+                            const QWidget *widget = nullptr) const override;
+    QRect subControlRect(ComplexControl control, const QStyleOptionComplex *option, SubControl subControl,
+                         const QWidget *widget = nullptr) const override;
     void polish(QWidget *widget) override;
     using QProxyStyle::polish;
 

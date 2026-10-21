@@ -140,6 +140,7 @@ SettingsView::SettingsView(const BuildInfo &info, Appearance appearance, core::L
     columnLayout->addWidget(aboutBox);
     columnLayout->addStretch(1);
 
+    column->setMaximumWidth(720); // a centred column, as System Settings' (P-003)
     auto *centered = new QWidget;
     centered->setObjectName(u"settings.page"_s); // the whole page, for full-length screenshots
     auto *centeredLayout = new QHBoxLayout(centered);
