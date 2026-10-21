@@ -228,6 +228,109 @@ TEST_F(ActivityLogTest, OnlyARecentAllowedRequestOfThatPeerNamesALookup)
     EXPECT_TRUE(ActivityLog::recent(db, 1).constFirst().explanation.contains(u"search results"_s));
 }
 
+namespace {
+
+QString lastExplanation(selecta::storage::Database &db)
+{
+    return ActivityLog::recent(db, 1).constFirst().explanation;
+}
+
+} // namespace
+
+TEST_F(ActivityLogTest, ATransferLookupNamesYourDownload)
+{
+    log.record(u"download"_s, u"crate_digger"_s, u"wanted"_s, u"Music\\Neon Rain.flac"_s);
+    nowMs += 2000;
+    log.recordPeerLookup(u"crate_digger"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_EQ(lastExplanation(db), u"You looked up crate_digger's address to carry on your download from them."_s);
+}
+
+TEST_F(ActivityLogTest, ATransferLookupNamesTheirDownload)
+{
+    log.record(u"upload"_s, u"night_owl"_s, u"started"_s, u"Shared/Neon Rain.mp3"_s);
+    nowMs += 2000;
+    log.recordPeerLookup(u"night_owl"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_EQ(lastExplanation(db), u"You looked up night_owl's address to carry on their download from you."_s);
+
+    // Held back: the same reason, then why.
+    log.recordPeerLookup(u"night_owl"_s, ConnectPurpose::Transfer, Refusal::RateLimited, u"Peer lookups: wait."_s);
+    EXPECT_EQ(lastExplanation(db), u"You wanted to look up night_owl's address to carry on their download from you. "
+                                   u"Selecta held it back: Peer lookups: wait."_s);
+}
+
+TEST_F(ActivityLogTest, ATransferLookupNamesBothDirectionsWhenBothAreUnderWay)
+{
+    log.record(u"download"_s, u"swapper"_s, u"wanted"_s, u"A.flac"_s);
+    nowMs += 1000;
+    log.record(u"upload"_s, u"swapper"_s, u"queued"_s, u"B.mp3"_s);
+    log.recordPeerLookup(u"swapper"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_EQ(lastExplanation(db), u"You looked up swapper's address to carry on the file transfers between you (your "
+                                   u"download from them, and theirs from you)."_s);
+}
+
+TEST_F(ActivityLogTest, ATransferLookupKeepsTheHedgeWhenTheDirectionIsUnknown)
+{
+    const QString hedge = u"You looked up %1's address to carry on a file transfer between you (your download from "
+                          u"them, or theirs from you)."_s;
+    // No transfer line for that peer at all.
+    log.recordPeerLookup(u"stranger"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_EQ(lastExplanation(db), hedge.arg(u"stranger"_s));
+
+    // Another peer's transfer says nothing about this one, nor do lines of other kinds about this peer.
+    log.record(u"download"_s, u"other"_s, u"wanted"_s, u"A.flac"_s);
+    log.record(u"upload"_s, u"other"_s, u"started"_s, u"B.mp3"_s);
+    log.record(u"arrival"_s, u"stranger"_s, u"arrived"_s, u"A.mp3"_s);
+    log.recordDecision(Operation::QueueDownload, u"stranger"_s, Refusal::None, u"Allowed."_s);
+    log.recordPeerLookup(u"stranger"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_EQ(lastExplanation(db), hedge.arg(u"stranger"_s));
+
+    // Too old to say which way this lookup's files go.
+    log.record(u"upload"_s, u"stranger"_s, u"completed"_s, u"B.mp3"_s);
+    nowMs += ActivityLog::kTransferMemoryMs + 1;
+    log.recordPeerLookup(u"stranger"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_EQ(lastExplanation(db), hedge.arg(u"stranger"_s));
+
+    // Only the recent direction counts.
+    log.record(u"download"_s, u"stranger"_s, u"wanted"_s, u"C.flac"_s);
+    log.recordPeerLookup(u"stranger"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_EQ(lastExplanation(db), u"You looked up stranger's address to carry on your download from them."_s);
+}
+
+TEST_F(ActivityLogTest, OnlyATransferLookupIsNamedAfterATransferLine)
+{
+    log.record(u"upload"_s, u"night_owl"_s, u"started"_s, u"B.mp3"_s);
+    log.recordPeerLookup(u"night_owl"_s, ConnectPurpose::SearchResponse, Refusal::None, QString());
+    EXPECT_TRUE(lastExplanation(db).contains(u"search results"_s));
+    log.recordPeerLookup(u"night_owl"_s, ConnectPurpose::Request, Refusal::None, QString());
+    EXPECT_TRUE(lastExplanation(db).endsWith(u"one of your requests."_s));
+}
+
+TEST_F(ActivityLogTest, TheTransferMemoryIsBounded)
+{
+    // A burst of uploads to more peers than it keeps: it starts over, and the newest still names its lookup.
+    log.record(u"upload"_s, u"first"_s, u"started"_s, u"B.mp3"_s);
+    for (int i = 0; i < ActivityLog::kTransferMemoryPeers + 10; ++i) {
+        log.record(u"upload"_s, u"peer%1"_s.arg(i), u"queued"_s, u"B.mp3"_s);
+    }
+    log.recordPeerLookup(u"first"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_TRUE(lastExplanation(db).endsWith(u"or theirs from you)."_s));
+    log.recordPeerLookup(u"peer%1"_s.arg(ActivityLog::kTransferMemoryPeers + 9), ConnectPurpose::Transfer,
+                         Refusal::None, QString());
+    EXPECT_TRUE(lastExplanation(db).endsWith(u"their download from you."_s));
+
+    // Full again with old peers: the expired ones go first, and a recent one stays.
+    nowMs += ActivityLog::kTransferMemoryMs + 1;
+    for (int i = 0; i < ActivityLog::kTransferMemoryPeers - 1; ++i) {
+        log.record(u"download"_s, u"old%1"_s.arg(i), u"wanted"_s, u"A.flac"_s);
+    }
+    nowMs += ActivityLog::kTransferMemoryMs - 1000;
+    log.record(u"download"_s, u"fresh"_s, u"wanted"_s, u"A.flac"_s);
+    nowMs += 1500;
+    log.record(u"upload"_s, u"newcomer"_s, u"queued"_s, u"B.mp3"_s);
+    log.recordPeerLookup(u"fresh"_s, ConnectPurpose::Transfer, Refusal::None, QString());
+    EXPECT_TRUE(lastExplanation(db).endsWith(u"your download from them."_s));
+}
+
 TEST_F(ActivityLogTest, ARefusedLookupSaysWhyItWasHeldBack)
 {
     log.recordPeerLookup(u"searcher"_s, ConnectPurpose::SearchResponse, Refusal::RateLimited,
