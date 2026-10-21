@@ -14,6 +14,10 @@ on:
         description: "Jobs to run: any of build, replay, tsan, lint, windows (empty: all)"
         type: string
         default: ''
+      replay:
+        description: Compilers to replay with (JSON list of gcc, gcc-g0, clang, clang-22)
+        type: string
+        default: '["gcc", "clang"]'
 
 permissions:
   contents: read
@@ -188,15 +192,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: gcc
-            flags: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD
-          - name: clang
-            flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD
-          - name: gcc-unity
-            flags: -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD -DCMAKE_UNITY_BUILD=ON
-          - name: clang-unity
-            flags: -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD -DCMAKE_UNITY_BUILD=ON
+        name: ${{ fromJSON(inputs.replay) }}
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
@@ -220,11 +216,20 @@ jobs:
 
       - name: Replay
         run: |
+          # Upstream Clang warns about designated initializers that leave fields to their defaults; Apple Clang doesn't.
+          nodfi="-DCMAKE_CXX_FLAGS=-Wno-missing-designated-field-initializers"
+          case "${{ matrix.name }}" in
+            gcc) flags=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD) ;;
+            gcc-g0) flags=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD
+                           -DCMAKE_C_FLAGS_DEBUG=-g0 -DCMAKE_CXX_FLAGS_DEBUG=-g0) ;;
+            clang) flags=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD "$nodfi") ;;
+            clang-22) flags=(-DCMAKE_C_COMPILER=clang-22 -DCMAKE_CXX_COMPILER=clang++-22 -DCMAKE_LINKER_TYPE=LLD "$nodfi") ;;
+          esac
           for commit in 31c7e94 22bba78 d7a1a2a; do
             git checkout -q "$commit"
             rm -rf build/r
             cmake --preset linux -B build/r -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ${{ matrix.flags }} > configure.log 2>&1 || { cat configure.log; exit 1; }
+              -DCMAKE_CXX_COMPILER_LAUNCHER=ccache "${flags[@]}" > configure.log 2>&1 || { cat configure.log; exit 1; }
             ccache -z > /dev/null
             start=$SECONDS
             status=0
