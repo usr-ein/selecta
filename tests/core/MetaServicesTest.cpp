@@ -224,7 +224,7 @@ TEST_F(MetaServicesTest, TheSignInPageOpensAgainWhileTheSignInWaits)
 
 TEST_F(MetaServicesTest, CoversAreKeptInTheCoverCacheGiven)
 {
-    QTemporaryDir dir;
+    const QTemporaryDir dir;
     ASSERT_TRUE(dir.isValid());
     const QString covers = dir.filePath(u"Covers"_s);
     MetaServices::Options options;

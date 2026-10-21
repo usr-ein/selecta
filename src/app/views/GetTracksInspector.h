@@ -82,7 +82,7 @@ public:
     static QString coverKey(const meta::Release &release);
 
     // Cover bytes from the network (untrusted): a JPEG or PNG within the cover bounds by its header, decoded at most
-    // kCoverPixels a side. Null when they aren't one, would take too much memory to decode, or don't decode. Any thread.
+    // kCoverPixels a side. Null when they aren't one, would take too much to decode, or don't decode. Any thread.
     static QImage decodeCover(const QByteArray &bytes);
 
     static constexpr int kCoverPixels = 800;   // the largest side decoded: a 400-point panel on a Retina screen

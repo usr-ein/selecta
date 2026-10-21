@@ -563,8 +563,8 @@ TEST(GetTracksInspector, ScreenshotsWithACover)
     buffer.open(QIODevice::WriteOnly);
     sampleCover(640).save(&buffer, "PNG");
 
-    for (const auto &[scheme, name] : {std::pair{Qt::ColorScheme::Light, u"light"_s},
-                                       std::pair{Qt::ColorScheme::Dark, u"dark"_s}}) {
+    for (const auto &[scheme, name] :
+         {std::pair{Qt::ColorScheme::Light, u"light"_s}, std::pair{Qt::ColorScheme::Dark, u"dark"_s}}) {
         QGuiApplication::styleHints()->setColorScheme(scheme);
         QCoreApplication::processEvents();
         GetTracksInspector inspector;
