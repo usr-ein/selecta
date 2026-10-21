@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/MessagesView.h"
 
+#include "app/Segmented.h"
 #include "app/Style.h"
 
 #include "app/Accessibility.h"
@@ -124,8 +125,17 @@ MessagesView::MessagesView(core::EngineHost &engine, QWidget *parent)
         markOpenRead();
         Q_EMIT summaryChanged();
     });
+    // The pages chosen with a segmented control, as macOS 26 does (P-003), in place of the tabs.
+    auto *switcher = SegmentedControl::forTabs(m_pages, u"messages.switcher"_s, this);
+    switcher->setAccessibleName(tr("Messages"));
+    auto *switcherRow = new QHBoxLayout;
+    switcherRow->setContentsMargins(style::kSpace5, style::kSpace2, style::kSpace5, style::kSpace2);
+    switcherRow->addWidget(switcher);
+    switcherRow->addStretch(1);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addLayout(switcherRow);
     layout->addWidget(m_pages);
 
     connect(&m_engine, &core::EngineHost::conversationsChanged, this,

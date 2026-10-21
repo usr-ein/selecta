@@ -3,6 +3,8 @@
 
 #include <QAbstractButton>
 #include <QSignalSpy>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QTest>
 
 #include <gtest/gtest.h>
@@ -38,4 +40,25 @@ TEST(SegmentedControl, OneSegmentIsChosenAtATime)
     control.setCurrentIndex(7); // out of range: nothing changes
     EXPECT_EQ(control.currentIndex(), 2);
     EXPECT_GT(control.sizeHint().width(), 3 * 30);
+}
+
+TEST(SegmentedControl, StandsInForATabWidgetsTabs)
+{
+    QWidget host;
+    auto *tabs = new QTabWidget(&host);
+    tabs->addTab(new QWidget, u"Conversations"_s);
+    tabs->addTab(new QWidget, u"People"_s);
+    SegmentedControl *control = SegmentedControl::forTabs(tabs, u"messages.switcher"_s, &host);
+    host.setAttribute(Qt::WA_DontShowOnScreen);
+    host.show();
+    EXPECT_EQ(control->objectName(), u"messages.switcher"_s);
+    EXPECT_EQ(control->count(), 2);
+    EXPECT_FALSE(tabs->tabBar()->isVisible()); // the control replaces the tabs
+    auto *people = control->findChild<QAbstractButton *>(u"messages.switcher.1"_s);
+    ASSERT_NE(people, nullptr);
+    EXPECT_EQ(people->text(), u"People"_s);
+    QTest::mouseClick(people, Qt::LeftButton);
+    EXPECT_EQ(tabs->currentIndex(), 1); // the control turns the page
+    tabs->setCurrentIndex(0);
+    EXPECT_EQ(control->currentIndex(), 0); // and follows the page turned elsewhere
 }

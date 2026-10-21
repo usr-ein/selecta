@@ -9,6 +9,8 @@
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTabBar>
+#include <QTabWidget>
 
 namespace selecta::app {
 namespace {
@@ -107,6 +109,20 @@ void SegmentedControl::setCurrentIndex(int index)
     if (QAbstractButton *segment = m_group->button(index)) {
         segment->setChecked(true);
     }
+}
+
+SegmentedControl *SegmentedControl::forTabs(QTabWidget *tabs, const QString &namePrefix, QWidget *parent)
+{
+    auto *control = new SegmentedControl(parent);
+    control->setObjectName(namePrefix);
+    for (int page = 0; page < tabs->count(); ++page) {
+        control->addSegment(tabs->tabText(page), namePrefix + u'.' + QString::number(page));
+    }
+    control->setCurrentIndex(tabs->currentIndex());
+    tabs->tabBar()->hide();
+    connect(control, &SegmentedControl::currentChanged, tabs, &QTabWidget::setCurrentIndex);
+    connect(tabs, &QTabWidget::currentChanged, control, &SegmentedControl::setCurrentIndex);
+    return control;
 }
 
 void SegmentedControl::paintEvent(QPaintEvent * /*event*/)

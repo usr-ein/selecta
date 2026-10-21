@@ -321,7 +321,12 @@ void SelectaStyle::drawControl(ControlElement element, const QStyleOption *optio
         // A hairline between panes, as AppKit's thin dividers; nothing where the sidebar's glass is the gap.
         const QWidget *splitter = widget ? widget->parentWidget() : nullptr;
         if (!splitter || !splitter->property(kHiddenHandles).toBool()) {
-            painter->fillRect(option->rect, hairlineColor(option->palette));
+            const QRect &rect = option->rect;
+            const bool vertical = option->state.testFlag(State_Horizontal); // a handle between side-by-side panes
+            const QRect line = vertical ? QRect(rect.center().x(), rect.top(), 1, rect.height())
+                                        : QRect(rect.left(), rect.center().y(), rect.width(), 1);
+            painter->fillRect(rect, option->palette.color(QPalette::Base)); // the panes' own background
+            painter->fillRect(line, hairlineColor(option->palette));
         }
         return;
     }

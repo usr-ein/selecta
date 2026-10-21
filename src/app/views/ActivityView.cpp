@@ -27,7 +27,6 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QStackedWidget>
-#include <QTabBar>
 #include <QTabWidget>
 #include <QTimer>
 #include <QTreeView>
@@ -105,15 +104,8 @@ ActivityView::ActivityView(core::EngineHost &engine, storage::Database &db, QWid
     m_pages->addTab(createPeersPage(), tr("Peers"));
     m_pages->addTab(createLogPage(), tr("Log"));
     // The pages chosen with a segmented control, as macOS 26 does (P-003), in place of the tabs.
-    m_pages->tabBar()->hide();
-    auto *switcher = new SegmentedControl(this);
-    switcher->setObjectName(u"activity.switcher"_s);
+    auto *switcher = SegmentedControl::forTabs(m_pages, u"activity.switcher"_s, this);
     switcher->setAccessibleName(tr("Activity"));
-    for (int page = 0; page < m_pages->count(); ++page) {
-        switcher->addSegment(m_pages->tabText(page), u"activity.switcher.%1"_s.arg(page));
-    }
-    connect(switcher, &SegmentedControl::currentChanged, m_pages, &QTabWidget::setCurrentIndex);
-    connect(m_pages, &QTabWidget::currentChanged, switcher, &SegmentedControl::setCurrentIndex);
     auto *switcherRow = new QHBoxLayout;
     switcherRow->setContentsMargins(style::kSpace5, style::kSpace2, style::kSpace5, 0);
     switcherRow->addWidget(switcher);

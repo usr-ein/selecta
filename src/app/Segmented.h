@@ -5,6 +5,7 @@
 
 class QButtonGroup;
 class QHBoxLayout;
+class QTabWidget;
 
 namespace selecta::app {
 
@@ -23,6 +24,11 @@ public:
     int currentIndex() const;
     // Chooses a segment without emitting currentChanged; out of range changes nothing.
     void setCurrentIndex(int index);
+
+    // Stands in for a tab widget's tabs (macOS 26 chooses pages with a segmented control): one segment per tab, named
+    // `<namePrefix>.<index>`, following the tab widget both ways; the tab bar is hidden. Returns the control, a child of
+    // `parent`, for the caller to place. Tabs added later aren't covered.
+    static SegmentedControl *forTabs(QTabWidget *tabs, const QString &namePrefix, QWidget *parent);
 
 Q_SIGNALS:
     // The user chose another segment.
