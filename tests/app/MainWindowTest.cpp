@@ -16,11 +16,11 @@
 #include "convert/TagWriter.h"
 #include "core/Albums.h"
 #include "core/EngineHost.h"
+#include "core/MatchCorrections.h"
 #include "core/NetworkService.h"
 #include "fixtures/FakePeer.h"
 #include "fixtures/FakeServer.h"
 #include "fixtures/TestUtil.h"
-#include "core/MatchCorrections.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
 #include "storage/Database.h"
@@ -1996,7 +1996,7 @@ TEST_F(MainWindowTest, BrowsingFromAFileOpensOnIt)
     album.path = selecta::slsk::RemotePath{"Music\\Okuma Drift\\Night Signals"};
     album.files = {entry("01 - Neon Rain.mp3"), entry("02 - Low Tide.mp3")};
     selecta::slsk::SharedDirectory bonus;
-    bonus.path = selecta::slsk::RemotePath{"Music\\Okuma Drift\\Night Signals\\Bonus"};
+    bonus.path = selecta::slsk::RemotePath{R"(Music\Okuma Drift\Night Signals\Bonus)"};
     bonus.files = {entry("01 - Encore.mp3")};
     peer.shares.directories = {album, bonus};
 
@@ -2027,7 +2027,7 @@ TEST_F(MainWindowTest, BrowsingFromAFileOpensOnIt)
     };
 
     // Opened on a file: it is the current row, every folder above it open.
-    const QByteArray encore = "Music\\Okuma Drift\\Night Signals\\Bonus\\01 - Encore.mp3";
+    const QByteArray encore = R"(Music\Okuma Drift\Night Signals\Bonus\01 - Encore.mp3)";
     window->browseFile(u"vinyl_ghost"_s, encore);
     EXPECT_EQ(window->currentViewId(), u"browse:vinyl_ghost"_s);
     auto *waiting = window->findChild<QLabel *>(u"browse.waiting"_s);
@@ -2040,7 +2040,7 @@ TEST_F(MainWindowTest, BrowsingFromAFileOpensOnIt)
     EXPECT_TRUE(table->selectionModel()->isRowSelected(table->currentIndex().row(), table->currentIndex().parent()));
 
     // A file picked in the list shown stays picked when the list comes again (here from the kept one).
-    const QByteArray lowTide = "Music\\Okuma Drift\\Night Signals\\02 - Low Tide.mp3";
+    const QByteArray lowTide = R"(Music\Okuma Drift\Night Signals\02 - Low Tide.mp3)";
     const auto *model = dynamic_cast<const selecta::app::BrowseTreeModel *>(table->model());
     ASSERT_NE(model, nullptr);
     table->setCurrentIndex(model->indexOfPath(lowTide));
@@ -2052,7 +2052,8 @@ TEST_F(MainWindowTest, BrowsingFromAFileOpensOnIt)
 
     // A file the list doesn't have: said so.
     window->browseFile(u"vinyl_ghost"_s, "Music\\Gone\\Vanished.mp3");
-    ASSERT_TRUE(selecta::slsk::testing::waitFor([&] { return details->text().contains(u"isn't in this list"_s); }, 10s));
+    ASSERT_TRUE(
+        selecta::slsk::testing::waitFor([&] { return details->text().contains(u"isn't in this list"_s); }, 10s));
     EXPECT_TRUE(details->text().contains(u"Vanished.mp3 isn't in this list"_s)) << details->text().toStdString();
 
     engine->stop();

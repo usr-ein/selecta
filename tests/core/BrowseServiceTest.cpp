@@ -21,6 +21,7 @@
 #include <QtEndian>
 
 #include <algorithm>
+#include <cstddef>
 #include <gtest/gtest.h>
 #include <memory>
 
@@ -370,7 +371,7 @@ TEST_F(BrowseServiceTest, AListWhosePathsComeToTooMuchIsRefused)
     // A few files under one huge folder name: few files, but every one carries the whole name.
     selecta::slsk::SharedFileList huge;
     selecta::slsk::SharedDirectory folder;
-    folder.path = selecta::slsk::RemotePath{QByteArray(1024 * 1024, 'x')};
+    folder.path = selecta::slsk::RemotePath{QByteArray(static_cast<qsizetype>(1024 * 1024), 'x')};
     for (int i = 0; i < 65; ++i) {
         folder.files.append(file("Track " + QByteArray::number(i) + ".mp3"));
     }
@@ -381,8 +382,8 @@ TEST_F(BrowseServiceTest, AListWhosePathsComeToTooMuchIsRefused)
     EXPECT_EQ(state->state, Browse::State::Failed);
     EXPECT_TRUE(state->message.contains(u"too big"_s)) << state->message.toStdString();
     browse->waitForIdle();
-    EXPECT_TRUE(reset.isEmpty()); // nothing analysed
-    EXPECT_EQ(browse->cachedPeers(), 0);  // nor kept
+    EXPECT_TRUE(reset.isEmpty());        // nothing analysed
+    EXPECT_EQ(browse->cachedPeers(), 0); // nor kept
 
     // The same name with fewer files is listed.
     huge.directories.first().files.resize(10);
