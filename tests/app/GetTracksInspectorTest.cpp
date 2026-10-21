@@ -591,3 +591,27 @@ TEST(GetTracksInspector, ScreenshotsWithACover)
     }
     QGuiApplication::styleHints()->unsetColorScheme();
 }
+
+// Not a check: draws the near misses with P-025's note, in light and dark, for the pull request's screenshots. Runs
+// only when SELECTA_SCREENS_DIR names the folder to save them in (see ScreenshotsWithACover).
+TEST(GetTracksInspector, ScreenshotsOfTheNearMisses)
+{
+    const QString folder = qEnvironmentVariable("SELECTA_SCREENS_DIR");
+    if (folder.isEmpty()) {
+        GTEST_SKIP() << "set SELECTA_SCREENS_DIR to draw the screenshots";
+    }
+    for (const auto &[scheme, name] :
+         {std::pair{Qt::ColorScheme::Light, u"light"_s}, std::pair{Qt::ColorScheme::Dark, u"dark"_s}}) {
+        QGuiApplication::styleHints()->setColorScheme(scheme);
+        QCoreApplication::processEvents();
+        GetTracksInspector inspector;
+        inspector.resize(300, 620);
+        inspector.setAttribute(Qt::WA_DontShowOnScreen);
+        inspector.show();
+        inspector.showLine(notFound(7));
+        QCoreApplication::processEvents();
+        const QPixmap shot = inspector.grab();
+        EXPECT_TRUE(shot.save(QDir(folder).filePath(u"P-025-near-misses-%1.png"_s.arg(name))));
+    }
+    QGuiApplication::styleHints()->unsetColorScheme();
+}
