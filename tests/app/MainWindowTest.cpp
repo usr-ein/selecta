@@ -9,6 +9,7 @@
 #include "app/SpectrogramView.h"
 #include "app/Toasts.h"
 #include "app/devtools/DebugServer.h"
+#include "app/models/BrowseTreeModel.h"
 #include "app/models/ConverterModel.h"
 #include "app/views/ConverterView.h"
 #include "audio/AnalysisCache.h"
@@ -16,6 +17,10 @@
 #include "core/Albums.h"
 #include "core/EngineHost.h"
 #include "core/MatchCorrections.h"
+#include "core/NetworkService.h"
+#include "fixtures/FakePeer.h"
+#include "fixtures/FakeServer.h"
+#include "fixtures/TestUtil.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
 #include "storage/Database.h"
@@ -62,6 +67,7 @@
 #include <string>
 
 using namespace Qt::StringLiterals;
+using namespace std::chrono_literals;
 using selecta::app::Appearance;
 using selecta::app::AppSettings;
 using selecta::app::MainWindow;
@@ -1969,3 +1975,86 @@ TEST_F(MainWindowTest, TheDebugSocketSetsSpinBoxesAndPicksComboItems)
     EXPECT_EQ(source->currentIndex(), 1);
 }
 #endif
+
+TEST_F(MainWindowTest, BrowsingFromAFileOpensOnIt)
+{
+    // A peer on a local fake server, browsed through the real engine (P-005).
+    selecta::slsk::testing::FakeServer server;
+    ASSERT_TRUE(server.start());
+    selecta::slsk::testing::FakePeer peer(u"vinyl_ghost"_s, &server);
+    ASSERT_TRUE(peer.start());
+    peer.answerIndirect = false;
+    const auto entry = [](const QByteArray &name) {
+        selecta::slsk::FileEntry file;
+        file.name = selecta::slsk::RemotePath{name};
+        file.size = 9'000'000;
+        file.attributes.bitrate = 320;
+        file.attributes.duration = 300;
+        return file;
+    };
+    selecta::slsk::SharedDirectory album;
+    album.path = selecta::slsk::RemotePath{"Music\\Okuma Drift\\Night Signals"};
+    album.files = {entry("01 - Neon Rain.mp3"), entry("02 - Low Tide.mp3")};
+    selecta::slsk::SharedDirectory bonus;
+    bonus.path = selecta::slsk::RemotePath{R"(Music\Okuma Drift\Night Signals\Bonus)"};
+    bonus.files = {entry("01 - Encore.mp3")};
+    peer.shares.directories = {album, bonus};
+
+    QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
+    engine->start();
+    ASSERT_TRUE(started.wait(5000));
+    auto window = makeWindow();
+    selecta::core::NetworkConfig config;
+    config.host = server.address().toString();
+    config.port = server.port();
+    config.username = u"selecta_test"_s;
+    config.listenPort = 0;
+    config.portMapping = false;
+    engine->setNetworkConfig(config);
+    engine->setNetworkPassword(u"pw"_s);
+    engine->connectNetwork();
+    ASSERT_TRUE(selecta::slsk::testing::waitFor(
+        [&] { return engine->networkStatus().state == selecta::core::NetworkStatus::State::Online; }, 10s));
+
+    auto *table = window->findChild<QTreeView *>(u"browse.results"_s);
+    auto *details = window->findChild<QLabel *>(u"browse.details"_s);
+    ASSERT_NE(table, nullptr);
+    ASSERT_NE(details, nullptr);
+    const auto currentPath = [&]() -> QByteArray {
+        const auto *model = dynamic_cast<const selecta::app::BrowseTreeModel *>(table->model());
+        const selecta::core::SearchResult *result = model != nullptr ? model->resultAt(table->currentIndex()) : nullptr;
+        return result != nullptr ? result->hit.path : QByteArray();
+    };
+
+    // Opened on a file: it is the current row, every folder above it open.
+    const QByteArray encore = R"(Music\Okuma Drift\Night Signals\Bonus\01 - Encore.mp3)";
+    window->browseFile(u"vinyl_ghost"_s, encore);
+    EXPECT_EQ(window->currentViewId(), u"browse:vinyl_ghost"_s);
+    auto *waiting = window->findChild<QLabel *>(u"browse.waiting"_s);
+    ASSERT_NE(waiting, nullptr);
+    ASSERT_TRUE(selecta::slsk::testing::waitFor([&] { return currentPath() == encore; }, 10s))
+        << waiting->text().toStdString() << " / " << details->text().toStdString();
+    for (QModelIndex folder = table->currentIndex().parent(); folder.isValid(); folder = folder.parent()) {
+        EXPECT_TRUE(table->isExpanded(folder)) << folder.data().toString().toStdString();
+    }
+    EXPECT_TRUE(table->selectionModel()->isRowSelected(table->currentIndex().row(), table->currentIndex().parent()));
+
+    // A file picked in the list shown stays picked when the list comes again (here from the kept one).
+    const QByteArray lowTide = R"(Music\Okuma Drift\Night Signals\02 - Low Tide.mp3)";
+    const auto *model = dynamic_cast<const selecta::app::BrowseTreeModel *>(table->model());
+    ASSERT_NE(model, nullptr);
+    table->setCurrentIndex(model->indexOfPath(lowTide));
+    ASSERT_EQ(currentPath(), lowTide);
+    QSignalSpy reset(engine.get(), &selecta::core::EngineHost::browseResultsReset);
+    window->browsePeer(u"vinyl_ghost"_s); // no file: the one asked for before isn't picked again
+    ASSERT_TRUE(reset.wait(10'000));
+    EXPECT_EQ(currentPath(), lowTide);
+
+    // A file the list doesn't have: said so.
+    window->browseFile(u"vinyl_ghost"_s, "Music\\Gone\\Vanished.mp3");
+    ASSERT_TRUE(
+        selecta::slsk::testing::waitFor([&] { return details->text().contains(u"isn't in this list"_s); }, 10s));
+    EXPECT_TRUE(details->text().contains(u"Vanished.mp3 isn't in this list"_s)) << details->text().toStdString();
+
+    engine->stop();
+}

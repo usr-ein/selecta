@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QLoggingCategory>
 
+#include <algorithm>
 #include <optional>
 
 using namespace Qt::StringLiterals;
@@ -48,8 +49,30 @@ bool isOwnPeerRequest(governor::Operation operation)
     }
 }
 
+// Which way a transfer lookup's files go, when the lines just before say so.
+enum class Direction : quint8 {
+    Unknown,
+    Download, // ours, from them
+    Upload,   // theirs, from us
+    Both,
+};
+
+// Makes room in a per-peer memory for `peer`: when it's full, the expired entries go; if every one is still recent
+// (a burst), the whole memory does.
+template <typename T, typename Expired>
+void makeRoom(QHash<QString, T> &memory, const QString &peer, int capacity, Expired expired)
+{
+    if (memory.size() < capacity || memory.contains(peer)) {
+        return;
+    }
+    memory.removeIf([&expired](QHash<QString, T>::iterator it) { return expired(it.value()); });
+    if (memory.size() >= capacity) {
+        memory.clear();
+    }
+}
+
 // Why we connect to a peer, as the end of "You looked up X's address to …".
-QString lookupReason(slsk::ConnectPurpose purpose, std::optional<governor::Operation> asked)
+QString lookupReason(slsk::ConnectPurpose purpose, std::optional<governor::Operation> asked, Direction direction)
 {
     switch (purpose) {
     case slsk::ConnectPurpose::Request:
@@ -70,6 +93,17 @@ QString lookupReason(slsk::ConnectPurpose purpose, std::optional<governor::Opera
     case slsk::ConnectPurpose::SearchResponse:
         return ActivityLog::tr("send them your search results: they searched for something you share");
     case slsk::ConnectPurpose::Transfer:
+        switch (direction) {
+        case Direction::Download:
+            return ActivityLog::tr("carry on your download from them");
+        case Direction::Upload:
+            return ActivityLog::tr("carry on their download from you");
+        case Direction::Both:
+            return ActivityLog::tr("carry on the file transfers between you (your download from them, and theirs "
+                                   "from you)");
+        case Direction::Unknown:
+            break;
+        }
         return ActivityLog::tr("carry on a file transfer between you (your download from them, or theirs from you)");
     case slsk::ConnectPurpose::Distributed:
         return ActivityLog::tr("try them as your parent in the distributed network, which passes other users' "
@@ -236,7 +270,23 @@ void ActivityLog::recordPeerLookup(const QString &username, slsk::ConnectPurpose
             asked = it->operation;
         }
     }
-    const QString reason = lookupReason(purpose, asked);
+    Direction direction = Direction::Unknown;
+    if (purpose == slsk::ConnectPurpose::Transfer) {
+        if (const auto it = m_lastTransfers.constFind(username); it != m_lastTransfers.constEnd()) {
+            const qint64 now = m_now();
+            const auto recent = [now](qint64 atMs) { return atMs > 0 && now - atMs <= kTransferMemoryMs; };
+            const bool download = recent(it->downloadAtMs);
+            const bool upload = recent(it->uploadAtMs);
+            if (download && upload) {
+                direction = Direction::Both;
+            } else if (download) {
+                direction = Direction::Download;
+            } else if (upload) {
+                direction = Direction::Upload;
+            }
+        }
+    }
+    const QString reason = lookupReason(purpose, asked, direction);
     const bool allowed = refusal == governor::Refusal::None;
     QString sentence;
     if (allowed) {
@@ -254,14 +304,19 @@ void ActivityLog::recordPeerLookup(const QString &username, slsk::ConnectPurpose
 void ActivityLog::remember(const QString &peer, governor::Operation operation)
 {
     const qint64 now = m_now();
-    if (m_lastAsked.size() >= kRequestMemoryPeers && !m_lastAsked.contains(peer)) {
-        // Forget what's too old to name a lookup; if every one is recent (a burst), start over.
-        m_lastAsked.removeIf([now](decltype(m_lastAsked)::iterator it) { return now - it->atMs > kRequestMemoryMs; });
-        if (m_lastAsked.size() >= kRequestMemoryPeers) {
-            m_lastAsked.clear();
-        }
-    }
+    makeRoom(m_lastAsked, peer, kRequestMemoryPeers,
+             [now](AskedOf asked) { return now - asked.atMs > kRequestMemoryMs; });
     m_lastAsked.insert(peer, AskedOf{.operation = operation, .atMs = now});
+}
+
+void ActivityLog::rememberTransfer(const QString &peer, bool download)
+{
+    const qint64 now = m_now();
+    makeRoom(m_lastTransfers, peer, kTransferMemoryPeers, [now](TransfersWith seen) {
+        return now - std::max(seen.downloadAtMs, seen.uploadAtMs) > kTransferMemoryMs;
+    });
+    TransfersWith &seen = m_lastTransfers[peer];
+    (download ? seen.downloadAtMs : seen.uploadAtMs) = now;
 }
 
 QString ActivityLog::describe(const ActivityEntry &entry)
@@ -313,6 +368,10 @@ QString ActivityLog::describe(const ActivityEntry &entry)
 ActivityEntry ActivityLog::record(const QString &operation, const QString &subject, const QString &outcome,
                                   const QString &explanation)
 {
+    // A download or upload line names the direction of the transfer lookups that follow it (recordPeerLookup()).
+    if (!subject.isEmpty() && (operation == u"download"_s || operation == u"upload"_s)) {
+        rememberTransfer(subject, operation == u"download"_s);
+    }
     ActivityEntry entry{.id = 0,
                         .atMs = m_now(),
                         .operation = operation,

@@ -137,6 +137,11 @@ QColor SearchResultsModel::queueColour(QueueLevel level)
     return dark ? QColor(0xFF, 0x45, 0x3A) : QColor(0xC4, 0x1E, 0x14);
 }
 
+QIcon SearchResultsModel::statusIcon(core::Ownership ownership)
+{
+    return ownershipIcon(ownership);
+}
+
 QString SearchResultsModel::statusText(core::Ownership ownership)
 {
     // Short enough for the column; the tooltip and the inspector have the whole story.

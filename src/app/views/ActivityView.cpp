@@ -419,7 +419,10 @@ void ActivityView::transfersMenu(QPoint position)
     retry->setEnabled(!failed.isEmpty());
     menu.addSeparator();
     if (const std::optional<core::Download> first = m_engine.download(ids.constFirst())) {
-        PeerMenu::addActions(menu, first->peer, m_engine, peerHandlers());
+        // Browsing opens on the file this transfer is (P-005).
+        PeerMenu::Handlers handlers = peerHandlers();
+        handlers.browse = [this, path = first->remotePath](const QString &peer) { Q_EMIT browseRequested(peer, path); };
+        PeerMenu::addActions(menu, first->peer, m_engine, handlers);
         menu.addSeparator();
     }
     menu.addAction(tr("Copy Path"), this, [paths] { QApplication::clipboard()->setText(paths.join(u'\n')); });

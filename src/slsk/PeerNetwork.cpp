@@ -74,6 +74,8 @@ const char *peerErrorName(PeerError error)
         return "connection closed";
     case PeerError::ProtocolError:
         return "protocol error";
+    case PeerError::TooLarge:
+        return "answer too large";
     case PeerError::Cancelled:
         return "cancelled";
     }
@@ -170,7 +172,12 @@ struct LateToken
     QDeadlineTimer deadline;
 };
 
-using ShareListResult = std::optional<SharedFileList>;
+// A share list decoded on a worker: the list, or why not (malformed, or inflating past its cap).
+struct ShareListResult
+{
+    std::optional<SharedFileList> list;
+    bool tooLarge = false;
+};
 
 } // namespace
 
@@ -1033,6 +1040,13 @@ void PeerNetworkPrivate::processFrames(quint64 id)
             if (c->reader.hasError()) {
                 qCWarning(lcSlskPeer).noquote()
                     << "closing connection to" << c->username << ":" << frameErrorName(c->reader.error());
+                // A share list we asked for that is bigger than we read: say so, rather than "connection closed".
+                const QString username = c->username;
+                if (c->type == ConnectionType::Peer && c->reader.error() == FrameReader::Error::Oversize &&
+                    c->reader.errorCode() == static_cast<quint32>(PeerCode::SharedFileListResponse) &&
+                    pendingBrowse.remove(username)) {
+                    Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0, PeerError::TooLarge);
+                }
                 close(id, PeerError::ProtocolError);
                 return;
             }
@@ -1230,11 +1244,14 @@ void PeerNetworkPrivate::handleShareList(const QString &username, const QByteArr
         return; // the frame cap already refuses unsolicited ones; a late duplicate is ignored
     }
     if (payload.size() <= kWorkerDecodeThreshold) {
-        const std::optional<peer::SharedFileListResponse> response = peer::SharedFileListResponse::decode(payload);
+        bool tooLarge = false;
+        const std::optional<peer::SharedFileListResponse> response =
+            peer::SharedFileListResponse::decode(payload, protocol::kShareListInflatedMax, &tooLarge);
         if (response) {
             Q_EMIT q->sharedFileListReceived(username, response->list);
         } else {
-            Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0, PeerError::ProtocolError);
+            Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0,
+                                    tooLarge ? PeerError::TooLarge : PeerError::ProtocolError);
         }
         return;
     }
@@ -1243,19 +1260,25 @@ void PeerNetworkPrivate::handleShareList(const QString &username, const QByteArr
     const auto promise = std::make_shared<QPromise<ShareListResult>>();
     auto *watcher = new QFutureWatcher<ShareListResult>(q);
     QObject::connect(watcher, &QFutureWatcherBase::finished, q, [this, watcher, username] {
-        const ShareListResult result = watcher->future().resultCount() > 0 ? watcher->result() : std::nullopt;
+        const ShareListResult result = watcher->future().resultCount() > 0 ? watcher->result() : ShareListResult{};
         watcher->deleteLater();
-        if (result) {
-            Q_EMIT q->sharedFileListReceived(username, *result);
+        if (result.list) {
+            Q_EMIT q->sharedFileListReceived(username, *result.list);
         } else {
-            Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0, PeerError::ProtocolError);
+            Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0,
+                                    result.tooLarge ? PeerError::TooLarge : PeerError::ProtocolError);
         }
     });
     watcher->setFuture(promise->future());
     promise->start();
     QThreadPool::globalInstance()->start([promise, payload] {
-        std::optional<peer::SharedFileListResponse> response = peer::SharedFileListResponse::decode(payload);
-        promise->addResult(response ? ShareListResult(std::move(response->list)) : ShareListResult());
+        ShareListResult result;
+        std::optional<peer::SharedFileListResponse> response =
+            peer::SharedFileListResponse::decode(payload, protocol::kShareListInflatedMax, &result.tooLarge);
+        if (response) {
+            result.list = std::move(response->list);
+        }
+        promise->addResult(std::move(result));
         promise->finish();
     });
 }

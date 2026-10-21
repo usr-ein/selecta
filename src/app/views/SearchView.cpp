@@ -245,9 +245,11 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
         addCorrections(menu, selected);
         if (const core::SearchResult *first = m_model->result(selected.constFirst())) {
             menu.addSeparator();
-            PeerMenu::addActions(menu, first->hit.peer, m_engine,
-                                 {.browse = [this](const QString &peer) { Q_EMIT browseRequested(peer); },
-                                  .message = [this](const QString &peer) { Q_EMIT messageRequested(peer); }});
+            // Browsing opens on this very file (P-005).
+            PeerMenu::addActions(
+                menu, first->hit.peer, m_engine,
+                {.browse = [this, path = first->hit.path](const QString &peer) { Q_EMIT browseRequested(peer, path); },
+                 .message = [this](const QString &peer) { Q_EMIT messageRequested(peer); }});
         }
         menu.addSeparator();
         menu.addAction(tr("Copy Path"), this, [this, selected] {

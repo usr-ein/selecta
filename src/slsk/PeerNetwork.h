@@ -38,7 +38,8 @@ enum class PeerError {
     SocketLimit,      // the global socket cap (setSocketLimit(), at most protocol::kSocketsMax) is reached
     Timeout,          // the peer didn't answer in time
     ConnectionClosed, // the connection closed before the answer arrived
-    ProtocolError,    // the answer was malformed, oversize, or didn't inflate
+    ProtocolError,    // the answer was malformed or didn't inflate
+    TooLarge,         // the answer is bigger than Selecta reads (its frame or inflate cap, protocol §12.4)
     Cancelled,        // cancelled locally (closeAll(), shutdown)
 };
 
