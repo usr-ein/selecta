@@ -83,7 +83,7 @@ checks:
 gh run list --branch <branch> --limit 5
 gh run view <run-id>                       # jobs and steps
 gh run view <run-id> --log-failed          # logs of the failed steps, once the whole run has finished
-gh run download <run-id> -n macos-test-log # LastTest.log of a failed test step: also linux-, asan-, tsan-test-log
+gh run download <run-id> -n macos-test-log # LastTest.log of a failed test step: also linux-, windows-, asan-test-log
 gh run download <run-id> -n lint-logs      # clang-tidy.log and clazy.log
 ```
 
