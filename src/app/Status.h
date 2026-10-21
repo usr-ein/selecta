@@ -36,7 +36,7 @@ struct Status
 };
 
 // The SF Symbols statuses use. Each has a drawn stand-in for platforms without SF Symbols.
-inline constexpr std::array<const char *, 16> kSymbols = {
+inline constexpr std::array<const char *, 17> kSymbols = {
     "clock",
     "hourglass",
     "magnifyingglass",
@@ -53,6 +53,7 @@ inline constexpr std::array<const char *, 16> kSymbols = {
     "questionmark.circle.fill",
     "minus.circle.fill",
     "trash",
+    "flag.fill",
 };
 
 // The kind's colour in light or dark: the macOS system colour (NSColor.systemGreenColor and the rest, resolved in Aqua

@@ -7,6 +7,7 @@
 #include "app/PlayerBar.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
+#include "app/Status.h"
 #include "app/Style.h"
 #include "app/SpectrogramView.h"
 #include "app/Toasts.h"
@@ -947,7 +948,8 @@ TEST_F(MainWindowTest, SinglesAlsoOnAnAlbumAreFlaggedInTheInboxAndTheCollection)
     ASSERT_NE(items, nullptr);
     const QModelIndex singles = items->model()->index(0, 0);
     ASSERT_EQ(items->model()->rowCount(singles), 1);
-    EXPECT_EQ(items->model()->index(0, 4, singles).data().toString(), u"⚑ Also on “Night Signals”"_s);
+    EXPECT_EQ(items->model()->index(0, 4, singles).data().toString(), u"Also on “Night Signals”"_s);
+    EXPECT_EQ(items->model()->index(0, 4, singles).data(selecta::app::status::kSymbolRole).toString(), u"flag.fill"_s);
 
     // A filed single: listed in the Collection view, which never touches it.
     selecta::core::SupersedeFlag flag;
@@ -1680,7 +1682,8 @@ TEST_F(MainWindowTest, TheInboxShowsTheSpectrumCheck)
     ASSERT_EQ(table->model()->rowCount(singles), 2);
     // Newest first: the suspect file, with its badge, a symbol and words (UI-4); the genuine one is just ready.
     const QModelIndex suspectStatus = table->model()->index(0, 4, singles);
-    EXPECT_EQ(suspectStatus.data().toString(), u"⚠ Likely from a ≈ 128 kbps MP3"_s);
+    EXPECT_EQ(suspectStatus.data().toString(), u"Likely from a ≈ 128 kbps MP3"_s);
+    EXPECT_EQ(suspectStatus.data(selecta::app::status::kSymbolRole).toString(), u"exclamationmark.triangle.fill"_s);
     EXPECT_TRUE(suspectStatus.data(Qt::ToolTipRole).toString().contains(u"the spectrum stops at 16.7 kHz"_s))
         << suspectStatus.data(Qt::ToolTipRole).toString().toStdString();
     EXPECT_EQ(table->model()->index(1, 4, singles).data().toString(), u"Ready"_s);
@@ -1986,7 +1989,7 @@ TEST_F(MainWindowTest, NotTheSameTrackDropsAFlagForGood)
     ASSERT_NE(items, nullptr);
     ASSERT_TRUE(QTest::qWaitFor([&] { return rowWithText(*items->model(), u"Low Tide"_s).isValid(); }, 5000));
     const QModelIndex single = rowWithText(*items->model(), u"Low Tide"_s);
-    EXPECT_EQ(single.siblingAtColumn(4).data().toString(), u"⚑ Also on “Night Signals”"_s);
+    EXPECT_EQ(single.siblingAtColumn(4).data().toString(), u"Also on “Night Signals”"_s);
     const QStringList inboxTexts = contextMenuOn(items, single, u"Not the Same Track"_s);
     EXPECT_TRUE(inboxTexts.contains(u"Not the Same Track"_s)) << inboxTexts.join(u", "_s).toStdString();
     ASSERT_TRUE(QTest::qWaitFor(

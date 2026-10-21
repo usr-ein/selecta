@@ -219,6 +219,17 @@ bool drawSymbol(QPainter &painter, const QString &name, const QColor &color)
         path.cubicTo(13.2, 17.2, 13.7, 16.7, 13.8, 16);
         path.lineTo(14.6, 5.4);
         painter.strokePath(path, line);
+    } else if (name == u"flag.fill") {
+        QPainterPath flag;
+        flag.moveTo(5.2, 3.6);
+        flag.lineTo(15.4, 3.6);
+        flag.lineTo(13.2, 7.1);
+        flag.lineTo(15.4, 10.6);
+        flag.lineTo(5.2, 10.6);
+        flag.closeSubpath();
+        painter.fillPath(flag, color);
+        painter.strokePath(flag, pen(color, 1.2));
+        painter.strokePath(polyline({{5.2, 3.2}, {5.2, 17.2}}), pen(color, 1.8));
     } else {
         return false;
     }

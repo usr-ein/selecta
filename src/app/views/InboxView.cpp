@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/InboxView.h"
 
+#include "app/Status.h"
 #include "app/Style.h"
 
 #include "app/Accessibility.h"
@@ -72,6 +73,28 @@ QString formatText(const InboxItem &item)
     return text.trimmed();
 }
 
+// The status's symbol and the kind that colours it (P-003): the symbol says what a ⚠ or a ⚑ used to.
+status::Status statusSymbol(const core::InboxEntry &entry)
+{
+    using status::Kind;
+    if (entry.busy || entry.item.state == InboxItem::State::Processing) {
+        return {u"arrow.triangle.2.circlepath"_s, Kind::Working};
+    }
+    if (entry.item.state == InboxItem::State::Failed) {
+        return {u"exclamationmark.octagon.fill"_s, Kind::Failed};
+    }
+    if (!core::spectrumBadge(entry.item).isEmpty() || !entry.item.belowWanted.isEmpty()) {
+        return {u"exclamationmark.triangle.fill"_s, Kind::Check};
+    }
+    if (!entry.alsoOn.isEmpty()) {
+        return {u"flag.fill"_s, Kind::Check};
+    }
+    if (!entry.item.warning.isEmpty()) {
+        return {u"exclamationmark.triangle.fill"_s, Kind::Check};
+    }
+    return {u"checkmark.circle.fill"_s, Kind::Ready};
+}
+
 QString statusText(const core::InboxEntry &entry)
 {
     if (entry.busy) {
@@ -85,20 +108,20 @@ QString statusText(const core::InboxEntry &entry)
     case InboxItem::State::Ready:
         // What the file is comes first (PREV-9): "Likely from a ≈ 192 kbps MP3".
         if (const QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
-            return InboxView::tr("⚠ %1").arg(badge);
+            return badge;
         }
         if (!entry.item.belowWanted.isEmpty()) {
             return InboxView::tr("Below your quality"); // got anyway (Get tracks)
         }
         if (!entry.alsoOn.isEmpty()) {
-            return InboxView::tr("⚑ Also on “%1”").arg(entry.alsoOn.constFirst());
+            return InboxView::tr("Also on “%1”").arg(entry.alsoOn.constFirst());
         }
-        return entry.item.warning.isEmpty() ? InboxView::tr("Ready") : InboxView::tr("⚠ Ready, see why");
+        return entry.item.warning.isEmpty() ? InboxView::tr("Ready") : InboxView::tr("Ready, see why");
     }
     return {};
 }
 
-// The status as VoiceOver reads it: the ⚠ and ⚑ in words, the ≈ as "roughly" (UI-5).
+// The status as VoiceOver reads it: the symbol's warning or flag in words, the ≈ as "roughly" (UI-5).
 QString accessibleStatus(const core::InboxEntry &entry)
 {
     if (entry.busy || entry.item.state != InboxItem::State::Ready) {
@@ -202,6 +225,10 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     m_table->header()->setSectionResizeMode(FromColumn, QHeaderView::ResizeToContents);
     m_table->header()->setSectionResizeMode(StatusColumn, QHeaderView::ResizeToContents);
     m_table->setColumnWidth(NameColumn, 260);
+    // Fewer columns (P-003): the file's name and where it came from are in the inspector.
+    m_table->header()->setSectionHidden(NameColumn, true);
+    m_table->header()->setSectionHidden(FromColumn, true);
+    m_table->setItemDelegateForColumn(StatusColumn, new status::StatusDelegate(m_table));
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &InboxView::refreshActions);
     connect(m_table->selectionModel(), &QItemSelectionModel::selectionChanged, this, &InboxView::showSelection);
     connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this, &InboxView::showSelection);
@@ -264,24 +291,18 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     listLayout->addWidget(m_table);
     m_pages->addWidget(list);
 
+    // The selection's count on the left; its two actions pinned on the right, whatever the width (P-023).
     auto *bar = new QHBoxLayout;
     bar->setContentsMargins(style::kBarMargins);
+    bar->setSpacing(style::kSpace2);
+    m_summary->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     bar->addWidget(m_summary, 1);
     bar->addWidget(m_trash);
     bar->addWidget(m_file);
-    auto *note =
-        new QLabel(tr("Downloads are converted and tagged as they arrive. Save to collection moves an item into your "
-                      "collection under the names from Settings; Selecta never changes files once they are "
-                      "there."),
-                   this);
-    note->setObjectName(u"inbox.note"_s);
-    note->setWordWrap(true);
-    note->setForegroundRole(QPalette::PlaceholderText);
     auto *resultBox = new QVBoxLayout;
     resultBox->setContentsMargins(style::kLineMargins);
-    resultBox->setSpacing(4);
+    resultBox->setSpacing(style::kSpace1);
     resultBox->addWidget(m_result);
-    resultBox->addWidget(note);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -406,6 +427,9 @@ void InboxView::rebuild(const QList<core::InboxEntry> &entries)
                 item.sourceFormat.isEmpty() ? QString() : tr("Downloaded as %1").arg(item.sourceFormat);
             QStandardItem *status = cell(statusText(*entry), item.id, statusToolTip(*entry));
             status->setData(accessibleStatus(*entry), Qt::AccessibleTextRole);
+            const status::Status shown = statusSymbol(*entry);
+            status->setData(shown.symbol, status::kSymbolRole);
+            status->setData(static_cast<int>(shown.kind), status::kKindRole);
             group->appendRow({cell(itemText, item.id), cell(formatText(item), item.id, source),
                               cell(fileName, item.id, item.relativePath), cell(item.peer, item.id), status});
         }
