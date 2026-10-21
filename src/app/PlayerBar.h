@@ -39,11 +39,16 @@ public:
 Q_SIGNALS:
     void volumeChanged(double volume);
 
+protected:
+    void changeEvent(QEvent *event) override;
+
 private:
     void refresh();
     void refreshQuality();
     void tick();
     void trackChanged();
+    void syncSides();
+    void tintSpeaker();
 
     PreviewController &m_preview;
     QLabel *m_title;
@@ -52,9 +57,12 @@ private:
     QToolButton *m_back;
     QToolButton *m_play;
     QToolButton *m_forward;
+    QWidget *m_left;  // the title, the subtitle and the quality badge
+    QWidget *m_right; // the time, the preview actions and the volume
     QLabel *m_time;
     QHBoxLayout *m_actions; // the preview actions' buttons
     QSlider *m_volume;
+    QLabel *m_speaker;
     WaveformView *m_waveform;
     QTimer *m_ticker; // moves the playhead while playing
     QString m_message;
