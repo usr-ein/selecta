@@ -94,8 +94,13 @@
     {
       "name": "tsan",
       "displayName": "Debug with ThreadSanitizer",
+      "description": "Qt Base comes from its own triplet, built with ThreadSanitizer too, so TSan sees Qt's locks.",
       "inherits": "dev",
-      "cacheVariables": { "SELECTA_SANITIZE": "thread" }
+      "cacheVariables": {
+        "SELECTA_SANITIZE": "thread",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx-selecta-tsan",
+        "VCPKG_HOST_TRIPLET": "arm64-osx-selecta-tsan"
+      }
     },
     {
       "name": "lint",
@@ -156,7 +161,12 @@
     { "name": "linux", "inherits": "base", "configurePreset": "linux" },
     { "name": "windows", "inherits": "base", "configurePreset": "windows" },
     { "name": "asan", "inherits": "base", "configurePreset": "asan" },
-    { "name": "tsan", "inherits": "base", "configurePreset": "tsan" },
+    {
+      "name": "tsan",
+      "inherits": "base",
+      "configurePreset": "tsan",
+      "environment": { "TSAN_OPTIONS": "suppressions=${sourceDir}/tests/tsan-suppressions.txt" }
+    },
     { "name": "ci", "inherits": "base", "configurePreset": "ci" }
   ],
   "workflowPresets": [

@@ -25,7 +25,7 @@ open build/dev/src/app/Selecta.app
 |---|---|
 | `dev` | Debug build with tests and developer tools |
 | `asan` | AddressSanitizer + UBSan |
-| `tsan` | ThreadSanitizer |
+| `tsan` | ThreadSanitizer, with Qt Base built with it too (its own triplet, `arm64-osx-selecta-tsan`) |
 | `lint` | clang-tidy on every compiled file |
 | `release` | Optimised, no tests, no developer tools |
 
@@ -51,9 +51,9 @@ Markdown files doesn't start it. A newer push to the same branch cancels the run
 |---|---|---|
 | macOS · build, tests, static linking | `macos-26` | The `dev` preset with warnings as errors, the whole suite, and that the app and `selecta-cli` load only system libraries |
 | macOS · lint | `macos-26` | `tools/lint.sh` over `src`, `tests` and `tools`. It needs the generated sources only, not a build. About 50 minutes, most of it clang-tidy |
-| macOS · asan, macOS · tsan | `macos-26` | The whole suite under AddressSanitizer + UBSan, and under ThreadSanitizer. Not on pull requests. A tsan failure doesn't fail the run yet: the prebuilt Qt isn't instrumented, so data passed through Qt's event queue or thread pool shows as a race |
+| macOS · asan, macOS · tsan | `macos-26` | The whole suite under AddressSanitizer + UBSan, and under ThreadSanitizer. Not on pull requests. tsan links a Qt Base built with ThreadSanitizer, so TSan sees Qt's locks, event queue and thread pool; `tests/tsan-suppressions.txt` lists Qt's own benign races, each with its reason |
 | Linux · build, tests | `ubuntu-26.04` | The `linux` preset with GCC and warnings as errors, then the suite in a network namespace that has only loopback |
-| Windows · build, tests (experimental) | `windows-2025` | The `windows` preset with MSVC, without the media libraries, warnings not fatal. Its failure doesn't fail the run |
+| Windows · build, tests | `windows-2025` | The `windows` preset with MSVC, without the media libraries (so no engine or app), warnings not fatal |
 
 Each job runs the same presets as a local build, so `cmake --workflow --preset dev`, `tools/lint.sh` and the `asan` and
 `tsan` presets reproduce it. GCC leaves `-Wshadow` and `-Wmissing-field-initializers` to Clang
@@ -66,8 +66,8 @@ anything else. CI has no secrets.
 **Caches.** Each job restores vcpkg's binary archives for its triplet and its own ccache folder, both kept in
 `build/cache` (actions/cache refuses paths with `..`). The archive key is a hash of `vcpkg.json`, `cmake/vcpkg-triplets`
 and `cmake/vcpkg-ports`. A change to any of them, or a new compiler on the runner image, rebuilds the dependencies once:
-about 25 minutes on macOS and Linux and 35 on Windows, mostly Qt. The macOS, Linux and Windows build jobs save the new
-archives. Lint and the sanitizer jobs only restore them.
+about 25 minutes on macOS and Linux and 35 on Windows, mostly Qt. The macOS, Linux, Windows and sanitizer jobs save the
+new archives (tsan for its own triplet); lint only restores them.
 
 **Windows (experimental).** vcpkg builds every dependency with MSVC (triplet `x64-windows-selecta`: static
 libraries on the dynamic CRT, about 35 minutes cold), and base, governor, storage, slsk and the devnet tool compile.

@@ -1,0 +1,6 @@
+# ThreadSanitizer suppressions for the tsan preset (CMakePresets.json passes this file in TSAN_OPTIONS).
+#
+# Only Qt's own benign races go here, by Qt function name (Qt is a static library, so a library-name suppression can't
+# match), each with a one-line reason. A race in Selecta's code is fixed, never suppressed. Qt Base itself is built
+# with ThreadSanitizer for this preset (cmake/vcpkg-triplets/arm64-osx-selecta-tsan.cmake), so Qt's locks, event
+# queue and thread pool are visible and need no entry here.

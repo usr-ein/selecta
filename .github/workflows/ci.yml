@@ -2,8 +2,10 @@
 # CI (PLAN §5.4, NFR-1, NFR-7), all with static vcpkg dependencies (ADR-004):
 #   macOS     build, tests and the static-linking check; the lint gate (tools/lint.sh) in its own job.
 #   asan/tsan the whole suite under AddressSanitizer + UBSan and under ThreadSanitizer (macOS), on main, CI branches
-#             (ci/**), nightly and on request; not on pull requests.
+#             (ci/**), nightly and on request; not on pull requests. tsan has its own triplet, with Qt Base built
+#             with ThreadSanitizer, and tests/tsan-suppressions.txt for Qt's own benign races.
 #   Linux     build and tests.
+#   Windows   build and tests with MSVC: the libraries, their tests and selecta-cli (no media, so no engine or app).
 #
 # Network safety (CLAUDE.md): nothing here talks to the Soulseek network or to the metadata services. Tests use
 # loopback fakes only (on Linux they run in a network namespace that has nothing but loopback), and the live-server
@@ -171,15 +173,17 @@ jobs:
     name: macOS · ${{ matrix.preset }}
     if: github.event_name != 'pull_request'
     runs-on: macos-26
-    timeout-minutes: 180
-    # The prebuilt Qt isn't instrumented, so ThreadSanitizer can't see the locks in Qt's event queue and thread pool:
-    # every payload of a cross-thread queued call shows as a race. Until Qt is built with TSan, tsan doesn't fail the
-    # run.
-    continue-on-error: ${{ matrix.preset == 'tsan' }}
+    # tsan's dependencies come from their own triplet: when its binary cache is cold, Qt Base and the rest build first.
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        preset: [asan, tsan]
+        include:
+          - preset: asan
+            triplet: arm64-osx-selecta
+          # Qt Base built with ThreadSanitizer, so TSan sees the locks in Qt's event queue, thread pool and futures.
+          - preset: tsan
+            triplet: arm64-osx-selecta-tsan
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
@@ -192,9 +196,10 @@ jobs:
         run: brew install autoconf autoconf-archive automake libtool ccache
 
       - name: vcpkg
+        id: vcpkg
         uses: ./.github/actions/vcpkg
         with:
-          triplet: arm64-osx-selecta
+          triplet: ${{ matrix.triplet }}
 
       - name: Restore the compiler cache
         uses: actions/cache/restore@v6
@@ -203,11 +208,20 @@ jobs:
           key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-macos-${{ matrix.preset }}-
 
-      - name: Configure
+      - name: Configure (builds missing dependencies)
+        id: configure
         run: >-
           cmake --preset ${{ matrix.preset }} -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF
           -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
+
+      - name: Save the vcpkg binary cache
+        if: always() && steps.vcpkg.outcome == 'success'
+        uses: ./.github/actions/vcpkg-save
+        with:
+          key: ${{ steps.vcpkg.outputs.cache-key }}
+          installed: build/${{ matrix.preset }}/vcpkg_installed
+          complete: ${{ steps.configure.outcome == 'success' }}
 
       - name: The live-server switch is off
         run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/${{ matrix.preset }}/CMakeCache.txt
@@ -224,7 +238,7 @@ jobs:
           key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Test
-        timeout-minutes: 60
+        timeout-minutes: 120
         run: ctest --preset ${{ matrix.preset }} --parallel "$(sysctl -n hw.ncpu)" --timeout 900
 
       - name: Keep the test log
@@ -313,12 +327,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Experimental: known POSIX-only code doesn't build with MSVC yet, so a failure here doesn't fail the run.
   windows:
-    name: Windows · build, tests (experimental)
+    name: Windows · build, tests
     runs-on: windows-2025
     timeout-minutes: 240
-    continue-on-error: true
     defaults:
       run:
         shell: bash
