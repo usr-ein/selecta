@@ -117,15 +117,37 @@ void expectLabelsShowTheName(const QWidget &root, int atLeast)
     EXPECT_GE(seen, atLeast);
 }
 
-// The menu a view opens on a right-click at `position`: what its items show.
+// The menu open now, if any.
+QMenu *openMenu()
+{
+    if (auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget())) {
+        return menu;
+    }
+    const QList<QWidget *> windows = QApplication::topLevelWidgets();
+    for (QWidget *widget : windows) {
+        if (auto *menu = qobject_cast<QMenu *>(widget); menu != nullptr && menu->isVisible()) {
+            return menu;
+        }
+    }
+    return nullptr;
+}
+
+// The menu a view opens on a right-click at `position`: what its items show. The menu is closed as soon as it is
+// up (looked for every 10 ms, for 5 s at most).
 QStringList contextMenu(QWidget *view, QPoint position)
 {
     QStringList texts;
-    QTimer::singleShot(0, view, [&texts] {
-        auto *menu = qobject_cast<QMenu *>(QApplication::activePopupWidget());
+    QTimer poll;
+    int tries = 0;
+    QObject::connect(&poll, &QTimer::timeout, view, [&] {
+        QMenu *menu = openMenu();
         if (menu == nullptr) {
+            if (++tries > 500) {
+                poll.stop();
+            }
             return;
         }
+        poll.stop();
         const QList<QAction *> actions = menu->actions();
         for (const QAction *action : actions) {
             if (!action->isSeparator()) {
@@ -134,7 +156,9 @@ QStringList contextMenu(QWidget *view, QPoint position)
         }
         menu->close();
     });
+    poll.start(10);
     Q_EMIT view->customContextMenuRequested(position);
+    poll.stop();
     return texts;
 }
 
