@@ -202,8 +202,10 @@ int runSelecta(int argc, char **argv)
     QApplication::setApplicationDisplayName(u"Selecta"_s);
     QApplication::setOrganizationDomain(u"usr-ein.github.io"_s);
     QApplication::setApplicationVersion(QString(selecta::base::kVersion));
-    // Tables, splitters and headers in the look of P-003 (Style.h), over the platform's own style.
-    QApplication::setStyle(new selecta::app::style::SelectaStyle);
+    // Tables, splitters and headers in the look of P-003 (Style.h), over the platform's own style. The application
+    // owns its style and deletes it on exit; the pointer stays reachable here only for the leak analyser.
+    static QStyle *const style = new selecta::app::style::SelectaStyle;
+    QApplication::setStyle(style);
 #ifndef Q_OS_MACOS
     // macOS takes the app icon from the bundle: there this would replace the Dock icon with the bare record.
     QApplication::setWindowIcon(selecta::app::icons::applicationIcon());

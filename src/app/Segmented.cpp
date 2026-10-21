@@ -21,6 +21,8 @@ constexpr int kSegmentHeight = 24;
 // One segment: its text, raised on a capsule when chosen.
 class Segment : public QAbstractButton
 {
+    Q_OBJECT
+
 public:
     Segment(const QString &text, QWidget *parent)
         : QAbstractButton(parent)
@@ -136,3 +138,5 @@ void SegmentedControl::paintEvent(QPaintEvent * /*event*/)
 }
 
 } // namespace selecta::app
+
+#include "Segmented.moc"

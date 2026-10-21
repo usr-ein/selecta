@@ -169,16 +169,15 @@ bool drawSymbol(QPainter &painter, const QString &name, const QColor &color)
         QPainterPath triangle = polyline({{10, 2.8}, {17.6, 16.4}, {2.4, 16.4}});
         triangle.closeSubpath();
         painter.strokePath(triangle, pen(color, 1.8)); // rounds the corners
-        QPainterPath dot = circle(1.0, {10, 13.9});
+        const QPainterPath dot = circle(1.0, {10, 13.9});
         drawFilled(painter, triangle, polyline({{10, 7.4}, {10, 11.1}}), color, dot);
     } else if (name == u"xmark.circle.fill") {
         QPainterPath glyph = polyline({{7.3, 7.3}, {12.7, 12.7}});
         glyph.addPath(polyline({{12.7, 7.3}, {7.3, 12.7}}));
         drawFilled(painter, circle(8.3), glyph, color);
     } else if (name == u"exclamationmark.octagon.fill") {
-        QPainterPath octagon =
-            polyline({{7.1, 2.4}, {12.9, 2.4}, {17.6, 7.1}, {17.6, 12.9}, {12.9, 17.6}, {7.1, 17.6}, {2.4, 12.9},
-                      {2.4, 7.1}});
+        QPainterPath octagon = polyline(
+            {{7.1, 2.4}, {12.9, 2.4}, {17.6, 7.1}, {17.6, 12.9}, {12.9, 17.6}, {7.1, 17.6}, {2.4, 12.9}, {2.4, 7.1}});
         octagon.closeSubpath();
         painter.strokePath(octagon, pen(color, 1.0));
         drawFilled(painter, octagon, polyline({{10, 6.2}, {10, 10.8}}), color, circle(1.0, {10, 13.7}));
@@ -327,7 +326,7 @@ void StatusDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option
     opt.icon = QIcon();
     opt.features &= ~(QStyleOptionViewItem::HasDisplay | QStyleOptionViewItem::HasDecoration);
     const QWidget *widget = option.widget;
-    QStyle *style = widget ? widget->style() : QApplication::style();
+    const QStyle *style = widget ? widget->style() : QApplication::style();
     style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
 
     const bool selected = opt.state.testFlag(QStyle::State_Selected);
@@ -340,7 +339,8 @@ void StatusDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option
 
     painter->save();
     if (m_symbolOnly) {
-        const QPointF at(content.center().x() - (kSymbolSize / 2.0) + 0.5, content.center().y() - (kSymbolSize / 2.0) + 0.5);
+        const QPointF at(content.center().x() - (kSymbolSize / 2.0) + 0.5,
+                         content.center().y() - (kSymbolSize / 2.0) + 0.5);
         painter->drawPixmap(at, glyph);
         painter->restore();
         return;

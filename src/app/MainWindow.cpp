@@ -107,6 +107,8 @@ Appearance nextAppearance(Appearance appearance)
 // needs room (the Converter's bar) doesn't squeeze the sidebar everywhere else.
 class ViewStack : public QStackedWidget
 {
+    Q_OBJECT
+
 public:
     explicit ViewStack(QWidget *parent)
         : QStackedWidget(parent)
@@ -1579,3 +1581,5 @@ void MainWindow::noteProblem()
 }
 
 } // namespace selecta::app
+
+#include "MainWindow.moc"

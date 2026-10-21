@@ -24,7 +24,7 @@ TEST(SegmentedControl, OneSegmentIsChosenAtATime)
     control.setAttribute(Qt::WA_DontShowOnScreen);
     control.show();
 
-    QSignalSpy changed(&control, &SegmentedControl::currentChanged);
+    const QSignalSpy changed(&control, &SegmentedControl::currentChanged);
     auto *peers = control.findChild<QAbstractButton *>(u"seg.1"_s);
     ASSERT_NE(peers, nullptr);
     EXPECT_EQ(peers->accessibleName(), u"Peers"_s);

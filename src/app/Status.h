@@ -11,8 +11,8 @@
 
 class QPalette;
 
-// How Selecta shows a status (P-003, mock/README.md "Statuses"): an SF Symbol, monochrome, tinted with the colour of its
-// kind, then a short word in the label colour. The colour says the kind; the symbol and the word say which one.
+// How Selecta shows a status (P-003, mock/README.md "Statuses"): an SF Symbol, monochrome, tinted with the colour of
+// its kind, then a short word in the label colour. The colour says the kind; the symbol and the word say which one.
 namespace selecta::app::status {
 
 enum class Kind : quint8 {

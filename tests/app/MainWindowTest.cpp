@@ -7,9 +7,9 @@
 #include "app/PlayerBar.h"
 #include "app/Presets.h"
 #include "app/Preview.h"
+#include "app/SpectrogramView.h"
 #include "app/Status.h"
 #include "app/Style.h"
-#include "app/SpectrogramView.h"
 #include "app/Toasts.h"
 #include "app/devtools/DebugServer.h"
 #include "app/models/BrowseTreeModel.h"
@@ -1552,7 +1552,7 @@ TEST_F(MainWindowTest, ToolbarButtonsStayOnScreenAtAnySidebarWidth)
     auto window = makeWindow();
     auto *splitter = window->findChild<QSplitter *>(u"mainSplitter"_s);
     ASSERT_NE(splitter, nullptr);
-    const QStringList buttons{u"toolbar.sidebar"_s, u"toolbar.budget"_s, u"toolbar.ratio"_s,
+    const QStringList buttons{u"toolbar.sidebar"_s, u"toolbar.budget"_s,     u"toolbar.ratio"_s,
                               u"toolbar.pause"_s,   u"toolbar.appearance"_s, u"toolbar.inspector"_s};
     for (const QString &id : {u"get"_s, u"inbox"_s, u"settings"_s}) {
         window->navigateTo(id);

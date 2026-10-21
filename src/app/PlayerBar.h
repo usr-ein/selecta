@@ -61,8 +61,8 @@ private:
     QToolButton *m_back;
     QToolButton *m_play;
     QToolButton *m_forward;
-    QWidget *m_left;  // the title, the subtitle and the quality badge
-    QWidget *m_right; // the preview actions and the volume
+    QWidget *m_left;        // the title, the subtitle and the quality badge
+    QWidget *m_right;       // the preview actions and the volume
     QHBoxLayout *m_actions; // the preview actions' buttons
     QSlider *m_volume;
     QLabel *m_speaker;

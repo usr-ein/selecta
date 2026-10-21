@@ -148,7 +148,9 @@ TEST(TransfersModel, EachStatusHasItsSymbolAndKind)
     using selecta::app::status::Kind;
     using selecta::app::status::kKindRole;
     using selecta::app::status::kSymbolRole;
-    const auto symbolOf = [](State state) { return TransfersModel::statusSymbol(download(1, u"p"_s, "a.flac", state)); };
+    const auto symbolOf = [](State state) {
+        return TransfersModel::statusSymbol(download(1, u"p"_s, "a.flac", state));
+    };
     EXPECT_EQ(symbolOf(State::Waiting).symbol, u"clock"_s);
     EXPECT_EQ(symbolOf(State::Queued).kind, Kind::Waiting);
     EXPECT_EQ(symbolOf(State::Transferring).symbol, u"arrow.down.circle.fill"_s);

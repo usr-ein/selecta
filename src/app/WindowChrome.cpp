@@ -24,17 +24,18 @@ bool hasGlass(const QWidget * /*window*/)
     return false;
 }
 
-void titleBarPressed(QWidget *window)
+void titleBarPressed(const QWidget *window)
 {
     if (window && window->windowHandle()) {
         window->windowHandle()->startSystemMove();
     }
 }
 
-void titleBarDoubleClicked(QWidget *window)
+void titleBarDoubleClicked(const QWidget *window)
 {
-    if (window) {
-        window->setWindowState(window->windowState() ^ Qt::WindowMaximized);
+    if (window && window->windowHandle()) {
+        QWindow *const native = window->windowHandle();
+        native->setWindowStates(native->windowStates() ^ Qt::WindowMaximized);
     }
 }
 

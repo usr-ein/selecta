@@ -38,6 +38,8 @@ constexpr int kHeaderHeight = chrome::kTitleBarHeight - (2 * style::kSpace2);
 // The search field's capsule (macOS 26): a soft fill, and the accent ring while the field has the keyboard.
 class SearchCapsule : public QWidget
 {
+    Q_OBJECT
+
 public:
     explicit SearchCapsule(QWidget *parent)
         : QWidget(parent)
@@ -51,7 +53,6 @@ public:
         field->installEventFilter(this); // the ring follows the field's focus
     }
 
-protected:
     bool eventFilter(QObject *watched, QEvent *event) override
     {
         if (watched == m_field && (event->type() == QEvent::FocusIn || event->type() == QEvent::FocusOut)) {
@@ -60,6 +61,7 @@ protected:
         return QWidget::eventFilter(watched, event);
     }
 
+protected:
     void paintEvent(QPaintEvent * /*event*/) override
     {
         QPainter painter(this);
@@ -317,3 +319,5 @@ void Sidebar::setConnectionStatus(const QString &text, bool online)
 }
 
 } // namespace selecta::app
+
+#include "Sidebar.moc"

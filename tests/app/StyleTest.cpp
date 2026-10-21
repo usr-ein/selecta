@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "app/SourceListView.h"
 #include "app/Style.h"
+
+#include "app/SourceListView.h"
 
 #include <QHeaderView>
 #include <QImage>
@@ -24,9 +25,11 @@ bool insideOf(const QPainterPath &path, qreal x, qreal y)
 // How far down from the top the shape starts, at this x.
 qreal topEdge(const QPainterPath &path, qreal x)
 {
-    for (qreal y = 0; y < path.boundingRect().height(); y += 0.05) {
-        if (path.contains(QPointF(x, y))) {
-            return y;
+    constexpr qreal kStep = 0.05;
+    const auto steps = static_cast<int>(path.boundingRect().height() / kStep);
+    for (int step = 0; step < steps; ++step) {
+        if (path.contains(QPointF(x, step * kStep))) {
+            return step * kStep;
         }
     }
     return -1;
@@ -179,8 +182,7 @@ TEST(StyleTest, ATableHasNoStripesTallRowsAndAQuietHeader)
     EXPECT_EQ(view.header()->sizeHint().height(), kRowHeight);
 
     // A selected row: inset from both sides, filled in between.
-    view.selectionModel()->select(model.index(1, 0),
-                                  QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    view.selectionModel()->select(model.index(1, 0), QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     const QImage image = view.viewport()->grab().toImage();
     const qreal dpr = image.devicePixelRatio();
     const QRect row = view.visualRect(model.index(1, 0)).united(view.visualRect(model.index(1, 1)));
@@ -200,7 +202,7 @@ TEST(StyleTest, CellsKnowTheirPlaceWhenColumnsAreMovedOrHidden)
     QTreeView tree;
     tree.setModel(&model);
     tree.header()->moveSection(tree.header()->visualIndex(2), 0); // visual order: 2, 0, 1, 3
-    tree.header()->setSectionHidden(3, true);                    // 3 hidden: 1 ends the row
+    tree.header()->setSectionHidden(3, true);                     // 3 hidden: 1 ends the row
     const auto positionOf = [&](int column) {
         QStyleOptionViewItem option;
         option.widget = &tree;

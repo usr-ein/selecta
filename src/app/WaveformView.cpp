@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/WaveformView.h"
 
-#include "app/Style.h"
-
 #include "app/Format.h"
+#include "app/Style.h"
 
 #include <QAccessible>
 #include <QAccessibleWidget>

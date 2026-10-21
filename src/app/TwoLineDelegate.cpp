@@ -38,7 +38,8 @@ void TwoLineDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget); // background, selection, focus
 
     // In line with the table's other cells (Style.h), the two lines centred in the row.
-    const QRect area = style::cellContentRect(opt.rect, style::cellPosition(opt)).adjusted(0, kPadding / 2, 0, -kPadding / 2);
+    const QRect area =
+        style::cellContentRect(opt.rect, style::cellPosition(opt)).adjusted(0, kPadding / 2, 0, -kPadding / 2);
     const bool selected = (opt.state & QStyle::State_Selected) != 0;
     const QPalette::ColorGroup group = (opt.state & QStyle::State_Enabled) ? QPalette::Normal : QPalette::Disabled;
     const QColor titleColour = opt.palette.color(group, selected ? QPalette::HighlightedText : QPalette::Text);
@@ -74,8 +75,8 @@ QSize TwoLineDelegate::sizeHint(const QStyleOptionViewItem &option, const QModel
     QSize size = QStyledItemDelegate::sizeHint(option, index);
     const QFontMetrics titleMetrics(option.font);
     const QFontMetrics subtitleMetrics(subtitleFont(option.font));
-    size.setHeight(std::max({size.height(), titleMetrics.height() + subtitleMetrics.height() + (kPadding * 2),
-                             style::kTwoLineRowHeight}));
+    size.setHeight(std::max(
+        {size.height(), titleMetrics.height() + subtitleMetrics.height() + (kPadding * 2), style::kTwoLineRowHeight}));
     return size;
 }
 

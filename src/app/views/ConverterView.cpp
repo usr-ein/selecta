@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ConverterView.h"
 
-#include "app/Style.h"
-
 #include "app/Format.h"
+#include "app/Style.h"
 #include "app/TickDelegate.h"
 #include "app/models/ConverterModel.h"
 #include "app/views/ConverterInspector.h"

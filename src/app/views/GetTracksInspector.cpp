@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksInspector.h"
 
-#include "app/Style.h"
-
 #include "app/Format.h"
 #include "app/Inspector.h"
+#include "app/Style.h"
 #include "app/models/GetTracksModel.h"
 #include "meta/CoverFetcher.h"
 #include "meta/ServicePolicy.h"

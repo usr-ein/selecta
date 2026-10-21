@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/InboxInspector.h"
 
-#include "app/Style.h"
-
 #include "app/Format.h"
 #include "app/Inspector.h"
 #include "app/SpectrogramView.h"
+#include "app/Style.h"
 #include "app/views/EditTagsDialog.h"
 #include "app/views/ReleasePickerDialog.h"
 #include "audio/AnalysisCache.h"

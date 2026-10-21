@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksView.h"
 
-#include "app/Style.h"
-
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/Icons.h"
 #include "app/Presets.h"
 #include "app/Status.h"
+#include "app/Style.h"
 #include "app/TickDelegate.h"
 #include "app/TwoLineDelegate.h"
 #include "app/models/GetTracksModel.h"
@@ -401,7 +400,7 @@ void GetTracksView::removeSelected()
 void GetTracksView::refresh()
 {
     m_pages->setCurrentIndex(m_model->rowCount() == 0 ? 0 : 1);
-    m_add->setVisible(m_model->rowCount() > 0); // the empty page has its own button
+    m_add->setVisible(m_model->rowCount() > 0);    // the empty page has its own button
     m_footer->setVisible(m_model->rowCount() > 0); // the counts are in the toolbar's subtitle (summary())
     m_footerSeparator->setVisible(m_model->rowCount() > 0);
     refreshProgress();

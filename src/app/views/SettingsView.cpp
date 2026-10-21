@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SettingsView.h"
 
-#include "app/Style.h"
-
 #include "app/Format.h"
+#include "app/Style.h"
 #include "governor/ServerGuard.h"
 #include "library/Naming.h"
 

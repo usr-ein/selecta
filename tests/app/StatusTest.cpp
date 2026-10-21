@@ -24,7 +24,7 @@ int opaquePixels(const QImage &image)
     return count;
 }
 
-constexpr std::array kKinds{Kind::Waiting, Kind::Working, Kind::Release, Kind::Ready, Kind::Check,
+constexpr std::array kKinds{Kind::Waiting, Kind::Working, Kind::Release, Kind::Ready,  Kind::Check,
                             Kind::Failed,  Kind::Have,    Kind::Inbox,   Kind::Upgrade};
 
 } // namespace
@@ -49,10 +49,10 @@ TEST(StatusTest, AFilledSymbolKeepsItsGlyphCutOut)
     // checkmark.circle.fill: the disc in the colour, the tick transparent, so a selection shows through it.
     const QImage image = drawnPixmap(QStringLiteral("checkmark.circle.fill"), Qt::red, 20, 4.0).toImage();
     const auto at = [&](qreal x, qreal y) { return image.pixelColor(QPointF(x * 4, y * 4).toPoint()); };
-    EXPECT_EQ(at(10, 4).alpha(), 255);         // inside the disc
-    EXPECT_EQ(at(10, 4).red(), 255);           // in its colour
-    EXPECT_EQ(at(8.9, 12.8).alpha(), 0);       // on the tick
-    EXPECT_EQ(at(0.5, 0.5).alpha(), 0);        // outside
+    EXPECT_EQ(at(10, 4).alpha(), 255);   // inside the disc
+    EXPECT_EQ(at(10, 4).red(), 255);     // in its colour
+    EXPECT_EQ(at(8.9, 12.8).alpha(), 0); // on the tick
+    EXPECT_EQ(at(0.5, 0.5).alpha(), 0);  // outside
 }
 
 TEST(StatusTest, EachKindHasItsOwnColourInEachAppearance)
@@ -111,7 +111,7 @@ Painted paintCell(bool symbolOnly, bool selected)
     return {view.viewport()->grab().toImage(), view.visualRect(model.index(0, 0))};
 }
 
-int pixelsNear(const QImage &image, const QRect &area, const QColor &colour)
+int pixelsNear(const QImage &image, QRect area, const QColor &colour)
 {
     int count = 0;
     const qreal dpr = image.devicePixelRatio();
@@ -148,9 +148,8 @@ TEST(StatusTest, ASymbolAloneSitsInTheMiddleOfItsCell)
     const QColor green = color(Kind::Ready, QTreeView().palette());
     const int middle = painted.cell.center().x();
     EXPECT_GT(pixelsNear(painted.image, QRect(middle - 8, painted.cell.top(), 16, painted.cell.height()), green), 10);
-    EXPECT_EQ(pixelsNear(painted.image, QRect(painted.cell.left(), painted.cell.top(), 40, painted.cell.height()),
-                         green),
-              0);
+    EXPECT_EQ(
+        pixelsNear(painted.image, QRect(painted.cell.left(), painted.cell.top(), 40, painted.cell.height()), green), 0);
 }
 
 TEST(StatusTest, InASelectedRowTheSymbolTakesTheSelectionsTextColour)

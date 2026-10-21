@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ActivityView.h"
 
-#include "app/Segmented.h"
-#include "app/Status.h"
-#include "app/Style.h"
-
 #include "app/Accessibility.h"
 #include "app/MeterDelegate.h"
 #include "app/PeerMenu.h"
+#include "app/Segmented.h"
+#include "app/Status.h"
+#include "app/Style.h"
 #include "app/models/ActivityModel.h"
 #include "app/models/PeersModel.h"
 #include "app/models/TransfersModel.h"

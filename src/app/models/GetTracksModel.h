@@ -2,7 +2,6 @@
 #pragma once
 
 #include "app/Status.h"
-
 #include "core/GetTracks.h"
 
 #include <QAbstractTableModel>

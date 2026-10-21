@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/RoomsView.h"
 
-#include "app/Style.h"
-
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
+#include "app/Style.h"
 #include "core/EngineHost.h"
 
 #include <QApplication>

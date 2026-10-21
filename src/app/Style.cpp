@@ -5,12 +5,13 @@
 
 #include <QAbstractItemView>
 #include <QHeaderView>
-#include <QTreeView>
 #include <QPainter>
 #include <QSplitter>
 #include <QStyleOptionComplex>
 #include <QStyleOptionHeader>
 #include <QStyleOptionViewItem>
+#include <QTextOption>
+#include <QTreeView>
 
 #include <algorithm>
 #include <array>
@@ -38,7 +39,7 @@ void addCorner(QPainterPath &path, QPointF vertex, QPointF in, QPointF out, qrea
     path.cubicTo(at(0, kC2), at(0, kC1), at(0, kReach));
 }
 
-const char *const kPlatformRows = "selectaPlatformRows"; // set by SelectaStyle::keepPlatformRows()
+const char *const kPlatformRows = "selectaPlatformRows";   // set by SelectaStyle::keepPlatformRows()
 const char *const kHiddenHandles = "selectaHiddenHandles"; // set by SelectaStyle::hideHandles()
 
 } // namespace
@@ -141,10 +142,15 @@ int cellPosition(const QStyleOptionViewItem &option)
         const int visual = header->visualIndex(option.index.column());
         const bool starts = visual == first;
         const bool ends = visual == last;
-        position = starts && ends ? QStyleOptionViewItem::OnlyOne
-                   : starts       ? QStyleOptionViewItem::Beginning
-                   : ends         ? QStyleOptionViewItem::End
-                                  : QStyleOptionViewItem::Middle;
+        if (starts && ends) {
+            position = QStyleOptionViewItem::OnlyOne;
+        } else if (starts) {
+            position = QStyleOptionViewItem::Beginning;
+        } else if (ends) {
+            position = QStyleOptionViewItem::End;
+        } else {
+            position = QStyleOptionViewItem::Middle;
+        }
     }
     // A tree's indentation and disclosure triangle come before its tree column's cell: when they start the row, the
     // cell continues it.
@@ -187,7 +193,7 @@ QColor hairlineColor(const QPalette &palette)
 
 } // namespace
 
-void paintRowSelection(QPainter *painter, const QRect &cell, int position, const QColor &fill)
+void paintRowSelection(QPainter *painter, QRect cell, int position, const QColor &fill)
 {
     if (!painter || cell.isEmpty()) {
         return;
@@ -196,7 +202,14 @@ void paintRowSelection(QPainter *painter, const QRect &cell, int position, const
     const bool last = endsRow(position);
     QRectF area(cell);
     area.adjust(first ? kRowInset : 0, 0, last ? -kRowInset : 0, 0);
-    const Corners corners = first && last ? Corners::All : first ? Corners::Left : last ? Corners::Right : Corners::None;
+    Corners corners = Corners::None;
+    if (first && last) {
+        corners = Corners::All;
+    } else if (first) {
+        corners = Corners::Left;
+    } else if (last) {
+        corners = Corners::Right;
+    }
     painter->save();
     painter->setRenderHint(QPainter::Antialiasing);
     painter->fillPath(squircle(area, kRadiusSmall, corners), fill);
@@ -219,14 +232,15 @@ int trailingPadding(int position)
 
 } // namespace
 
-QRect cellContentRect(const QRect &cell, int position)
+QRect cellContentRect(QRect cell, int position)
 {
     return cell.adjusted(leadingPadding(position), 0, -trailingPadding(position), 0);
 }
 
-SelectaStyle::SelectaStyle()
-    : QProxyStyle()
-{}
+SelectaStyle::SelectaStyle(QObject *parent)
+{
+    setParent(parent);
+}
 
 void SelectaStyle::keepPlatformRows(QAbstractItemView *view)
 {
@@ -332,8 +346,9 @@ void SelectaStyle::drawControl(ControlElement element, const QStyleOption *optio
     }
     const auto *header = qstyleoption_cast<const QStyleOptionHeader *>(option);
     const QWidget *view = widget ? widget->parentWidget() : nullptr;
-    if (header && drawsRowsOf(view) && (element == CE_Header || element == CE_HeaderSection ||
-                                        element == CE_HeaderEmptyArea || element == CE_HeaderLabel)) {
+    if (header && drawsRowsOf(view) &&
+        (element == CE_Header || element == CE_HeaderSection || element == CE_HeaderEmptyArea ||
+         element == CE_HeaderLabel)) {
         const QPalette &palette = option->palette;
         if (element != CE_HeaderLabel) {
             // A quiet header: the table's own background and one hairline under it, no column separators.
@@ -342,33 +357,40 @@ void SelectaStyle::drawControl(ControlElement element, const QStyleOption *optio
                               hairlineColor(palette));
         }
         if (element == CE_Header || element == CE_HeaderLabel) {
-            const bool first = header->position == QStyleOptionHeader::Beginning ||
-                               header->position == QStyleOptionHeader::OnlyOneSection;
-            const bool last = header->position == QStyleOptionHeader::End ||
-                              header->position == QStyleOptionHeader::OnlyOneSection;
-            const int left = first ? kRowInset + kCellPadding : kSpace2;
-            const int right = last ? kRowInset + kCellPadding : kSpace2;
-            QRect text = option->rect.adjusted(left, 0, -right, -1);
-            if (header->sortIndicator != QStyleOptionHeader::None) {
-                QStyleOptionHeader arrow = *header;
-                constexpr int kArrow = 8;
-                const bool rightAligned = header->textAlignment.testFlag(Qt::AlignRight);
-                arrow.rect = rightAligned ? QRect(text.left(), text.center().y() - (kArrow / 2), kArrow, kArrow)
-                                          : QRect(text.right() - kArrow, text.center().y() - (kArrow / 2), kArrow,
-                                                  kArrow);
-                drawPrimitive(PE_IndicatorHeaderArrow, &arrow, painter, widget);
-                text.adjust(rightAligned ? kArrow + kSpace1 : 0, 0, rightAligned ? 0 : -(kArrow + kSpace1), 0);
-            }
-            painter->save();
-            painter->setPen(palette.color(QPalette::PlaceholderText));
-            const QString label = painter->fontMetrics().elidedText(header->text, Qt::ElideRight, text.width());
-            painter->drawText(text, static_cast<int>(header->textAlignment | Qt::AlignVCenter) | Qt::TextSingleLine,
-                              label);
-            painter->restore();
+            drawHeaderLabel(*header, painter, widget);
         }
         return;
     }
     QProxyStyle::drawControl(element, option, painter, widget);
+}
+
+void SelectaStyle::drawHeaderLabel(const QStyleOptionHeader &header, QPainter *painter, const QWidget *widget) const
+{
+    // The label in line with the cells' text (cellContentRect), in the secondary colour, the sort arrow beside it.
+    const bool first =
+        header.position == QStyleOptionHeader::Beginning || header.position == QStyleOptionHeader::OnlyOneSection;
+    const bool last =
+        header.position == QStyleOptionHeader::End || header.position == QStyleOptionHeader::OnlyOneSection;
+    const int left = first ? kRowInset + kCellPadding : kSpace2;
+    const int right = last ? kRowInset + kCellPadding : kSpace2;
+    QRect text = header.rect.adjusted(left, 0, -right, -1);
+    if (header.sortIndicator != QStyleOptionHeader::None) {
+        QStyleOptionHeader arrow = header;
+        constexpr int kArrow = 8;
+        const bool rightAligned = header.textAlignment.testFlag(Qt::AlignRight);
+        const int top = text.center().y() - (kArrow / 2);
+        arrow.rect =
+            rightAligned ? QRect(text.left(), top, kArrow, kArrow) : QRect(text.right() - kArrow, top, kArrow, kArrow);
+        drawPrimitive(PE_IndicatorHeaderArrow, &arrow, painter, widget);
+        text.adjust(rightAligned ? kArrow + kSpace1 : 0, 0, rightAligned ? 0 : -(kArrow + kSpace1), 0);
+    }
+    painter->save();
+    painter->setPen(header.palette.color(QPalette::PlaceholderText));
+    const QString label = painter->fontMetrics().elidedText(header.text, Qt::ElideRight, text.width());
+    QTextOption layout(header.textAlignment | Qt::AlignVCenter);
+    layout.setWrapMode(QTextOption::NoWrap);
+    painter->drawText(QRectF(text), label, layout);
+    painter->restore();
 }
 
 QRect SelectaStyle::subElementRect(SubElement element, const QStyleOption *option, const QWidget *widget) const
@@ -471,7 +493,7 @@ int SelectaStyle::styleHint(StyleHint hint, const QStyleOption *option, const QW
         return 0;
     }
     if (hint == SH_FormLayoutFormAlignment) {
-        return static_cast<int>(Qt::AlignLeft | Qt::AlignTop); // forms start at their group's edge, as System Settings
+        return (Qt::AlignLeft | Qt::AlignTop).toInt(); // forms start at their group's edge, as System Settings
     }
     return QProxyStyle::styleHint(hint, option, widget, returnData);
 }

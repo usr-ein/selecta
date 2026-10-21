@@ -34,9 +34,9 @@ bool hasGlass(const QWidget *window);
 
 // A press on empty title bar space (the toolbar's, the sidebar's top): the window follows the mouse, as when dragging
 // a title bar. The buttons there take their clicks themselves.
-void titleBarPressed(QWidget *window);
+void titleBarPressed(const QWidget *window);
 // A double-click there: what the system's setting says a title bar does (macOS: zoom, minimise or nothing, as set in
 // Desktop & Dock), else maximise or restore.
-void titleBarDoubleClicked(QWidget *window);
+void titleBarDoubleClicked(const QWidget *window);
 
 } // namespace selecta::app::chrome

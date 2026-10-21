@@ -84,7 +84,7 @@ private:
     QHBoxLayout *m_layout;
     QLabel *m_title;
     QLabel *m_subtitle;
-    int m_capsuleIndex; // where the next capsule goes
+    int m_capsuleIndex = 1; // where the next capsule goes: after the title (and the leading button)
 };
 
 } // namespace selecta::app

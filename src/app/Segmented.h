@@ -9,8 +9,8 @@ class QTabWidget;
 
 namespace selecta::app {
 
-// A segmented control as macOS 26 draws one (mock: .seg): a capsule track, the chosen segment raised on it. Each segment
-// is a button the keyboard reaches; one is chosen at a time. Main thread only.
+// A segmented control as macOS 26 draws one (mock: .seg): a capsule track, the chosen segment raised on it. Each
+// segment is a button the keyboard reaches; one is chosen at a time. Main thread only.
 class SegmentedControl : public QWidget
 {
     Q_OBJECT
@@ -26,8 +26,8 @@ public:
     void setCurrentIndex(int index);
 
     // Stands in for a tab widget's tabs (macOS 26 chooses pages with a segmented control): one segment per tab, named
-    // `<namePrefix>.<index>`, following the tab widget both ways; the tab bar is hidden. Returns the control, a child of
-    // `parent`, for the caller to place. Tabs added later aren't covered.
+    // `<namePrefix>.<index>`, following the tab widget both ways; the tab bar is hidden. Returns the control, a child
+    // of `parent`, for the caller to place. Tabs added later aren't covered.
     static SegmentedControl *forTabs(QTabWidget *tabs, const QString &namePrefix, QWidget *parent);
 
 Q_SIGNALS:

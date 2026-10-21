@@ -317,6 +317,22 @@ status::Status TransfersModel::statusSymbol(const core::Download &download)
     return {};
 }
 
+status::Status TransfersModel::groupSymbol(const GroupSummary &summary, int count)
+{
+    // A folder: failed if any failed, in the Inbox once all arrived, else on its way.
+    using status::Kind;
+    if (summary.failed > 0) {
+        return {u"exclamationmark.octagon.fill"_s, Kind::Failed};
+    }
+    if (summary.arrived == count) {
+        return {u"tray.full.fill"_s, Kind::Inbox};
+    }
+    if (summary.arriving > 0) {
+        return {u"arrow.down.circle.fill"_s, Kind::Working};
+    }
+    return {u"hourglass"_s, Kind::Waiting};
+}
+
 QModelIndex TransfersModel::index(int row, int column, const QModelIndex &parent) const
 {
     if (row < 0 || column < 0 || column >= ColumnCount) {
@@ -499,13 +515,7 @@ QVariant TransfersModel::groupData(const Group &group, int column, int role) con
         return bold;
     }
     if (column == StatusColumn && (role == status::kSymbolRole || role == status::kKindRole)) {
-        // A folder: failed if any failed, in the Inbox once all arrived, else on its way.
-        const status::Status shown = summary.failed > 0 ? status::Status{u"exclamationmark.octagon.fill"_s,
-                                                                         status::Kind::Failed}
-                                     : summary.arrived == count ? status::Status{u"tray.full.fill"_s, status::Kind::Inbox}
-                                     : summary.arriving > 0
-                                         ? status::Status{u"arrow.down.circle.fill"_s, status::Kind::Working}
-                                         : status::Status{u"hourglass"_s, status::Kind::Waiting};
+        const status::Status shown = groupSymbol(summary, count);
         return role == status::kSymbolRole ? QVariant(shown.symbol) : QVariant(static_cast<int>(shown.kind));
     }
     if (role == Qt::ForegroundRole && column == StatusColumn) {

@@ -12,51 +12,57 @@ namespace {
 // appearances, and thin symbols drawn in it on a dark sidebar read as too dark a blue (beta notes, 2026-10-20).
 constexpr CGFloat kDarkHighlightLevel = 0.3;
 
-// An NSColor resolved under Aqua or Dark Aqua (system colours are dynamic), in sRGB, as a QColor; invalid if AppKit
-// can't give it.
-QColor resolved(NSColor *(^make)(void), bool dark)
+// A system colour resolved under Aqua or Dark Aqua (system colours are dynamic), in sRGB, as a QColor; invalid if
+// AppKit can't give it.
+QColor resolved(NSColor *color, bool dark)
 {
     NSAppearance *const appearance =
         [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
-    if (appearance == nil) {
+    if (appearance == nil || color == nil) {
         return {};
     }
-    __block NSColor *color = nil;
+    __block NSColor *srgb = nil;
     [appearance performAsCurrentDrawingAppearance:^{
-        color = [make() colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+        srgb = [color colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
     }];
-    if (color == nil) {
+    if (srgb == nil) {
         return {};
     }
-    return QColor::fromRgbF(static_cast<float>(color.redComponent), static_cast<float>(color.greenComponent),
-                            static_cast<float>(color.blueComponent), static_cast<float>(color.alphaComponent));
+    return QColor::fromRgbF(static_cast<float>(srgb.redComponent), static_cast<float>(srgb.greenComponent),
+                            static_cast<float>(srgb.blueComponent), static_cast<float>(srgb.alphaComponent));
+}
+
+NSColor *systemColor(status::Kind kind)
+{
+    using status::Kind;
+    switch (kind) {
+    case Kind::Waiting:
+        return NSColor.systemGrayColor;
+    case Kind::Working:
+        return NSColor.systemBlueColor;
+    case Kind::Release:
+        return NSColor.systemIndigoColor;
+    case Kind::Ready:
+        return NSColor.systemGreenColor;
+    case Kind::Check:
+        return NSColor.systemOrangeColor;
+    case Kind::Failed:
+        return NSColor.systemRedColor;
+    case Kind::Have:
+        return NSColor.systemPurpleColor;
+    case Kind::Inbox:
+        return NSColor.systemCyanColor;
+    case Kind::Upgrade:
+        return NSColor.systemTealColor;
+    }
+    return nil;
 }
 
 } // namespace
 
 QColor status::macStatusColor(int kind, bool dark)
 {
-    switch (static_cast<Kind>(kind)) {
-    case Kind::Waiting:
-        return resolved(^{ return NSColor.systemGrayColor; }, dark);
-    case Kind::Working:
-        return resolved(^{ return NSColor.systemBlueColor; }, dark);
-    case Kind::Release:
-        return resolved(^{ return NSColor.systemIndigoColor; }, dark);
-    case Kind::Ready:
-        return resolved(^{ return NSColor.systemGreenColor; }, dark);
-    case Kind::Check:
-        return resolved(^{ return NSColor.systemOrangeColor; }, dark);
-    case Kind::Failed:
-        return resolved(^{ return NSColor.systemRedColor; }, dark);
-    case Kind::Have:
-        return resolved(^{ return NSColor.systemPurpleColor; }, dark);
-    case Kind::Inbox:
-        return resolved(^{ return NSColor.systemCyanColor; }, dark);
-    case Kind::Upgrade:
-        return resolved(^{ return NSColor.systemTealColor; }, dark);
-    }
-    return {};
+    return resolved(systemColor(static_cast<status::Kind>(kind)), dark);
 }
 
 QColor macSystemAccentColor(bool dark)

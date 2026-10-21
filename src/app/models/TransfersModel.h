@@ -2,7 +2,6 @@
 #pragma once
 
 #include "app/Status.h"
-
 #include "core/Downloads.h"
 #include "core/ShareService.h"
 
@@ -104,6 +103,8 @@ private:
 
     QString groupKey(const core::Download &download) const;
     GroupSummary summarise(const Group &group) const;
+    // A folder's status as shown, from its files'.
+    static status::Status groupSymbol(const GroupSummary &summary, int count);
     void rebuild();
     void place(qint64 id, bool announce);
     int groupOf(qint64 id) const;

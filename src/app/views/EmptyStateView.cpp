@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/EmptyStateView.h"
 
-#include "app/Style.h"
-
 #include "app/Icons.h"
+#include "app/Style.h"
 
 #include <QEvent>
 #include <QHBoxLayout>

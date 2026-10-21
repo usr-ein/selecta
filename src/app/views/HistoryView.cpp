@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/HistoryView.h"
 
+#include "app/Format.h"
 #include "app/Status.h"
 #include "app/Style.h"
-
-#include "app/Format.h"
 #include "library/HistoryStore.h"
 #include "storage/SessionLog.h"
 

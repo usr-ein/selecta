@@ -122,7 +122,6 @@ PlayerBar::PlayerBar(PreviewController &preview, QWidget *parent)
     m_quality->setTextFormat(Qt::PlainText);
     m_quality->hide();
 
-
     m_volume->setObjectName(u"player.volume"_s);
     m_volume->setRange(0, 100);
     m_volume->setValue(80);

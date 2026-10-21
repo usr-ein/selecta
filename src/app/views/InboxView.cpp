@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/InboxView.h"
 
-#include "app/Status.h"
-#include "app/Style.h"
-
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/Icons.h"
+#include "app/Status.h"
+#include "app/Style.h"
 #include "app/views/EmptyStateView.h"
 #include "app/views/InboxInspector.h"
 #include "core/EngineHost.h"

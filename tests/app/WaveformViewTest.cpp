@@ -70,8 +70,10 @@ TEST_F(WaveformViewTest, EmptyShowsTheMessageOnTheDarkScreen)
 {
     view.setMessage(u"Select a track"_s);
     const QImage image = shot();
-    EXPECT_EQ(image.pixel(2, 2) | 0xff000000, kBackground);
-    EXPECT_EQ(image.pixel(view.width() - 3, view.height() - 3) | 0xff000000, kBackground);
+    // Dark inside its rounded corners (P-003: the screen is a squircle, radius 10); the very corner is cut.
+    EXPECT_EQ(image.pixel(12, 12) | 0xff000000, kBackground);
+    EXPECT_EQ(image.pixel(view.width() - 13, view.height() - 13) | 0xff000000, kBackground);
+    EXPECT_NE(image.pixel(0, 0) | 0xff000000, kBackground);
 }
 
 TEST_F(WaveformViewTest, DetailIsMirroredWithTheOverlapInBrown)

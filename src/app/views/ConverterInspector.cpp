@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/ConverterInspector.h"
 
-#include "app/Style.h"
-
 #include "app/Inspector.h"
+#include "app/Style.h"
 
 #include <QFileInfo>
 #include <QHBoxLayout>

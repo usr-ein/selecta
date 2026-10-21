@@ -24,12 +24,14 @@ bool onCocoa()
     return QGuiApplication::platformName() == u"cocoa";
 }
 
-NSWindow *nativeWindow(QWidget *window)
+NSWindow *nativeWindow(const QWidget *window)
 {
     if (!window || !onCocoa() || !window->testAttribute(Qt::WA_WState_Created)) {
         return nil;
     }
-    NSView *view = (__bridge NSView *)reinterpret_cast<void *>(window->winId());
+    // A native widget's WId is its NSView, by Qt's contract.
+    // NOLINTNEXTLINE(bugprone-casting-through-void,performance-no-int-to-ptr)
+    auto *const view = (__bridge NSView *)reinterpret_cast<void *>(window->winId());
     return view.window;
 }
 
@@ -44,10 +46,36 @@ BOOL cannotMoveWindow(id /*self*/, SEL /*command*/)
 void keepClicksForTheContent(NSView *content)
 {
     const SEL selector = @selector(mouseDownCanMoveWindow);
-    const Method inherited = class_getInstanceMethod([NSView class], selector);
+    auto *const inherited = class_getInstanceMethod([NSView class], selector);
+    auto *const viewClass = object_getClass(content);
+    if (inherited == nil || viewClass == nil) {
+        return;
+    }
     // Adds the method to Qt's view class (it doesn't define it); a no-op once added.
-    class_addMethod(object_getClass(content), selector, reinterpret_cast<IMP>(cannotMoveWindow),
-                    method_getTypeEncoding(inherited));
+    class_addMethod(viewClass, selector, reinterpret_cast<IMP>(cannotMoveWindow), method_getTypeEncoding(inherited));
+}
+
+void installGlass(QWidget *window, NSWindow *ns)
+{
+    NSView *const content = ns.contentView;
+    NSView *const frame = content.superview;
+    if (frame == nil) {
+        return;
+    }
+    for (NSView *existing in frame.subviews) {
+        if ([existing.identifier isEqualToString:kGlassIdentifier]) {
+            window->setProperty(kHasGlass, true);
+            return;
+        }
+    }
+    NSVisualEffectView *const glass = [[NSVisualEffectView alloc] initWithFrame:frame.bounds];
+    glass.identifier = kGlassIdentifier;
+    glass.material = NSVisualEffectMaterialSidebar;
+    glass.blendingMode = NSVisualEffectBlendingModeBehindWindow;
+    glass.state = NSVisualEffectStateFollowsWindowActiveState;
+    glass.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [frame addSubview:glass positioned:NSWindowBelow relativeTo:content];
+    window->setProperty(kHasGlass, true);
 }
 
 } // namespace
@@ -77,14 +105,14 @@ void prepare(QWidget *window, bool glass)
 
 bool install(QWidget *window)
 {
-    NSWindow *ns = nativeWindow(window);
+    NSWindow *const ns = nativeWindow(window);
     if (ns == nil) {
         return false;
     }
     // An empty unified toolbar makes the title bar as tall as Selecta's toolbar and centres the traffic lights in it.
     // It holds no items: clicks in the title bar reach the content under it (the toolbar's buttons).
     if (ns.toolbar == nil || ![ns.toolbar.identifier isEqualToString:kToolbarIdentifier]) {
-        NSToolbar *toolbar = [[NSToolbar alloc] initWithIdentifier:kToolbarIdentifier];
+        NSToolbar *const toolbar = [[NSToolbar alloc] initWithIdentifier:kToolbarIdentifier];
         toolbar.allowsUserCustomization = NO;
         toolbar.displayMode = NSToolbarDisplayModeIconOnly;
         ns.toolbar = toolbar;
@@ -93,30 +121,10 @@ bool install(QWidget *window)
     ns.titleVisibility = NSWindowTitleHidden;
     ns.titlebarAppearsTransparent = YES;
     keepClicksForTheContent(ns.contentView);
-
-    if (!window->property(kWantsGlass).toBool()) {
-        return false;
+    if (window->property(kWantsGlass).toBool()) {
+        installGlass(window, ns);
     }
-    NSView *content = ns.contentView;
-    NSView *frame = content.superview;
-    if (frame == nil) {
-        return false;
-    }
-    for (NSView *existing in frame.subviews) {
-        if ([existing.identifier isEqualToString:kGlassIdentifier]) {
-            window->setProperty(kHasGlass, true);
-            return true;
-        }
-    }
-    NSVisualEffectView *glass = [[NSVisualEffectView alloc] initWithFrame:frame.bounds];
-    glass.identifier = kGlassIdentifier;
-    glass.material = NSVisualEffectMaterialSidebar;
-    glass.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-    glass.state = NSVisualEffectStateFollowsWindowActiveState;
-    glass.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [frame addSubview:glass positioned:NSWindowBelow relativeTo:content];
-    window->setProperty(kHasGlass, true);
-    return true;
+    return hasGlass(window);
 }
 
 bool hasGlass(const QWidget *window)
@@ -124,16 +132,16 @@ bool hasGlass(const QWidget *window)
     return window && window->property(kHasGlass).toBool();
 }
 
-void titleBarPressed(QWidget *window)
+void titleBarPressed(const QWidget *window)
 {
     if (window && window->windowHandle()) {
         window->windowHandle()->startSystemMove();
     }
 }
 
-void titleBarDoubleClicked(QWidget *window)
+void titleBarDoubleClicked(const QWidget *window)
 {
-    NSWindow *ns = nativeWindow(window);
+    NSWindow *const ns = nativeWindow(window);
     if (ns == nil) {
         return;
     }

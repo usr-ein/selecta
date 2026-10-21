@@ -152,15 +152,16 @@ void GlassCapsule::paintEvent(QPaintEvent * /*event*/)
     const QRectF body = QRectF(rect()).adjusted(1, 1, -1, -2);
     // A soft shadow under the glass, then the glass, its outer hairline and its lit rim (mock: --shadow-glass).
     for (int i = 1; i <= 2; ++i) {
-        painter.fillPath(style::squircle(body.translated(0, i * 0.5).adjusted(-0.5 * i, 0, 0.5 * i, 0.5 * i),
-                                         body.height() / 2.0),
-                         QColor(0, 0, 0, dark ? 40 / i : 14 / i));
+        const qreal spread = 0.5 * i;
+        painter.fillPath(
+            style::squircle(body.translated(0, spread).adjusted(-spread, 0, spread, spread), body.height() / 2.0),
+            QColor(0, 0, 0, dark ? 40 / i : 14 / i));
     }
     const QPainterPath shape = style::squircle(body, body.height() / 2.0);
     const QColor base = pal.color(QPalette::Base);
     painter.fillPath(shape, dark ? QColor(58, 58, 64, 230) : withAlpha(base.lighter(103), 0.96F));
     painter.setPen(QPen(dark ? QColor(0, 0, 0, 110) : QColor(0, 0, 0, 22), 0.75));
-    painter.drawPath(style::squircle(body.adjusted(-0.4, -0.4, 0.4, 0.4), body.height() / 2.0 + 0.4));
+    painter.drawPath(style::squircle(body.adjusted(-0.4, -0.4, 0.4, 0.4), (body.height() / 2.0) + 0.4));
     painter.setPen(QPen(dark ? QColor(255, 255, 255, 34) : QColor(255, 255, 255, 220), 0.75));
     painter.drawPath(style::squircle(body.adjusted(0.6, 0.6, -0.6, -0.6), (body.height() / 2.0) - 0.6));
 }
@@ -195,14 +196,15 @@ Toolbar::Toolbar(QWidget *parent)
     m_subtitle->setFont(subtitleFont);
     m_subtitle->setForegroundRole(QPalette::PlaceholderText);
     for (QLabel *label : {m_title, m_subtitle}) {
-        label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred); // long titles elide, never push the capsules
+        label->setSizePolicy(QSizePolicy::Ignored,
+                             QSizePolicy::Preferred); // long titles elide, never push the capsules
     }
     titleLayout->addStretch(1);
     titleLayout->addWidget(m_title);
     titleLayout->addWidget(m_subtitle);
     titleLayout->addStretch(1);
     m_layout->addWidget(titleBox, 1);
-    m_capsuleIndex = m_layout->count();
+    Q_ASSERT(m_layout->count() == m_capsuleIndex); // capsules go after the title
 }
 
 QToolButton *Toolbar::setLeadingAction(QAction *action, const QString &objectName)

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SearchView.h"
 
-#include "app/Status.h"
-#include "app/Style.h"
-
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
 #include "app/Presets.h"
+#include "app/Status.h"
+#include "app/Style.h"
 #include "app/models/SearchResultsModel.h"
 #include "app/views/SearchInspector.h"
 #include "core/EngineHost.h"
