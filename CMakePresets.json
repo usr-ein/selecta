@@ -100,12 +100,6 @@
       "cacheVariables": { "SELECTA_SANITIZE": "address;undefined" }
     },
     {
-      "name": "tsan",
-      "displayName": "Debug with ThreadSanitizer",
-      "inherits": "dev",
-      "cacheVariables": { "SELECTA_SANITIZE": "thread" }
-    },
-    {
       "name": "lint",
       "displayName": "Debug with clang-tidy on every translation unit",
       "inherits": "dev",
@@ -147,7 +141,6 @@
     { "name": "linux-asan", "configurePreset": "linux-asan" },
     { "name": "windows", "configurePreset": "windows" },
     { "name": "asan", "configurePreset": "asan" },
-    { "name": "tsan", "configurePreset": "tsan" },
     { "name": "lint", "configurePreset": "lint" },
     { "name": "release", "configurePreset": "release" },
     { "name": "beta", "configurePreset": "beta" },
@@ -166,7 +159,6 @@
     { "name": "linux-asan", "inherits": "base", "configurePreset": "linux-asan" },
     { "name": "windows", "inherits": "base", "configurePreset": "windows" },
     { "name": "asan", "inherits": "base", "configurePreset": "asan" },
-    { "name": "tsan", "inherits": "base", "configurePreset": "tsan" },
     { "name": "ci", "inherits": "base", "configurePreset": "ci" }
   ],
   "workflowPresets": [

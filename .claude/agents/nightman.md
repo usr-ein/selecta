@@ -101,8 +101,8 @@ They come from sessions named `selecta-bitch-…`.
 If no minion or bitch is running and no PR is waiting, answer in one line and stop. Otherwise:
 
 1. Run `tools/crew/resources.sh` and act on every WARN:
-   - **disk:** start no new minion; have merged minions clean up; ask minions to delete `build/asan` and
-     `build/tsan` if they made them.
+   - **disk:** start no new minion; have merged minions clean up; ask minions to delete `build/asan` if they
+     made one.
    - **memory or CPU:** ask the minions to run one full test suite at a time and to keep builds incremental.
    - **network:** stop the offending session at once (`command claude stop <id>`), then tell the maintainer, whatever the hour.
 2. For each minion:
