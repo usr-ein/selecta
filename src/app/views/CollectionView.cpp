@@ -451,13 +451,12 @@ void CollectionView::refreshSelection()
     const QList<qint64> better = upgradable(tracks);
     if (tracks.isEmpty()) {
         m_selection->clear();
-    } else if (m_browse->currentIndex() == kWallPage) {
-        const auto tiles = static_cast<int>(m_wall->selectionModel()->selectedIndexes().size());
-        m_selection->setText(tiles == static_cast<int>(tracks.size())
-                                 ? tracksText(static_cast<int>(tracks.size())) + tr(" selected")
-                                 : tr("%1 selected · %2").arg(tiles).arg(tracksText(static_cast<int>(tracks.size()))));
+    } else if (const auto tiles = static_cast<int>(m_wall->selectionModel()->selectedIndexes().size());
+               m_browse->currentIndex() == kWallPage && tiles != static_cast<int>(tracks.size())) {
+        m_selection->setText(tr("%1 selected · %2").arg(tiles).arg(tracksText(static_cast<int>(tracks.size()))));
     } else {
-        m_selection->setText(tracksText(static_cast<int>(tracks.size())) + tr(" selected"));
+        m_selection->setText(tracks.size() == 1 ? tr("1 track selected")
+                                                : tr("%1 tracks selected").arg(QLocale().toString(tracks.size())));
     }
     m_betterQuality->setEnabled(!better.isEmpty());
     if (tracks.isEmpty()) {

@@ -9,6 +9,8 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
+
 using namespace Qt::StringLiterals;
 using selecta::core::browseKey;
 using selecta::core::CollectionAlbum;
@@ -190,6 +192,76 @@ TEST(QualityTiers, LosslessDownloadsByTheirQualityText)
          {u"MP3 320"_s, u"MP3 VBR 245"_s, u"AAC 256"_s, u"Opus VBR 160"_s, u""_s, u"FLACX 16/44.1"_s, u"Other"_s}) {
         EXPECT_FALSE(isLosslessQualityText(no)) << no.toStdString();
     }
+}
+
+// What an Inbox item's source quality says (core::sourceQualityText()), for an upgrade's real tier (review round 1).
+TEST(QualityTiers, ADownloadsQualityText)
+{
+    using selecta::core::qualityOfText;
+    const AudioQuality flac = qualityOfText(u"FLAC 16/44.1");
+    EXPECT_EQ(flac.codec, Codec::Flac);
+    EXPECT_EQ(flac.bitDepth, 16);
+    EXPECT_EQ(flac.sampleRateHz, 44100);
+    EXPECT_EQ(qualityTier(flac), QualityTier::Lossless);
+    EXPECT_EQ(qualityOfText(u"PCM 16/22.05").sampleRateHz, 22050);
+    EXPECT_EQ(qualityOfText(u"WAV 24/96").sampleRateHz, 96000);
+    const AudioQuality v0 = qualityOfText(u"MP3 VBR 245");
+    EXPECT_EQ(v0.codec, Codec::Mp3);
+    EXPECT_EQ(v0.bitrateKbps, 245);
+    EXPECT_EQ(v0.vbr, std::optional(true));
+    EXPECT_EQ(qualityTier(v0), QualityTier::Top);
+    const AudioQuality cbr = qualityOfText(u" mp3 192 ");
+    EXPECT_EQ(cbr.vbr, std::optional(false)); // a bitrate without "VBR": a constant one
+    EXPECT_EQ(qualityTier(cbr), QualityTier::From192);
+    EXPECT_EQ(qualityOfText(u"AAC 256").codec, Codec::Aac);
+    const AudioQuality opus = qualityOfText(u"Opus");
+    EXPECT_EQ(opus.codec, Codec::Opus);
+    EXPECT_EQ(opus.bitrateKbps, 0);
+    EXPECT_FALSE(opus.vbr.has_value());
+    EXPECT_EQ(qualityTier(opus), QualityTier::Unknown);
+    // Nothing, words it doesn't know, numbers out of bounds: unknown, never more.
+    EXPECT_EQ(qualityOfText(u"").codec, Codec::Unknown);
+    EXPECT_EQ(qualityOfText(u"   ").codec, Codec::Unknown);
+    EXPECT_EQ(qualityOfText(u"Tape 90").codec, Codec::Unknown);
+    const AudioQuality odd = qualityOfText(u"MP3 -5 99999999999 x/y");
+    EXPECT_EQ(odd.bitrateKbps, 0);
+    EXPECT_EQ(odd.sampleRateHz, 0);
+    EXPECT_EQ(qualityOfText(u"FLAC 16/2.15e+06").sampleRateHz, 0);
+    EXPECT_EQ(qualityOfText(u"FLAC -16/nan").bitDepth, 0);
+}
+
+// What an upgrade must beat, by path (P-010): the exact path, then another spelling of it; nothing before the collection
+// is read.
+TEST(TierIndex, ByPathThenByAnotherSpelling)
+{
+    using State = selecta::core::TierInCollection::State;
+    selecta::core::TierIndex index;
+    EXPECT_EQ(index.tierOf(nullptr, u"/Music/Okuma Drift - Dusk.mp3"_s).state, State::NotReadYet);
+
+    Listing first;
+    first.track(u"Okuma Drift"_s, u"Dusk"_s, QualityTier::From192);
+    first.track(u"Étienne"_s, u"Café"_s, QualityTier::Lossless);
+    const auto listing = std::make_shared<const CollectionListing>(first.get());
+    auto found = index.tierOf(listing, u"/Music/Okuma Drift - Dusk.mp3"_s);
+    EXPECT_EQ(found.state, State::InCollection);
+    EXPECT_EQ(found.tier, QualityTier::From192);
+    // The same name decomposed (NFD), as some volumes spell it.
+    const QString decomposed = u"/Music/Étienne - Café.mp3"_s.normalized(QString::NormalizationForm_D);
+    ASSERT_NE(decomposed, u"/Music/Étienne - Café.mp3"_s);
+    found = index.tierOf(listing, decomposed);
+    EXPECT_EQ(found.state, State::InCollection);
+    EXPECT_EQ(found.tier, QualityTier::Lossless);
+    found = index.tierOf(listing, u"/Music/Nobody - Nothing.mp3"_s);
+    EXPECT_EQ(found.state, State::NotInCollection);
+    EXPECT_EQ(found.tier, QualityTier::Unknown);
+
+    // Another listing (the collection changed): indexed again.
+    Listing second;
+    second.track(u"Okuma Drift"_s, u"Dusk"_s, QualityTier::Top);
+    const auto changed = std::make_shared<const CollectionListing>(second.get());
+    EXPECT_EQ(index.tierOf(changed, u"/Music/Okuma Drift - Dusk.mp3"_s).tier, QualityTier::Top);
+    EXPECT_EQ(index.tierOf(changed, decomposed).state, State::NotInCollection);
+    EXPECT_EQ(index.tierOf(nullptr, u"/Music/Okuma Drift - Dusk.mp3"_s).state, State::NotReadYet);
 }
 
 TEST(CollectionBrowse, NamesCompareWithoutCaseOrAccents)

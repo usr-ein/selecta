@@ -18,6 +18,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QLoggingCategory>
+#include <QPointer>
 #include <QSet>
 #include <QThread>
 #include <QTimer>
@@ -56,28 +57,6 @@ public:
 private:
     NetworkService &m_network;
 };
-
-// The quality tier of a collection file now, by its path or another spelling of it (NFD, say): what an upgrade line
-// must beat (P-010). nullopt when the collection hasn't it.
-std::optional<QualityTier> tierInCollection(const CollectionService &collection, const QString &path)
-{
-    const std::shared_ptr<const CollectionListing> listing = collection.listing();
-    if (!listing) {
-        return std::nullopt;
-    }
-    for (const CollectionTrack &track : listing->tracks) {
-        if (track.path == path) {
-            return track.tier;
-        }
-    }
-    const QString key = collection::comparisonKey(path);
-    for (const CollectionTrack &track : listing->tracks) {
-        if (collection::comparisonKey(track.path) == key) {
-            return track.tier;
-        }
-    }
-    return std::nullopt;
-}
 
 } // namespace
 
@@ -291,9 +270,16 @@ bool Engine::start()
     m_collection = std::make_unique<CollectionService>(*m_db, collectionOptions, m_options.wallClock);
     connect(m_collection.get(), &CollectionService::statusChanged, this, &Engine::collectionStatusChanged);
     connect(m_collection.get(), &CollectionService::listingChanged, this, &Engine::collectionListingChanged);
-    // An upgrade line takes only a better copy than its file is now (P-010).
-    m_getTracks->setTierLookup(
-        [collection = m_collection.get()](const QString &path) { return tierInCollection(*collection, path); });
+    // An upgrade takes only a better copy than its file is now (P-010): Get tracks when it picks one, the Inbox when it
+    // judges what arrived, again whenever the collection changes. Both on this thread, so they share one index. The
+    // collection goes first at shutdown, while the Inbox may still publish: then nothing is known.
+    const auto tiers = std::make_shared<TierIndex>();
+    const TierLookup tierOf = [collection = QPointer<CollectionService>(m_collection.get()), tiers](const QString &path) {
+        return collection ? tiers->tierOf(collection->listing(), path) : TierInCollection{};
+    };
+    m_getTracks->setTierLookup(tierOf);
+    m_inbox->setTierLookup(tierOf);
+    connect(m_collection.get(), &CollectionService::listingChanged, m_inbox.get(), &InboxService::refresh);
     // Sharing: the collection, read-only (D12).
     m_shares = std::make_unique<ShareService>(*m_db, *m_governor, *m_network, *m_activity, *m_clock, m_options.session,
                                               m_options.wallClock);

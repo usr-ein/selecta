@@ -11,8 +11,10 @@
 #include "app/views/CollectionWall.h"
 #include "app/views/InboxInspector.h"
 #include "app/views/InboxView.h"
+#include "collection/FolderRoles.h"
 #include "convert/TagWriter.h"
 #include "core/EngineHost.h"
+#include "core/InboxService.h"
 
 #include <QAccessible>
 #include <QBuffer>
@@ -729,37 +731,62 @@ TEST_F(CollectionViewTest, AnEmptyCollectionSaysSo)
 
 // --- The Inbox's mark ------------------------------------------------------------------------------------------------
 
-TEST(InboxUpgrades, AnUpgradeIsMarkedAndSaysWhetherItCanReplaceItsFile)
+namespace {
+
+// An Inbox entry for an upgrade of `replaces`, judged as the engine judges it, against a collection at `tier`.
+selecta::core::InboxEntry upgradeEntry(qint64 id, const QString &name, const QString &replaces,
+                                       const QString &source, QualityTier tier)
+{
+    selecta::core::InboxEntry entry;
+    entry.item.id = id;
+    entry.item.kind = selecta::library::InboxItem::Kind::Single;
+    entry.item.state = selecta::library::InboxItem::State::Ready;
+    entry.item.relativePath = u"Singles/"_s + name;
+    entry.item.title = name;
+    entry.item.format = u"MP3"_s;
+    entry.item.bitrate = 320;
+    entry.item.sourceFormat = source;
+    entry.item.replaces = replaces;
+    const selecta::core::UpgradeJudgement judged = selecta::core::judgeUpgrade(
+        entry.item, [tier](const QString &) { return selecta::core::TierInCollection::of(tier); },
+        selecta::collection::FolderRoles(u"/Music/Tracks"_s, u"/Music/Albums"_s));
+    entry.upgrade = judged.verdict;
+    entry.upgradeNote = judged.note;
+    return entry;
+}
+
+} // namespace
+
+TEST(InboxUpgrades, AnUpgradeIsMarkedAndSaysWhatSavingDoes)
 {
     selecta::core::EngineHost engine{selecta::core::EngineOptions{}};
     const selecta::app::InboxView inbox(engine);
-    selecta::core::InboxEntry upgrade;
-    upgrade.item.id = 1;
-    upgrade.item.kind = selecta::library::InboxItem::Kind::Single;
-    upgrade.item.state = selecta::library::InboxItem::State::Ready;
-    upgrade.item.relativePath = u"Singles/Okuma Drift - Dusk.mp3"_s;
-    upgrade.item.title = u"Dusk"_s;
-    upgrade.item.replaces = u"/Music/Albums/Okuma Drift - Nightfall/01 Dusk.mp3"_s;
-    selecta::core::InboxEntry mismatch = upgrade;
-    mismatch.item.id = 2;
-    mismatch.item.relativePath = u"Singles/Okuma Drift - Dawn.mp3"_s;
-    mismatch.item.replaces = u"/Music/Tracks/Okuma Drift - Dawn.m4a"_s;
-    Q_EMIT engine.inboxChanged({upgrade, mismatch});
-    auto *items = inbox.findChild<QTreeView *>(u"inbox.items"_s);
+    Q_EMIT engine.inboxChanged({
+        upgradeEntry(1, u"Okuma Drift - Dusk.mp3"_s, u"/Music/Albums/Nightfall/01 Dusk.mp3"_s, u"FLAC 16/44.1"_s,
+                     QualityTier::From192),
+        upgradeEntry(2, u"Okuma Drift - Dawn.mp3"_s, u"/Music/Tracks/Okuma Drift - Dawn.flac"_s, u"FLAC 16/44.1"_s,
+                     QualityTier::From192),
+        upgradeEntry(3, u"Okuma Drift - Noon.mp3"_s, u"/Music/Tracks/Okuma Drift - Noon.mp3"_s, u"MP3 192"_s,
+                     QualityTier::From256),
+    });
+    const auto *items = inbox.findChild<QTreeView *>(u"inbox.items"_s);
     ASSERT_NE(items, nullptr);
     const QModelIndex singles = items->model()->index(0, 0);
-    ASSERT_EQ(items->model()->rowCount(singles), 2);
+    ASSERT_EQ(items->model()->rowCount(singles), 3);
     QStringList statuses;
     QStringList tips;
-    for (int row = 0; row < 2; ++row) {
+    for (int row = 0; row < 3; ++row) {
         statuses.append(items->model()->index(row, 4, singles).data().toString());
         tips.append(shownToolTip(items->model()->index(row, 4, singles).data(Qt::ToolTipRole).toString()));
     }
     statuses.sort();
-    EXPECT_EQ(statuses, (QStringList{u"Upgrade"_s, u"⚠ Upgrade, can't replace"_s}));
-    EXPECT_TRUE(
-        std::ranges::any_of(tips, [](const QString &tip) { return tip.contains(u"moves that file to the Trash"_s); }));
-    EXPECT_TRUE(std::ranges::any_of(tips, [](const QString &tip) { return tip.contains(u"(M4A, not MP3)"_s); }));
+    EXPECT_EQ(statuses, (QStringList{u"Upgrade"_s, u"⚠ Not better than yours"_s, u"⚠ Upgrade, can't replace"_s}));
+    const auto said = [&tips](const QString &words) {
+        return std::ranges::any_of(tips, [&words](const QString &tip) { return tip.contains(words); });
+    };
+    EXPECT_TRUE(said(u"moves that file to the Trash"_s));
+    EXPECT_TRUE(said(u"(FLAC, not MP3)"_s));
+    EXPECT_TRUE(said(u"Not better (192–255 kbps; the file: 256–319 kbps)"_s));
 }
 
 // The inspector says the same about the item shown.
@@ -767,24 +794,23 @@ TEST(InboxUpgrades, TheInspectorSaysWhatAnUpgradeReplaces)
 {
     selecta::core::EngineHost engine{selecta::core::EngineOptions{}};
     selecta::app::InboxInspector inspector(engine);
-    selecta::library::InboxItem item;
-    item.id = 1;
-    item.kind = selecta::library::InboxItem::Kind::Single;
-    item.state = selecta::library::InboxItem::State::Ready;
-    item.relativePath = u"Singles/Okuma Drift - Dusk.mp3"_s;
-    item.replaces = u"/Music/Albums/Okuma Drift - Nightfall/01 Dusk.mp3"_s;
     const QTemporaryDir dir;
-    inspector.showItem(item, dir.path());
-    inspector.setAlsoOn({});
+    const selecta::core::InboxEntry better = upgradeEntry(1, u"Okuma Drift - Dusk.mp3"_s,
+                                                          u"/Music/Albums/Nightfall/01 Dusk.mp3"_s,
+                                                          u"FLAC 16/44.1"_s, QualityTier::From192);
+    inspector.showItem(better.item, dir.path());
+    inspector.setAlsoOn({}, better.upgradeNote);
     const auto *notes = inspector.findChild<QLabel *>(u"inspector.inbox.alsoOn"_s);
     ASSERT_NE(notes, nullptr);
-    EXPECT_TRUE(notes->text().startsWith(
-        u"An upgrade of %1: Save to collection puts it in that file's place"_s.arg(format::shownPath(item.replaces))))
+    EXPECT_TRUE(notes->text().startsWith(u"An upgrade of %1. Better (From lossless; the file: 192–255 kbps)"_s.arg(
+        format::shownPath(better.item.replaces))))
         << notes->text().toStdString();
-    item.replaces = u"/Music/Tracks/Okuma Drift - Dusk.m4a"_s;
-    inspector.showItem(item, dir.path());
-    inspector.setAlsoOn({});
-    EXPECT_TRUE(notes->text().contains(u"(M4A, not MP3)"_s)) << notes->text().toStdString();
+    const selecta::core::InboxEntry aac = upgradeEntry(2, u"Okuma Drift - Dawn.mp3"_s,
+                                                       u"/Music/Tracks/Okuma Drift - Dawn.m4a"_s, u"FLAC 16/44.1"_s,
+                                                       QualityTier::From192);
+    inspector.showItem(aac.item, dir.path());
+    inspector.setAlsoOn({}, aac.upgradeNote);
+    EXPECT_TRUE(notes->text().contains(u"as Okuma Drift - Dawn.mp3"_s)) << notes->text().toStdString();
 }
 
 // --- Screenshots -----------------------------------------------------------------------------------------------------

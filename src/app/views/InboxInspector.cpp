@@ -421,21 +421,16 @@ void InboxInspector::showCover(const QImage &image)
     m_cover->setAccessibleName(tr("Cover"));
 }
 
-void InboxInspector::setAlsoOn(const QStringList &albums)
+void InboxInspector::setAlsoOn(const QStringList &albums, const QString &upgradeNote)
 {
     // What the arrival found about the file itself first: its spectrum (PREV-9), its warning (DL-10, CONV-2).
     QStringList lines;
     if (const QString badge = m_item ? core::spectrumBadge(*m_item) : QString(); !badge.isEmpty()) {
         lines.append(tr("⚠ %1.").arg(badge));
     }
-    // P-010: a better copy of a collection file, asked for from the Collection view.
-    if (m_item && !m_item->replaces.isEmpty()) {
-        const QString file = format::shownPath(m_item->replaces);
-        const QString mismatch = core::upgradeMismatch(*m_item);
-        lines.append(mismatch.isEmpty() ? tr("An upgrade of %1: Save to collection puts it in that file's place, under "
-                                             "the same name, and moves that file to the Trash.")
-                                              .arg(file)
-                                        : tr("An upgrade of %1. %2").arg(file, mismatch));
+    // P-010: an upgrade of a collection file, as the engine judged it.
+    if (m_item && !m_item->replaces.isEmpty() && !upgradeNote.isEmpty()) {
+        lines.append(tr("An upgrade of %1. %2").arg(format::shownPath(m_item->replaces), upgradeNote));
     }
     if (m_item && !m_item->belowWanted.isEmpty()) {
         lines.append(tr("Below the quality you wanted (%1): you got it anyway.").arg(m_item->belowWanted));

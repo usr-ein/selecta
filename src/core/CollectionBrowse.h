@@ -3,16 +3,18 @@
 
 #include "match/Types.h"
 
+#include <QHash>
 #include <QList>
 #include <QMetaType>
 #include <QString>
 #include <QStringView>
 
+#include <functional>
 #include <memory>
 #include <optional>
 
 // What the Collection view shows (P-010): the collection's tracks and albums with their quality tiers, and the cover
-// wall's sections for each way of grouping them. Plain values and pure functions: any thread.
+// wall's sections for each way of grouping them. Plain values and pure functions: any thread (TierIndex: one thread).
 namespace selecta::core {
 
 // --- Quality tiers ---------------------------------------------------------------------------------------------------
@@ -52,6 +54,26 @@ int tierDisplayOrder(QualityTier tier);
 QString tierName(QualityTier tier);
 // Whether a History quality text ("FLAC 16/44.1", "WAV 24/96", "MP3 320") says the download was lossless.
 bool isLosslessQualityText(QStringView quality);
+// The quality a download's text gives (core::sourceQualityText(): "FLAC 16/44.1", "MP3 VBR 245", "AAC 256", "Opus"):
+// its codec, bitrate and whether it is VBR, as far as the text says. Pure.
+match::AudioQuality qualityOfText(QStringView quality);
+
+// What the collection says of a file now (P-010): what an upgrade of it must beat.
+struct TierInCollection
+{
+    enum class State : quint8 {
+        NotReadYet,      // the collection isn't read yet (just after launch): nothing is known of the file
+        NotInCollection, // the collection hasn't the file (any more)
+        InCollection,    // the file is there, of `tier`
+    };
+    State state = State::NotReadYet;
+    QualityTier tier = QualityTier::Unknown; // InCollection only
+
+    static TierInCollection of(QualityTier found) { return {.state = State::InCollection, .tier = found}; }
+    static TierInCollection notInCollection() { return {.state = State::NotInCollection}; }
+};
+// The collection's word on a file, by path. Engine thread.
+using TierLookup = std::function<TierInCollection(const QString &path)>;
 
 // --- The listing -----------------------------------------------------------------------------------------------------
 
@@ -104,6 +126,22 @@ struct CollectionListing
     qsizetype indexOf(qint64 trackId) const;
 
     friend bool operator==(const CollectionListing &, const CollectionListing &) = default;
+};
+
+// A listing's tiers by path, for a TierLookup: the exact path first, then another spelling of it
+// (collection::comparisonKey(): NFC). Indexed again for each new listing, the second way only at the first miss, so a
+// lookup costs a hash, not a pass over the collection. Not thread-safe: one thread (the engine's) at a time.
+class TierIndex
+{
+public:
+    // What `listing`, the collection's now (CollectionService::listing(); nullptr: not read yet), says of `path`.
+    TierInCollection tierOf(const std::shared_ptr<const CollectionListing> &listing, const QString &path);
+
+private:
+    std::shared_ptr<const CollectionListing> m_listing;
+    QHash<QString, QualityTier> m_byPath;
+    QHash<QString, QualityTier> m_byKey; // by comparisonKey(); built at the first miss
+    bool m_keyed = false;
 };
 
 // --- The cover wall ----------------------------------------------------------------------------------------------

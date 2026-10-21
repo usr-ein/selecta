@@ -7,6 +7,7 @@
 #include "core/TransferService.h"
 #include "match/Matcher.h"
 #include "match/Normalizer.h"
+#include "match/Quality.h"
 #include "match/Tracklist.h"
 #include "storage/Database.h"
 
@@ -46,11 +47,20 @@ TrackIdentity lineIdentity(const GetLine &line)
 
 using ReleaseState = GetLine::ReleaseState;
 
-// An upgrade line takes only files of a higher tier than its file's (P-010): drops the others, near misses included.
-// Returns how many of the files that passed the preset went.
+// An upgrade line takes only files of a higher tier than its file's (P-010), and only MP3 or lossless ones: any other
+// lossy file arrives as an MP3 made from it, no better than it was (principle 3). Drops the others, near misses
+// included. Returns how many of the files that passed the preset went.
 int keepBetterThan(RankedChoices &choices, QualityTier floor)
 {
-    const auto notBetter = [floor](const FileChoice &choice) { return qualityTierOf(choice) <= floor; };
+    const auto notBetter = [floor](const FileChoice &choice) {
+        const match::Codec codec = match::codecFor(choice.extension, match::RemoteAttributes{
+                                                                         .bitrateKbps = choice.bitrate.value_or(0),
+                                                                         .durationSec = 0,
+                                                                         .vbr = choice.vbr,
+                                                                         .sampleRateHz = choice.sampleRate.value_or(0),
+                                                                         .bitDepth = choice.bitDepth.value_or(0)});
+        return (codec != match::Codec::Mp3 && !match::isLossless(codec)) || qualityTierOf(choice) <= floor;
+    };
     const auto dropped = choices.files.removeIf(notBetter);
     if (choices.nearMisses.removeIf(notBetter) > 0) {
         choices.belowQuality = static_cast<int>(choices.nearMisses.size());
@@ -553,8 +563,11 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
     RankedChoices choices = FileRanking::rank(*line, outcome, m_filter, m_peerLoad);
     int notBetter = 0;
     QualityTier floor = QualityTier::Unknown;
+    bool collectionRead = false;
     if (!line->upgradeOf.isEmpty()) {
-        floor = m_tierOf ? m_tierOf(line->upgradeOf).value_or(QualityTier::Unknown) : QualityTier::Unknown;
+        const TierInCollection now = m_tierOf ? m_tierOf(line->upgradeOf) : TierInCollection{};
+        floor = now.tier; // Unknown unless the file is there: any copy of a known quality is better
+        collectionRead = now.state != TierInCollection::State::NotReadYet;
         notBetter = keepBetterThan(choices, floor);
     }
     line->message.clear();
@@ -589,8 +602,9 @@ void GetTracksService::found(qint64 id, const SearchOutcome &outcome)
         line->ticked = confident; // confident matches are pre-ticked (BATCH-5)
     }
     store(*line);
-    // P-010: the user asked for a better copy of a track they have: a confident one comes by itself.
-    if (!line->upgradeOf.isEmpty() && line->findState == GetLine::FindState::Ready &&
+    // P-010: the user asked for a better copy of a track they have: a confident one comes by itself, once the
+    // collection said what it must beat (just after launch, it may not have yet).
+    if (!line->upgradeOf.isEmpty() && collectionRead && line->findState == GetLine::FindState::Ready &&
         line->downloadState == GetLine::DownloadState::None) {
         download({id});
     }

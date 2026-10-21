@@ -33,25 +33,79 @@ bool overlap(const QString &first, const QString &second)
 
 } // namespace
 
-QString upgradeMismatch(const library::InboxItem &item)
+QualityTier downloadTier(const library::InboxItem &item)
+{
+    match::AudioQuality quality = qualityOfText(item.sourceFormat);
+    if (quality.codec == match::Codec::Unknown && quality.bitrateKbps == 0) { // no source quality kept: as it is now
+        quality = qualityOfText(item.format);
+        quality.bitrateKbps = item.bitrate.value_or(0);
+    }
+    return qualityTier(quality, TierEvidence{.fromLossless = false, .likelySourceKbps = item.qualitySourceKbps});
+}
+
+UpgradeJudgement judgeUpgrade(const library::InboxItem &item, const TierLookup &tierOf,
+                              const collection::FolderRoles &folders)
 {
     if (item.replaces.isEmpty()) {
         return {};
     }
-    if (item.kind != library::InboxItem::Kind::Single) {
-        return InboxService::tr("An album can't replace a track.");
-    }
-    const QString mine = QFileInfo(item.relativePath).suffix();
-    const QString theirs = QFileInfo(item.replaces).suffix();
-    if (mine.compare(theirs, Qt::CaseInsensitive) == 0) {
-        return {};
-    }
-    const auto type = [](const QString &suffix) {
-        return suffix.isEmpty() ? InboxService::tr("no type") : suffix.toUpper();
+    const auto judged = [](UpgradeVerdict verdict, QString note) {
+        return UpgradeJudgement{.verdict = verdict, .note = std::move(note)};
     };
-    return InboxService::tr("The file it would replace is of another type (%1, not %2): Save to collection adds this "
-                            "one as a new file.")
-        .arg(type(theirs), type(mine));
+    if (item.kind != library::InboxItem::Kind::Single) {
+        return judged(UpgradeVerdict::CantReplace,
+                      InboxService::tr("An album can't take a track's place: Save to collection files it as an album."));
+    }
+    const QString target = library::FileOps::upgradeTarget(item.relativePath, item.replaces);
+    if (target.isEmpty()) {
+        const auto type = [](const QString &path) {
+            const QString suffix = QFileInfo(path).suffix();
+            return suffix.isEmpty() ? InboxService::tr("no type") : suffix.toUpper();
+        };
+        return judged(UpgradeVerdict::CantReplace,
+                      InboxService::tr("The file it would replace is of another type (%1, not %2): Save to collection "
+                                       "adds this one as a new file.")
+                          .arg(type(item.replaces), type(item.relativePath)));
+    }
+    // An AAC, Ogg or Opus file's upgrade takes its name with .mp3 (D41): the note says so.
+    const QString renamed = target == item.replaces ? QString() : QFileInfo(target).fileName();
+    const TierInCollection now = tierOf ? tierOf(item.replaces) : TierInCollection{};
+    switch (now.state) {
+    case TierInCollection::State::NotReadYet:
+        return judged(UpgradeVerdict::NotKnownYet, InboxService::tr("Selecta is still reading your collection: in a "
+                                                                    "moment, it tells whether this one is better."));
+    case TierInCollection::State::NotInCollection:
+        // Its place is free while its folder is still the collection's: a file deleted, a replace cut short.
+        if (folders.roleOf(item.replaces) == collection::FolderRoles::Role::None) {
+            return judged(UpgradeVerdict::CantReplace,
+                          InboxService::tr("The file isn't in your collection folders any more: Save to collection "
+                                           "adds this one as a new file."));
+        }
+        return judged(UpgradeVerdict::Replaces,
+                      renamed.isEmpty()
+                          ? InboxService::tr("The file isn't in your collection any more: Save to collection puts "
+                                             "this one in its place.")
+                          : InboxService::tr("The file isn't in your collection any more: Save to collection puts "
+                                             "this one in its place, as %1.")
+                                .arg(renamed));
+    case TierInCollection::State::InCollection:
+        break;
+    }
+    const QualityTier arrived = downloadTier(item);
+    if (arrived <= now.tier) {
+        return judged(UpgradeVerdict::NotBetter,
+                      InboxService::tr("Not better (%1; the file: %2): Save to collection adds it as a new file and "
+                                       "leaves that file as it is.")
+                          .arg(tierName(arrived), tierName(now.tier)));
+    }
+    return judged(UpgradeVerdict::Replaces,
+                  renamed.isEmpty()
+                      ? InboxService::tr("Better (%1; the file: %2): Save to collection puts it in that file's place, "
+                                         "under the same name, and moves that file to the Trash.")
+                            .arg(tierName(arrived), tierName(now.tier))
+                      : InboxService::tr("Better (%1; the file: %2): Save to collection puts it in that file's place, "
+                                         "as %3, and moves that file to the Trash.")
+                            .arg(tierName(arrived), tierName(now.tier), renamed));
 }
 
 QString checkLibraryConfig(const LibraryConfig &config)
@@ -132,14 +186,24 @@ QList<InboxEntry> InboxService::entries()
     SupersedeFlagStore flags(m_db);
     const QHash<qint64, QStringList> flagged = flags.albumsByInboxItem();
     const QHash<qint64, QList<qint64>> flagIds = flags.idsByInboxItem();
+    const collection::FolderRoles folders = m_config.folderRoles();
     result.reserve(items.size());
     for (const InboxItem &item : items) {
+        UpgradeJudgement judged = judgeUpgrade(item, m_tierOf, folders);
         result.append(InboxEntry{.item = item,
                                  .busy = m_busy.contains(item.id),
                                  .alsoOn = flagged.value(item.id),
-                                 .flags = flagIds.value(item.id)});
+                                 .flags = flagIds.value(item.id),
+                                 .upgrade = judged.verdict,
+                                 .upgradeNote = std::move(judged.note)});
     }
     return result;
+}
+
+void InboxService::setTierLookup(TierLookup lookup)
+{
+    m_tierOf = std::move(lookup);
+    publish();
 }
 
 void InboxService::publish()
@@ -186,8 +250,18 @@ void InboxService::file(const QList<qint64> &ids)
         }
         const bool album = item->kind == InboxItem::Kind::Album;
         if (!album && !item->replaces.isEmpty()) {
-            startUpgrade(id, absolutePath(*item), item->replaces, m_config.tracksRoot,
-                         QFileInfo(item->relativePath).fileName());
+            // Judged again now: the file it upgrades may have changed since the list said.
+            const UpgradeVerdict verdict = judgeUpgrade(*item, m_tierOf, m_config.folderRoles()).verdict;
+            const QString name = QFileInfo(item->relativePath).fileName();
+            if (verdict == UpgradeVerdict::NotKnownYet) {
+                Q_EMIT finished(id, false,
+                                tr("Selecta is still reading your collection, to tell whether %1 is better: try again "
+                                   "in a moment.")
+                                    .arg(name));
+                continue;
+            }
+            startUpgrade(id, absolutePath(*item), item->replaces, m_config.tracksRoot, name,
+                         verdict != UpgradeVerdict::Replaces);
             continue;
         }
         const QString root = album ? m_config.albumsRoot : m_config.tracksRoot;
@@ -312,18 +386,32 @@ void InboxService::start(qint64 id, Work work, std::function<FileResult()> job)
 }
 
 void InboxService::startUpgrade(qint64 id, const QString &source, const QString &replaces, const QString &tracksRoot,
-                                const QString &name)
+                                const QString &name, bool asNew)
 {
     m_busy.insert(id);
-    m_pool.start([this, id, ops = m_fileOps, source, replaces, tracksRoot, name] {
+    m_pool.start([this, id, ops = m_fileOps, source, replaces, tracksRoot, name, asNew] {
         Outcome outcome{.id = id, .work = Work::Replace};
-        const library::FileResult check = ops->checkReplace(source, replaces);
-        if (check.ok) {
-            outcome.result = ops->replaceInCollection(source, replaces);
+        if (!asNew) {
+            const library::FileResult check = ops->checkReplace(source, replaces);
+            if (check.ok) {
+                // Its real path, as History keeps filed paths: its downloads go to the Trash with it.
+                const QFileInfo old(replaces);
+                const QString real = old.canonicalFilePath();
+                outcome.upgraded = real.isEmpty() ? QDir::cleanPath(replaces) : real;
+                outcome.oldThere = old.exists();
+                outcome.result = ops->replaceInCollection(source, replaces);
+            } else if (!QFileInfo(QFileInfo(replaces).absolutePath()).isDir()) {
+                outcome.result = library::FileResult::failure(
+                    tr("The folder of %1 isn't there: plug its drive in and try again.")
+                        .arg(QDir::toNativeSeparators(replaces)));
+            } else {
+                outcome.result = library::FileResult::failure(
+                    tr("It can't take the place of %1: %2").arg(QDir::toNativeSeparators(replaces), check.error));
+            }
         } else {
-            // It can't take the file's place: a new file, like any single, and the message says why.
+            // Not to take its file's place (the Inbox said why): a new file, like any single; the file stays.
             outcome.work = Work::File;
-            outcome.note = check.error;
+            outcome.upgraded = replaces;
             outcome.result = tracksRoot.isEmpty()
                                  ? library::FileResult::failure(tr("Choose your tracks folder in Settings first."))
                                  : ops->fileIntoCollection(source, tracksRoot, name);
@@ -407,8 +495,12 @@ void InboxService::drain()
         }
         const bool replaced = outcome.work == Work::Replace;
         const bool filed = outcome.work == Work::File || replaced;
-        if (replaced && m_history.trashFiledAt(outcome.result.path) < 0) {
-            qCWarning(lcInbox) << "couldn't record that the replaced file went to the Trash:" << m_db.lastError();
+        if (replaced) {
+            // The old file's downloads went to the Trash with it; so did any earlier file of the path it takes (.mp3).
+            const int old = m_history.trashFiledAt(outcome.upgraded);
+            if (const int earlier = m_history.trashFiledAt(outcome.result.path); old < 0 || earlier < 0) {
+                qCWarning(lcInbox) << "couldn't record that the replaced file went to the Trash:" << m_db.lastError();
+            }
         }
         const QList<qint64> history = filed ? QList<qint64>() : m_history.idsForInboxItem(outcome.id);
         const int recorded = m_history.setWhereaboutsForInboxItem(
@@ -425,11 +517,17 @@ void InboxService::drain()
         }
         qCInfo(lcInbox).noquote() << done << name << "→" << outcome.result.path;
         QString message;
-        if (replaced) {
+        if (replaced && !outcome.oldThere) {
+            message = tr("Filed to %1, the place of the file it upgrades, which wasn't there any more.")
+                          .arg(outcome.result.path);
+        } else if (replaced && QFileInfo(outcome.upgraded).fileName() != QFileInfo(outcome.result.path).fileName()) {
+            message = tr("Replaced %1 with %2. The old file is in the Trash.")
+                          .arg(QDir::toNativeSeparators(outcome.upgraded), outcome.result.path);
+        } else if (replaced) {
             message = tr("Replaced %1. The old file is in the Trash.").arg(outcome.result.path);
-        } else if (filed && !outcome.note.isEmpty()) {
-            message = tr("Filed to %1 as a new file: it couldn't replace the old one (%2).")
-                          .arg(outcome.result.path, outcome.note);
+        } else if (filed && !outcome.upgraded.isEmpty()) {
+            message = tr("Filed to %1 as a new file; %2 stays as it was.")
+                          .arg(outcome.result.path, QDir::toNativeSeparators(outcome.upgraded));
         } else {
             message = filed ? tr("Filed to %1").arg(outcome.result.path) : tr("Moved %1 to the Trash").arg(name);
         }

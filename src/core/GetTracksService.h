@@ -135,14 +135,14 @@ public:
         int already = 0;     // the list already looks for a better copy of the file
     };
     // Adds a line for each of these collection tracks and searches for them at once (after their release lookup).
-    // A line only takes a copy of a higher quality tier than its file's (setTierLookup()): the others found are
-    // ignored, near misses included. A confident find downloads by itself; a doubtful one waits for the user, as any
-    // line. An upgrade line is never "You have it": it is about a track the user has. What arrives is marked as
-    // replacing the file in the Inbox (ArrivalService).
+    // A line only takes an MP3 or lossless copy of a higher quality tier than its file's (setTierLookup()): the others
+    // found are ignored, near misses included. A confident find downloads by itself once the collection is read; a
+    // doubtful one waits for the user, as any line. An upgrade line is never "You have it": it is about a track the
+    // user has. What arrives is marked as an upgrade of the file in the Inbox (ArrivalService), which judges it again.
     UpgradeResult addUpgrades(const QList<UpgradeRequest> &tracks);
-    // The quality tier of a collection file now, by path; nullopt when it isn't in the collection any more (an upgrade
-    // line then takes any copy of a known quality). Without a lookup, every file counts as of unknown quality.
-    using TierLookup = std::function<std::optional<QualityTier>(const QString &path)>;
+    // What the collection says of a file now, by path. A file it hasn't (any more), or hasn't read yet, counts as of
+    // unknown quality: an upgrade line then takes any copy of a known quality. Without a lookup, nothing is read yet.
+    using TierLookup = core::TierLookup;
     void setTierLookup(TierLookup lookup) { m_tierOf = std::move(lookup); }
 
     // --- what the user owns (BATCH-3, DL-11) ---

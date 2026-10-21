@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "core/CollectionBrowse.h"
 
+#include "collection/Scanner.h"
 #include "match/Quality.h"
 
 #include <QCoreApplication>
@@ -155,6 +156,41 @@ QString tierName(QualityTier tier)
     return translated("Quality unknown");
 }
 
+match::AudioQuality qualityOfText(QStringView quality)
+{
+    static const QHash<QString, match::Codec> kCodecs{
+        {u"MP3"_s, match::Codec::Mp3},     {u"AAC"_s, match::Codec::Aac},   {u"VORBIS"_s, match::Codec::Vorbis},
+        {u"OPUS"_s, match::Codec::Opus},   {u"WMA"_s, match::Codec::Wma},   {u"FLAC"_s, match::Codec::Flac},
+        {u"ALAC"_s, match::Codec::Alac},   {u"WAV"_s, match::Codec::Wav},   {u"PCM"_s, match::Codec::Wav},
+        {u"AIFF"_s, match::Codec::Aiff},   {u"APE"_s, match::Codec::Ape},   {u"WAVPACK"_s, match::Codec::WavPack},
+    };
+    match::AudioQuality result;
+    const QList<QStringView> words = quality.trimmed().split(u' ', Qt::SkipEmptyParts);
+    if (words.isEmpty()) {
+        return result;
+    }
+    result.codec = kCodecs.value(words.constFirst().toString().toUpper(), match::Codec::Unknown);
+    for (const QStringView word : words.sliced(1)) {
+        bool number = false;
+        if (const int kbps = word.toInt(&number); number && kbps > 0) {
+            result.bitrateKbps = kbps;
+        } else if (word.compare(u"VBR", Qt::CaseInsensitive) == 0) {
+            result.vbr = true;
+        } else if (const qsizetype slash = word.indexOf(u'/'); slash > 0) { // "16/44.1"
+            result.bitDepth = std::max(word.left(slash).toInt(), 0);
+            bool khzOk = false;
+            // In kHz, as a header said (bounded: "1e+06" too can come from a file).
+            if (const double khz = word.sliced(slash + 1).toDouble(&khzOk); khzOk && khz > 0 && khz <= 1000) {
+                result.sampleRateHz = qRound(khz * 1000.0);
+            }
+        }
+    }
+    if (!result.vbr.has_value() && result.bitrateKbps > 0) {
+        result.vbr = false; // a bitrate without "VBR": a constant one ("MP3 320")
+    }
+    return result;
+}
+
 bool isLosslessQualityText(QStringView quality)
 {
     const QStringView trimmed = quality.trimmed();
@@ -190,6 +226,37 @@ qsizetype CollectionListing::indexOf(qint64 trackId) const
 {
     const auto it = std::ranges::find(tracks, trackId, &CollectionTrack::id);
     return it == tracks.cend() ? -1 : std::distance(tracks.cbegin(), it);
+}
+
+TierInCollection TierIndex::tierOf(const std::shared_ptr<const CollectionListing> &listing, const QString &path)
+{
+    if (!listing) {
+        return {};
+    }
+    if (listing != m_listing) {
+        m_listing = listing;
+        m_byPath.clear();
+        m_byKey.clear();
+        m_keyed = false;
+        m_byPath.reserve(listing->tracks.size());
+        for (const CollectionTrack &track : listing->tracks) {
+            m_byPath.insert(track.path, track.tier);
+        }
+    }
+    if (const auto found = m_byPath.constFind(path); found != m_byPath.cend()) {
+        return TierInCollection::of(*found);
+    }
+    if (!m_keyed) {
+        m_keyed = true;
+        m_byKey.reserve(m_listing->tracks.size());
+        for (const CollectionTrack &track : m_listing->tracks) {
+            m_byKey.insert(collection::comparisonKey(track.path), track.tier);
+        }
+    }
+    if (const auto found = m_byKey.constFind(collection::comparisonKey(path)); found != m_byKey.cend()) {
+        return TierInCollection::of(*found);
+    }
+    return TierInCollection::notInCollection();
 }
 
 QString browseKey(QStringView text)

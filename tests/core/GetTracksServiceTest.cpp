@@ -652,9 +652,9 @@ TEST_F(GetTracksServiceTest, AnUpgradeTakesOnlyAHigherTier)
     Finding finding(*service);
     selecta::core::QualityTier floor = selecta::core::QualityTier::Top;
     QStringList asked;
-    service->setTierLookup([&floor, &asked](const QString &path) -> std::optional<selecta::core::QualityTier> {
+    service->setTierLookup([&floor, &asked](const QString &path) {
         asked.append(path);
-        return floor;
+        return selecta::core::TierInCollection::of(floor);
     });
     const QString path = u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s;
     service->addUpgrades({upgrade(path, u"Okuma Drift"_s, u"Neon Rain"_s)});
@@ -693,7 +693,7 @@ TEST_F(GetTracksServiceTest, AnUpgradeTakesOnlyAHigherTier)
 TEST_F(GetTracksServiceTest, AnUpgradesNearMissesAreBetterThanYours)
 {
     Finding finding(*service);
-    service->setTierLookup([](const QString &) { return std::optional(selecta::core::QualityTier::Below192); });
+    service->setTierLookup([](const QString &) { return selecta::core::TierInCollection::of(selecta::core::QualityTier::Below192); });
     service->addUpgrades({upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s)});
     ASSERT_TRUE(QTest::qWaitFor([&finding] { return finding.network.sent.size() == 1; }, 3000));
     selecta::core::SearchService &search = finding.search;
@@ -705,4 +705,19 @@ TEST_F(GetTracksServiceTest, AnUpgradesNearMissesAreBetterThanYours)
     ASSERT_EQ(line.nearMisses.size(), 1); // the 256 is better than yours; the 128 isn't
     EXPECT_EQ(line.nearMisses.constFirst().peer, u"vinyl_ghost"_s);
     EXPECT_EQ(line.message, u"1 file of this track found, below the quality wanted."_s);
+}
+
+// Review round 1: an AAC or Ogg file, however good, arrives as an MP3 made from it: no upgrade takes one.
+TEST_F(GetTracksServiceTest, AnUpgradeTakesOnlyMp3OrLossless)
+{
+    Finding finding(*service);
+    service->setTierLookup([](const QString &) { return selecta::core::TierInCollection::of(selecta::core::QualityTier::From256); });
+    service->addUpgrades({upgrade(u"/Music/Tracks/Okuma Drift - Neon Rain.mp3"_s, u"Okuma Drift"_s, u"Neon Rain"_s)});
+    ASSERT_TRUE(QTest::qWaitFor([&finding] { return finding.network.sent.size() == 1; }, 3000));
+    finding.search.received(1, u"aac_fan"_s, fileResponse(1, u"@@a\\Okuma Drift - Neon Rain.m4a"_s, 320, 372));
+    finding.search.received(1, u"ogg_fan"_s, fileResponse(1, u"@@b\\Okuma Drift - Neon Rain.ogg"_s, 320, 372));
+    ASSERT_TRUE(QTest::qWaitFor([this] { return service->findingCount() == 0; }, 3000));
+    const GetLine line = service->lines().constFirst();
+    EXPECT_FALSE(line.best.has_value());
+    EXPECT_EQ(line.findState, GetLine::FindState::NotFound);
 }

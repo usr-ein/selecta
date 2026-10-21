@@ -43,9 +43,10 @@ public:
     // The item to show (nullopt: the empty page), and the Inbox folder it lives in.
     void showItem(const std::optional<library::InboxItem> &item, const QString &inboxRoot);
     std::optional<qint64> itemId() const;
-    // What to say about the shown item beyond its tags: the arrival's warning (DL-10) and the albums a single is also
-    // on (DL-8). Call after showItem().
-    void setAlsoOn(const QStringList &albums);
+    // What to say about the shown item beyond its tags: the arrival's warning (DL-10), the albums a single is also on
+    // (DL-8), and for an upgrade what Save to collection does with it (InboxEntry::upgradeNote, P-010). Call after
+    // showItem().
+    void setAlsoOn(const QStringList &albums, const QString &upgradeNote = {});
 
     // What a read of the file found: its tags and a cover thumbnail.
     struct FileTags
