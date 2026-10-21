@@ -479,6 +479,7 @@ void InboxInspector::refreshProvenance()
     }
     source.append(tr("In your Inbox as %1.").arg(QFileInfo(m_item->relativePath).fileName()));
     m_source->setText(source.join(u' '));
+    m_source->setToolTip(format::plainToolTip(source.join(u' '))); // a file name too long for the panel is cut
 }
 
 void InboxInspector::showSpectrum()

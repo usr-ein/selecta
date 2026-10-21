@@ -37,11 +37,13 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QListView>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSet>
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QSplitter>
@@ -57,6 +59,7 @@
 #include <cmath>
 #include <gtest/gtest.h>
 #include <memory>
+#include <string>
 
 using namespace Qt::StringLiterals;
 using selecta::app::Appearance;
@@ -656,6 +659,7 @@ TEST_F(MainWindowTest, TheInboxInspectorShowsAndEditsTags)
     EXPECT_TRUE(provenance->text().contains(u"Spotify"_s));
     EXPECT_TRUE(source->text().contains(u"vinyl_ghost"_s));
     EXPECT_TRUE(source->text().contains(u"FLAC 16/44.1"_s));
+    EXPECT_TRUE(source->toolTip().contains(u"In your Inbox as "_s)); // whole, if the panel cuts a long name
     const auto *alsoOn = window->findChild<QLabel *>(u"inspector.inbox.alsoOn"_s);
     ASSERT_NE(alsoOn, nullptr);
     EXPECT_TRUE(alsoOn->text().contains(u"Below the quality you wanted (under <b>320</b> kbps)"_s))
@@ -1342,7 +1346,7 @@ TEST_F(MainWindowTest, AClickBringsTheWindowForwardUnlessItIsKeptOffTheScreen)
 
 // The search's Download and Add to Wishlist stay on screen however the window is split (beta notes, 2026-10-20: after
 // the sidebar was dragged, the Download button at the top right was off the screen). The filter bar's left side gives
-// way first: the actions keep their full size as long as the view has room for them alone.
+// way first, and cleanly: each of its controls shows whole, elides its label, or is hidden; none is cut.
 TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
 {
     QSignalSpy started(engine.get(), &selecta::core::EngineHost::started);
@@ -1358,10 +1362,12 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
     auto *splitter = window->findChild<QSplitter *>(u"mainSplitter"_s);
     auto *sidebar = window->findChild<QWidget *>(u"sidebar"_s);
     auto *inspector = window->findChild<QWidget *>(u"inspector"_s);
+    auto *wants = window->findChild<QWidget *>(u"search.wants"_s);
     ASSERT_NE(view, nullptr);
     ASSERT_NE(splitter, nullptr);
     ASSERT_NE(sidebar, nullptr);
     ASSERT_NE(inspector, nullptr);
+    ASSERT_NE(wants, nullptr);
     const QStringList actions{u"search.filters"_s, u"search.wishlist"_s, u"search.download"_s};
     int actionsWidth = 16 + 16; // the bar's side margins
     for (const QString &name : actions) {
@@ -1369,32 +1375,71 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
         ASSERT_NE(button, nullptr) << name.toStdString();
         actionsWidth += button->sizeHint().width() + 12; // and the spacing between them
     }
-    // Far narrower than the whole bar wants, but wide enough for the actions.
-    const auto *wants = window->findChild<QWidget *>(u"search.wants"_s);
-    ASSERT_NE(wants, nullptr);
-    ASSERT_GT(wants->sizeHint().width(), 100);
-    const int viewWidth = actionsWidth + 40;
+    window->resize(4000, window->minimumHeight()); // room for the whole bar: its left side as it wants to be
+    QCoreApplication::processEvents();
+    const int wantsWidth = wants->sizeHint().width();
+    ASSERT_GT(wantsWidth, 100);
+    const QSet<QString> fullBoxTexts{u"Only this release"_s, u"Group by folder"_s};
 
-    // The sidebar dragged to its narrowest. (The splitter won't widen it here: the views ask for more than the
-    // window has.)
-    const int sidebarWidth = sidebar->minimumWidth();
-    window->resize(std::max(window->minimumWidth(), sidebarWidth + viewWidth + inspector->width() + 10),
-                   window->minimumHeight());
-    QCoreApplication::processEvents();
-    splitter->setSizes({sidebarWidth, window->width() - sidebarWidth});
-    QCoreApplication::processEvents();
-    ASSERT_EQ(sidebar->width(), sidebarWidth);
-    const QRect viewRect(view->mapTo(window.get(), QPoint(0, 0)), view->size());
-    ASSERT_LE(viewRect.right(), window->rect().right());
-    ASSERT_LT(view->width(), view->minimumSizeHint().width()); // the case the beta hit: squeezed by the splitter
-    for (const QString &name : actions) {
-        const auto *button = window->findChild<QAbstractButton *>(name);
-        ASSERT_TRUE(button->isVisible()) << name.toStdString();
-        const QRect shown(button->mapTo(window.get(), QPoint(0, 0)), button->size());
-        EXPECT_TRUE(viewRect.contains(shown))
-            << name.toStdString() << " with a sidebar of " << sidebarWidth << ": its right edge at " << shown.right()
-            << ", the view's at " << viewRect.right();
-        EXPECT_GE(button->width(), button->sizeHint().width()) << name.toStdString(); // never squeezed
+    // From the smallest window up to one where the whole bar fits, the sidebar dragged as wide as it goes.
+    QList<int> viewWidths{0}; // 0: the smallest window
+    for (int extra = 0; extra <= wantsWidth + 40; extra += 37) {
+        viewWidths.append(actionsWidth + extra);
+    }
+    for (const int viewWidth : std::as_const(viewWidths)) {
+        const int sidebarWidth = sidebar->minimumWidth();
+        window->resize(viewWidth == 0
+                           ? window->minimumWidth()
+                           : std::max(window->minimumWidth(), sidebarWidth + viewWidth + inspector->width() + 10),
+                       window->minimumHeight());
+        QCoreApplication::processEvents();
+        splitter->setSizes({window->width(), 1}); // as wide as the splitter lets the sidebar go
+        QCoreApplication::processEvents();
+        QCoreApplication::processEvents(); // the layout requests the bar's fitting posts
+        const std::string at = "a view " + std::to_string(view->width()) + " wide";
+        const QRect viewRect(view->mapTo(window.get(), QPoint(0, 0)), view->size());
+        ASSERT_LE(viewRect.right(), window->rect().right()) << at;
+
+        for (const QString &name : actions) {
+            const auto *button = window->findChild<QAbstractButton *>(name);
+            ASSERT_TRUE(button->isVisible()) << name.toStdString() << ", " << at;
+            const QRect shown(button->mapTo(window.get(), QPoint(0, 0)), button->size());
+            EXPECT_TRUE(viewRect.contains(shown)) << name.toStdString() << ", " << at;
+            if (view->width() >= actionsWidth) {
+                EXPECT_GE(button->width(), button->sizeHint().width()) << name.toStdString() << ", " << at;
+            }
+        }
+        // The left side: never a control cut in half. (Layout rects: a macOS control's widget rect is a little wider,
+        // for its focus ring.)
+        QLayout *wantsLayout = wants->layout();
+        ASSERT_NE(wantsLayout, nullptr);
+        const QRect wantsRect(QPoint(0, 0), wants->size());
+        for (int i = 0; i < wantsLayout->count(); ++i) {
+            const QLayoutItem *item = wantsLayout->itemAt(i);
+            QWidget *control = item->widget();
+            if (!control || !control->isVisible()) {
+                continue;
+            }
+            const std::string name = control->metaObject()->className() + (" " + control->objectName().toStdString());
+            if (view->width() >= actionsWidth) {
+                EXPECT_TRUE(wantsRect.contains(item->geometry()))
+                    << name << " at " << item->geometry().x() << "+" << item->geometry().width() << " in "
+                    << wants->width() << ", " << at;
+                EXPECT_GE(item->geometry().width(), item->minimumSize().width()) << name << ", " << at;
+            }
+            if (const auto *box = qobject_cast<QCheckBox *>(control)) {
+                EXPECT_TRUE(fullBoxTexts.contains(box->text()) || box->text().endsWith(u'…'))
+                    << box->text().toStdString() << ", " << at;
+                EXPECT_TRUE(fullBoxTexts.contains(box->accessibleName())); // whole for VoiceOver
+            }
+        }
+        if (view->width() >= actionsWidth + wantsWidth) {
+            for (const QString &name : {u"search.onlyRelease"_s, u"search.grouped"_s, u"search.presets"_s}) {
+                const auto *control = window->findChild<QWidget *>(name);
+                EXPECT_TRUE(control->isVisible()) << name.toStdString() << ", " << at; // room for it all: all whole
+            }
+            EXPECT_TRUE(fullBoxTexts.contains(window->findChild<QCheckBox *>(u"search.grouped"_s)->text()));
+        }
     }
     engine->stop();
 }

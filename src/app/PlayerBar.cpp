@@ -261,8 +261,8 @@ void PlayerBar::tintSpeaker()
 void PlayerBar::changeEvent(QEvent *event)
 {
     QWidget::changeEvent(event);
-    if (event->type() == QEvent::PaletteChange) {
-        tintSpeaker(); // light and dark
+    if (event->type() == QEvent::PaletteChange || event->type() == QEvent::DevicePixelRatioChange) {
+        tintSpeaker(); // light and dark; a Retina screen or not
     }
 }
 
