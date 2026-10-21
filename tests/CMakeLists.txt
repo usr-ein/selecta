@@ -32,6 +32,7 @@ selecta_add_test_suite(selecta_unit_tests
         base/LoggingTest.cpp
         base/PathsTest.cpp
         governor/GovernorTest.cpp
+        governor/LimitsTest.cpp
         governor/PeerLedgerTest.cpp
         governor/QueryHygieneTest.cpp
         governor/ReconnectPolicyTest.cpp
