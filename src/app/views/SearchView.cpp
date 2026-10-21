@@ -345,8 +345,6 @@ QWidget *SearchView::createFilterBar()
     barLayout->addWidget(wants, 1);
     m_wantLabel = fieldLabel(tr("Want"), wants, m_preset);
     layout->addWidget(m_wantLabel);
-    // The preset's name elides down to a few letters before anything else gives way.
-    m_preset->setMinimumWidth((m_preset->fontMetrics().averageCharWidth() * 6) + 40);
     m_preset->setObjectName(u"search.preset"_s);
     m_preset->setToolTip(tr("The quality you want: a preset. Get tracks and the Wishlist pick from the same ones."));
     layout->addWidget(m_preset);
@@ -391,6 +389,9 @@ QWidget *SearchView::createFilterBar()
         box->setProperty("fullText", box->text());
         box->setProperty("fullToolTip", box->toolTip());
         box->setAccessibleName(box->text()); // whole, even when the label is elided
+        // Laid out by its whole rect: macOS's layout rect for a box stops short of its label's last letters, which
+        // the bar's edge would then cut.
+        box->setAttribute(Qt::WA_LayoutUsesWidgetRect);
     }
     m_filtersButton->setObjectName(u"search.filters"_s);
     m_filtersButton->setText(tr("Filters"));
@@ -1222,6 +1223,7 @@ void SearchView::giveWay()
     m_presetsButton->setVisible(true);
     m_wantLabel->setVisible(true);
     m_preset->setVisible(true);
+    m_preset->setMinimumWidth(0); // its whole name (the layout takes its size hint)
     for (QCheckBox *box : boxes) {
         const int over = needed() - available;
         if (over <= 0) {
@@ -1237,7 +1239,11 @@ void SearchView::giveWay()
         box->setText(metrics.elidedText(full, Qt::ElideRight, room));
         box->setToolTip(full + u'\n' + box->property("fullToolTip").toString());
     }
-    // Then Presets, "Want", and at last the preset itself: the actions on the right matter more.
+    // Then the preset's name is cut down to a few letters (macOS draws a combo box's text cut, not elided; the whole
+    // name is in its list), then Presets, "Want", and at last the preset itself: the actions matter more.
+    if (needed() > available) {
+        m_preset->setMinimumWidth((m_preset->fontMetrics().averageCharWidth() * 6) + 40);
+    }
     for (QWidget *widget : {static_cast<QWidget *>(m_presetsButton), static_cast<QWidget *>(m_wantLabel),
                             static_cast<QWidget *>(m_preset)}) {
         if (needed() <= available) {
