@@ -253,36 +253,56 @@ QWidget *ConverterView::createBar()
     });
     connect(m_stop, &QPushButton::clicked, this, [this] { m_engine.cancelConversions(); });
 
-    auto *first = new QHBoxLayout;
+    // The choices on the left, shrinking as the window narrows; the actions pinned on the right (P-003: the bar asked
+    // for 2,436 px and squeezed the sidebar everywhere).
+    for (QComboBox *box : {m_target, m_sampleRate, m_bitDepth, m_id3, m_artwork, m_destination}) {
+        box->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        box->setMinimumContentsLength(6);
+        box->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    }
+    auto *choices = new QWidget(bar);
+    choices->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto *first = new QHBoxLayout(choices);
     first->setContentsMargins(0, 0, 0, 0);
+    first->setSpacing(style::kSpace2);
     auto *convertTo = new QLabel(tr("Convert to"), bar);
     convertTo->setBuddy(m_target);
     first->addWidget(convertTo);
     first->addWidget(m_target);
     first->addWidget(m_sampleRate);
     first->addWidget(m_bitDepth);
-    first->addWidget(m_id3);
-    first->addWidget(m_artwork);
     first->addStretch(1);
-    first->addWidget(m_add);
-    first->addWidget(m_stop);
-    first->addWidget(m_convert);
-    auto *second = new QHBoxLayout;
+    auto *top = new QHBoxLayout;
+    top->setContentsMargins(0, 0, 0, 0);
+    top->setSpacing(style::kSpace2);
+    top->addWidget(choices, 1);
+    top->addWidget(m_add);
+    top->addWidget(m_stop);
+    top->addWidget(m_convert);
+
+    auto *more = new QWidget(bar);
+    more->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto *second = new QHBoxLayout(more);
     second->setContentsMargins(0, 0, 0, 0);
+    second->setSpacing(style::kSpace2);
     auto *saveTo = new QLabel(tr("New files go"), bar);
     saveTo->setBuddy(m_destination);
     second->addWidget(saveTo);
     second->addWidget(m_destination);
-    auto *note = new QLabel(tr("Originals are never changed, and no file is ever replaced."), bar);
-    note->setForegroundRole(QPalette::PlaceholderText);
-    second->addWidget(note);
+    second->addWidget(m_id3);
+    second->addWidget(m_artwork);
     second->addStretch(1);
-    second->addWidget(m_status);
+    m_destination->setToolTip(tr("Originals are never changed, and no file is ever replaced."));
+    m_status->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    auto *bottom = new QHBoxLayout;
+    bottom->setContentsMargins(0, 0, 0, 0);
+    bottom->addWidget(more, 1);
+    bottom->addWidget(m_status, 1);
     auto *rows = new QVBoxLayout(bar);
     rows->setContentsMargins(style::kBarMargins);
-    rows->setSpacing(8);
-    rows->addLayout(first);
-    rows->addLayout(second);
+    rows->setSpacing(style::kSpace2);
+    rows->addLayout(top);
+    rows->addLayout(bottom);
     return bar;
 }
 

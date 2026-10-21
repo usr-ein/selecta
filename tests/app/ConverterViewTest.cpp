@@ -369,3 +369,21 @@ TEST_F(ConverterViewTest, AnMp3At320IsCopiedAndNeverMadeLossless24Bit)
     ASSERT_TRUE(copy.open(QIODevice::ReadOnly));
     EXPECT_TRUE(copy.readAll().endsWith(original));
 }
+
+TEST_F(ConverterViewTest, TheBarFitsANarrowWindowAndKeepsConvertInSight)
+{
+    // P-003: the Converter's bar asked for 2,436 px, which squeezed the sidebar on every view. Its choices give way;
+    // Add Files…, Stop and Convert stay whole on the right.
+    makeView();
+    EXPECT_LT(view->minimumSizeHint().width(), 640) << view->minimumSizeHint().width();
+    view->setAttribute(Qt::WA_DontShowOnScreen);
+    view->resize(640, 400);
+    view->show();
+    QCoreApplication::processEvents();
+    for (const QString &name : {u"converter.add"_s, u"converter.convert"_s}) {
+        const auto *button = child<QPushButton>(name);
+        const QRect shown(button->mapTo(view.get(), QPoint(0, 0)), button->size());
+        EXPECT_TRUE(view->rect().contains(shown)) << name.toStdString();
+        EXPECT_GE(button->width(), button->minimumSizeHint().width()) << name.toStdString();
+    }
+}
