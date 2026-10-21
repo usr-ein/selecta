@@ -2,6 +2,7 @@
 #include "app/Inspector.h"
 
 #include <QLabel>
+#include <QScrollArea>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
@@ -46,6 +47,26 @@ void Inspector::showPanelFor(const QString &viewId)
 QWidget *Inspector::currentPanel() const
 {
     return m_stack->currentWidget();
+}
+
+void Inspector::fitToWidth(QScrollArea *scroll)
+{
+    if (!scroll) {
+        return;
+    }
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    QWidget *details = scroll->widget();
+    if (!details) {
+        return;
+    }
+    const QList<QLabel *> labels = details->findChildren<QLabel *>();
+    for (QLabel *label : labels) {
+        if (label->wordWrap()) {
+            QSizePolicy policy = label->sizePolicy(); // keeps height-for-width
+            policy.setHorizontalPolicy(QSizePolicy::Ignored);
+            label->setSizePolicy(policy);
+        }
+    }
 }
 
 } // namespace selecta::app

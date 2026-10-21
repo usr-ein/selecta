@@ -118,6 +118,7 @@ if(SELECTA_WITH_MEDIA)
             app/FormatTest.cpp
             app/GetTracksInspectorTest.cpp
             app/GetTracksModelTest.cpp
+            app/InspectorTest.cpp
             app/LibrarySettingsTest.cpp
             app/MainWindowTest.cpp
             app/NavModelTest.cpp

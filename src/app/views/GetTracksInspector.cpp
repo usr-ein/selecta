@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksInspector.h"
 
+#include "app/Inspector.h"
+
 #include "app/Format.h"
 #include "app/models/GetTracksModel.h"
 #include "meta/CoverFetcher.h"
@@ -287,6 +289,7 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(details);
+    Inspector::fitToWidth(scroll);
     m_pages->addWidget(scroll);
 
     auto *outer = new QVBoxLayout(this);

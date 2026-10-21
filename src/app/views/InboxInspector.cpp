@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/InboxInspector.h"
 
+#include "app/Inspector.h"
+
 #include "app/Format.h"
 #include "app/SpectrogramView.h"
 #include "app/views/EditTagsDialog.h"
@@ -289,6 +291,7 @@ InboxInspector::InboxInspector(core::EngineHost &engine, QWidget *parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(details);
+    Inspector::fitToWidth(scroll);
     m_pages->addWidget(scroll);
 
     auto *outer = new QVBoxLayout(this);

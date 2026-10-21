@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SearchInspector.h"
 
+#include "app/Inspector.h"
+
 #include "app/Format.h"
 #include "app/models/SearchResultsModel.h"
 
@@ -150,6 +152,7 @@ SearchInspector::SearchInspector(QWidget *parent)
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setWidget(details);
+    Inspector::fitToWidth(scroll);
     m_pages->addWidget(scroll);
 
     auto *outer = new QVBoxLayout(this);
@@ -238,6 +241,7 @@ void SearchInspector::showResult(const std::optional<core::SearchResult> &result
         file.append(tr("Read as: %1").arg(readAs));
     }
     m_file->setText(file.join(u'\n'));
+    m_file->setToolTip(format::plainToolTip(file.join(u'\n'))); // a name too long for the panel is cut: all of it
 
     QStringList peer{result->hit.peer};
     peer.append(result->hit.freeSlot ? tr("Upload slot: free now")
