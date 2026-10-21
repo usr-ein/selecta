@@ -61,8 +61,10 @@ struct SharedFileListResponse
     SELECTA_SLSK_MESSAGE(SharedFileListResponse, PeerCode::SharedFileListResponse);
     SharedFileList list;
 
-    // decode() with a different inflate cap than protocol::kShareListInflatedMax.
-    static std::optional<SharedFileListResponse> decode(QByteArrayView payload, qsizetype maxInflated);
+    // decode() with a different inflate cap than protocol::kShareListInflatedMax. `tooLarge`, when given, says whether
+    // a failure was the stream inflating past the cap (rather than a malformed list).
+    static std::optional<SharedFileListResponse> decode(QByteArrayView payload, qsizetype maxInflated,
+                                                        bool *tooLarge = nullptr);
 };
 
 // Search results from a peer, keyed by the token of our search.

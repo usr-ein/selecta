@@ -254,6 +254,27 @@ TEST(PeerMessages, LargeShareListRoundTripsWithinItsCap)
     ASSERT_TRUE(decoded.has_value());
     EXPECT_EQ(*decoded, big);
     EXPECT_FALSE(peer::SharedFileListResponse::decode(payload, 1024).has_value());
+    // Why it failed: over the cap, not malformed.
+    bool tooLarge = false;
+    EXPECT_FALSE(peer::SharedFileListResponse::decode(payload, 1024, &tooLarge).has_value());
+    EXPECT_TRUE(tooLarge);
+    EXPECT_TRUE(peer::SharedFileListResponse::decode(payload, protocol::kShareListInflatedMax, &tooLarge).has_value());
+    EXPECT_FALSE(tooLarge);
+}
+
+TEST(PeerMessages, MalformedShareListIsNotTooLarge)
+{
+    Writer body;
+    body.u32(3); // three folders announced, none follows
+    bool tooLarge = true;
+    EXPECT_FALSE(
+        peer::SharedFileListResponse::decode(zlib::deflate(body.data()), protocol::kShareListInflatedMax, &tooLarge)
+            .has_value());
+    EXPECT_FALSE(tooLarge);
+    tooLarge = true;
+    EXPECT_FALSE(
+        peer::SharedFileListResponse::decode("not zlib", protocol::kShareListInflatedMax, &tooLarge).has_value());
+    EXPECT_FALSE(tooLarge);
 }
 
 TEST(PeerMessages, ShareListWithTrailingGarbageAfterTheStreamIsRefused)

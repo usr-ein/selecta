@@ -24,6 +24,7 @@ qt_add_library(selecta_app STATIC
     TwoLineDelegate.h TwoLineDelegate.cpp
     WaveformView.h WaveformView.cpp
     models/ActivityModel.h models/ActivityModel.cpp
+    models/BrowseTreeModel.h models/BrowseTreeModel.cpp
     models/ConverterModel.h models/ConverterModel.cpp
     models/GetTracksModel.h models/GetTracksModel.cpp
     models/PeersModel.h models/PeersModel.cpp
