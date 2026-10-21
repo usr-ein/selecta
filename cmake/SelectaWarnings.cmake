@@ -31,6 +31,11 @@ function(selecta_set_warnings target)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(${target} PRIVATE -Wno-shadow -Wno-missing-field-initializers)
     endif()
+    # Upstream Clang (Linux CI) also flags those designated initializers, which Apple Clang doesn't; .clang-tidy turns
+    # the warning off for the analysers too.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 19)
+        target_compile_options(${target} PRIVATE -Wno-missing-designated-field-initializers)
+    endif()
     if(SELECTA_WARNINGS_AS_ERRORS)
         target_compile_options(${target} PRIVATE -Werror)
     endif()
