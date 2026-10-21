@@ -13,10 +13,12 @@
 #   - the runtime inputs its executable's compile definitions name with an absolute path: another executable
 #     (SELECTA_CLI_PATH) or file, and the data files of a source folder (SELECTA_META_FIXTURES, QT_TESTCASE_SOURCEDIR):
 #     every file in it but C++ sources and CMakeLists.txt, which reach the executables through the build. Folders of
-#     the build tree are left out: they hold the build itself;
+#     the build tree are left out: they hold the build itself, and no test reads data the build writes there;
+#   - the files its arguments name with an absolute path (an argument that is one, or --option=/path), the same way;
 #   - this script.
-# When in doubt a test counts as changed: an executable or an input outside the checkout, or one it can't read, gets a
-# fingerprint no other run has. A <known> file that is missing or empty selects every test.
+# When in doubt a test counts as changed and runs: an executable no compile command builds (a script, a target with
+# another OUTPUT_NAME), an executable or an input outside the checkout, or one it can't read, gets a fingerprint no
+# other run has. A <known> file that is missing or empty selects every test.
 #
 # With --passed, the tests that failed in the build folder's last ctest run (Testing/Temporary/LastTestsFailed.log)
 # are left out, so that they run again next time. Needs bash 4, jq, ctest and sha256sum (or shasum).
@@ -65,23 +67,39 @@ hash_input() {
 # definitions name.
 declare -A executable_hashes=()
 hash_executable() {
-    local executable="$1" name inputs="" path
+    local executable="$1" name commands inputs="" path
     if [[ "$executable" != "$root"/* || ! -f "$executable" || ! -r "$executable" ]]; then
         executable_hashes["x$executable"]="$(unknown)"
         return
     fi
     name="${executable##*/}"
+    commands="$(jq -r --arg target "CMakeFiles/$name.dir/" \
+        '.[] | select((.output // "") | contains($target)) | .command' "$build/compile_commands.json")"
+    # Its runtime inputs are known only from its compile commands.
+    if [[ -z "$commands" ]]; then
+        executable_hashes["x$executable"]="$(unknown)"
+        return
+    fi
     while IFS= read -r path; do
         inputs+="$path $(hash_input "$path")"$'\n'
-    done < <(jq -r --arg target "CMakeFiles/$name.dir/" \
-        '.[] | select((.output // "") | contains($target)) | .command' "$build/compile_commands.json" |
-        grep -oE -- '-D[A-Za-z_][A-Za-z0-9_]*=\\?"/[^"\\]*\\?"' | sed -E 's/^[^=]*=\\?"(.*)$/\1/; s/\\?"$//' |
-        LC_ALL=C sort -u)
+    done < <(grep -oE -- '-D[A-Za-z_][A-Za-z0-9_]*=\\?"/[^"\\]*\\?"' <<< "$commands" |
+        sed -E 's/^[^=]*=\\?"(.*)$/\1/; s/\\?"$//' | LC_ALL=C sort -u)
     executable_hashes["x$executable"]="$(printf '%s\n%s' "$(hash_file "$executable")" "$inputs" | hash_text)"
 }
 
+# hash_arguments <paths…>: the files a test's arguments name, once each.
+declare -A argument_hashes=()
+hash_arguments() {
+    local path all=""
+    for path in "$@"; do
+        [[ -n "${argument_hashes[x$path]:-}" ]] || argument_hashes["x$path"]="$(hash_input "$path")"
+        all+="$path ${argument_hashes[x$path]}"$'\n'
+    done
+    [[ -z "$all" ]] || hash_text <<< "$all"
+}
+
 fingerprint() {
-    local passed=0 self tests line name command definition
+    local passed=0 self tests line name command arguments definition paths
     build="$(cd "$1" && pwd)"
     [[ "${2:-}" != --passed ]] || passed=1
     [[ -f "$build/compile_commands.json" ]] || { echo "affected-tests: no $build/compile_commands.json" >&2; exit 2; }
@@ -97,11 +115,16 @@ fingerprint() {
             failed["${line#*:}"]=1
         done < "$build/Testing/Temporary/LastTestsFailed.log"
     fi
-    # Fields split on the unit separator: a tab is blank to read, which would merge an empty command away.
-    while IFS=$'\x1f' read -r name command definition; do
+    # Fields split on the unit separator: a tab is blank to read, which would merge an empty command away. Arguments
+    # split on the record separator.
+    while IFS=$'\x1f' read -r name command arguments definition; do
         [[ -z "${failed[$name]:-}" ]] || continue
-        printf '%s\t%s:%s\t%s\n' "$name" "$self" "${executable_hashes[x$command]}" "$definition"
-    done < <(jq -r '.tests[] | [.name, (.command[0] // ""), tojson] | join("\u001f")' <<< "$tests") | LC_ALL=C sort
+        IFS=$'\x1e' read -r -a paths <<< "$arguments"
+        printf '%s\t%s:%s:%s\t%s\n' "$name" "$self" "${executable_hashes[x$command]}" \
+            "$(hash_arguments "${paths[@]}")" "$definition"
+    done < <(jq -r '.tests[] | [.name, (.command[0] // ""),
+            ((.command // [])[1:] | map(capture("^(?:[^=/]*=)?(?<path>/.*)$").path) | join("\u001e")),
+            tojson] | join("\u001f")' <<< "$tests") | LC_ALL=C sort
 }
 
 select_tests() {

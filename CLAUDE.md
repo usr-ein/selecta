@@ -34,7 +34,7 @@ Selecta is a GPLv3 Soulseek client in C++/Qt 6, macOS-first. Start here:
 ```sh
 export VCPKG_ROOT="$HOME/vcpkg"             # vcpkg clone; every dependency is a static library (ADR-004)
 cmake --workflow --preset dev              # configure + build + test (build/dev)
-cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # ASan + UBSan; CI runs it nightly on main
+cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # ASan + UBSan (CI: linux-asan, nightly)
 tools/lint.sh [paths…]                     # clang-format check, clang-tidy, clazy, cppcheck; must be clean
 tools/dev/run-headless.sh                  # start Selecta with a throwaway data folder and the debug socket
 tools/dev/app.sh state | tree | screenshot path=/abs.png | navigate view=<id> | click name=<objectName> | log
