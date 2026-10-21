@@ -3,18 +3,32 @@
 
 #include "app/Format.h"
 #include "app/models/GetTracksModel.h"
+#include "meta/CoverFetcher.h"
+#include "meta/ServicePolicy.h"
 
+#include <QBuffer>
 #include <QButtonGroup>
 #include <QDesktopServices>
 #include <QEvent>
 #include <QFormLayout>
+#include <QFuture>
 #include <QHBoxLayout>
+#include <QImageReader>
 #include <QLabel>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPointer>
+#include <QPromise>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScrollArea>
 #include <QStackedWidget>
+#include <QThreadPool>
+#include <QTimer>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <memory>
 
 using namespace Qt::StringLiterals;
 
@@ -45,11 +59,118 @@ QLabel *quietNote(const QString &objectName, QWidget *parent)
     return note;
 }
 
+// What the image reader may allocate for one cover: a 4096-pixel square, far above what is ever shown. A PNG bigger
+// than that (the reader can't scale those while decoding) is refused rather than decoded.
+constexpr int kCoverAllocationMiB = 64;
+
+// Cover bytes from the network (untrusted): a JPEG or PNG within the cover bounds by its header, decoded at most
+// kCoverPixels a side. Null when they aren't, or don't decode. Any thread.
+QImage decodeCover(const QByteArray &bytes)
+{
+    if (bytes.isEmpty() || bytes.size() > meta::kMaxCoverBytes) {
+        return {};
+    }
+    const meta::Result<meta::CoverImage> checked = meta::CoverFetcher::inspect(bytes, QUrl(), meta::Source::Spotify);
+    if (!checked.ok()) {
+        return {};
+    }
+    QBuffer buffer;
+    buffer.setData(bytes);
+    if (!buffer.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    const QByteArray format = checked.value().mimeType == u"image/png"_s ? QByteArrayLiteral("png")
+                                                                          : QByteArrayLiteral("jpeg");
+    QImageReader reader(&buffer, format);
+    reader.setDecideFormatFromContent(false); // the header said which
+    reader.setAllocationLimit(kCoverAllocationMiB);
+    const QSize size = reader.size();
+    if (!size.isValid() || size.isEmpty()) {
+        return {};
+    }
+    const int side = GetTracksInspector::kCoverPixels;
+    if (size.width() > side || size.height() > side) {
+        reader.setScaledSize(size.scaled(side, side, Qt::KeepAspectRatio));
+    }
+    return reader.read();
+}
+
 } // namespace
+
+CoverArt::CoverArt(QWidget *parent)
+    : QWidget(parent)
+{
+    QSizePolicy policy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    policy.setHeightForWidth(true);
+    setSizePolicy(policy);
+    setAccessibleName(tr("No cover"));
+}
+
+void CoverArt::setImage(const QImage &image)
+{
+    m_pixmap = image.isNull() ? QPixmap() : QPixmap::fromImage(image);
+    setAccessibleName(m_pixmap.isNull() ? tr("No cover") : tr("Cover"));
+    update();
+}
+
+QSize CoverArt::sizeHint() const
+{
+    return {240, 240};
+}
+
+QSize CoverArt::minimumSizeHint() const
+{
+    return {64, 64};
+}
+
+void CoverArt::paintEvent(QPaintEvent * /*event*/)
+{
+    QPainter painter(this);
+    painter.setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+    // Square, whatever the layout gave: as wide as the panel, as high as it is wide.
+    const int side = std::min(width(), height());
+    const QRectF square(QPointF((width() - side) / 2.0, 0), QSizeF(side, side));
+    constexpr qreal kRadius = 6.0;
+    QPainterPath shape;
+    shape.addRoundedRect(square, kRadius, kRadius);
+
+    const QColor ground = palette().color(QPalette::Window);
+    const QColor ink = palette().color(QPalette::WindowText);
+    const auto blend = [&ground, &ink](qreal amount) {
+        return QColor::fromRgbF(static_cast<float>(ground.redF() + ((ink.redF() - ground.redF()) * amount)),
+                                static_cast<float>(ground.greenF() + ((ink.greenF() - ground.greenF()) * amount)),
+                                static_cast<float>(ground.blueF() + ((ink.blueF() - ground.blueF()) * amount)));
+    };
+
+    if (!m_pixmap.isNull()) {
+        // Filled, centred: a cover that isn't square loses its edges, not the panel its shape.
+        const QSizeF image = m_pixmap.deviceIndependentSize();
+        const qreal scale = std::max(square.width() / image.width(), square.height() / image.height());
+        const QSizeF shown(square.width() / scale, square.height() / scale);
+        const QRectF source(QPointF((image.width() - shown.width()) / 2.0, (image.height() - shown.height()) / 2.0),
+                            shown);
+        painter.setClipPath(shape);
+        painter.drawPixmap(square, m_pixmap,
+                           QRectF(source.topLeft() * m_pixmap.devicePixelRatio(),
+                                  source.size() * m_pixmap.devicePixelRatio()));
+        painter.setClipping(false);
+    } else {
+        painter.fillPath(shape, blend(0.06));
+        QFont font = painter.font();
+        font.setPixelSize(std::max(1, side * 2 / 5));
+        painter.setFont(font);
+        painter.setPen(palette().color(QPalette::PlaceholderText));
+        painter.drawText(square, Qt::AlignCenter, u"\u266A"_s); // ♪
+    }
+    painter.setPen(QPen(blend(0.12), 1.0));
+    painter.drawPath(shape);
+}
 
 GetTracksInspector::GetTracksInspector(QWidget *parent)
     : QWidget(parent)
     , m_pages(new QStackedWidget(this))
+    , m_cover(new CoverArt(this))
+    , m_coverTimer(new QTimer(this))
     , m_title(new QLabel(this))
     , m_status(new QLabel(this))
     , m_wayOut(new QWidget(this))
@@ -85,6 +206,12 @@ GetTracksInspector::GetTracksInspector(QWidget *parent)
     titleFont.setWeight(QFont::DemiBold);
     titleFont.setPointSizeF(titleFont.pointSizeF() + 1);
     m_title->setFont(titleFont);
+    // The release's cover first, above the title (P-021).
+    m_cover->setObjectName(u"inspector.get.cover"_s);
+    layout->addWidget(m_cover);
+    m_coverTimer->setSingleShot(true);
+    m_coverTimer->setInterval(kCoverDelayMs);
+    connect(m_coverTimer, &QTimer::timeout, this, &GetTracksInspector::askForCover);
     m_status->setObjectName(u"inspector.get.status"_s);
     m_status->setTextFormat(Qt::PlainText);
     m_status->setWordWrap(true);
@@ -343,9 +470,14 @@ void GetTracksInspector::showLine(const std::optional<core::GetLine> &line)
     }
     if (!line) {
         m_pages->setCurrentIndex(0);
+        m_coverTimer->stop();
+        m_coverKey.clear();
+        m_coverRelease.reset();
+        m_cover->setImage({});
         return;
     }
     m_pages->setCurrentIndex(1);
+    showLineCover(*line);
     m_title->setText(line->raw);
     QString status = GetTracksModel::statusText(*line);
     if (!line->message.isEmpty()) {
@@ -355,6 +487,103 @@ void GetTracksInspector::showLine(const std::optional<core::GetLine> &line)
     showWayOut(*line);
     showRelease(*line);
     showFile(*line);
+}
+
+QString GetTracksInspector::coverKey(const meta::Release &release)
+{
+    if (!release.covers.isEmpty() && release.covers.constFirst().url.isValid()) {
+        return release.covers.constFirst().url.toString();
+    }
+    if (!release.musicBrainzReleaseId.isEmpty()) {
+        return u"musicbrainz:release:"_s + release.musicBrainzReleaseId;
+    }
+    if (!release.musicBrainzReleaseGroupId.isEmpty()) {
+        return u"musicbrainz:release-group:"_s + release.musicBrainzReleaseGroupId;
+    }
+    return {};
+}
+
+void GetTracksInspector::showLineCover(const core::GetLine &line)
+{
+    const bool hasRelease = line.release && line.releaseState != core::GetLine::ReleaseState::None;
+    const QString key = hasRelease ? coverKey(*line.release) : QString();
+    if (key == m_coverKey) {
+        if (hasRelease) {
+            m_coverRelease = line.release; // the same cover; the newest words for the request
+        }
+        return; // shown, or on its way
+    }
+    m_coverTimer->stop();
+    m_coverKey = key;
+    m_coverRelease = key.isEmpty() ? std::nullopt : line.release;
+    const auto cached = std::ranges::find(m_covers, key, &std::pair<QString, QImage>::first);
+    if (key.isEmpty() || cached == m_covers.end()) {
+        m_cover->setImage({});
+        if (!key.isEmpty()) {
+            m_coverTimer->start(); // asked for once the line has been shown a moment
+        }
+        return;
+    }
+    // Most recently shown last: the one dropped first is the one not seen for longest.
+    std::pair<QString, QImage> entry = *cached;
+    m_covers.erase(cached);
+    m_cover->setImage(entry.second);
+    m_covers.append(std::move(entry));
+}
+
+void GetTracksInspector::setCoverDelay(int ms)
+{
+    m_coverTimer->setInterval(ms);
+}
+
+void GetTracksInspector::askForCover()
+{
+    if (m_coverKey.isEmpty() || !m_coverRelease || m_coversAsked.contains(m_coverKey)) {
+        return;
+    }
+    m_coversAsked.insert(m_coverKey);
+    Q_EMIT coverWanted(m_coverKey, *m_coverRelease);
+}
+
+void GetTracksInspector::showCover(const QString &key, const QByteArray &bytes)
+{
+    if (!m_coversAsked.remove(key)) {
+        return; // not ours: another view's, or answered already
+    }
+    if (bytes.isEmpty()) {
+        return; // none: the placeholder stays, and it is asked for again when its line is next shown
+    }
+    // Off the main thread: a large JPEG takes a while to decode.
+    const auto promise = std::make_shared<QPromise<QImage>>();
+    QFuture<QImage> future = promise->future();
+    promise->start();
+    QThreadPool::globalInstance()->start([promise, bytes] {
+        promise->addResult(decodeCover(bytes));
+        promise->finish();
+    });
+    future.then(this, [self = QPointer<GetTracksInspector>(this), key](const QImage &image) {
+        if (self) {
+            self->decoded(key, image);
+        }
+    });
+}
+
+void GetTracksInspector::decoded(const QString &key, const QImage &image)
+{
+    if (image.isNull()) {
+        return; // not an image after all: the placeholder stays
+    }
+    const auto known = std::ranges::find(m_covers, key, &std::pair<QString, QImage>::first);
+    if (known != m_covers.end()) {
+        m_covers.erase(known);
+    }
+    m_covers.append({key, image});
+    while (m_covers.size() > kCoverCacheSize) {
+        m_covers.removeFirst();
+    }
+    if (key == m_coverKey) {
+        m_cover->setImage(image);
+    }
 }
 
 void GetTracksInspector::showWayOut(const core::GetLine &line)

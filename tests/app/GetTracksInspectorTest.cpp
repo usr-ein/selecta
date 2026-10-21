@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/GetTracksInspector.h"
 
+#include <QBuffer>
 #include <QCoreApplication>
+#include <QImage>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSignalSpy>
+#include <QTest>
 
 #include <gtest/gtest.h>
 
@@ -267,4 +270,233 @@ TEST(GetTracksInspector, NamesThatLookLikeMarkupShowAsTheyAre)
     waiting.peersNote = u"Selecta couldn't ask %1 for the file."_s.arg(peer);
     inspector.showLine(waiting);
     expectPlain(inspector, 2);
+}
+
+// --- the cover (P-021) ---
+
+namespace {
+
+using selecta::app::CoverArt;
+using selecta::meta::Release;
+
+Release release(const QString &cover)
+{
+    Release result;
+    result.title = u"Neon Rain"_s;
+    result.artists = {u"Okuma Drift"_s};
+    result.album = u"Neon Rain"_s;
+    if (!cover.isEmpty()) {
+        result.covers = {{QUrl(cover), 640, 640}};
+    }
+    return result;
+}
+
+GetLine withRelease(qint64 id, const QString &cover)
+{
+    GetLine line = track(id);
+    line.releaseState = GetLine::ReleaseState::Resolved;
+    line.release = release(cover);
+    return line;
+}
+
+QString coverUrl(int n)
+{
+    return u"https://i.scdn.co/image/test-cover-%1"_s.arg(n);
+}
+
+QByteArray pngBytes(int width, int height, const QColor &color = Qt::red)
+{
+    QImage image(width, height, QImage::Format_RGB32);
+    image.fill(color);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "PNG");
+    return bytes;
+}
+
+CoverArt *cover(const GetTracksInspector &inspector)
+{
+    return child<CoverArt>(inspector, u"inspector.get.cover"_s);
+}
+
+// Shows `line` and waits for the request for its cover; false when none came.
+bool shownAndAsked(GetTracksInspector &inspector, QSignalSpy &wanted, const GetLine &line)
+{
+    const qsizetype before = wanted.size();
+    inspector.showLine(line);
+    return QTest::qWaitFor([&] { return wanted.size() > before; }, 2000);
+}
+
+} // namespace
+
+TEST(GetTracksInspector, TheCoverIsAskedForOnceTheLineHasBeenShownAMoment)
+{
+    GetTracksInspector inspector;
+    QSignalSpy wanted(&inspector, &GetTracksInspector::coverWanted);
+    const GetLine line = withRelease(1, coverUrl(1));
+    inspector.showLine(line);
+    EXPECT_TRUE(wanted.isEmpty()); // not at once: arrowing through the list asks for nothing on the way
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !wanted.isEmpty(); }, 2000));
+    EXPECT_EQ(wanted.at(0).at(0).toString(), coverUrl(1));
+    EXPECT_EQ(wanted.at(0).at(0).toString(), GetTracksInspector::coverKey(*line.release));
+    EXPECT_EQ(wanted.at(0).at(1).value<Release>(), *line.release);
+
+    // The same line again (its progress changed), or another line with the same cover: not asked again.
+    GetLine moved = line;
+    moved.message = u"Searching"_s;
+    inspector.showLine(moved);
+    inspector.showLine(withRelease(2, coverUrl(1)));
+    QTest::qWait(GetTracksInspector::kCoverDelayMs * 2);
+    EXPECT_EQ(wanted.size(), 1);
+
+    // Lines passed on the way ask for nothing; the one the selection stops on does.
+    wanted.clear();
+    inspector.showLine(withRelease(3, coverUrl(3)));
+    inspector.showLine(withRelease(4, coverUrl(4)));
+    inspector.showLine(withRelease(5, coverUrl(5)));
+    ASSERT_TRUE(QTest::qWaitFor([&] { return !wanted.isEmpty(); }, 2000));
+    QTest::qWait(GetTracksInspector::kCoverDelayMs * 2);
+    ASSERT_EQ(wanted.size(), 1);
+    EXPECT_EQ(wanted.at(0).at(0).toString(), coverUrl(5));
+}
+
+TEST(GetTracksInspector, TheCoverSitsAboveTheTitleSquareAndAsWideAsThePanel)
+{
+    GetTracksInspector inspector;
+    inspector.resize(300, 900);
+    inspector.show();
+    QSignalSpy wanted(&inspector, &GetTracksInspector::coverWanted);
+    const GetLine line = withRelease(1, coverUrl(1));
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, line));
+    CoverArt *art = cover(inspector);
+    ASSERT_NE(art, nullptr);
+    EXPECT_FALSE(art->hasImage());
+    EXPECT_EQ(art->accessibleName(), u"No cover"_s);
+    QCoreApplication::processEvents();
+    const QRect placeholder = art->geometry();
+
+    inspector.showCover(coverUrl(1), pngBytes(640, 640));
+    ASSERT_TRUE(QTest::qWaitFor([&] { return art->hasImage(); }, 2000));
+    EXPECT_EQ(art->accessibleName(), u"Cover"_s);
+    QCoreApplication::processEvents();
+
+    const auto *title = child<QLabel>(inspector, u"inspector.get.title"_s);
+    ASSERT_NE(title, nullptr);
+    EXPECT_LT(art->geometry().bottom(), title->geometry().top());
+    EXPECT_EQ(art->width(), title->width()); // the panel's width, between its margins
+    EXPECT_GT(art->width(), 200);
+    EXPECT_EQ(art->height(), art->width());
+    EXPECT_EQ(art->geometry(), placeholder); // the layout doesn't jump when the cover arrives
+}
+
+TEST(GetTracksInspector, WithoutACoverThePlaceholderHoldsItsPlace)
+{
+    GetTracksInspector inspector;
+    inspector.setCoverDelay(0);
+    QSignalSpy wanted(&inspector, &GetTracksInspector::coverWanted);
+
+    // No release yet, or none: nothing to ask for.
+    GetLine pending = track(1);
+    inspector.showLine(pending);
+    GetLine none = track(2);
+    none.releaseState = GetLine::ReleaseState::None;
+    inspector.showLine(none);
+    // A release that links no cover and has no MusicBrainz ids: none can be found.
+    inspector.showLine(withRelease(3, QString()));
+    QTest::qWait(100);
+    EXPECT_TRUE(wanted.isEmpty());
+    EXPECT_TRUE(shown(inspector, u"inspector.get.cover"_s));
+    EXPECT_FALSE(cover(inspector)->hasImage());
+
+    // A release known by MusicBrainz only: the Cover Art Archive has its cover.
+    GetLine archived = withRelease(4, QString());
+    archived.release->musicBrainzReleaseId = u"c6a53877-7733-4bdb-9721-0dff076ce2ef"_s;
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, archived));
+    EXPECT_EQ(wanted.constLast().at(0).toString(), u"musicbrainz:release:c6a53877-7733-4bdb-9721-0dff076ce2ef"_s);
+    GetLine grouped = withRelease(5, QString());
+    grouped.release->musicBrainzReleaseGroupId = u"0d464138-a623-4255-bfc1-ea36f17fd374"_s;
+    EXPECT_EQ(GetTracksInspector::coverKey(*grouped.release),
+              u"musicbrainz:release-group:0d464138-a623-4255-bfc1-ea36f17fd374"_s);
+
+    // No cover found, or bytes that aren't a cover we take: the placeholder stays.
+    const QString key = wanted.constLast().at(0).toString();
+    inspector.showCover(key, {});
+    EXPECT_FALSE(cover(inspector)->hasImage());
+    const QList<QByteArray> refused = {
+        QByteArrayLiteral("<html>not found</html>"),
+        QByteArray("GIF89a\x01\x00\x01\x00", 10),
+        pngBytes(640, 640).left(60), // a valid header, then cut short
+    };
+    for (const QByteArray &bytes : refused) {
+        ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(6, coverUrl(6)))); // answered: asked again
+        inspector.showCover(coverUrl(6), bytes);
+        QTest::qWait(100);
+        EXPECT_FALSE(cover(inspector)->hasImage());
+        inspector.showLine(std::nullopt);
+    }
+
+    // Nothing selected: the placeholder, ready for the next line.
+    inspector.showLine(std::nullopt);
+    EXPECT_FALSE(cover(inspector)->hasImage());
+}
+
+TEST(GetTracksInspector, ACoverIsKeptForItsLineAndOnlyAsAskedFor)
+{
+    GetTracksInspector inspector;
+    inspector.setCoverDelay(0);
+    QSignalSpy wanted(&inspector, &GetTracksInspector::coverWanted);
+
+    // An answer nobody asked for is ignored.
+    inspector.showCover(coverUrl(9), pngBytes(64, 64));
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(9, coverUrl(9))));
+    QTest::qWait(100);
+    EXPECT_FALSE(cover(inspector)->hasImage());
+
+    // The answer for a line left meanwhile doesn't show on the next one, but is there when it comes back.
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(1, coverUrl(1))));
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(2, coverUrl(2))));
+    inspector.showCover(coverUrl(1), pngBytes(64, 64));
+    QTest::qWait(200);
+    EXPECT_FALSE(cover(inspector)->hasImage());
+    const qsizetype asked = wanted.size();
+    inspector.showLine(withRelease(1, coverUrl(1)));
+    EXPECT_TRUE(cover(inspector)->hasImage()); // at once, from memory
+    QTest::qWait(100);
+    EXPECT_EQ(wanted.size(), asked);
+
+    // A cover not found is asked for again when its line is next shown.
+    inspector.showCover(coverUrl(2), {});
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(2, coverUrl(2))));
+    EXPECT_EQ(wanted.constLast().at(0).toString(), coverUrl(2));
+}
+
+TEST(GetTracksInspector, OnlyTheLastCoversAreKept)
+{
+    GetTracksInspector inspector;
+    inspector.setCoverDelay(0);
+    QSignalSpy wanted(&inspector, &GetTracksInspector::coverWanted);
+    for (int n = 0; n <= GetTracksInspector::kCoverCacheSize; ++n) {
+        ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(n, coverUrl(n))));
+        inspector.showCover(coverUrl(n), pngBytes(32, 32));
+        ASSERT_TRUE(QTest::qWaitFor([&] { return cover(inspector)->hasImage(); }, 2000)) << n;
+    }
+    // The oldest went; the others stay.
+    inspector.showLine(withRelease(1, coverUrl(1)));
+    EXPECT_TRUE(cover(inspector)->hasImage());
+    const qsizetype asked = wanted.size();
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(0, coverUrl(0))));
+    EXPECT_EQ(wanted.size(), asked + 1);
+    EXPECT_FALSE(cover(inspector)->hasImage());
+}
+
+TEST(GetTracksInspector, AHugeCoverIsShownScaledDown)
+{
+    GetTracksInspector inspector;
+    inspector.setCoverDelay(0);
+    QSignalSpy wanted(&inspector, &GetTracksInspector::coverWanted);
+    ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(1, coverUrl(1))));
+    inspector.showCover(coverUrl(1), pngBytes(2400, 1200)); // not square either
+    ASSERT_TRUE(QTest::qWaitFor([&] { return cover(inspector)->hasImage(); }, 5000));
+    EXPECT_EQ(cover(inspector)->imageSize(), QSize(GetTracksInspector::kCoverPixels, GetTracksInspector::kCoverPixels / 2));
 }

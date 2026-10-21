@@ -965,6 +965,25 @@ void Engine::applyInboxRelease(qint64 itemId, const meta::Release &release)
         });
 }
 
+void Engine::fetchCover(const QString &key, const meta::Release &release)
+{
+    meta::CoverFetcher *covers = m_started ? m_meta->covers() : nullptr;
+    if (covers == nullptr) {
+        Q_EMIT coverFetched(key, {}); // not started, or cover downloads are off
+        return;
+    }
+    covers->fetch(release, meta::Priority::Interactive)
+        .then(this, [this, key](const meta::Result<meta::CoverImage> &cover) {
+            if (!m_started) {
+                return;
+            }
+            if (!cover.ok()) {
+                qCDebug(lcEngine).noquote() << "no cover for the inspector:" << cover.error().message;
+            }
+            Q_EMIT coverFetched(key, cover.ok() ? cover.value().bytes : QByteArray());
+        });
+}
+
 void Engine::annotate(QList<SearchResult> &results)
 {
     if (!m_started) {

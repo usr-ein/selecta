@@ -115,6 +115,7 @@ void EngineHost::start()
     });
     connect(engine, &Engine::searchOpened, this, &EngineHost::searchOpened);
     connect(engine, &Engine::inboxReleasesFound, this, &EngineHost::inboxReleasesFound);
+    connect(engine, &Engine::coverFetched, this, &EngineHost::coverFetched);
     connect(engine, &Engine::ytDlpChecked, this, &EngineHost::ytDlpChecked);
     connect(engine, &Engine::manualSearchChanged, this, [this](const ManualSearch &search) {
         const auto known = std::ranges::find(m_searches, search.id, &ManualSearch::id);
@@ -473,6 +474,11 @@ void EngineHost::findInboxReleases(qint64 itemId)
 void EngineHost::applyInboxRelease(qint64 itemId, const meta::Release &release)
 {
     post([itemId, release](Engine &engine) { engine.applyInboxRelease(itemId, release); });
+}
+
+void EngineHost::fetchCover(const QString &key, const meta::Release &release)
+{
+    post([key, release](Engine &engine) { engine.fetchCover(key, release); });
 }
 
 quint64 EngineHost::openSearch(const QString &text)
