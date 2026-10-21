@@ -16,7 +16,9 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 
+#include <filesystem>
 #include <gtest/gtest.h>
+#include <system_error>
 
 using namespace Qt::StringLiterals;
 using selecta::collection::FolderRoles;
@@ -374,7 +376,17 @@ TEST_F(CollectionServiceTest, TheListingHasEveryTrackWithItsAlbumTierAndGenre)
 TEST_F(CollectionServiceTest, HistorySaysWhenAFiledTrackCameAndWhatItCameFrom)
 {
     const QString linked = dir.filePath(u"Linked"_s);
+#ifdef Q_OS_WIN
+    // QFile::link makes a shortcut there, no link at all; a real one needs an administrator or Developer Mode.
+    std::error_code linkError;
+    std::filesystem::create_directory_symlink(QDir::toNativeSeparators(root).toStdWString(),
+                                              QDir::toNativeSeparators(linked).toStdWString(), linkError);
+    if (linkError) {
+        GTEST_SKIP() << "this user can't make symbolic links";
+    }
+#else
     ASSERT_TRUE(QFile::link(root, linked));
+#endif
     const QString realTracks = QFileInfo(tracks).canonicalFilePath();
     const QString realAlbums = QFileInfo(albums).canonicalFilePath();
     ASSERT_FALSE(realTracks.isEmpty());
