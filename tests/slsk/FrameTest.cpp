@@ -176,6 +176,21 @@ TEST(FrameReader, TakeBufferedReturnsWhatFollowsAFrame)
     EXPECT_EQ(reader.buffered(), 0);
 }
 
+TEST(FrameReader, TakeBufferedReturnsAZeroTokenAndStartsOver)
+{
+    // A token of 0 after the peer-init frame reads as an impossible frame length: the bytes still come back whole.
+    FrameReader reader(CodeWidth::Byte, 100);
+    reader.append(QByteArray(frame(peerinit::PeerInit{u"alice"_s, ConnectionType::File, 0}) +
+                             QByteArray::fromHex("00 00 00 00")));
+    const std::optional<Frame> init = reader.next();
+    ASSERT_TRUE(init.has_value());
+    EXPECT_TRUE(reader.hasError());
+    EXPECT_EQ(reader.takeBuffered(), QByteArray::fromHex("00 00 00 00"));
+    EXPECT_FALSE(reader.hasError());
+    reader.append(QByteArray::fromHex("00 00 00 00"));
+    EXPECT_EQ(reader.takeBuffered(), QByteArray::fromHex("00 00 00 00"));
+}
+
 TEST(FrameReader, CompactsConsumedBytes)
 {
     FrameReader reader(CodeWidth::Word, qsizetype{1024} * 1024);

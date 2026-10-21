@@ -135,6 +135,9 @@ QByteArray FrameReader::takeBuffered()
     m_headerChecked = false;
     m_pendingPayload = 0;
     m_pendingCode = 0;
+    // A verdict only ever concerns bytes not yet consumed: they leave with the caller, so the reader starts over. After
+    // a peer-init frame on an F connection, for one, a token of 0 reads as an impossible frame length.
+    m_error = Error::None;
     return rest;
 }
 
