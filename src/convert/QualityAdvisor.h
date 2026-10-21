@@ -100,7 +100,7 @@ enum class Badge {
 };
 
 enum class AdviceContext {
-    Filing, // the arrival pipeline (D29): lossy sources it can't improve are kept as they are
+    Filing, // the arrival pipeline (D29): MP3s it can't improve are kept as they are, other lossy files become MP3
     Manual, // the converter view (CONV-3): everything is offered, behind confirmations
 };
 
@@ -129,8 +129,10 @@ struct Advice
 
 // The quality advisor (CONV-2, CONV-6): the warning matrix of conversion §6.2. Never upsamples automatically: a rate
 // above the source's, chosen or forced (MP3 from below 44.1 kHz, other than 32 kHz), needs confirmation; lossy → lossy
-// and lossy → lossless only with explicit confirmation; a lossy source below the target is kept with a "below target"
-// badge, an MP3 is kept as it is only at the target's rate. Pure function.
+// and lossy → lossless only with explicit confirmation; an MP3 below the target is kept with a "below target" badge,
+// an MP3 is kept as it is only at the target's rate. One exception, filing to an MP3 target (P-025): every other lossy
+// format (AAC, Vorbis, Opus, WMA, MP2…) is converted, at a raised rate if MP3 can't store its own (Convert with the
+// Generation notice, and NotPlayable, Upsample or Resample when they apply). Pure function.
 Advice advise(const SourceQuality &source, const EncodeSettings &target, AdviceContext context,
               const HardwareProfile &hardware = {});
 

@@ -20,7 +20,9 @@ namespace selecta::core {
 QString sourceQualityText(const convert::SourceQuality &quality);
 
 // What the Inbox gets from a file of this quality: MP3 320 CBR (D29), or the audio kept as it is when converting it
-// can't improve it (lossy audio below the format).
+// can't improve it: an MP3 (below the format, or at it) or a lossless file the advisor won't convert unasked. Every
+// other lossy format (AAC, Vorbis, Opus, WMA…) becomes MP3 320, and so does any file whose format Selecta can't tag
+// (P-025). Pure.
 struct InboxFormat
 {
     convert::EncodeSettings settings;
