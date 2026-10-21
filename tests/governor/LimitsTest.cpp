@@ -2,7 +2,6 @@
 #include "governor/Limits.h"
 
 #include <gtest/gtest.h>
-
 #include <limits>
 
 namespace limits = selecta::governor::limits;

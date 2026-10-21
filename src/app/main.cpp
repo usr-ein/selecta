@@ -180,7 +180,8 @@ std::optional<selecta::core::CountryDatabaseOptions> countryDatabase(const Optio
 void logOpenFileLimit(qint64 atLaunch, qint64 raised)
 {
     if (raised < selecta::governor::limits::kWantedOpenFiles) {
-        qCWarning(lcApp) << "can open only" << raised << "files at once: fewer peer connections than usual";
+        qCWarning(lcApp) << "the system allows only" << raised << "open files: peer sockets are capped at"
+                         << selecta::governor::limits::socketCapFor(raised);
     } else if (raised != atLaunch) {
         qCInfo(lcApp) << "open-file limit raised from" << atLaunch << "to" << raised;
     }

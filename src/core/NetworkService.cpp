@@ -105,7 +105,7 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
     qRegisterMetaType<NetworkStatus>();
     m_permits = std::make_unique<GovernorPermits>(m_governor, m_activity, this);
     m_peers = std::make_unique<slsk::PeerNetwork>(*m_server, *m_permits);
-    // Run out of descriptors, and sockets fail and Qt aborts on its next thread: peer sockets leave the reserve alone.
+    // Sockets that take every descriptor make Qt abort when it next starts a thread (P-022): leave the reserve alone.
     const qint64 openFiles = base::openFileLimit();
     const int sockets = governor::limits::socketCapFor(openFiles);
     m_peers->setSocketLimit(sockets);

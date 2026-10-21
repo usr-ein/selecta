@@ -69,10 +69,10 @@ static_assert(kPeerLookupsPerMinute <= kPeerLookupsPerMinuteCeiling);
 
 // --- Open files (P-022) ---------------------------------------------------------------------------------------------
 // Every socket, file and pipe takes one of the process's descriptors, and a macOS app gets 256 unless it asks for more.
-// When they run out, sockets fail with "Out of resources" and Qt aborts the next time it starts a thread (each thread
-// needs a pipe). Selecta asks for kWantedOpenFiles at start-up. Peer sockets get the limit in force minus a reserve
-// for everything else (the database, logs, files being transferred or converted, worker threads, HTTP, child
-// processes), never more than kSocketsMax: the open-file limit can only lower the socket cap.
+// When they run out, sockets fail with "Out of resources" and Qt aborts the next time it starts a thread (a thread's
+// event loop needs descriptors of its own). Selecta asks for kWantedOpenFiles at start-up. Peer sockets get the limit
+// in force minus a reserve for everything else (the database, logs, files being transferred or converted, worker
+// threads, HTTP, child processes), never more than kSocketsMax: the open-file limit can only lower the socket cap.
 inline constexpr int kReservedDescriptors = 256;
 // Room for kSocketsMax and the reserve, with some to spare (Linux's usual soft limit).
 inline constexpr int kWantedOpenFiles = 1024;

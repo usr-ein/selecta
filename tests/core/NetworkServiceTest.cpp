@@ -20,9 +20,8 @@
 #include <QTest>
 #include <QThreadPool>
 
-#include <gtest/gtest.h>
-
 #include <atomic>
+#include <gtest/gtest.h>
 
 using namespace Qt::StringLiterals;
 using selecta::core::NetworkConfig;
