@@ -9,10 +9,14 @@ runs:
   steps:
     - name: Fingerprints of the passing tests
       shell: bash
+      # Only this scope's file goes in its cache: main's, restored next to it, has a cache of its own.
       run: |
-        mkdir -p build/cache/fingerprints-save
-        tools/ci/affected-tests.sh fingerprint build/linux --passed > build/cache/fingerprints-save/passed.txt
-        echo "$(wc -l < build/cache/fingerprints-save/passed.txt) passing"
+        folder=build/cache/fingerprints-save
+        file="$folder/passed-${FINGERPRINTS_SCOPE//\//-}.txt"
+        mkdir -p "$folder"
+        find "$folder" -type f ! -path "$file" -delete
+        tools/ci/affected-tests.sh fingerprint build/linux --passed > "$file"
+        echo "$(wc -l < "$file") passing"
 
     - name: Save them
       uses: actions/cache/save@v6

@@ -3,7 +3,8 @@ name: fingerprints-restore
 description: >-
   Restores the fingerprints of the tests that passed (tools/ci/affected-tests.sh): main's newest, and on a pull request
   or another branch its own newest too. Sets FINGERPRINTS_KNOWN to a file with both, empty when there are none (then
-  every test runs). ../fingerprints-save saves this run's.
+  every test runs). ../fingerprints-save saves this run's. A cache restores only into the folder it was saved from, so
+  both share build/cache/fingerprints-save, one file per scope.
 runs:
   using: composite
   steps:
@@ -30,7 +31,7 @@ runs:
     - name: Restore main's fingerprints
       uses: actions/cache/restore@v6
       with:
-        path: build/cache/fingerprints-main
+        path: build/cache/fingerprints-save
         key: test-fingerprints-linux-main-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: test-fingerprints-linux-main-
 
@@ -38,7 +39,7 @@ runs:
       if: steps.scope.outputs.scope != 'main'
       uses: actions/cache/restore@v6
       with:
-        path: build/cache/fingerprints-own
+        path: build/cache/fingerprints-save
         key: test-fingerprints-linux-${{ steps.scope.outputs.scope }}-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: test-fingerprints-linux-${{ steps.scope.outputs.scope }}-
 
@@ -46,6 +47,6 @@ runs:
       shell: bash
       run: |
         known="$RUNNER_TEMP/known-fingerprints.txt"
-        cat build/cache/fingerprints-main/passed.txt build/cache/fingerprints-own/passed.txt 2> /dev/null > "$known" || true
+        cat build/cache/fingerprints-save/*.txt 2> /dev/null > "$known" || true
         echo "FINGERPRINTS_KNOWN=$known" >> "$GITHUB_ENV"
         echo "$(wc -l < "$known") known passing fingerprints"
