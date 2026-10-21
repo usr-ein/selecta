@@ -2,6 +2,7 @@
 #include "app/Appearance.h"
 
 #include <QGuiApplication>
+#include <QPalette>
 #include <QStyleHints>
 
 using namespace Qt::StringLiterals;
@@ -49,6 +50,21 @@ void applyAppearance(Appearance appearance)
         hints->setColorScheme(Qt::ColorScheme::Dark);
         break;
     }
+}
+
+bool isDarkPalette(const QPalette &palette)
+{
+    return palette.color(QPalette::Window).lightness() < palette.color(QPalette::WindowText).lightness();
+}
+
+QColor symbolAccentColor(const QPalette &palette)
+{
+#ifdef Q_OS_MACOS
+    if (const QColor system = macSystemAccentColor(isDarkPalette(palette)); system.isValid()) {
+        return system;
+    }
+#endif
+    return palette.color(QPalette::Accent);
 }
 
 } // namespace selecta::app

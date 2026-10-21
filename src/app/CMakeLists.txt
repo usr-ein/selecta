@@ -57,8 +57,9 @@ qt_add_library(selecta_app STATIC
 add_library(Selecta::App ALIAS selecta_app)
 if(APPLE)
     # System notifications (UI-6): UNUserNotificationCenter, in Objective-C++ with ARC. System frameworks only.
-    target_sources(selecta_app PRIVATE MacNotifications.mm)
-    set_source_files_properties(MacNotifications.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    # The system accent colour in light and dark (Appearance.h), from AppKit.
+    target_sources(selecta_app PRIVATE MacNotifications.mm AppearanceMac.mm)
+    set_source_files_properties(MacNotifications.mm AppearanceMac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
     target_link_libraries(selecta_app PRIVATE "-framework UserNotifications" "-framework AppKit"
         "-framework Foundation")
 endif()

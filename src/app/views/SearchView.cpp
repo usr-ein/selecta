@@ -26,6 +26,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QScrollBar>
 #include <QSet>
 #include <QStackedWidget>
@@ -330,9 +331,20 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
 QWidget *SearchView::createFilterBar()
 {
     auto *bar = new QWidget(this);
-    auto *layout = new QHBoxLayout(bar);
-    layout->setContentsMargins(16, 10, 16, 6);
-    layout->addWidget(fieldLabel(tr("Want"), bar, m_preset));
+    auto *barLayout = new QHBoxLayout(bar);
+    barLayout->setContentsMargins(16, 10, 16, 6);
+    // What you want on the left, what you do on the right. The actions keep their room and stay in sight however
+    // narrow the view gets (beta notes: Download went off screen); the left side gives way (fitWants).
+    auto *wants = new QWidget(bar);
+    m_wants = wants;
+    wants->setObjectName(u"search.wants"_s);
+    wants->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    wants->installEventFilter(this); // fitWants on each resize
+    auto *layout = new QHBoxLayout(wants);
+    layout->setContentsMargins(0, 0, 0, 0);
+    barLayout->addWidget(wants, 1);
+    m_wantLabel = fieldLabel(tr("Want"), wants, m_preset);
+    layout->addWidget(m_wantLabel);
     m_preset->setObjectName(u"search.preset"_s);
     m_preset->setToolTip(tr("The quality you want: a preset. Get tracks and the Wishlist pick from the same ones."));
     layout->addWidget(m_preset);
@@ -373,6 +385,20 @@ QWidget *SearchView::createFilterBar()
     });
     layout->addWidget(m_grouped);
     layout->addStretch(1);
+    for (QCheckBox *box : {m_onlyRelease, m_grouped}) {
+        box->setProperty("fullText", box->text());
+        box->setProperty("fullToolTip", box->toolTip());
+        box->setAccessibleName(box->text()); // whole, even when the label is elided
+        // Laid out by its whole rect: macOS's layout rect for a box stops short of its label's last letters, which
+        // the bar's edge would then cut.
+        box->setAttribute(Qt::WA_LayoutUsesWidgetRect);
+        // Checked while hidden (a preset, a saved state): fit again, so it shows.
+        connect(box, &QCheckBox::toggled, this, [this, box](bool checked) {
+            if (checked && box->isHidden()) {
+                fitWants();
+            }
+        });
+    }
     m_filtersButton->setObjectName(u"search.filters"_s);
     m_filtersButton->setText(tr("Filters"));
     m_filtersButton->setCheckable(true);
@@ -382,7 +408,7 @@ QWidget *SearchView::createFilterBar()
         m_state.filtersShown = shown;
         m_settings.setSearchViewState(m_state);
     });
-    layout->addWidget(m_filtersButton);
+    barLayout->addWidget(m_filtersButton);
     // SRCH-14: watch for this search in the background.
     m_watch->setObjectName(u"search.wishlist"_s);
     m_watch->setToolTip(tr("Run this search again in the background and say when new files turn up"));
@@ -392,11 +418,11 @@ QWidget *SearchView::createFilterBar()
             m_engine.addToWishlist(search->text, presetLabel(), m_state.filter);
         }
     });
-    layout->addWidget(m_watch);
+    barLayout->addWidget(m_watch);
     m_download->setObjectName(u"search.download"_s);
     m_download->setToolTip(tr("Download the selected files to the Inbox, converted and tagged (Return)"));
     connect(m_download, &QPushButton::clicked, this, &SearchView::downloadSelected);
-    layout->addWidget(m_download);
+    barLayout->addWidget(m_download);
     QWidget::setTabOrder(m_watch, m_download); // Tab follows the bar, left to right
     return bar;
 }
@@ -1176,8 +1202,79 @@ void SearchView::downloadFiles(const QList<int> &selected)
     box->open();
 }
 
+void SearchView::fitWants()
+{
+    if (!m_wants || !m_wants->layout()) {
+        return;
+    }
+    giveWay();
+    m_wants->layout()->activate(); // lay it out now, at the width it has: nothing is drawn half-fitted
+}
+
+void SearchView::giveWay()
+{
+    const int available = m_wants->width();
+    QLayout *layout = m_wants->layout();
+    const auto needed = [layout] {
+        layout->invalidate();
+        return layout->minimumSize().width();
+    };
+    // Start whole, then give way: an unchecked box before a checked one (a filter in use must stay in sight), and
+    // the last box before the first.
+    QList<QCheckBox *> boxes{m_grouped, m_onlyRelease};
+    std::ranges::stable_partition(boxes, [](const QCheckBox *box) { return !box->isChecked(); });
+    for (QCheckBox *box : std::as_const(boxes)) {
+        box->setText(box->property("fullText").toString());
+        box->setToolTip(box->property("fullToolTip").toString());
+        box->setVisible(true);
+    }
+    m_presetsButton->setVisible(true);
+    m_wantLabel->setVisible(true);
+    m_preset->setVisible(true);
+    m_preset->setMinimumWidth(0); // its whole name (the layout takes its size hint)
+    for (QCheckBox *box : std::as_const(boxes)) {
+        const int over = needed() - available;
+        if (over <= 0) {
+            return;
+        }
+        const QString full = box->property("fullText").toString();
+        const QFontMetrics metrics(box->font());
+        const int shortest = metrics.horizontalAdvance(u"Only…"_s); // a word: "O…" would say nothing
+        int room = metrics.horizontalAdvance(full) - over;
+        if (room < shortest) {
+            if (!box->isChecked()) {
+                box->setVisible(false);
+                continue;
+            }
+            room = shortest; // a checked box is never hidden: it keeps a word, and the rest gives way
+        }
+        box->setText(metrics.elidedText(full, Qt::ElideRight, room));
+        box->setToolTip(full + u'\n' + box->property("fullToolTip").toString());
+    }
+    // Then the preset's name is cut down to a few letters (macOS draws a combo box's text cut, not elided; the whole
+    // name is in its list), then Presets, "Want", and at last the preset itself: the actions matter more.
+    if (needed() > available) {
+        m_preset->setMinimumWidth((m_preset->fontMetrics().averageCharWidth() * 6) + 40);
+    }
+    for (QWidget *widget : {static_cast<QWidget *>(m_presetsButton), static_cast<QWidget *>(m_wantLabel),
+                            static_cast<QWidget *>(m_preset)}) {
+        if (needed() <= available) {
+            return;
+        }
+        widget->setVisible(false);
+    }
+}
+
 bool SearchView::eventFilter(QObject *watched, QEvent *event)
 {
+    if (watched == m_wants && event->type() == QEvent::Resize) {
+        // Only a new width: what fitWants shows or hides can change the height, which mustn't fit it again.
+        const auto *resize = dynamic_cast<const QResizeEvent *>(event);
+        if (resize && resize->size().width() != resize->oldSize().width()) {
+            fitWants();
+        }
+        return false;
+    }
     if (watched == m_table && event->type() == QEvent::KeyPress) {
         const auto *key = dynamic_cast<const QKeyEvent *>(event);
         if (key && (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) &&

@@ -179,7 +179,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     , m_table(new QTreeView(this))
     , m_summary(new QLabel(this))
     , m_result(new QLabel(this))
-    , m_file(new QPushButton(tr("File"), this))
+    , m_file(new QPushButton(tr("Save to collection"), this))
     , m_trash(new QPushButton(tr("Move to Trash"), this))
     , m_inspector(new InboxInspector(engine))
 {
@@ -254,7 +254,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
             Q_EMIT convertRequested(paths);
         });
         menu.addSeparator();
-        menu.addAction(tr("File"), this, &InboxView::fileSelected)->setEnabled(m_file->isEnabled());
+        menu.addAction(tr("Save to collection"), this, &InboxView::fileSelected)->setEnabled(m_file->isEnabled());
         menu.addAction(tr("Move to Trash"), this, &InboxView::trashSelected);
         menu.exec(m_table->viewport()->mapToGlobal(position));
     });
@@ -269,7 +269,7 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
 
     auto *empty =
         new EmptyStateView(icons::symbol(u"tray.and.arrow.down"_s, u"mail-folder-inbox"_s), tr("Your Inbox is empty"),
-                           tr("Downloads land here as tagged MP3 320 files with their cover, until you file "
+                           tr("Downloads land here as tagged MP3 320 files with their cover, until you save "
                               "them into your collection."),
                            {}, m_pages);
     m_pages->addWidget(empty);
@@ -284,10 +284,11 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     bar->addWidget(m_summary, 1);
     bar->addWidget(m_trash);
     bar->addWidget(m_file);
-    auto *note = new QLabel(tr("Downloads are converted and tagged as they arrive. File moves an item into your "
-                               "collection under the names from Settings; Selecta never changes files once they are "
-                               "there."),
-                            this);
+    auto *note =
+        new QLabel(tr("Downloads are converted and tagged as they arrive. Save to collection moves an item into your "
+                      "collection under the names from Settings; Selecta never changes files once they are "
+                      "there."),
+                   this);
     note->setObjectName(u"inbox.note"_s);
     note->setWordWrap(true);
     note->setForegroundRole(QPalette::PlaceholderText);
@@ -497,7 +498,7 @@ void InboxView::refreshActions()
     const QString tracksFolder = QDir::toNativeSeparators(m_config.tracksRoot);
     const QString albumsFolder = QDir::toNativeSeparators(m_config.albumsRoot);
     m_file->setEnabled((singles && tracksChosen) || (albums && albumsChosen) || upgrades);
-    m_file->setText(selected.size() > 1 ? tr("File %1").arg(selected.size()) : tr("File"));
+    m_file->setText(selected.size() > 1 ? tr("Save %1 to collection").arg(selected.size()) : tr("Save to collection"));
     QString tip;
     if (upgrades && !singles && !albums) {
         tip = tr("Put the selection in the place of the files it upgrades, under the same names: those files go to the "
