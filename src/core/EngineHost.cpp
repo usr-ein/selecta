@@ -29,6 +29,7 @@ EngineHost::EngineHost(EngineOptions options, QObject *parent)
     qRegisterMetaType<NetworkStatus>();
     qRegisterMetaType<Preview>();
     qRegisterMetaType<CollectionStatus>();
+    qRegisterMetaType<std::shared_ptr<const CollectionListing>>();
     qRegisterMetaType<ShareStatus>();
     qRegisterMetaType<UploadEntry>();
     qRegisterMetaType<QList<UploadEntry>>();
@@ -113,6 +114,13 @@ void EngineHost::start()
         m_collectionStatus = status;
         Q_EMIT collectionStatusChanged(status);
     });
+    connect(engine, &Engine::collectionListingChanged, this,
+            [this](const std::shared_ptr<const CollectionListing> &listing) {
+                if (listing) {
+                    m_collectionListing = listing;
+                    Q_EMIT collectionListingChanged(listing);
+                }
+            });
     connect(engine, &Engine::searchOpened, this, &EngineHost::searchOpened);
     connect(engine, &Engine::inboxReleasesFound, this, &EngineHost::inboxReleasesFound);
     connect(engine, &Engine::coverFetched, this, &EngineHost::coverFetched);

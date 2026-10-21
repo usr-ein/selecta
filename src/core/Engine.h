@@ -264,6 +264,8 @@ Q_SIGNALS:
     void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    // The Collection view's listing, with every index build (CollectionService::listingChanged()).
+    void collectionListingChanged(const std::shared_ptr<const selecta::core::CollectionListing> &listing);
     void shareStatusChanged(const selecta::core::ShareStatus &status);
     void uploadsChanged(const QList<selecta::core::UploadEntry> &uploads);
     // Searches typed by hand (ManualSearchService's signals, forwarded).

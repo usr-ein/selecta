@@ -163,3 +163,37 @@ TEST_F(MigrationsTest, TheInboxMoveForgetsTheOldItemsButNotWhatHistorySays)
     // A dropped Inbox single's flag goes with it; a filed single's flag stays.
     EXPECT_EQ(rows(u"SELECT id, album_item FROM supersede_flags;"_s), QStringList{u"2|null"_s});
 }
+
+// P-010: genres join the collection index, so every file known is read once more (its signature no longer matches the
+// disk), keeping its row and id; Get tracks lines, Inbox items and History get empty upgrade marks and no verdict.
+TEST_F(MigrationsTest, TheUpgradesMigrationReadsEveryCollectionFileAgain)
+{
+    const std::span<const Migration> all = selecta::storage::selectaMigrations();
+    constexpr auto kBefore = static_cast<std::size_t>(selecta::storage::kCollectionUpgradesVersion - 1);
+    ASSERT_GT(all.size(), kBefore);
+    ASSERT_TRUE(QString::fromUtf8(all[kBefore].sql).contains(u"upgrade_of"_s));
+    ASSERT_TRUE(selecta::storage::migrate(db, all.first(kBefore)).ok());
+    ASSERT_TRUE(db.exec(uR"sql(
+        INSERT INTO collection_files (id, path, path_key, size, modified_ms, artist, title) VALUES
+            (7, '/Music/Tracks/Okuma Drift - Neon Rain.mp3', '/Music/Tracks/Okuma Drift - Neon Rain.mp3', 9, 1700,
+             'Okuma Drift', 'Neon Rain');
+        INSERT INTO get_lines (id, position, raw, dedupe_key, added_at) VALUES (1, 0, 'Okuma Drift - Neon Rain', 'k', 1);
+        INSERT INTO inbox_items (id, kind, relative_path, state, created_at) VALUES
+            (1, 'single', 'Singles/Okuma Drift - Neon Rain.mp3', 'ready', 1);
+        INSERT INTO history (id, completed_at, kind, peer, remote_path, size_bytes) VALUES
+            (1, 1, 'single', 'vinyl_ghost', X'61', 5);
+    )sql"_s))
+        << db.lastError().toStdString();
+
+    const auto result = selecta::storage::migrate(db, all);
+    ASSERT_TRUE(result.ok()) << result.error.toStdString();
+
+    EXPECT_EQ(rows(u"SELECT id, modified_ms, genre, title FROM collection_files;"_s),
+              QStringList{u"7|-1||Neon Rain"_s});
+    EXPECT_EQ(rows(u"SELECT upgrade_of FROM get_lines;"_s), QStringList{QString()});
+    EXPECT_EQ(rows(u"SELECT replaces FROM inbox_items;"_s), QStringList{QString()});
+    EXPECT_EQ(rows(u"SELECT likely_source_kbps FROM history;"_s), QStringList{u"null"_s});
+    // A verdict is a bitrate.
+    EXPECT_FALSE(db.exec(u"UPDATE history SET likely_source_kbps = 0;"_s));
+    EXPECT_TRUE(db.exec(u"UPDATE history SET likely_source_kbps = 128;"_s));
+}

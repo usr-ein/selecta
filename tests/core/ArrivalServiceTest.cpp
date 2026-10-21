@@ -511,6 +511,10 @@ TEST_F(ArrivalServiceTest, AFlacMadeFromAn128kbpsMp3SaysSo)
     EXPECT_EQ(item->qualityFindings, QStringList{u"from-lossy"_s});
     EXPECT_EQ(item->qualitySourceKbps, 128);
     EXPECT_EQ(selecta::core::spectrumBadge(*item), u"Likely from a ≈ 128 kbps MP3"_s);
+    // History keeps the verdict, so the file sits in its real quality tier once filed (P-010).
+    const QList<selecta::library::HistoryEntry> downloads = selecta::library::HistoryStore(db).downloads();
+    ASSERT_EQ(downloads.size(), 1);
+    EXPECT_EQ(downloads.constFirst().likelySourceKbps, 128);
 }
 
 TEST_F(ArrivalServiceTest, AGenuineLosslessFileArrivesCheckedWithoutFindings)

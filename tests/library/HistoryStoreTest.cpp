@@ -66,6 +66,24 @@ TEST_F(HistoryStoreTest, RoundTripsAnEntry)
     EXPECT_TRUE(loaded->filedPath.isEmpty());
 }
 
+// P-010: the spectrum check's verdict travels with the download, so a fake 320 keeps its real tier once filed.
+TEST_F(HistoryStoreTest, KeepsTheSpectrumVerdict)
+{
+    HistoryEntry fake = download("@@vinyl\\Music\\Fake 320.mp3", 2000);
+    fake.likelySourceKbps = 128;
+    HistoryEntry clean = download("@@vinyl\\Music\\Clean.mp3", 2001);
+    HistoryEntry nonsense = download("@@vinyl\\Music\\Odd.mp3", 2002);
+    nonsense.likelySourceKbps = 0; // not a bitrate: no verdict
+    const auto fakeId = store.add(fake);
+    const auto cleanId = store.add(clean);
+    const auto nonsenseId = store.add(nonsense);
+    ASSERT_TRUE(fakeId && cleanId && nonsenseId) << db.lastError().toStdString();
+    EXPECT_EQ(store.find(*fakeId)->likelySourceKbps, 128);
+    EXPECT_FALSE(store.find(*cleanId)->likelySourceKbps.has_value());
+    EXPECT_FALSE(store.find(*nonsenseId)->likelySourceKbps.has_value());
+    EXPECT_EQ(store.downloads().constFirst().likelySourceKbps, 128);
+}
+
 TEST_F(HistoryStoreTest, RemotePathsKeepTheirRawBytes)
 {
     // Peers send paths in whatever encoding their system uses; history must not mangle them.

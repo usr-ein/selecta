@@ -9,6 +9,7 @@
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -26,7 +27,7 @@ namespace keys = selecta::convert::keys;
 namespace {
 
 bool writeTrack(const QString &path, const QString &artist, const QString &title, double seconds = 4.0,
-                const QString &album = {})
+                const QString &album = {}, const QString &genre = {})
 {
     QDir().mkpath(QFileInfo(path).absolutePath());
     const QByteArray bytes = path.endsWith(u".flac"_s)
@@ -42,6 +43,9 @@ bool writeTrack(const QString &path, const QString &artist, const QString &title
     tags.set(keys::Title, title, selecta::convert::Provenance::Embedded);
     if (!album.isEmpty()) {
         tags.set(keys::Album, album, selecta::convert::Provenance::Embedded);
+    }
+    if (!genre.isEmpty()) {
+        tags.set(keys::Genre, genre, selecta::convert::Provenance::Embedded);
     }
     return selecta::convert::writeTags(path, tags).ok();
 }
@@ -289,4 +293,139 @@ TEST_F(CollectionServiceTest, OneFolderChosenIsEnoughToScan)
     service->waitForIdle();
     EXPECT_EQ(service->status().tracks, 2);
     EXPECT_EQ(service->status().roots, QStringList{tracks});
+}
+
+// --- The Collection view's listing (P-010) ---------------------------------------------------------------------------
+
+namespace {
+
+const selecta::core::CollectionTrack *trackAt(const selecta::core::CollectionListing &listing, const QString &path)
+{
+    const auto it = std::ranges::find_if(listing.tracks, [&path](const selecta::core::CollectionTrack &track) {
+        return QDir::cleanPath(track.path) == QDir::cleanPath(path);
+    });
+    return it == listing.tracks.cend() ? nullptr : &*it;
+}
+
+selecta::library::HistoryEntry filedDownload(qint64 id, const QString &filedPath, qint64 completedAt,
+                                             const QString &quality, std::optional<int> likelySourceKbps = {})
+{
+    selecta::library::HistoryEntry entry;
+    entry.id = id;
+    entry.completedAt = completedAt;
+    entry.peer = u"vinyl_ghost"_s;
+    entry.remotePath = "@@vinyl\\track"_ba;
+    entry.quality = quality;
+    entry.whereabouts = selecta::library::HistoryEntry::Whereabouts::Filed;
+    entry.filedPath = filedPath;
+    entry.likelySourceKbps = likelySourceKbps;
+    return entry;
+}
+
+} // namespace
+
+TEST_F(CollectionServiceTest, TheListingHasEveryTrackWithItsAlbumTierAndGenre)
+{
+    const QString nightfall = albums + u"/Okuma Drift - Nightfall"_s;
+    ASSERT_TRUE(writeTrack(nightfall + u"/02 Dawn.mp3"_s, u"Okuma Drift"_s, u"Dawn"_s, 4.0, u"Nightfall"_s));
+    ASSERT_TRUE(writeTrack(nightfall + u"/01 Dusk.mp3"_s, u"Okuma Drift"_s, u"Dusk"_s, 4.0, u"Nightfall"_s,
+                           u"Ambient"_s));
+    ASSERT_TRUE(writeTrack(tracks + u"/Aster Vale - Glass.mp3"_s, u"Aster Vale"_s, u"Glass"_s, 4.0, {},
+                           u"Deep House"_s));
+    const QSignalSpy listings(service.get(), &CollectionService::listingChanged);
+    service->setFolders(roles(), {});
+    service->waitForIdle();
+    EXPECT_FALSE(listings.isEmpty());
+    const std::shared_ptr<const selecta::core::CollectionListing> listing = service->listing();
+    ASSERT_TRUE(listing);
+    ASSERT_EQ(listing->tracks.size(), 5);
+    ASSERT_EQ(listing->albums.size(), 1);
+    const selecta::core::CollectionAlbum &album = listing->albums.constFirst();
+    EXPECT_EQ(album.title, u"Nightfall"_s);
+    EXPECT_EQ(album.artist, u"Okuma Drift"_s);
+    EXPECT_EQ(QDir::cleanPath(album.folder), QDir::cleanPath(nightfall));
+    EXPECT_NE(album.id, 0U);
+
+    const auto *dusk = trackAt(*listing, nightfall + u"/01 Dusk.mp3"_s);
+    const auto *dawn = trackAt(*listing, nightfall + u"/02 Dawn.mp3"_s);
+    const auto *glass = trackAt(*listing, tracks + u"/Aster Vale - Glass.mp3"_s);
+    const auto *tidewater = trackAt(*listing, tracks + u"/Halden Rue - Tidewater.flac"_s);
+    ASSERT_TRUE(dusk && dawn && glass && tidewater);
+    EXPECT_EQ(dusk->albumId, album.id);
+    EXPECT_EQ(dawn->albumId, album.id);
+    EXPECT_EQ(glass->albumId, 0U); // a loose track
+    EXPECT_EQ(dusk->genre, u"Ambient"_s);
+    EXPECT_EQ(glass->genre, u"Deep House"_s);
+    EXPECT_TRUE(dawn->genre.isEmpty());
+    EXPECT_EQ(glass->tier, selecta::core::QualityTier::Top); // the synthetic MP3s are 320
+    EXPECT_EQ(tidewater->tier, selecta::core::QualityTier::Lossless);
+    EXPECT_EQ(glass->title, u"Glass"_s);
+    EXPECT_GT(glass->sizeBytes, 0);
+    EXPECT_GT(glass->durationMs, 0);
+    // Not downloaded by Selecta: as new as the file.
+    EXPECT_EQ(glass->addedMs, QFileInfo(tracks + u"/Aster Vale - Glass.mp3"_s).lastModified().toMSecsSinceEpoch());
+    // The view names each folder by its role.
+    EXPECT_EQ(service->status().tracksFolder, tracks);
+    EXPECT_EQ(service->status().albumsFolder, albums);
+}
+
+// History says when the files Selecta filed came and what they came from. It keeps the paths FileOps reported, real
+// ones, while the folders may be chosen through a symbolic link (/var is one on macOS).
+TEST_F(CollectionServiceTest, HistorySaysWhenAFiledTrackCameAndWhatItCameFrom)
+{
+    const QString linked = dir.filePath(u"Linked"_s);
+    ASSERT_TRUE(QFile::link(root, linked));
+    const QString realTracks = QFileInfo(tracks).canonicalFilePath();
+    const QString realAlbums = QFileInfo(albums).canonicalFilePath();
+    ASSERT_FALSE(realTracks.isEmpty());
+    const QString nightfall = albums + u"/Okuma Drift - Nightfall"_s;
+    ASSERT_TRUE(writeTrack(nightfall + u"/01 Dusk.mp3"_s, u"Okuma Drift"_s, u"Dusk"_s, 4.0, u"Nightfall"_s));
+    ASSERT_TRUE(writeTrack(nightfall + u"/02 Dawn.mp3"_s, u"Okuma Drift"_s, u"Dawn"_s, 4.0, u"Nightfall"_s));
+    ASSERT_TRUE(writeTrack(tracks + u"/Aster Vale - Glass.mp3"_s, u"Aster Vale"_s, u"Glass"_s));
+    service->setHistory({
+        // An MP3 Selecta made from a FLAC download.
+        filedDownload(1, realTracks + u"/Okuma Drift - Neon Rain.mp3"_s, 1'700'000'000'000, u"FLAC 16/44.1"_s),
+        // An album made from FLAC files: one entry per file, filed as its folder.
+        filedDownload(2, realAlbums + u"/Okuma Drift - Nightfall"_s, 1'700'000'100'000, u"FLAC 16/44.1"_s),
+        filedDownload(3, realAlbums + u"/Okuma Drift - Nightfall"_s, 1'700'000'200'000, u"FLAC 24/96"_s),
+        // A file filed once, then replaced by an upgrade the spectrum check found to be a fake 320: the newest says.
+        filedDownload(4, realTracks + u"/Aster Vale - Glass.mp3"_s, 1'600'000'000'000, u"FLAC 16/44.1"_s),
+        filedDownload(5, realTracks + u"/Aster Vale - Glass.mp3"_s, 1'700'000'300'000, u"MP3 320"_s, 128),
+    });
+    service->setFolders(FolderRoles(linked + u"/Tracks"_s, linked + u"/Albums"_s), {});
+    service->waitForIdle();
+    const std::shared_ptr<const selecta::core::CollectionListing> listing = service->listing();
+    ASSERT_TRUE(listing);
+    ASSERT_EQ(listing->tracks.size(), 5);
+
+    const auto *neonRain = trackAt(*listing, linked + u"/Tracks/Okuma Drift - Neon Rain.mp3"_s);
+    const auto *dusk = trackAt(*listing, linked + u"/Albums/Okuma Drift - Nightfall/01 Dusk.mp3"_s);
+    const auto *glass = trackAt(*listing, linked + u"/Tracks/Aster Vale - Glass.mp3"_s);
+    const auto *tidewater = trackAt(*listing, linked + u"/Tracks/Halden Rue - Tidewater.flac"_s);
+    ASSERT_TRUE(neonRain && dusk && glass && tidewater);
+    EXPECT_EQ(neonRain->tier, selecta::core::QualityTier::Lossless);
+    EXPECT_EQ(neonRain->addedMs, 1'700'000'000'000);
+    EXPECT_EQ(dusk->tier, selecta::core::QualityTier::Lossless);
+    EXPECT_EQ(dusk->addedMs, 1'700'000'200'000); // the album's newest file
+    EXPECT_EQ(glass->tier, selecta::core::QualityTier::Below192);
+    EXPECT_EQ(glass->addedMs, 1'700'000'300'000);
+    EXPECT_EQ(tidewater->tier, selecta::core::QualityTier::Lossless); // a FLAC Selecta didn't download
+    EXPECT_EQ(tidewater->addedMs,
+              QFileInfo(tracks + u"/Halden Rue - Tidewater.flac"_s).lastModified().toMSecsSinceEpoch());
+}
+
+// An album of lossy downloads isn't "from lossless", even when one of its files was.
+TEST_F(CollectionServiceTest, AnAlbumIsFromLosslessOnlyWhenAllItsDownloadsWere)
+{
+    const QString nightfall = albums + u"/Okuma Drift - Nightfall"_s;
+    ASSERT_TRUE(writeTrack(nightfall + u"/01 Dusk.mp3"_s, u"Okuma Drift"_s, u"Dusk"_s, 4.0, u"Nightfall"_s));
+    const QString realAlbum = QFileInfo(nightfall).canonicalFilePath();
+    service->setHistory({filedDownload(1, realAlbum, 1'700'000'000'000, u"FLAC 16/44.1"_s),
+                         filedDownload(2, realAlbum, 1'700'000'000'001, u"MP3 320"_s)});
+    service->setFolders(roles(), {});
+    service->waitForIdle();
+    const auto *dusk = trackAt(*service->listing(), nightfall + u"/01 Dusk.mp3"_s);
+    ASSERT_NE(dusk, nullptr);
+    EXPECT_EQ(dusk->tier, selecta::core::QualityTier::Top);
+    EXPECT_EQ(dusk->addedMs, 1'700'000'000'001);
 }

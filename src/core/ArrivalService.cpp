@@ -489,6 +489,7 @@ void ArrivalService::record(const Outcome &outcome)
     entry.title = item.title;
     entry.inboxItem = id;
     entry.whereabouts = library::HistoryEntry::Whereabouts::Inbox;
+    entry.likelySourceKbps = item.qualitySourceKbps; // a fake 320 keeps its real tier once filed (P-010)
     if (!library::HistoryStore(m_db).add(entry)) {
         qCWarning(lcArrival) << "couldn't record the download in the history:" << m_db.lastError();
     }

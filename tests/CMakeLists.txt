@@ -70,6 +70,7 @@ if(SELECTA_WITH_MEDIA)
             core/AlbumServiceTest.cpp
             core/ArrivalServiceTest.cpp
             core/BrowseServiceTest.cpp
+            core/CollectionBrowseTest.cpp
             core/CollectionServiceTest.cpp
             core/CountryDatabaseTest.cpp
             core/ConverterServiceTest.cpp

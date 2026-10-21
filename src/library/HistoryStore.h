@@ -36,6 +36,10 @@ struct HistoryEntry
     std::optional<qint64> inboxItem; // cleared when the Inbox item goes
     Whereabouts whereabouts = Whereabouts::Inbox;
     QString filedPath; // where it was filed, for Whereabouts::Filed
+    // The spectrum check's verdict on the file as downloaded (PRD PREV-9): the bitrate of the lossy file it was likely
+    // made from. Unset when the check didn't run or found no such thing. A fake 320 stays in its real quality tier
+    // once filed (P-010).
+    std::optional<int> likelySourceKbps;
 };
 
 // One peer's downloads in the history (PRD FAIR-1).

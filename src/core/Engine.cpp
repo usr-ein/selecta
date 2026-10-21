@@ -215,6 +215,8 @@ bool Engine::start()
     connect(m_inbox.get(), &InboxService::finished, this, [this](qint64 /*id*/, bool ok) {
         if (ok) {
             refreshSupersedeFlags(); // a flagged single filed or trashed takes its flag along
+            // Where History says the files went: when a filed track came and what it came from (P-010).
+            m_collection->setHistory(library::HistoryStore(*m_db).downloads());
         }
     });
     connect(m_albums.get(), &AlbumService::reported, this, &Engine::albumReported);
@@ -263,6 +265,7 @@ bool Engine::start()
     collectionOptions.watch = m_options.watchCollection;
     m_collection = std::make_unique<CollectionService>(*m_db, collectionOptions, m_options.wallClock);
     connect(m_collection.get(), &CollectionService::statusChanged, this, &Engine::collectionStatusChanged);
+    connect(m_collection.get(), &CollectionService::listingChanged, this, &Engine::collectionListingChanged);
     // Sharing: the collection, read-only (D12).
     m_shares = std::make_unique<ShareService>(*m_db, *m_governor, *m_network, *m_activity, *m_clock, m_options.session,
                                               m_options.wallClock);
