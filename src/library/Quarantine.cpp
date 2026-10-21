@@ -104,19 +104,20 @@ QString agentOf(const QString &path)
     return fields.size() > 2 ? QString::fromUtf8(fields.at(2)) : QString();
 }
 
+#ifdef Q_OS_MACOS
 bool mark(const QString &path, QString *error)
 {
-#ifdef Q_OS_MACOS
     if (attributeSize(QFile::encodeName(path)) > 0) {
         return true; // kept as it is: it may record that the user allowed the file to open
     }
     return write(path, selectaValue(), error);
-#else
-    Q_UNUSED(path);
-    Q_UNUSED(error);
-    return true;
-#endif
 }
+#else
+bool mark(const QString & /*path*/, QString * /*error*/)
+{
+    return true; // no attribute on this platform: nothing to mark, nothing to report
+}
+#endif
 
 bool markTree(const QString &folder, QString *error)
 {
@@ -137,17 +138,17 @@ bool markTree(const QString &folder, QString *error)
     return ok;
 }
 
+#ifdef Q_OS_MACOS
 bool copy(const QString &from, const QString &to, QString *error)
 {
-#ifdef Q_OS_MACOS
     const QByteArray attribute = value(from);
     return attribute.isEmpty() || write(to, attribute, error);
-#else
-    Q_UNUSED(from);
-    Q_UNUSED(to);
-    Q_UNUSED(error);
-    return true;
-#endif
 }
+#else
+bool copy(const QString & /*from*/, const QString & /*to*/, QString * /*error*/)
+{
+    return true; // no attribute on this platform: nothing to copy
+}
+#endif
 
 } // namespace selecta::library::quarantine
