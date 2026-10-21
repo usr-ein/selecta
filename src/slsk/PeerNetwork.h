@@ -184,6 +184,12 @@ Q_SIGNALS:
     void requestFailed(const QString &username, selecta::slsk::PeerRequest request, quint32 token,
                        selecta::slsk::PeerError error);
 
+    // A message from `username` on a `P` connection couldn't be read (malformed, or a string over
+    // protocol::kStringMaxBytes) and was dropped; the connection stays. Emitted for every such message, alongside
+    // requestFailed() when it was the answer to a request of ours: the receiver decides how often to tell the user.
+    // A share list over its inflate cap isn't unreadable (requestFailed() with TooLarge only).
+    void peerMessageDropped(const QString &username, quint32 code);
+
     // Peers' requests we answered (for the activity log; the answers came from the providers).
     void sharedFileListRequested(const QString &username);
     void userInfoRequested(const QString &username);

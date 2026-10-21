@@ -250,6 +250,81 @@ TEST_F(NetworkServiceTest, ARefusedPeerLookupIsLoggedWithItsReason)
     EXPECT_TRUE(newest[0].explanation.contains(u"Selecta held it back: "_s));
 }
 
+// --- P-032: unreadable peer messages ---------------------------------------------------------------------------------
+
+TEST_F(NetworkServiceTest, AnUnreadablePeerMessageIsLoggedOncePerPeer)
+{
+    quint16 listenPort = 0;
+    {
+        QTcpServer probe; // a free port for the listener
+        ASSERT_TRUE(probe.listen(QHostAddress::LocalHost, 0));
+        listenPort = probe.serverPort();
+    }
+    NetworkConfig withPort = config(u"127.0.0.1"_s, 1); // nothing listens on port 1: the session never starts
+    withPort.listenPort = listenPort;
+    service->start(withPort);
+    service->setPassword(u"pw"_s); // the attempt opens the listener
+    ASSERT_TRUE(settle([&] { return service->peers().listenPort() != 0; }));
+
+    using selecta::slsk::CodeWidth;
+    using selecta::slsk::encodeFrame;
+    const QSignalSpy dropped(&service->peers(), &selecta::slsk::PeerNetwork::peerMessageDropped);
+    QTcpSocket alice;
+    alice.connectToHost(QHostAddress::LocalHost, service->peers().listenPort());
+    ASSERT_TRUE(alice.waitForConnected(3000));
+    alice.write(
+        selecta::slsk::frame(selecta::slsk::peerinit::PeerInit{u"alice"_s, selecta::slsk::ConnectionType::Peer, 0}));
+    // Three QueueUploads Selecta can't read: a path over the string cap, twice, and a truncated one.
+    const selecta::slsk::peer::QueueUpload oversize{
+        selecta::slsk::RemotePath{QByteArray(selecta::slsk::protocol::kStringMaxBytes + 1, 'p')}};
+    alice.write(selecta::slsk::frame(oversize));
+    alice.write(selecta::slsk::frame(oversize));
+    alice.write(encodeFrame(CodeWidth::Word, 43, QByteArray::fromHex("ff ff ff ff")));
+    ASSERT_TRUE(settle([&] { return dropped.size() == 3; }));
+    EXPECT_EQ(alice.state(), QAbstractSocket::ConnectedState); // the connection stays
+
+    const auto entries = selecta::core::ActivityLog::recent(db, 100);
+    qsizetype lines = 0;
+    for (const selecta::core::ActivityEntry &entry : entries) {
+        if (entry.operation == u"peer-message"_s) {
+            ++lines;
+            EXPECT_EQ(entry.subject, u"alice"_s);
+            EXPECT_EQ(entry.outcome, u"unreadable"_s);
+            EXPECT_TRUE(entry.explanation.startsWith(u"alice sent a message Selecta couldn't read (code 43)"_s))
+                << entry.explanation.toStdString();
+            EXPECT_EQ(selecta::core::ActivityLog::describe(entry), entry.explanation);
+        }
+    }
+    EXPECT_EQ(lines, 1);
+    service->disconnectNow();
+}
+
+TEST_F(NetworkServiceTest, UnreadableMessageLinesAreBoundedAcrossPeers)
+{
+    selecta::slsk::PeerNetwork &peers = service->peers();
+    const auto peerLines = [&] {
+        qsizetype lines = 0;
+        const QList<selecta::core::ActivityEntry> entries = selecta::core::ActivityLog::recent(db, 5000);
+        for (const selecta::core::ActivityEntry &entry : entries) {
+            lines += entry.operation == u"peer-message"_s ? 1 : 0;
+        }
+        return lines;
+    };
+    Q_EMIT peers.peerMessageDropped(u"bob"_s, 9);
+    Q_EMIT peers.peerMessageDropped(u"bob"_s, 5);
+    Q_EMIT peers.peerMessageDropped(u"carol"_s, 9);
+    EXPECT_EQ(peerLines(), 2);
+    // A swarm of peers each sending one bad message: the lines stop at a bound rather than grow with the swarm.
+    for (int i = 0; i < 2000; ++i) {
+        Q_EMIT peers.peerMessageDropped(u"swarm%1"_s.arg(i), 9);
+    }
+    const qsizetype bounded = peerLines();
+    EXPECT_GE(bounded, 100);
+    EXPECT_LT(bounded, 2002);
+    Q_EMIT peers.peerMessageDropped(u"late"_s, 9);
+    EXPECT_EQ(peerLines(), bounded);
+}
+
 // --- P-022: peer sockets leave descriptors for the rest of the app ---------------------------------------------------
 
 namespace {

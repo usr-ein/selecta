@@ -94,6 +94,9 @@ private:
 // service is made (governor::limits::socketCapFor()), so a burst of them can't take the descriptors the rest of the app
 // needs (P-022): raise the limit first (base::raiseOpenFileLimit()).
 //
+// A peer message that couldn't be read (malformed, or a string over slsk's cap) is dropped by slsk; the activity log
+// gets one line for the first one from each peer while the service lives, never one per message.
+//
 // Threading: engine thread. Ownership: owns the slsk components; the Governor, activity log and token store outlive it.
 class NetworkService : public QObject
 {
@@ -188,6 +191,7 @@ private:
     void updatePortMapping();
     // The port peers should dial: the router's external port when it mapped another one.
     quint16 advertisedPort() const;
+    void peerMessageDropped(const QString &username, quint32 code);
     void log(const QString &outcome, const QString &explanation);
 
     governor::Governor &m_governor;
@@ -210,7 +214,8 @@ private:
     int m_passwordGeneration = 0; // drops a stored password read that a typed password replaced
     NetworkStatus m_status;
     std::unique_ptr<PortMapper> m_portMapper;
-    QSet<QString> m_reachedBy; // peers that connected to our listening port (bounded: kReachedByMax)
+    QSet<QString> m_reachedBy;      // peers that connected to our listening port (bounded: kReachedByMax)
+    QSet<QString> m_unreadableFrom; // peers whose unreadable message is in the activity log (bounded)
 };
 
 } // namespace selecta::core

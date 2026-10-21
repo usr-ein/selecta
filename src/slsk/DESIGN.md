@@ -60,6 +60,10 @@ when or how often to send, never touches files, never decides what is shared, an
   stays. Framing violations (a length over the channel's cap, or too short to hold the code) close the connection.
   Unknown codes are skipped by length. Optional trailing fields are read only if bytes remain; extra trailing bytes
   are ignored. Lists are checked against the bytes that remain before anything is reserved.
+- Every string is capped at 64 KiB (`protocol::kStringMaxBytes`; the user-info picture, a binary blob, is bounded by
+  its frame instead). A longer one makes its message malformed, even inside an optional trailing field, so a hostile
+  name never reaches code that copies it once per file. A malformed message on a `P` connection is reported with
+  `PeerNetwork::peerMessageDropped`; `core::NetworkService` logs the first one from each peer in the activity log.
 - Caps (protocol §12.4): server 16 MiB; peer-init 16 KiB; peer 1 MiB; search results, folder contents and unknown
   peer codes 16 MiB (128 MiB inflated); share list 256 MiB (1 GiB inflated) and user info 16 MiB **only while we
   wait for one from that user**, otherwise the connection closes; distributed 16 KiB.

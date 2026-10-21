@@ -241,6 +241,7 @@ public:
     void answerRequest(quint64 id, const Frame &f);
     void handleSearchResults(const QString &username, const QByteArray &payload, const QHostAddress &address) const;
     void handleShareList(const QString &username, const QByteArray &payload);
+    void shareListFailed(const QString &username, bool tooLarge) const;
     void handleUserInfo(const QString &username, const QByteArray &payload);
     void handleFolderContents(const QString &username, const QByteArray &payload);
     void forwardTransferMessage(const QString &username, const Frame &f);
@@ -1141,7 +1142,8 @@ void PeerNetworkPrivate::answerRequest(quint64 id, const Frame &f)
     }
     const std::optional<peer::FolderContentsRequest> request = peer::FolderContentsRequest::decode(f.payload);
     if (!request) {
-        qCDebug(lcSlskPeer) << "dropped malformed FolderContentsRequest";
+        qCDebug(lcSlskPeer).noquote() << "dropped malformed FolderContentsRequest from" << username;
+        Q_EMIT q->peerMessageDropped(username, f.code);
         return;
     }
     Q_EMIT q->folderContentsRequested(username, request->folder);
@@ -1168,6 +1170,7 @@ void PeerNetworkPrivate::handleSearchResults(const QString &username, const QByt
     const std::optional<peer::FileSearchResponse> response = peer::FileSearchResponse::decode(payload);
     if (!response) {
         qCDebug(lcSlskPeer).noquote() << "dropped malformed search results from" << username;
+        Q_EMIT q->peerMessageDropped(username, static_cast<quint32>(PeerCode::FileSearchResponse));
         return;
     }
     Q_EMIT q->searchResponseReceived(username, *response, address);
@@ -1182,6 +1185,7 @@ void PeerNetworkPrivate::handleUserInfo(const QString &username, const QByteArra
     if (info) {
         Q_EMIT q->userInfoReceived(username, *info);
     } else {
+        Q_EMIT q->peerMessageDropped(username, static_cast<quint32>(PeerCode::UserInfoResponse));
         Q_EMIT q->requestFailed(username, PeerRequest::UserInfo, 0, PeerError::ProtocolError);
     }
 }
@@ -1191,6 +1195,7 @@ void PeerNetworkPrivate::handleFolderContents(const QString &username, const QBy
     const std::optional<peer::FolderContentsResponse> contents = peer::FolderContentsResponse::decode(payload);
     if (!contents) {
         qCDebug(lcSlskPeer).noquote() << "dropped malformed folder contents from" << username;
+        Q_EMIT q->peerMessageDropped(username, static_cast<quint32>(PeerCode::FolderContentsResponse));
         return;
     }
     const auto pending = pendingFolders.constFind(contents->token);
@@ -1207,6 +1212,7 @@ void PeerNetworkPrivate::forwardTransferMessage(const QString &username, const F
     const Decoded<PeerMessage> decoded = decodePeer(f.code, f.payload);
     if (decoded.status == DecodeStatus::Malformed) {
         qCWarning(lcSlskPeer).noquote() << "dropped malformed peer message from" << username << "code" << f.code;
+        Q_EMIT q->peerMessageDropped(username, f.code);
         return;
     }
     if (!decoded.ok() || !decoded.message) {
@@ -1238,6 +1244,15 @@ void PeerNetworkPrivate::forwardTransferMessage(const QString &username, const F
         *decoded.message);
 }
 
+void PeerNetworkPrivate::shareListFailed(const QString &username, bool tooLarge) const
+{
+    if (!tooLarge) {
+        Q_EMIT q->peerMessageDropped(username, static_cast<quint32>(PeerCode::SharedFileListResponse));
+    }
+    Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0,
+                            tooLarge ? PeerError::TooLarge : PeerError::ProtocolError);
+}
+
 void PeerNetworkPrivate::handleShareList(const QString &username, const QByteArray &payload)
 {
     if (!pendingBrowse.remove(username)) {
@@ -1250,8 +1265,7 @@ void PeerNetworkPrivate::handleShareList(const QString &username, const QByteArr
         if (response) {
             Q_EMIT q->sharedFileListReceived(username, response->list);
         } else {
-            Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0,
-                                    tooLarge ? PeerError::TooLarge : PeerError::ProtocolError);
+            shareListFailed(username, tooLarge);
         }
         return;
     }
@@ -1265,8 +1279,7 @@ void PeerNetworkPrivate::handleShareList(const QString &username, const QByteArr
         if (result.list) {
             Q_EMIT q->sharedFileListReceived(username, *result.list);
         } else {
-            Q_EMIT q->requestFailed(username, PeerRequest::SharedFileList, 0,
-                                    result.tooLarge ? PeerError::TooLarge : PeerError::ProtocolError);
+            shareListFailed(username, result.tooLarge);
         }
     });
     watcher->setFuture(promise->future());

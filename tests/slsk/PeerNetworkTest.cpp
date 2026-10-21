@@ -525,6 +525,7 @@ TEST_F(PeerNetworkTest, ShareListOverItsCapFailsAsTooLarge)
     };
     const QSignalSpy failed(&peers, &PeerNetwork::requestFailed);
     const QSignalSpy lists(&peers, &PeerNetwork::sharedFileListReceived);
+    const QSignalSpy dropped(&peers, &PeerNetwork::peerMessageDropped);
     ASSERT_TRUE(peers.requestSharedFileList(u"alice"_s, permit(Operation::Browse)));
     ASSERT_TRUE(waitFor([&] { return !failed.isEmpty(); }));
     ASSERT_EQ(failed.size(), 1); // once: not also as "connection closed"
@@ -534,6 +535,7 @@ TEST_F(PeerNetworkTest, ShareListOverItsCapFailsAsTooLarge)
     settle(100ms);
     EXPECT_EQ(failed.size(), 1);
     EXPECT_TRUE(lists.isEmpty());
+    EXPECT_TRUE(dropped.isEmpty()); // too large isn't unreadable
 }
 
 TEST_F(PeerNetworkTest, MalformedShareListFailsAsAProtocolError)
@@ -547,22 +549,83 @@ TEST_F(PeerNetworkTest, MalformedShareListFailsAsAProtocolError)
         }
     };
     const QSignalSpy failed(&peers, &PeerNetwork::requestFailed);
+    const QSignalSpy dropped(&peers, &PeerNetwork::peerMessageDropped);
     ASSERT_TRUE(peers.requestSharedFileList(u"alice"_s, permit(Operation::Browse)));
     ASSERT_TRUE(waitFor([&] { return !failed.isEmpty(); }));
     EXPECT_EQ(failed.at(0).at(3).value<PeerError>(), PeerError::ProtocolError);
+    ASSERT_EQ(dropped.size(), 1);
+    EXPECT_EQ(dropped.at(0).at(0).toString(), u"alice"_s);
+    EXPECT_EQ(dropped.at(0).at(1).toUInt(), static_cast<quint32>(PeerCode::SharedFileListResponse));
+}
+
+TEST_F(PeerNetworkTest, ShareListWithAnOversizeNameFailsAsUnreadable)
+{
+    const auto alice = makePeer(u"alice"_s);
+    // One huge folder path over many files: the list is refused whole, before anything copies the path.
+    SharedDirectory folder;
+    folder.path.raw = QByteArray(protocol::kStringMaxBytes + 1, 'f');
+    for (int i = 0; i < 1000; ++i) {
+        folder.files.append(selecta::slsk::testing::sampleFile(i));
+    }
+    alice->shares.directories = {folder};
+    const QSignalSpy failed(&peers, &PeerNetwork::requestFailed);
+    const QSignalSpy lists(&peers, &PeerNetwork::sharedFileListReceived);
+    const QSignalSpy dropped(&peers, &PeerNetwork::peerMessageDropped);
+    ASSERT_TRUE(peers.requestSharedFileList(u"alice"_s, permit(Operation::Browse)));
+    ASSERT_TRUE(waitFor([&] { return !failed.isEmpty(); }));
+    EXPECT_EQ(failed.at(0).at(3).value<PeerError>(), PeerError::ProtocolError);
+    ASSERT_EQ(dropped.size(), 1);
+    EXPECT_EQ(dropped.at(0).at(1).toUInt(), static_cast<quint32>(PeerCode::SharedFileListResponse));
+    EXPECT_TRUE(lists.isEmpty());
+}
+
+TEST_F(PeerNetworkTest, SearchResultsWithAnOversizeNameAreDropped)
+{
+    const auto alice = makePeer(u"alice"_s);
+    const QSignalSpy results(&peers, &PeerNetwork::searchResponseReceived);
+    const QSignalSpy dropped(&peers, &PeerNetwork::peerMessageDropped);
+    peers.openSearch(77);
+    peer::FileSearchResponse response;
+    response.username = u"alice"_s;
+    response.token = 77;
+    FileEntry huge = selecta::slsk::testing::sampleFile(0);
+    huge.name.raw = QByteArray(protocol::kStringMaxBytes + 1, 'n');
+    response.results = {selecta::slsk::testing::sampleFile(1), huge};
+    const quint64 bad =
+        alice->connectTo(u"selecta"_s, QHostAddress::LocalHost, peers.listenPort(), ConnectionType::Peer);
+    alice->send(bad, frame(response));
+    ASSERT_TRUE(waitFor([&] { return dropped.size() == 1; }));
+    EXPECT_EQ(dropped.at(0).at(0).toString(), u"alice"_s);
+    EXPECT_EQ(dropped.at(0).at(1).toUInt(), static_cast<quint32>(PeerCode::FileSearchResponse));
+    // The search goes on: the next answer is read.
+    response.results = {selecta::slsk::testing::sampleFile(1)};
+    const quint64 good =
+        alice->connectTo(u"selecta"_s, QHostAddress::LocalHost, peers.listenPort(), ConnectionType::Peer);
+    alice->send(good, frame(response));
+    ASSERT_TRUE(waitFor([&] { return results.size() == 1; }));
+    EXPECT_EQ(results.at(0).at(1).value<peer::FileSearchResponse>().results.size(), 1);
+    EXPECT_EQ(dropped.size(), 1);
 }
 
 TEST_F(PeerNetworkTest, MalformedAndUnknownMessagesAreSkipped)
 {
     const auto alice = makePeer(u"alice"_s);
     const QSignalSpy queued(&peers, &PeerNetwork::queueUploadReceived);
+    const QSignalSpy dropped(&peers, &PeerNetwork::peerMessageDropped);
     const quint64 c = alice->connectTo(u"selecta"_s, QHostAddress::LocalHost, peers.listenPort(), ConnectionType::Peer);
     alice->send(c, encodeFrame(CodeWidth::Word, 43, QByteArray::fromHex("ff ff ff ff"))); // malformed QueueUpload
     alice->send(c, encodeFrame(CodeWidth::Word, 999, "unknown"));
     alice->send(c, encodeFrame(CodeWidth::Word, 47, "obsolete"));
+    alice->send(c, frame(peer::QueueUpload{RemotePath{QByteArray(protocol::kStringMaxBytes + 1, 'p')}}));
     alice->send(c, frame(peer::QueueUpload{RemotePath::fromText(u"Music\\a.mp3"_s)}));
     ASSERT_TRUE(waitFor([&] { return queued.size() == 1; }));
     EXPECT_TRUE(alice->isOpen(c));
+    // The two QueueUploads that couldn't be read; unknown and obsolete codes aren't unreadable.
+    ASSERT_EQ(dropped.size(), 2);
+    for (const QList<QVariant> &signal : dropped) {
+        EXPECT_EQ(signal.at(0).toString(), u"alice"_s);
+        EXPECT_EQ(signal.at(1).toUInt(), 43U);
+    }
 }
 
 TEST_F(PeerNetworkTest, TransferMessagesBecomeSignals)

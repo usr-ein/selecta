@@ -27,7 +27,8 @@ using Event = governor::ReconnectPolicy::Event;
 using EndReason = slsk::ServerSession::EndReason;
 using State = NetworkStatus::State;
 
-constexpr qsizetype kReachedByMax = 10'000; // peers counted for the reachability line; more prove nothing new
+constexpr qsizetype kReachedByMax = 10'000;     // peers counted for the reachability line; more prove nothing new
+constexpr qsizetype kUnreadableFromMax = 1'000; // peers whose unreadable messages were logged; past it, no more lines
 
 // How a session ended, as the reconnect policy sees it.
 std::optional<Event> eventFor(EndReason reason)
@@ -160,6 +161,7 @@ NetworkService::NetworkService(governor::Governor &governor, ActivityLog &activi
         m_status.peersReachedUs = static_cast<int>(m_reachedBy.size());
         Q_EMIT statusChanged(m_status);
     });
+    connect(m_peers.get(), &slsk::PeerNetwork::peerMessageDropped, this, &NetworkService::peerMessageDropped);
     connect(
         m_peers.get(), &slsk::PeerNetwork::searchResponseReceived, this,
         [this](const QString &username, const slsk::peer::FileSearchResponse &response, const QHostAddress &address) {
@@ -200,6 +202,20 @@ NetworkService::~NetworkService()
     m_peers.reset(); // uses the session and the permits
     m_permits.reset();
     m_server.reset();
+}
+
+void NetworkService::peerMessageDropped(const QString &username, quint32 code)
+{
+    // One line per peer while Selecta runs: a peer sending a stream of bad messages mustn't flood the log.
+    if (m_unreadableFrom.size() >= kUnreadableFromMax || m_unreadableFrom.contains(username)) {
+        return;
+    }
+    m_unreadableFrom.insert(username);
+    m_activity.record(u"peer-message"_s, username, u"unreadable"_s,
+                      tr("%1 sent a message Selecta couldn't read (code %2), so it was dropped. Any more like it from "
+                         "%1 are dropped without a new line.")
+                          .arg(username)
+                          .arg(code));
 }
 
 void NetworkService::log(const QString &outcome, const QString &explanation)
