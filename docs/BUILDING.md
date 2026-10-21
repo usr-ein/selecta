@@ -55,6 +55,7 @@ jobs that take longer, or need macOS or Windows, run after the merge on `main`, 
 | Linux · build, tests | `ubuntu-26.04` | everything | The `linux` preset with Clang and warnings as errors, then the tests in a network namespace that has only loopback: on a pull request, only those whose code or inputs changed; elsewhere the whole suite |
 | Linux · lint 1, 2, 3 | `ubuntu-26.04` | everything | `tools/lint.sh --changed` on the files the pull request (or the push) changes, split in up to three shares of about fifteen files; the whole tree at night and on request |
 | macOS · build, tests, static linking | `macos-26` | `main`, nightly | The `dev` preset with warnings as errors, the whole suite, and that the app and `selecta-cli` load only system libraries |
+| macOS · lint (.mm) | `macos-26` | pushes to `main` | `tools/lint.sh` on the Objective-C++ files (`git ls-files '*.mm'`), which Linux can't compile |
 | Windows · build, tests | `windows-2025` | `main`, nightly | The `windows` preset with MSVC, without the media libraries (so no engine or app), warnings not fatal |
 | Linux · asan | `ubuntu-26.04` | nightly, on request | The `linux-asan` preset: the whole suite under AddressSanitizer + UBSan |
 
@@ -62,8 +63,9 @@ Before its pull request, a minion builds and runs the targeted tests on the Mac 
 macOS-only code a pull request's CI no longer sees (Objective-C++, Keychain, the Trash, the bundle, Apple Clang's
 warnings). `main`'s run builds and tests all of it after the merge, and a red `main` gets a fix-forward minion at once.
 
-Lint runs on Linux only (maintainer, 2026-10-21): macOS on `main` is build and tests. Linux can't analyse the macOS-only
-code (`.mm` files, `Q_OS_MACOS` branches), so the minion's own `tools/lint.sh` on the Mac is what checks it.
+Lint runs on Linux (maintainer, 2026-10-21), except the `.mm` files: Linux can't compile Objective-C++, so macOS lints
+them on pushes to `main`. The `Q_OS_MACOS` branches of C++ files stay out of Linux's sight: the minion's own
+`tools/lint.sh` on the Mac is what checks them. cppcheck doesn't read Objective-C++, so it skips `.mm` files.
 
 Each job runs the same presets as a local build, so `cmake --workflow --preset dev`, `tools/lint.sh` and the `asan`
 preset reproduce it on the Mac. Linux builds Selecta with Clang (its dependencies keep the system's GCC); upstream Clang
@@ -122,7 +124,7 @@ gh run list --branch <branch> --limit 5
 gh run view <run-id>                       # jobs and steps
 gh run view <run-id> --log-failed          # logs of the failed steps, once the whole run has finished
 gh run download <run-id> -n linux-test-log # LastTest.log of a failed test step: also macos-, windows-, asan-test-log
-gh run download <run-id> -n lint-logs-1    # clang-tidy.log and clazy.log of lint share 1
+gh run download <run-id> -n lint-logs-1    # clang-tidy.log and clazy.log of lint share 1 (macos-lint-logs: .mm)
 ```
 
 ## Inspecting a running Selecta
