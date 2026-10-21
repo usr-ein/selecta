@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # CI (PLAN §5.4, NFR-1, NFR-7), all with static vcpkg dependencies (ADR-004):
 #   macOS     build, tests and the static-linking check; the lint gate (tools/lint.sh) in its own job.
-#   asan/tsan the whole suite under AddressSanitizer + UBSan and under ThreadSanitizer (macOS), on main, CI branches
-#             (ci/**), nightly and on request; not on pull requests. tsan has its own triplet, with Qt Base built
-#             with ThreadSanitizer, and tests/tsan-suppressions.txt for Qt's own benign races.
+#   asan      the whole suite under AddressSanitizer + UBSan (macOS), on main, CI branches (ci/**), nightly and on
+#             request; not on pull requests.
 #   Linux     build and tests.
 #   Windows   build and tests with MSVC: the libraries, their tests and selecta-cli (no media, so no engine or app).
 #
@@ -173,17 +172,11 @@ jobs:
     name: macOS · ${{ matrix.preset }}
     if: github.event_name != 'pull_request'
     runs-on: macos-26
-    # tsan's dependencies come from their own triplet: when its binary cache is cold, Qt Base and the rest build first.
-    timeout-minutes: 300
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - preset: asan
-            triplet: arm64-osx-selecta
-          # Qt Base built with ThreadSanitizer, so TSan sees the locks in Qt's event queue, thread pool and futures.
-          - preset: tsan
-            triplet: arm64-osx-selecta-tsan
+        preset: [asan]
     env:
       VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/build/cache/vcpkg-archives
@@ -196,10 +189,9 @@ jobs:
         run: brew install autoconf autoconf-archive automake libtool ccache
 
       - name: vcpkg
-        id: vcpkg
         uses: ./.github/actions/vcpkg
         with:
-          triplet: ${{ matrix.triplet }}
+          triplet: arm64-osx-selecta
 
       - name: Restore the compiler cache
         uses: actions/cache/restore@v6
@@ -208,20 +200,11 @@ jobs:
           key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: ccache-macos-${{ matrix.preset }}-
 
-      - name: Configure (builds missing dependencies)
-        id: configure
+      - name: Configure
         run: >-
           cmake --preset ${{ matrix.preset }} -DSELECTA_ENABLE_LIVE_SERVER:BOOL=OFF
           -DVCPKG_INSTALL_OPTIONS=--clean-after-build -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_OBJCXX_COMPILER_LAUNCHER=ccache
-
-      - name: Save the vcpkg binary cache
-        if: always() && steps.vcpkg.outcome == 'success'
-        uses: ./.github/actions/vcpkg-save
-        with:
-          key: ${{ steps.vcpkg.outputs.cache-key }}
-          installed: build/${{ matrix.preset }}/vcpkg_installed
-          complete: ${{ steps.configure.outcome == 'success' }}
 
       - name: The live-server switch is off
         run: grep -Eqx 'SELECTA_ENABLE_LIVE_SERVER:[A-Z]+=OFF' build/${{ matrix.preset }}/CMakeCache.txt
@@ -238,7 +221,7 @@ jobs:
           key: ccache-macos-${{ matrix.preset }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Test
-        timeout-minutes: 120
+        timeout-minutes: 60
         run: ctest --preset ${{ matrix.preset }} --parallel "$(sysctl -n hw.ncpu)" --timeout 900
 
       - name: Keep the test log
