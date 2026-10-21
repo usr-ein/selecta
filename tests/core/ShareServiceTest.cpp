@@ -10,12 +10,14 @@
 #include "fixtures/TestUtil.h"
 #include "governor/Governor.h"
 #include "meta/TokenStore.h"
+#include "slsk/PeerMessages.h"
 #include "storage/Database.h"
 #include "storage/Migrations.h"
 #include "storage/SessionLog.h"
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTcpServer>
 #include <QTemporaryDir>
 
@@ -35,6 +37,22 @@ namespace synth = selecta::testing;
 namespace {
 
 constexpr qint64 kNow = 1'800'000'000'000;
+
+// Every file of a share list, as peers see it: the full virtual path.
+QStringList sharedPaths(const QByteArray &shareList)
+{
+    const std::optional<peer::SharedFileListResponse> decoded = peer::SharedFileListResponse::decode(shareList);
+    EXPECT_TRUE(decoded.has_value());
+    QStringList paths;
+    if (decoded) {
+        for (const selecta::slsk::SharedDirectory &directory : decoded->list.directories) {
+            for (const selecta::slsk::FileEntry &file : directory.files) {
+                paths.append(directory.path.display() + u'\\' + file.name.display());
+            }
+        }
+    }
+    return paths;
+}
 
 quint16 freePort()
 {
@@ -241,4 +259,57 @@ TEST_F(ShareServiceTest, BannedUsersGetNothing)
     service->setBanned({});
     EXPECT_EQ(service->folderContents(u"bob"_s, folder).size(), 1);
     EXPECT_EQ(service->sharedFileList(u"bob"_s), service->sharedFileList(u"carol"_s));
+}
+
+// PRD SHARE-1: peers get <tracks folder>\<track> and <albums folder>\<album>\<track>, only tracks, never the Inbox.
+TEST_F(ShareServiceTest, SharesOnlyTheTracksOfBothFoldersAndNeverTheInbox)
+{
+    const QString tracks = dir.filePath(u"Tracks"_s);
+    const QString inbox = dir.filePath(u"Selecta Inbox"_s);
+    const QByteArray mp3 = synth::makeMp3(synth::sine(330.0, 1.0));
+    for (const QString &relative : {u"Tracks/Loose One.mp3"_s, u"Tracks/Old Rips/Kept Aside.mp3"_s,
+                                    u"Music/Loose On Top.mp3"_s, u"Music/Kel Varo/CD2/Bonus.mp3"_s,
+                                    u"Selecta Inbox/Singles/Waiting.mp3"_s, u"Selecta Inbox/Albums/A/01 Waiting.mp3"_s,
+                                    // An Inbox lying in the albums folder (Settings refuses it) still isn't an album.
+                                    u"Music/Selecta Inbox 2/01 Waiting Too.mp3"_s}) {
+        ASSERT_TRUE(QDir().mkpath(QFileInfo(dir.filePath(relative)).path()));
+        writeFile(dir.filePath(relative), mp3);
+    }
+    for (const QString &relative : {u"Tracks/cover.jpg"_s, u"Tracks/list.m3u"_s, u"Tracks/.DS_Store"_s,
+                                    u"Music/Kel Varo/cover.jpg"_s, u"Music/Kel Varo/notes.txt"_s}) {
+        writeFile(dir.filePath(relative), QByteArrayLiteral("not a track"));
+    }
+    service->setFolders(selecta::collection::FolderRoles(tracks, root),
+                        {inbox, dir.filePath(u"Music/Selecta Inbox 2"_s)});
+    service->waitForIdle();
+
+    const QStringList expected{u"Tracks\\Loose One.mp3"_s, u"Music\\Kel Varo\\Kel Varo - Amber Engine.flac"_s,
+                               u"Music\\Kel Varo\\Kel Varo - Night Ferry.mp3"_s};
+    EXPECT_EQ(sharedPaths(service->sharedFileList(u"bob"_s)), expected);
+    EXPECT_EQ(service->status().roots, QStringList({tracks, root}));
+    EXPECT_EQ(service->status().files, 3);
+    EXPECT_EQ(service->status().folders, 3); // Tracks, Music, Music\Kel Varo
+    EXPECT_TRUE(service->index()->search(u"waiting"_s, {}).isEmpty());
+    EXPECT_TRUE(service->index()->search(u"cover"_s, {}).isEmpty());
+    EXPECT_FALSE(service->index()->lookup(RemotePath::fromText(u"Tracks\\Old Rips\\Kept Aside.mp3"_s)));
+}
+
+TEST_F(ShareServiceTest, AFolderInBothRolesSharesItsLooseTracksAndItsAlbums)
+{
+    writeFile(root + u"/Loose.mp3"_s, synth::makeMp3(synth::sine(330.0, 1.0)));
+    service->setFolders(selecta::collection::FolderRoles(root, root), {});
+    service->waitForIdle();
+    EXPECT_EQ(sharedPaths(service->sharedFileList(u"bob"_s)),
+              QStringList({u"Music\\Loose.mp3"_s, u"Music\\Kel Varo\\Kel Varo - Amber Engine.flac"_s,
+                           u"Music\\Kel Varo\\Kel Varo - Night Ferry.mp3"_s}));
+    EXPECT_EQ(service->status().roots, QStringList{root});
+}
+
+TEST_F(ShareServiceTest, NoFoldersShareNothing)
+{
+    service->setFolders({}, {});
+    service->waitForIdle();
+    EXPECT_TRUE(service->status().roots.isEmpty());
+    EXPECT_EQ(service->status().files, 0);
+    EXPECT_TRUE(sharedPaths(service->sharedFileList(u"bob"_s)).isEmpty());
 }

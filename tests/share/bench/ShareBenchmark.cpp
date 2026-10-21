@@ -10,8 +10,8 @@
 // index_MB is the index's own accounting (ShareIndex::memoryBytes); retained_MB what a second index adds to the
 // process footprint (an independent check); build_peak_MB how far the footprint rose while building the first.
 //
-// The trees are synthetic: artist folders of album folders ("Artist 12 - Album 345 (2019)") of 10 tracks
-// ("07 - Artist 12 - Title 3456.mp3", every fifth a FLAC) and a cover.jpg each. Files hold one byte: build() only
+// The trees are synthetic albums folders: album folders ("Artist 12 - Album 345 (2019)") of 10 tracks
+// ("07 - Artist 12 - Title 3456.mp3", every fifth a FLAC) and a cover.jpg each (walked, never shared). Files hold one byte: build() only
 // stats them, and knownAudio (built here as the collection would report it) gives every track its attributes. Trees
 // are written once into the temporary folder and reused by later runs (delete them to rebuild).
 #include "share/ShareIndex.h"
@@ -104,7 +104,7 @@ QString trackPath(const QString &root, int i)
     const int album = i / kTracksPerAlbum;
     const int artist = album / kAlbumsPerArtist;
     const int track = (i % kTracksPerAlbum) + 1;
-    return u"%1/Artist %2/Artist %2 - Album %3 (%4)/%5 - Artist %2 - Title %6.%7"_s.arg(root)
+    return u"%1/Artist %2 - Album %3 (%4)/%5 - Artist %2 - Title %6.%7"_s.arg(root)
         .arg(artist)
         .arg(album)
         .arg(1990 + (album % 30))
@@ -125,7 +125,7 @@ BenchTree makeTree(int files, std::unique_ptr<QTemporaryDir> &throwaway)
 {
     BenchTree tree;
     tree.files = files;
-    tree.root = QDir::temp().filePath(u"selecta-share-bench-%1-v1"_s.arg(files));
+    tree.root = QDir::temp().filePath(u"selecta-share-bench-%1-v2"_s.arg(files));
     if (!keepTrees()) {
         throwaway = std::make_unique<QTemporaryDir>();
         tree.root = throwaway->filePath(u"tree"_s);
@@ -188,7 +188,7 @@ const BenchTree &searchTree()
 
 BuildResult buildOf(const BenchTree &tree)
 {
-    return selecta::share::build({{tree.root, u"Music"_s}}, tree.known);
+    return selecta::share::build({{tree.root, u"Music"_s, selecta::share::Layout::Albums}}, tree.known);
 }
 
 // The 100 k index, built once, with what building it cost.
