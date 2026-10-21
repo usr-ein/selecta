@@ -14,6 +14,7 @@
 #include <QSignalSpy>
 #include <QStyleHints>
 #include <QTest>
+#include <QThreadPool>
 
 #include <gtest/gtest.h>
 #include <utility>
@@ -462,7 +463,10 @@ TEST(GetTracksInspector, ACoverIsKeptForItsLineAndOnlyAsAskedFor)
     ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(1, coverUrl(1))));
     ASSERT_TRUE(shownAndAsked(inspector, wanted, withRelease(2, coverUrl(2))));
     inspector.showCover(coverUrl(1), pngBytes(64, 64));
-    QTest::qWait(200);
+    // The decode done (on the thread pool) and its result handed back (queued to this thread), however slow the run.
+    ASSERT_TRUE(QThreadPool::globalInstance()->waitForDone(10000));
+    QCoreApplication::sendPostedEvents();
+    QCoreApplication::processEvents();
     EXPECT_FALSE(cover(inspector)->hasImage());
     const qsizetype asked = wanted.size();
     inspector.showLine(withRelease(1, coverUrl(1)));

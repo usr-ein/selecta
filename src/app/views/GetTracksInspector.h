@@ -62,7 +62,8 @@ private:
 // list asks for nothing on the way), and once per cover while the answer is awaited. The answer (showCover()) is
 // untrusted bytes: checked JPEG or PNG within the cover bounds, then decoded off the main thread at most kCoverPixels
 // a side. The last kCoverCacheSize covers decoded are kept in memory. No cover, a failed fetch or bytes that don't
-// decode leave the placeholder; a failed cover is asked for again the next time its line is shown. Main thread.
+// decode leave the placeholder; a failed cover is asked for again the next time its line is shown. A request never
+// answered (the engine stopped mid-fetch, at quit) isn't asked again this session. Main thread.
 class GetTracksInspector : public QWidget
 {
     Q_OBJECT

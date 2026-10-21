@@ -504,6 +504,7 @@ QImage GetTracksInspector::decodeCover(const QByteArray &bytes)
     if (bytes.isEmpty() || bytes.size() > meta::kMaxCoverBytes) {
         return {};
     }
+    // Only the header's verdict and type are used: the source given is a placeholder.
     const meta::Result<meta::CoverImage> checked = meta::CoverFetcher::inspect(bytes, QUrl(), meta::Source::Spotify);
     if (!checked.ok()) {
         return {};
