@@ -17,9 +17,9 @@
 #include "storage/Migrations.h"
 
 #include <QCoreApplication>
-#include <QDeadlineTimer>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QRandomGenerator>
@@ -70,15 +70,19 @@ QByteArray readFile(const QString &path)
 // after each batch of events. waitFor() (QTest::qWaitFor) sleeps 10 ms between passes of the event loop, which lets a
 // transfer move on by one socket read per pass: a 14.88 MB download took 3.5 s on a Mac and over 15 s on a loaded
 // macOS runner. The timeout is only reached when a test fails.
+// The expiry timer alone decides the timeout: it is what wakes a loop that nothing else wakes, and a coarse timer may
+// fire before a clock-based deadline has passed, which would leave the loop blocked with no wake-up to come.
 template <typename Condition>
 bool arrives(Condition condition, std::chrono::milliseconds timeout = 15s)
 {
-    const QDeadlineTimer deadline(timeout);
-    QTimer expiry; // wakes the loop when nothing else happens
+    bool expired = false;
+    QTimer expiry;
     expiry.setSingleShot(true);
+    expiry.setTimerType(Qt::PreciseTimer);
+    QObject::connect(&expiry, &QTimer::timeout, [&expired] { expired = true; });
     expiry.start(timeout);
     while (!condition()) {
-        if (deadline.hasExpired()) {
+        if (expired) {
             return false;
         }
         QCoreApplication::processEvents(QEventLoop::AllEvents | QEventLoop::WaitForMoreEvents);
@@ -238,6 +242,31 @@ TEST_F(TransferServiceTest, DownloadsAFileAndHandsItOn)
     EXPECT_EQ(arrived->state, State::Arrived);
     EXPECT_EQ(arrived->inboxItem, inboxItem);
     EXPECT_TRUE(service->unfinished().isEmpty());
+}
+
+// The wait for a download fails at its timeout when the download never arrives, rather than hanging: nothing else
+// wakes the event loop while the peer sends nothing. 1 s takes Qt's coarse-timer path, which may fire early.
+TEST_F(TransferServiceTest, AWaitForADownloadThatNeverArrivesEndsAtItsTimeout)
+{
+    auto ghost = peer(u"vinyl_ghost"_s);
+    const QByteArray path = "Music\\Okuma Drift\\01 Neon Rain.flac";
+    ghost->files.insert(path, FakePeer::Upload{.content = content(300'000, 2)});
+    ghost->stallUploads = true; // the connection opens, then no byte comes
+
+    QSignalSpy completed(service.get(), &TransferService::completed);
+    const std::optional<qint64> id = service->enqueue(spec(*ghost, path, 300'000));
+    ASSERT_TRUE(id.has_value());
+    QElapsedTimer elapsed;
+    elapsed.start();
+    EXPECT_FALSE(arrives([&] { return !completed.isEmpty(); }, 1s));
+    EXPECT_GE(elapsed.elapsed(), 900);
+    EXPECT_LT(elapsed.elapsed(), 3000);
+    EXPECT_EQ(service->download(*id)->state, State::Queued); // still connecting: asked for, nothing received
+    EXPECT_EQ(service->download(*id)->received, 0);
+
+    elapsed.restart();
+    EXPECT_FALSE(arrives([] { return false; }, 1s)); // with nothing at all going on
+    EXPECT_LT(elapsed.elapsed(), 3000);
 }
 
 TEST_F(TransferServiceTest, AFileAlreadyWantedIsTheSameDownload)
