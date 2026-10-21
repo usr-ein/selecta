@@ -73,6 +73,8 @@ public:
 
     Error error() const { return m_error; }
     bool hasError() const { return m_error != Error::None; }
+    // The code of the frame that caused the error (0 without one, or when the length was too short to hold it).
+    quint32 errorCode() const { return m_errorCode; }
     // Payload bytes and code the frame being read announced (0 before its header is complete). For progress and
     // logging.
     qsizetype pendingFrameSize() const { return m_pendingPayload; }
@@ -100,6 +102,7 @@ private:
     quint32 m_pendingCode = 0;
     bool m_headerChecked = false;
     Error m_error = Error::None;
+    quint32 m_errorCode = 0;
 };
 
 const char *frameErrorName(FrameReader::Error error);

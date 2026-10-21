@@ -468,7 +468,7 @@ void MainWindow::createViews()
     addView(u"history"_s, history, fixed(tr("Session %1 started at %2").arg(m_services.build.session).arg(started)));
 
     m_activityView = new ActivityView(m_services.engine, m_services.database, m_stack);
-    connect(m_activityView, &ActivityView::browseRequested, this, &MainWindow::browsePeer);
+    connect(m_activityView, &ActivityView::browseRequested, this, &MainWindow::browseFile);
     connect(m_activityView, &ActivityView::messageRequested, this, &MainWindow::messagePeer);
     addView(u"activity"_s, m_activityView, [this] { return m_activityView->summary(); });
     connect(m_activityView, &ActivityView::summaryChanged, this, [this] {
@@ -522,7 +522,7 @@ void MainWindow::createSearchView()
     connect(m_searchView, &SearchView::previewRequested, this,
             [this] { previewSearchResult(false, m_services.settings.previewSource()); });
     connect(m_searchView, &SearchView::selectionMoved, this, &MainWindow::selectionMoved);
-    connect(m_searchView, &SearchView::browseRequested, this, &MainWindow::browsePeer);
+    connect(m_searchView, &SearchView::browseRequested, this, &MainWindow::browseFile);
     connect(m_searchView, &SearchView::messageRequested, this, &MainWindow::messagePeer);
     connect(&m_services.engine, &core::EngineHost::searchOpened, this, [this](quint64 request, qint64 searchId) {
         if (request == m_searchRequest && searchId > 0) {
@@ -572,9 +572,16 @@ void MainWindow::createBrowseView()
 
 void MainWindow::browsePeer(const QString &peer)
 {
+    browseFile(peer, {});
+}
+
+void MainWindow::browseFile(const QString &peer, const QByteArray &remotePath)
+{
     if (peer.isEmpty()) {
         return;
     }
+    // Without a file, a file asked for earlier isn't selected later either.
+    m_browseView->revealFile(peer, remotePath);
     m_navModel->setBrowse(peer, 0, true);
     m_services.engine.browse(peer);
     navigateTo(NavModel::browseItemId(peer));

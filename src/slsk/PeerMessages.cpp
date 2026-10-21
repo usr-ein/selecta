@@ -151,9 +151,17 @@ std::optional<SharedFileListResponse> SharedFileListResponse::decode(QByteArrayV
     return decode(payload, protocol::kShareListInflatedMax);
 }
 
-std::optional<SharedFileListResponse> SharedFileListResponse::decode(QByteArrayView payload, qsizetype maxInflated)
+std::optional<SharedFileListResponse> SharedFileListResponse::decode(QByteArrayView payload, qsizetype maxInflated,
+                                                                     bool *tooLarge)
 {
-    return parseCompressed<SharedFileListResponse>(payload, maxInflated, [](Reader &r, SharedFileListResponse &m) {
+    const zlib::Inflated inflated = zlib::inflate(payload, maxInflated);
+    if (tooLarge != nullptr) {
+        *tooLarge = inflated.error == zlib::Error::TooLarge;
+    }
+    if (!inflated.ok()) {
+        return std::nullopt;
+    }
+    return parse<SharedFileListResponse>(QByteArrayView(inflated.data), [](Reader &r, SharedFileListResponse &m) {
         m.list.directories = readDirectories(r);
         if (r.remaining() >= 4) {
             m.list.unknown = r.u32();

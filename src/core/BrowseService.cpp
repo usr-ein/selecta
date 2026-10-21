@@ -7,7 +7,11 @@
 #include "storage/Database.h"
 
 #include <QDateTime>
+#include <QLocale>
 #include <QLoggingCategory>
+
+#include <algorithm>
+#include <limits>
 
 using namespace Qt::StringLiterals;
 
@@ -55,6 +59,46 @@ std::optional<slsk::SharedFileList> decodeList(const QByteArray &blob)
     return reader.ok() ? std::optional(std::move(list)) : std::nullopt;
 }
 
+qsizetype fileCount(const slsk::SharedFileList &list)
+{
+    qsizetype files = 0;
+    for (const QList<slsk::SharedDirectory> *directories : {&list.directories, &list.privateDirectories}) {
+        for (const slsk::SharedDirectory &directory : *directories) {
+            files += directory.files.size();
+        }
+    }
+    return files;
+}
+
+// The bytes every file's whole path comes to: its folder's path, a separator and its name.
+qint64 pathBytes(const slsk::SharedFileList &list)
+{
+    qint64 bytes = 0;
+    for (const QList<slsk::SharedDirectory> *directories : {&list.directories, &list.privateDirectories}) {
+        for (const slsk::SharedDirectory &directory : *directories) {
+            bytes += (qint64{directory.path.raw.size()} + 1) * qint64{directory.files.size()};
+            for (const slsk::FileEntry &file : directory.files) {
+                bytes += file.name.raw.size();
+            }
+        }
+    }
+    return bytes;
+}
+
+// The levels of every folder that holds files: an upper bound on the folders the tree shows.
+qint64 folderLevels(const slsk::SharedFileList &list)
+{
+    qint64 levels = 0;
+    for (const QList<slsk::SharedDirectory> *directories : {&list.directories, &list.privateDirectories}) {
+        for (const slsk::SharedDirectory &directory : *directories) {
+            if (!directory.files.isEmpty()) {
+                levels += 1 + directory.path.raw.count('\\') + directory.path.raw.count('/');
+            }
+        }
+    }
+    return levels;
+}
+
 // Every file of the list as a search hit: the full path, the peer's attributes.
 QList<SearchHit> hitsOf(const QString &peer, const slsk::SharedFileList &list)
 {
@@ -90,6 +134,8 @@ QString describePeerError(const QString &peer, slsk::PeerError error)
         return BrowseService::tr("%1 closed the connection before answering.").arg(peer);
     case slsk::PeerError::ProtocolError:
         return BrowseService::tr("%1's answer couldn't be read.").arg(peer);
+    case slsk::PeerError::TooLarge:
+        return BrowseService::tr("%1's list of shared files is too big for Selecta to read.").arg(peer);
     case slsk::PeerError::NotLoggedIn:
         return BrowseService::tr("Not connected to Soulseek.");
     case slsk::PeerError::NotPermitted:
@@ -194,11 +240,40 @@ void BrowseService::listProgress(const QString &peer, qint64 received, qint64 to
 
 void BrowseService::listReceived(const QString &peer, const slsk::SharedFileList &list)
 {
-    if (!m_browses.contains(peer)) {
+    const auto found = m_browses.find(peer);
+    if (found == m_browses.end()) {
         return; // closed meanwhile (or never asked)
+    }
+    if (const std::optional<QString> why = tooBig(peer, list)) {
+        // Too big to list: said plainly, nothing kept, and an older list of theirs isn't shown as if it were this one.
+        found->files = static_cast<int>(std::min<qsizetype>(fileCount(list), std::numeric_limits<int>::max()));
+        found->folders = static_cast<int>(std::min<qsizetype>(list.directories.size() + list.privateDirectories.size(),
+                                                              std::numeric_limits<int>::max()));
+        found->privateFolders = 0;
+        found->fromCache = false;
+        ++m_generation[peer]; // an analysis in flight is dropped
+        if (m_results.remove(peer) > 0) {
+            Q_EMIT resultsReset(peer, {});
+        }
+        setState(*found, State::Failed, *why);
+        return;
     }
     store(peer, list);
     accept(peer, list, m_now(), false);
+}
+
+std::optional<QString> BrowseService::tooBig(const QString &peer, const slsk::SharedFileList &list)
+{
+    const qsizetype files = fileCount(list);
+    if (files > kMaxFiles) {
+        return tr("%1 shares %2 files: too big a list for Selecta, which shows at most %3.")
+            .arg(peer, QLocale().toString(files), QLocale().toString(kMaxFiles));
+    }
+    if (pathBytes(list) > kMaxPathBytes || folderLevels(list) > kMaxFolderLevels) {
+        return tr("%1's list of shared files is too big for Selecta: its names come to over %2.")
+            .arg(peer, QLocale().formattedDataSize(kMaxPathBytes, 0, QLocale::DataSizeSIFormat));
+    }
+    return std::nullopt;
 }
 
 void BrowseService::requestFailed(const QString &peer, const QString &why)
@@ -218,12 +293,7 @@ void BrowseService::accept(const QString &peer, const slsk::SharedFileList &list
     entry.fetchedAtMs = fetchedAtMs;
     entry.folders = static_cast<int>(list.directories.size() + list.privateDirectories.size());
     entry.privateFolders = static_cast<int>(list.privateDirectories.size());
-    entry.files = 0;
-    for (const QList<slsk::SharedDirectory> *directories : {&list.directories, &list.privateDirectories}) {
-        for (const slsk::SharedDirectory &directory : *directories) {
-            entry.files += static_cast<int>(directory.files.size());
-        }
-    }
+    entry.files = static_cast<int>(fileCount(list)); // at most kMaxFiles
     setState(entry, State::Ready, entry.files == 0 ? tr("%1 shares nothing.").arg(peer) : QString());
     // Analysed like search results, on the worker: quality, what the user owns.
     const quint64 generation = ++m_generation[peer];
@@ -302,7 +372,7 @@ std::optional<std::pair<slsk::SharedFileList, qint64>> BrowseService::cached(con
         return std::nullopt;
     }
     std::optional<slsk::SharedFileList> list = decodeList(query.blob(1));
-    if (!list) {
+    if (!list || tooBig(peer, *list)) {
         return std::nullopt;
     }
     return std::pair{std::move(*list), fetched};
