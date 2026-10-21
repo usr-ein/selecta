@@ -139,8 +139,8 @@ QString statusToolTip(const core::InboxEntry &entry)
     }
     if (!item.replaces.isEmpty()) {
         const QString mismatch = core::upgradeMismatch(item);
-        lines.append(mismatch.isEmpty() ? InboxView::tr("A better copy of %1: filing puts it in that file's place, under "
-                                                        "the same name, and moves that file to the Trash.")
+        lines.append(mismatch.isEmpty() ? InboxView::tr("A better copy of %1: Save to collection puts it in that file's "
+                                                        "place, under the same name, and moves that file to the Trash.")
                                               .arg(QDir::toNativeSeparators(item.replaces))
                                         : InboxView::tr("A better copy of %1. %2")
                                               .arg(QDir::toNativeSeparators(item.replaces), mismatch));

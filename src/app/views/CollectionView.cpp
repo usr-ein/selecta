@@ -263,11 +263,11 @@ CollectionView::CollectionView(core::EngineHost &engine, storage::Database & /*d
     outer->setContentsMargins(0, 0, 0, 0);
     outer->addWidget(m_pages);
 
-    connect(&m_engine, &core::EngineHost::collectionStatusChanged, this, &CollectionView::show);
+    connect(&m_engine, &core::EngineHost::collectionStatusChanged, this, &CollectionView::showStatus);
     connect(&m_engine, &core::EngineHost::collectionListingChanged, this, &CollectionView::showListing);
     connect(&m_engine, &core::EngineHost::supersedeFlagsChanged, this, &CollectionView::showFlags);
     connect(&m_engine, &core::EngineHost::inboxChanged, this, &CollectionView::showInbox);
-    show(m_engine.collectionStatus());
+    showStatus(m_engine.collectionStatus());
     showListing(m_engine.collectionListing());
     showFlags(m_engine.supersedeFlags());
     showInbox();
@@ -316,7 +316,7 @@ QString CollectionView::summary() const
     return tracksText(m_status.tracks);
 }
 
-void CollectionView::show(const core::CollectionStatus &status)
+void CollectionView::showStatus(const core::CollectionStatus &status)
 {
     m_status = status;
     QStringList formats;
@@ -470,13 +470,15 @@ void CollectionView::refreshSelection()
     m_betterQuality->setEnabled(!better.isEmpty());
     if (tracks.isEmpty()) {
         m_betterQuality->setToolTip(tr("Select tracks or albums first: Selecta looks for a better copy of each one, and "
-                                       "a copy it finds takes the old file's place once you file it from the Inbox"));
+                                       "a copy it finds takes the old file's place once you save it to the collection "
+                                       "from the Inbox"));
     } else if (better.isEmpty()) {
         m_betterQuality->setToolTip(tr("Everything selected is from lossless already: nothing is better"));
     } else {
         m_betterQuality->setToolTip(
             tr("Look for a better copy of each track selected, in Get tracks. What it finds arrives in the Inbox "
-               "marked Upgrade; filed, it takes the old file's place, and the old file goes to the Trash"));
+               "marked Upgrade; saved to the collection, it takes the old file's place, and the old file goes to the "
+               "Trash"));
     }
 }
 

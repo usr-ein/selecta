@@ -49,8 +49,8 @@ QString upgradeMismatch(const library::InboxItem &item)
     const auto type = [](const QString &suffix) {
         return suffix.isEmpty() ? InboxService::tr("no type") : suffix.toUpper();
     };
-    return InboxService::tr("The file it would replace is of another type (%1, not %2): filing adds this one as a new "
-                            "file.")
+    return InboxService::tr("The file it would replace is of another type (%1, not %2): Save to collection adds this "
+                            "one as a new file.")
         .arg(type(theirs), type(mine));
 }
 

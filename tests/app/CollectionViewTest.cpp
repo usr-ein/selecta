@@ -8,6 +8,7 @@
 #include "app/views/CollectionAlbumView.h"
 #include "app/views/CollectionCovers.h"
 #include "app/views/CollectionWall.h"
+#include "app/views/InboxInspector.h"
 #include "app/views/InboxView.h"
 #include "convert/TagWriter.h"
 #include "core/EngineHost.h"
@@ -357,11 +358,11 @@ TEST_F(CollectionWallTest, TheKeysMoveBetweenTilesPassingOverHeaders)
     };
     EXPECT_EQ(press(Qt::Key_Right), 3);
     EXPECT_EQ(press(Qt::Key_Left), 2);
-    EXPECT_EQ(press(Qt::Key_Down), 6); // the album, below in the second row; nearest column
-    EXPECT_EQ(press(Qt::Key_Down), 9); // September's second tile, under the album's column
+    EXPECT_EQ(press(Qt::Key_Down), 6); // the album, alone in October's second row
+    EXPECT_EQ(press(Qt::Key_Down), 8); // past September's header, in the album's column
     EXPECT_EQ(press(Qt::Key_Up), 6);
-    EXPECT_EQ(press(Qt::Key_Up), 2);
-    EXPECT_EQ(press(Qt::Key_Up), 2); // the top row: nowhere to go
+    EXPECT_EQ(press(Qt::Key_Up), 1); // the first row, in the album's column
+    EXPECT_EQ(press(Qt::Key_Up), 1); // the top row: nowhere to go
     EXPECT_EQ(press(Qt::Key_End), 9);
     EXPECT_EQ(press(Qt::Key_Left), 8);
     EXPECT_EQ(press(Qt::Key_Left), 6); // September's header passed over
@@ -391,8 +392,11 @@ TEST_F(CollectionWallTest, ADragFromTheBackgroundSelectsTheTilesItCovers)
 TEST_F(CollectionWallTest, AnAlbumOpensOnADoubleClickOrReturn)
 {
     QSignalSpy opened(&wall, &CollectionWall::albumOpened);
+    // QTest sends a double click as the second press alone: the first click comes before it, as with a mouse.
+    QTest::mouseClick(wall.viewport(), Qt::LeftButton, {}, rectOf(2).center());
     QTest::mouseDClick(wall.viewport(), Qt::LeftButton, {}, rectOf(2).center()); // a loose track
     EXPECT_TRUE(opened.isEmpty());
+    QTest::mouseClick(wall.viewport(), Qt::LeftButton, {}, rectOf(6).center());
     QTest::mouseDClick(wall.viewport(), Qt::LeftButton, {}, rectOf(6).center());
     ASSERT_EQ(opened.size(), 1);
     EXPECT_EQ(opened.constFirst().constFirst().toULongLong(), 7U);
@@ -450,11 +454,9 @@ TEST(CollectionCovers, AnEmbeddedCoverIsReadSquareAndBounded)
 {
     QTemporaryDir dir;
     const QString front = dir.filePath(u"front.mp3"_s);
-    const QString other = dir.filePath(u"other.mp3"_s);
     const QString wide = dir.filePath(u"wide.mp3"_s);
     const QString none = dir.filePath(u"none.mp3"_s);
     ASSERT_TRUE(writeTrackWithCover(front, jpeg({1200, 1200}, Qt::red)));
-    ASSERT_TRUE(writeTrackWithCover(other, jpeg({500, 500}, Qt::blue), 0)); // filed as "other"
     ASSERT_TRUE(writeTrackWithCover(wide, jpeg({800, 400}, Qt::green)));
     ASSERT_TRUE(writeTrackWithCover(none, {}));
 
@@ -462,11 +464,30 @@ TEST(CollectionCovers, AnEmbeddedCoverIsReadSquareAndBounded)
     ASSERT_FALSE(big.isNull());
     EXPECT_EQ(big.size(), QSize(CollectionCovers::kSide, CollectionCovers::kSide));
     EXPECT_TRUE(near(middle(big), Qt::red));
-    EXPECT_TRUE(near(middle(CollectionCovers::read({.folder = {}, .file = other})), Qt::blue));
     const QImage cut = CollectionCovers::read({.folder = {}, .file = wide});
     EXPECT_EQ(cut.width(), cut.height()); // its middle
     EXPECT_TRUE(CollectionCovers::read({.folder = {}, .file = none}).isNull());
     EXPECT_TRUE(CollectionCovers::read({.folder = {}, .file = dir.filePath(u"missing.mp3"_s)}).isNull());
+}
+
+// Many taggers file the cover as "other": the first picture is the cover then.
+TEST(CollectionCovers, TheFrontCoverElseTheFirstPicture)
+{
+    selecta::convert::Picture other;
+    other.data = "other";
+    other.type = 0;
+    selecta::convert::Picture back;
+    back.data = "back";
+    back.type = 4;
+    selecta::convert::Picture front;
+    front.data = "front";
+    front.type = 3;
+    selecta::convert::MetadataModel tags;
+    EXPECT_FALSE(CollectionCovers::coverOf(tags).has_value());
+    tags.setPictures({other, back});
+    EXPECT_EQ(CollectionCovers::coverOf(tags)->data, "other");
+    tags.setPictures({other, back, front});
+    EXPECT_EQ(CollectionCovers::coverOf(tags)->data, "front");
 }
 
 TEST(CollectionCovers, AnAlbumsFolderImageComesFirst)
@@ -522,8 +543,10 @@ TEST(CollectionCovers, RequestsWaitingAreBounded)
     }
     EXPECT_LE(covers.pending(), CollectionCovers::kMaxWaiting + CollectionCovers::kWorkers);
     EXPECT_TRUE(QTest::qWaitFor([&covers] { return covers.pending() == 0; }, 5000));
-    EXPECT_TRUE(covers.cover(u"track:299"_s).has_value()); // the newest are read; the oldest were dropped
-    EXPECT_FALSE(covers.cover(u"track:0"_s).has_value());
+    // The first ones were read at once, the newest after them; those between were dropped, to be asked again.
+    EXPECT_TRUE(covers.cover(u"track:0"_s).has_value());
+    EXPECT_TRUE(covers.cover(u"track:299"_s).has_value());
+    EXPECT_FALSE(covers.cover(u"track:100"_s).has_value());
 }
 
 // --- The album page --------------------------------------------------------------------------------------------------
@@ -725,4 +748,29 @@ TEST(InboxUpgrades, AnUpgradeIsMarkedAndSaysWhetherItCanReplaceItsFile)
     EXPECT_EQ(statuses, (QStringList{u"Upgrade"_s, u"⚠ Upgrade, can't replace"_s}));
     EXPECT_TRUE(std::ranges::any_of(tips, [](const QString &tip) { return tip.contains(u"moves that file to the Trash"_s); }));
     EXPECT_TRUE(std::ranges::any_of(tips, [](const QString &tip) { return tip.contains(u"(M4A, not MP3)"_s); }));
+}
+
+// The inspector says the same about the item shown.
+TEST(InboxUpgrades, TheInspectorSaysWhatAnUpgradeReplaces)
+{
+    selecta::core::EngineHost engine{selecta::core::EngineOptions{}};
+    selecta::app::InboxInspector inspector(engine);
+    selecta::library::InboxItem item;
+    item.id = 1;
+    item.kind = selecta::library::InboxItem::Kind::Single;
+    item.state = selecta::library::InboxItem::State::Ready;
+    item.relativePath = u"Singles/Okuma Drift - Dusk.mp3"_s;
+    item.replaces = u"/Music/Albums/Okuma Drift - Nightfall/01 Dusk.mp3"_s;
+    QTemporaryDir dir;
+    inspector.showItem(item, dir.path());
+    inspector.setAlsoOn({});
+    const auto *notes = inspector.findChild<QLabel *>(u"inspector.inbox.alsoOn"_s);
+    ASSERT_NE(notes, nullptr);
+    EXPECT_TRUE(notes->text().startsWith(u"An upgrade of %1: Save to collection puts it in that file's place"_s.arg(
+        QDir::toNativeSeparators(item.replaces))))
+        << notes->text().toStdString();
+    item.replaces = u"/Music/Tracks/Okuma Drift - Dusk.m4a"_s;
+    inspector.showItem(item, dir.path());
+    inspector.setAlsoOn({});
+    EXPECT_TRUE(notes->text().contains(u"(M4A, not MP3)"_s)) << notes->text().toStdString();
 }

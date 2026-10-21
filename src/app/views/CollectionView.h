@@ -69,7 +69,7 @@ Q_SIGNALS:
     void betterQualityRequested(const QList<qint64> &trackIds);
 
 private:
-    void show(const core::CollectionStatus &status);
+    void showStatus(const core::CollectionStatus &status);
     // DL-8: filed singles that are also on an album.
     void showFlags(const QList<core::SupersedeFlag> &flags);
     void showInbox();

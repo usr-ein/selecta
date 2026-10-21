@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "convert/MetadataModel.h"
+
 #include <QCache>
 #include <QHash>
 #include <QImage>
@@ -65,6 +67,9 @@ public:
     // Blocking: reads the cover of `source`, at most `side` pixels a side; null when there's none or it can't be read.
     // Any thread.
     static QImage read(const Source &source, int side = kSide);
+    // The picture of these tags that is the cover: the front cover, else the first picture (many taggers file the
+    // cover as "other"). Pure.
+    static std::optional<convert::Picture> coverOf(const convert::MetadataModel &tags);
 
 Q_SIGNALS:
     // The cover `key` names was read (cover() has it, or knows there is none).

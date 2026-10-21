@@ -85,11 +85,7 @@ QImage embeddedCover(const QString &path, int side)
     if (!tags.ok()) {
         return {};
     }
-    // Many taggers file the cover as "other": the first picture then.
-    std::optional<convert::Picture> cover = tags.value().frontCover();
-    if (!cover && !tags.value().pictures().isEmpty()) {
-        cover = tags.value().pictures().constFirst();
-    }
+    const std::optional<convert::Picture> cover = CollectionCovers::coverOf(tags.value());
     return cover ? decode(cover->data, side) : QImage();
 }
 
@@ -166,6 +162,14 @@ void CollectionCovers::finished(const QString &key, quint64 generation, const QI
         Q_EMIT ready(key);
     }
     startNext();
+}
+
+std::optional<convert::Picture> CollectionCovers::coverOf(const convert::MetadataModel &tags)
+{
+    if (std::optional<convert::Picture> front = tags.frontCover()) {
+        return front;
+    }
+    return tags.pictures().isEmpty() ? std::nullopt : std::optional(tags.pictures().constFirst());
 }
 
 QImage CollectionCovers::read(const Source &source, int side)

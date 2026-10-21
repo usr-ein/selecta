@@ -416,7 +416,8 @@ TEST_F(InboxServiceTest, AnUpgradeOfAnotherTypeIsFiledAsANewFileAndSaysWhy)
     const std::optional<InboxItem> item = inbox.find(id);
     ASSERT_TRUE(item.has_value());
     EXPECT_EQ(selecta::core::upgradeMismatch(*item),
-              u"The file it would replace is of another type (M4A, not MP3): filing adds this one as a new file."_s);
+              u"The file it would replace is of another type (M4A, not MP3): Save to collection adds this one as a new "
+              "file."_s);
 
     const QSignalSpy finished(service.get(), &InboxService::finished);
     service->file({id});
