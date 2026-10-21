@@ -15,7 +15,7 @@ on:
         type: string
         default: ''
       replay:
-        description: Compilers to replay with (JSON list of gcc, gcc-g0, clang, clang-22)
+        description: Compilers to replay with (JSON list of gcc, gcc-g0, gcc-pch, clang, clang-22)
         type: string
         default: '["gcc", "clang"]'
 
@@ -223,6 +223,11 @@ jobs:
             gcc-g0) flags=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD
                            -DCMAKE_C_FLAGS_DEBUG=-g0 -DCMAKE_CXX_FLAGS_DEBUG=-g0) ;;
             clang) flags=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD "$nodfi") ;;
+            # The replayed commits don't have the experiment's file: a copy outside the checkout.
+            gcc-pch) cp .github/experiments/pch.cmake "$RUNNER_TEMP/pch.cmake"
+                     flags=(-DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DCMAKE_LINKER_TYPE=MOLD
+                            "-DCMAKE_PROJECT_INCLUDE=$RUNNER_TEMP/pch.cmake" -DCMAKE_CXX_FLAGS=-fpch-preprocess)
+                     export CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime ;;
             clang-22) flags=(-DCMAKE_C_COMPILER=clang-22 -DCMAKE_CXX_COMPILER=clang++-22 -DCMAKE_LINKER_TYPE=LLD "$nodfi") ;;
           esac
           for commit in 31c7e94 22bba78 d7a1a2a; do
