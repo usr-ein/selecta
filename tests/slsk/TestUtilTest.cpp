@@ -4,6 +4,8 @@
 #include "fixtures/TestUtil.h"
 
 #include <QElapsedTimer>
+#include <QObject>
+#include <QPointer>
 #include <QTimer>
 
 #include <atomic>
@@ -19,8 +21,9 @@ using namespace std::chrono_literals;
 
 TEST(TestUtilTest, AConditionThatAlreadyHoldsReturnsWithoutSpinningTheEventLoop)
 {
+    const QObject context;
     bool ran = false;
-    QTimer::singleShot(0, [&ran] { ran = true; });
+    QTimer::singleShot(0, &context, [&ran] { ran = true; });
     EXPECT_TRUE(waitFor([] { return true; }));
     EXPECT_FALSE(ran); // spinning could deliver events that invalidate the condition
     EXPECT_TRUE(waitFor([&ran] { return ran; }));
@@ -31,13 +34,14 @@ TEST(TestUtilTest, AConditionThatAlreadyHoldsReturnsWithoutSpinningTheEventLoop)
 TEST(TestUtilTest, AChainOfEventsRunsWithoutASleepBetweenPasses)
 {
     constexpr int kSteps = 400;
+    const QObject context;
     int steps = 0;
     std::function<void()> step = [&] {
         if (++steps < kSteps) {
-            QTimer::singleShot(0, step);
+            QTimer::singleShot(0, &context, step);
         }
     };
-    QTimer::singleShot(0, step);
+    QTimer::singleShot(0, &context, step);
     QElapsedTimer elapsed;
     elapsed.start();
     EXPECT_TRUE(waitFor([&steps] { return steps == kSteps; }));
@@ -80,8 +84,9 @@ TEST(TestUtilTest, AFailingWaitEndsAtItsTimeout)
 // A zero timeout still gives the event loop one pass, as QTest::qWaitFor does.
 TEST(TestUtilTest, AZeroTimeoutStillRunsOnePass)
 {
+    const QObject context;
     bool ran = false;
-    QTimer::singleShot(0, [&ran] { ran = true; });
+    QTimer::singleShot(0, &context, [&ran] { ran = true; });
     EXPECT_TRUE(waitFor([&ran] { return ran; }, 0ms));
 }
 
@@ -103,11 +108,9 @@ TEST(TestUtilTest, AFailingWaitEndsAtItsTimeoutUnderABusyEventLoop)
 // Objects deleted later are deleted between passes, as with QTest::qWaitFor: tests wait for a deleteLater().
 TEST(TestUtilTest, DeferredDeletesRunDuringTheWait)
 {
-    auto *object = new QObject;
-    bool destroyed = false;
-    QObject::connect(object, &QObject::destroyed, [&destroyed] { destroyed = true; });
+    const QPointer<QObject> object = new QObject;
     object->deleteLater();
-    EXPECT_TRUE(waitFor([&destroyed] { return destroyed; }));
+    EXPECT_TRUE(waitFor([&object] { return object.isNull(); }));
 }
 
 } // namespace
