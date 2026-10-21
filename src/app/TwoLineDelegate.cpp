@@ -38,7 +38,7 @@ void TwoLineDelegate::paint(QPainter *painter, const QStyleOptionViewItem &optio
     style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget); // background, selection, focus
 
     // In line with the table's other cells (Style.h), the two lines centred in the row.
-    const QRect area = style::cellContentRect(opt.rect, opt.viewItemPosition).adjusted(0, kPadding / 2, 0, -kPadding / 2);
+    const QRect area = style::cellContentRect(opt.rect, style::cellPosition(opt)).adjusted(0, kPadding / 2, 0, -kPadding / 2);
     const bool selected = (opt.state & QStyle::State_Selected) != 0;
     const QPalette::ColorGroup group = (opt.state & QStyle::State_Enabled) ? QPalette::Normal : QPalette::Disabled;
     const QColor titleColour = opt.palette.color(group, selected ? QPalette::HighlightedText : QPalette::Text);

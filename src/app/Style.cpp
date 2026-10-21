@@ -5,6 +5,7 @@
 
 #include <QAbstractItemView>
 #include <QHeaderView>
+#include <QTreeView>
 #include <QPainter>
 #include <QSplitter>
 #include <QStyleOptionHeader>
@@ -111,11 +112,41 @@ bool endsRow(int position)
            position == QStyleOptionViewItem::Invalid;
 }
 
-// The cell's place in its row as the style paints it: the first cell of a tree's row, after the indentation and the
-// disclosure triangle, continues the row's selection rather than starting it.
-int paintedPosition(const QStyleOptionViewItem &option)
+// The visible sections at either end of a tree's header, in visual order; -1 when there are none.
+std::pair<int, int> visibleEnds(const QHeaderView *header)
+{
+    int first = -1;
+    int last = -1;
+    for (int visual = 0; visual < header->count(); ++visual) {
+        if (!header->isSectionHidden(header->logicalIndex(visual))) {
+            first = first < 0 ? visual : first;
+            last = visual;
+        }
+    }
+    return {first, last};
+}
+
+} // namespace
+
+int cellPosition(const QStyleOptionViewItem &option)
 {
     int position = option.viewItemPosition;
+    const auto *tree = qobject_cast<const QTreeView *>(option.widget);
+    // QTreeView places cells as if logical column 0 came first; a view with its columns moved (Search's status, first)
+    // gets its places from the header's visual order. A cell spanning the row (a group) stays the row's only one.
+    if (tree && option.index.isValid() && position != QStyleOptionViewItem::OnlyOne) {
+        const QHeaderView *header = tree->header();
+        const auto [first, last] = visibleEnds(header);
+        const int visual = header->visualIndex(option.index.column());
+        const bool starts = visual == first;
+        const bool ends = visual == last;
+        position = starts && ends ? QStyleOptionViewItem::OnlyOne
+                   : starts       ? QStyleOptionViewItem::Beginning
+                   : ends         ? QStyleOptionViewItem::End
+                                  : QStyleOptionViewItem::Middle;
+    }
+    // A tree's indentation and disclosure triangle come before its tree column's cell: when they start the row, the
+    // cell continues it.
     if (option.features.testFlag(QStyleOptionViewItem::IsDecoratedRootColumn)) {
         if (position == QStyleOptionViewItem::Beginning) {
             position = QStyleOptionViewItem::Middle;
@@ -124,6 +155,19 @@ int paintedPosition(const QStyleOptionViewItem &option)
         }
     }
     return position;
+}
+
+namespace {
+
+// Whether a tree's indentation and disclosure start its rows (its tree column is the first one shown).
+bool branchesStartRows(const QWidget *widget)
+{
+    const auto *tree = qobject_cast<const QTreeView *>(widget);
+    if (!tree) {
+        return true;
+    }
+    return tree->header()->visualIndex(tree->treePosition() < 0 ? 0 : tree->treePosition()) ==
+           visibleEnds(tree->header()).first;
 }
 
 QColor selectionFill(const QStyleOption &option)
@@ -234,25 +278,29 @@ void SelectaStyle::drawPrimitive(PrimitiveElement element, const QStyleOption *o
         switch (element) {
         case PE_PanelItemViewItem:
             if (item->state.testFlag(State_Selected)) {
-                paintRowSelection(painter, item->rect, paintedPosition(*item), selectionFill(*item));
+                paintRowSelection(painter, item->rect, cellPosition(*item), selectionFill(*item));
             } else if (item->backgroundBrush.style() != Qt::NoBrush) {
-                painter->fillRect(cellContentRect(item->rect, paintedPosition(*item))
+                painter->fillRect(cellContentRect(item->rect, cellPosition(*item))
                                       .adjusted(-kCellPadding, 0, kCellPadding, 0)
                                       .intersected(item->rect),
                                   item->backgroundBrush);
             }
             return;
         case PE_PanelItemViewRow:
-            // A tree's indentation and disclosure triangle: the start of its row's selection. Elsewhere nothing, as
-            // there are no stripes.
+            // A tree's indentation and disclosure triangle: the start of its row's selection when they start the
+            // row, part of it otherwise. Elsewhere nothing, as there are no stripes.
             if (item->features.testFlag(QStyleOptionViewItem::IsDecorationForRootColumn) &&
-                item->state.testFlag(State_Selected) && item->rect.width() > kRowInset) {
-                QRectF area(item->rect);
-                area.setLeft(std::max<qreal>(area.left(), kRowInset));
-                painter->save();
-                painter->setRenderHint(QPainter::Antialiasing);
-                painter->fillPath(squircle(area, kRadiusSmall, Corners::Left), selectionFill(*item));
-                painter->restore();
+                item->state.testFlag(State_Selected)) {
+                if (!branchesStartRows(widget)) {
+                    painter->fillRect(item->rect, selectionFill(*item));
+                } else if (item->rect.width() > kRowInset) {
+                    QRectF area(item->rect);
+                    area.setLeft(std::max<qreal>(area.left(), kRowInset));
+                    painter->save();
+                    painter->setRenderHint(QPainter::Antialiasing);
+                    painter->fillPath(squircle(area, kRadiusSmall, Corners::Left), selectionFill(*item));
+                    painter->restore();
+                }
             }
             return;
         default:
@@ -326,7 +374,7 @@ QRect SelectaStyle::subElementRect(SubElement element, const QStyleOption *optio
         // The base style keeps its own margin inside the rectangle it gets: give it the content rectangle less that.
         const int margin = QProxyStyle::pixelMetric(PM_FocusFrameHMargin, option, widget) + 1;
         QStyleOptionViewItem inset = *item;
-        inset.rect = cellContentRect(item->rect, paintedPosition(*item)).adjusted(-margin, 0, margin, 0);
+        inset.rect = cellContentRect(item->rect, cellPosition(*item)).adjusted(-margin, 0, margin, 0);
         return QProxyStyle::subElementRect(element, &inset, widget);
     }
     return QProxyStyle::subElementRect(element, option, widget);
@@ -338,7 +386,7 @@ QSize SelectaStyle::sizeFromContents(ContentsType type, const QStyleOption *opti
     QSize result = QProxyStyle::sizeFromContents(type, option, size, widget);
     if (type == CT_ItemViewItem && drawsRowsOf(widget)) {
         const auto *item = qstyleoption_cast<const QStyleOptionViewItem *>(option);
-        const int position = item ? paintedPosition(*item) : QStyleOptionViewItem::Middle;
+        const int position = item ? cellPosition(*item) : QStyleOptionViewItem::Middle;
         const int margin = 2 * (QProxyStyle::pixelMetric(PM_FocusFrameHMargin, option, widget) + 1); // already in
         result.setWidth(result.width() - margin + leadingPadding(position) + trailingPadding(position));
         result.setHeight(std::max(result.height(), kRowHeight));

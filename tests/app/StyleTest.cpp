@@ -191,3 +191,33 @@ TEST(StyleTest, ATableHasNoStripesTallRowsAndAQuietHeader)
     EXPECT_NE(at(row.left() + 40, row.top() + 3), base);
     EXPECT_NE(at(view.viewport()->width() / 2, row.top() + 3), base);
 }
+
+TEST(StyleTest, CellsKnowTheirPlaceWhenColumnsAreMovedOrHidden)
+{
+    // Search shows its status column first and hides its queue column (P-003): QTreeView alone would call the first
+    // logical column the row's start wherever it sits.
+    QStandardItemModel model(1, 4);
+    QTreeView tree;
+    tree.setModel(&model);
+    tree.header()->moveSection(tree.header()->visualIndex(2), 0); // visual order: 2, 0, 1, 3
+    tree.header()->setSectionHidden(3, true);                    // 3 hidden: 1 ends the row
+    const auto positionOf = [&](int column) {
+        QStyleOptionViewItem option;
+        option.widget = &tree;
+        option.index = model.index(0, column);
+        option.viewItemPosition = column == 0 ? QStyleOptionViewItem::Beginning : QStyleOptionViewItem::Middle;
+        return cellPosition(option);
+    };
+    EXPECT_EQ(positionOf(2), QStyleOptionViewItem::Beginning);
+    EXPECT_EQ(positionOf(0), QStyleOptionViewItem::Middle);
+    EXPECT_EQ(positionOf(1), QStyleOptionViewItem::End);
+
+    // A cell spanning the row stays its only one; after a disclosure triangle that starts the row, it ends it.
+    QStyleOptionViewItem spanning;
+    spanning.widget = &tree;
+    spanning.index = model.index(0, 0);
+    spanning.viewItemPosition = QStyleOptionViewItem::OnlyOne;
+    EXPECT_EQ(cellPosition(spanning), QStyleOptionViewItem::OnlyOne);
+    spanning.features |= QStyleOptionViewItem::IsDecoratedRootColumn;
+    EXPECT_EQ(cellPosition(spanning), QStyleOptionViewItem::End);
+}

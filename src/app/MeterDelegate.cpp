@@ -31,7 +31,7 @@ void MeterDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
     const QStyle *style = widget ? widget->style() : QApplication::style();
     style->drawControl(QStyle::CE_ItemViewItem, &background, painter, widget);
 
-    const QRect content = style::cellContentRect(option.rect, option.viewItemPosition);
+    const QRect content = style::cellContentRect(option.rect, style::cellPosition(option));
     const QRectF track(content.left(), option.rect.center().y() - (kHeight / 2.0) + 0.5, std::max(0, content.width()),
                        kHeight);
     QColor empty = option.palette.color(QPalette::PlaceholderText);

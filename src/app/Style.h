@@ -8,6 +8,7 @@
 
 class QAbstractItemView;
 class QPainter;
+class QStyleOptionViewItem;
 class QPalette;
 class QSplitter;
 
@@ -90,5 +91,8 @@ public:
 void paintRowSelection(QPainter *painter, const QRect &cell, int position, const QColor &fill);
 // A cell's rectangle without the inset its row has at the view's sides, for what a delegate draws inside it.
 QRect cellContentRect(const QRect &cell, int position);
+// The cell's place in its row as the style paints it (a QStyleOptionViewItem::ViewItemPosition): from the header's
+// visual order in a tree whose columns were moved, and after a tree's disclosure triangle when it starts the row.
+int cellPosition(const QStyleOptionViewItem &option);
 
 } // namespace selecta::app::style

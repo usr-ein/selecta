@@ -3,6 +3,7 @@
 
 #include "app/Format.h"
 #include "app/Icons.h"
+#include "app/Status.h"
 #include "core/CountryDatabase.h"
 
 #include <QFont>
@@ -46,6 +47,32 @@ QIcon ownershipIcon(core::Ownership ownership)
         return icons::symbol(u"clock.arrow.circlepath"_s, u"document-open-recent"_s);
     case core::Ownership::OtherVersion:
         return icons::symbol(u"square.on.square"_s, u"edit-copy"_s);
+    case core::Ownership::None:
+        break;
+    }
+    return {};
+}
+
+// What the result is to you, as a symbol (P-003): shown alone in the results, its words in the tooltip.
+status::Status ownershipSymbol(core::Ownership ownership)
+{
+    using status::Kind;
+    switch (ownership) {
+    case core::Ownership::InCollection:
+        return {u"checkmark.seal.fill"_s, Kind::Have};
+    case core::Ownership::Upgrade:
+        return {u"arrow.up.circle.fill"_s, Kind::Upgrade};
+    case core::Ownership::LikelyInCollection:
+        return {u"questionmark.circle.fill"_s, Kind::Check};
+    case core::Ownership::InInbox:
+        return {u"tray.full.fill"_s, Kind::Inbox};
+    case core::Ownership::Queued:
+        return {u"arrow.down.circle.fill"_s, Kind::Working};
+    case core::Ownership::DownloadedThisSession:
+    case core::Ownership::DownloadedBefore:
+        return {u"clock"_s, Kind::Waiting};
+    case core::Ownership::OtherVersion:
+        return {u"questionmark.circle.fill"_s, Kind::Waiting};
     case core::Ownership::None:
         break;
     }
@@ -561,6 +588,15 @@ QVariant SearchResultsModel::resultData(const core::SearchResult &result, int co
         return column == QueueColumn ? QVariant(queueFont()) : QVariant();
     case Qt::DecorationRole:
         return column == StatusColumn ? QVariant(ownershipIcon(result.ownership)) : QVariant();
+    case status::kSymbolRole:
+        if (column == StatusColumn) {
+            return ownershipSymbol(result.ownership).symbol;
+        }
+        // The queue, shown with the speed (P-003): an hourglass when the peer's slots are taken.
+        return column == SpeedColumn && !result.hit.freeSlot ? QVariant(u"hourglass"_s) : QVariant();
+    case status::kKindRole:
+        return column == StatusColumn ? QVariant(static_cast<int>(ownershipSymbol(result.ownership).kind))
+                                      : QVariant(static_cast<int>(status::Kind::Waiting));
     case Qt::TextAlignmentRole:
         if (column == LengthColumn || column == SpeedColumn) {
             return {Qt::AlignRight | Qt::AlignVCenter};
@@ -728,6 +764,8 @@ QVariant SearchResultsModel::folderData(const Folder &folder, int column, int ro
     case Qt::ForegroundRole:
     case Qt::TextAlignmentRole:
     case QueueLevelRole:
+    case status::kSymbolRole:
+    case status::kKindRole:
         return lead && (column == QueueColumn || column == SpeedColumn) ? resultData(*lead, column, role) : QVariant();
     case Qt::DisplayRole:
         break;
@@ -771,10 +809,12 @@ QVariant SearchResultsModel::headerData(int section, Qt::Orientation orientation
     }
     if (role == Qt::ToolTipRole || role == Qt::AccessibleTextRole) {
         switch (section) {
+        case StatusColumn:
+            return tr("Status: what the file is to you"); // the column shows symbols alone (P-003)
         case QueueColumn:
             return tr("Queue: NQ when a slot is free, otherwise Q coloured by the queue's length");
         case SpeedColumn:
-            return tr("The peer's upload speed");
+            return tr("The peer's upload speed, with an hourglass when its slots are taken and you would queue");
         default:
             return {};
         }
@@ -784,7 +824,7 @@ QVariant SearchResultsModel::headerData(int section, Qt::Orientation orientation
     }
     switch (section) {
     case StatusColumn:
-        return tr("Status");
+        return QString(); // a narrow column of symbols; its name is in the tooltip
     case TitleColumn:
         return tr("Title");
     case QualityColumn:

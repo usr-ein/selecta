@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SearchView.h"
 
+#include "app/Status.h"
 #include "app/Style.h"
 
 #include "app/Accessibility.h"
@@ -210,13 +211,19 @@ SearchView::SearchView(core::EngineHost &engine, AppSettings &settings, Presets 
     header->setSortIndicatorClearable(true); // no indicator: the default order, shortest wait first (SRCH-18)
     header->setSortIndicator(-1, Qt::AscendingOrder);
     header->setSectionResizeMode(SearchResultsModel::TitleColumn, QHeaderView::Stretch);
-    header->setSectionResizeMode(SearchResultsModel::StatusColumn, QHeaderView::Interactive);
-    m_table->setColumnWidth(SearchResultsModel::StatusColumn, 130);
+    // P-003: the status as a symbol alone, first, its words in the tooltip and the inspector (maintainer: "the search
+    // results look good"); the queue goes with the speed, as an hourglass when the peer's slots are taken.
+    header->setSectionResizeMode(SearchResultsModel::StatusColumn, QHeaderView::Fixed);
+    header->moveSection(header->visualIndex(SearchResultsModel::StatusColumn), 0);
+    m_table->setColumnWidth(SearchResultsModel::StatusColumn, style::kRowInset + 36);
+    m_table->setItemDelegateForColumn(SearchResultsModel::StatusColumn, new status::StatusDelegate(m_table, true));
+    m_table->setItemDelegateForColumn(SearchResultsModel::SpeedColumn, new status::StatusDelegate(m_table));
+    header->setSectionHidden(SearchResultsModel::QueueColumn, true);
     m_table->setColumnWidth(SearchResultsModel::QualityColumn, 110);
     m_table->setColumnWidth(SearchResultsModel::LengthColumn, 80);
     m_table->setColumnWidth(SearchResultsModel::PeerColumn, 130);
     m_table->setColumnWidth(SearchResultsModel::QueueColumn, 40);
-    m_table->setColumnWidth(SearchResultsModel::SpeedColumn, 85);
+    m_table->setColumnWidth(SearchResultsModel::SpeedColumn, 110);
     m_table->setSortingEnabled(true);
     m_table->installEventFilter(this); // Return downloads
     m_table->setAccessibleName(tr("Search results"));

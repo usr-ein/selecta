@@ -336,7 +336,7 @@ void StatusDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option
     const QColor tint = selected ? palette.color(QPalette::HighlightedText) : color(kind, palette);
     const qreal dpr = painter->device() ? painter->device()->devicePixelRatioF() : qApp->devicePixelRatio();
     const QPixmap glyph = pixmap(symbol, tint, kSymbolSize, dpr);
-    const QRect content = style::cellContentRect(option.rect, option.viewItemPosition);
+    const QRect content = style::cellContentRect(option.rect, style::cellPosition(option));
 
     painter->save();
     if (m_symbolOnly) {
@@ -365,7 +365,7 @@ QSize StatusDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelI
     if (index.data(kSymbolRole).toString().isEmpty()) {
         return size;
     }
-    const QRect padding = style::cellContentRect(QRect(0, 0, 100, 1), option.viewItemPosition);
+    const QRect padding = style::cellContentRect(QRect(0, 0, 100, 1), style::cellPosition(option));
     const int pad = 100 - padding.width();
     if (m_symbolOnly) {
         size.setWidth(kSymbolSize + pad);
