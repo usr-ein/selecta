@@ -2,15 +2,16 @@
 // The player bar's transport as macOS players have it (beta notes, 2026-10-20): symbols with no box around them, in
 // the middle of the bar.
 #include "app/PlayerBar.h"
+
 #include "app/Preview.h"
 
 #include <QAction>
 #include <QImage>
 #include <QLabel>
 #include <QPainter>
-#include <QTest>
 #include <QStyle>
 #include <QStyleFactory>
+#include <QTest>
 #include <QToolButton>
 
 #include <gtest/gtest.h>
@@ -32,13 +33,13 @@ protected:
     }
 
     // Where the transport's middle is, across the bar.
-    int transportCentre() const
+    double transportCentre() const
     {
         const auto *back = bar.findChild<QToolButton *>(u"player.back"_s);
         const auto *forward = bar.findChild<QToolButton *>(u"player.forward"_s);
         const int left = back->mapTo(&bar, QPoint(0, 0)).x();
         const int right = forward->mapTo(&bar, QPoint(forward->width(), 0)).x();
-        return (left + right) / 2;
+        return (left + right) / 2.0;
     }
 
     PreviewController controller{selecta::playback::AudioOutput::createSilent(), nullptr}; // never the audio device
@@ -50,7 +51,7 @@ QIcon squareIcon()
 {
     QPixmap pixmap(32, 32);
     pixmap.fill(Qt::black);
-    return QIcon(pixmap);
+    return {pixmap};
 }
 
 QImage render(QWidget &widget)
@@ -71,7 +72,7 @@ TEST_F(PlayerBarTest, TheTransportHasNoBoxEvenWhenPressed)
         auto *button = bar.findChild<QToolButton *>(name);
         ASSERT_NE(button, nullptr) << name.toStdString();
         button->setIcon(QIcon()); // no symbol: whatever shows is the button's own box
-        button->setEnabled(true);  // as while a preview plays
+        button->setEnabled(true); // as while a preview plays
         button->setAttribute(Qt::WA_UnderMouse, true);
         button->setStyle(fusion.get()); // a style that draws a tool button's panel when hovered or pressed
         for (const bool down : {false, true}) {
@@ -123,12 +124,12 @@ TEST_F(PlayerBarTest, TheTransportStaysInTheMiddleOfTheBar)
     for (const int width : {900, 1400}) {
         bar.resize(width, 200);
         QCoreApplication::processEvents();
-        EXPECT_NEAR(transportCentre(), bar.width() / 2, 2) << "at " << width;
+        EXPECT_NEAR(transportCentre(), bar.width() / 2.0, 2.0) << "at " << width;
     }
     // A long title elides rather than pushing the transport aside.
     title->setText(QString(200, u'x'));
     QCoreApplication::processEvents();
-    EXPECT_NEAR(transportCentre(), bar.width() / 2, 2);
+    EXPECT_NEAR(transportCentre(), bar.width() / 2.0, 2.0);
     // The right side stays whole.
     const auto *volume = bar.findChild<QWidget *>(u"player.volume"_s);
     ASSERT_NE(volume, nullptr);

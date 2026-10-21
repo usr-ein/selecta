@@ -15,18 +15,19 @@ constexpr CGFloat kDarkHighlightLevel = 0.3;
 
 QColor macSystemAccentColor(bool dark)
 {
-    NSAppearance *appearance = [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
+    NSAppearance *const appearance =
+        [NSAppearance appearanceNamed:dark ? NSAppearanceNameDarkAqua : NSAppearanceNameAqua];
     if (appearance == nil) {
         return {};
     }
     // Resolved under the appearance asked for (system colours are dynamic), into sRGB, as Qt's colours are.
     __block NSColor *resolved = nil;
     [appearance performAsCurrentDrawingAppearance:^{
-      NSColor *accent = [NSColor controlAccentColor];
-      if (dark) {
-          accent = [accent highlightWithLevel:kDarkHighlightLevel];
-      }
-      resolved = [accent colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
+        NSColor *accent = [NSColor controlAccentColor];
+        if (dark) {
+            accent = [accent highlightWithLevel:kDarkHighlightLevel];
+        }
+        resolved = [accent colorUsingColorSpace:[NSColorSpace sRGBColorSpace]];
     }];
     if (resolved == nil) {
         return {};

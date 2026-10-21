@@ -267,10 +267,11 @@ InboxView::InboxView(core::EngineHost &engine, QWidget *parent)
     bar->addWidget(m_summary, 1);
     bar->addWidget(m_trash);
     bar->addWidget(m_file);
-    auto *note = new QLabel(tr("Downloads are converted and tagged as they arrive. Save to collection moves an item into your "
-                               "collection under the names from Settings; Selecta never changes files once they are "
-                               "there."),
-                            this);
+    auto *note =
+        new QLabel(tr("Downloads are converted and tagged as they arrive. Save to collection moves an item into your "
+                      "collection under the names from Settings; Selecta never changes files once they are "
+                      "there."),
+                   this);
     note->setObjectName(u"inbox.note"_s);
     note->setWordWrap(true);
     note->setForegroundRole(QPalette::PlaceholderText);

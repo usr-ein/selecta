@@ -31,6 +31,8 @@ constexpr double kSkipSeconds = 5.0;
 // while pressed, and when disabled.
 class GlyphButton : public QToolButton
 {
+    Q_OBJECT
+
 public:
     explicit GlyphButton(QWidget *parent)
         : QToolButton(parent)
@@ -384,3 +386,5 @@ void PlayerBar::tick()
 }
 
 } // namespace selecta::app
+
+#include "PlayerBar.moc"

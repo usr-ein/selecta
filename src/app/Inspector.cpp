@@ -55,7 +55,7 @@ void Inspector::fitToWidth(QScrollArea *scroll)
         return;
     }
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    QWidget *details = scroll->widget();
+    const QWidget *details = scroll->widget();
     if (!details) {
         return;
     }

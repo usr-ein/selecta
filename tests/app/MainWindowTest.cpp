@@ -23,8 +23,8 @@
 #include "storage/SessionLog.h"
 #include "support/FakeNotificationSink.h"
 
-#include <QAbstractItemView>
 #include <QAbstractButton>
+#include <QAbstractItemView>
 #include <QAction>
 #include <QApplication>
 #include <QBuffer>
@@ -1391,9 +1391,9 @@ TEST_F(MainWindowTest, SearchActionsStayOnScreenWhenTheViewIsNarrow)
         const auto *button = window->findChild<QAbstractButton *>(name);
         ASSERT_TRUE(button->isVisible()) << name.toStdString();
         const QRect shown(button->mapTo(window.get(), QPoint(0, 0)), button->size());
-        EXPECT_TRUE(viewRect.contains(shown)) << name.toStdString() << " with a sidebar of " << sidebarWidth
-                                              << ": its right edge at " << shown.right() << ", the view's at "
-                                              << viewRect.right();
+        EXPECT_TRUE(viewRect.contains(shown))
+            << name.toStdString() << " with a sidebar of " << sidebarWidth << ": its right edge at " << shown.right()
+            << ", the view's at " << viewRect.right();
         EXPECT_GE(button->width(), button->sizeHint().width()) << name.toStdString(); // never squeezed
     }
     engine->stop();

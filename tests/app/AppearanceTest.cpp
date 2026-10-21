@@ -20,21 +20,28 @@ QPalette paletteWith(const QColor &window, const QColor &text, const QColor &acc
 }
 
 const QColor kQtAccent(0x30, 0x8C, 0xC6);
-const QPalette kLight = paletteWith(QColor(0xEC, 0xEC, 0xEC), Qt::black, kQtAccent);
-const QPalette kDark = paletteWith(QColor(0x1E, 0x1E, 0x1E), Qt::white, kQtAccent);
+QPalette lightPalette()
+{
+    return paletteWith(QColor(0xEC, 0xEC, 0xEC), Qt::black, kQtAccent);
+}
+
+QPalette darkPalette()
+{
+    return paletteWith(QColor(0x1E, 0x1E, 0x1E), Qt::white, kQtAccent);
+}
 
 } // namespace
 
 TEST(AppearanceTest, TellsDarkPalettesFromLightOnes)
 {
-    EXPECT_FALSE(isDarkPalette(kLight));
-    EXPECT_TRUE(isDarkPalette(kDark));
+    EXPECT_FALSE(isDarkPalette(lightPalette()));
+    EXPECT_TRUE(isDarkPalette(darkPalette()));
 }
 
 TEST(AppearanceTest, SymbolAccentIsLighterInDarkMode)
 {
-    const QColor light = symbolAccentColor(kLight);
-    const QColor dark = symbolAccentColor(kDark);
+    const QColor light = symbolAccentColor(lightPalette());
+    const QColor dark = symbolAccentColor(darkPalette());
     ASSERT_TRUE(light.isValid());
     ASSERT_TRUE(dark.isValid());
 #ifdef Q_OS_MACOS

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/SearchInspector.h"
 
-#include "app/Inspector.h"
-
 #include "app/Format.h"
+#include "app/Inspector.h"
 #include "app/models/SearchResultsModel.h"
 
 #include <QFileInfo>
