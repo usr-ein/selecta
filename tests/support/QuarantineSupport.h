@@ -10,6 +10,9 @@
 #ifdef Q_OS_MACOS
 #include <sys/xattr.h>
 #endif
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
 
 // Test-only: quarantine attributes as other apps leave them, so tests can check that Selecta keeps them.
 namespace selecta::testing {
@@ -29,6 +32,16 @@ inline bool setQuarantine(const QString &path, const QByteArray &value)
 #else
     Q_UNUSED(path);
     Q_UNUSED(value);
+    return false;
+#endif
+}
+
+// True when the tests run as root, whom read-only files don't stop (Unix). False elsewhere.
+inline bool runningAsRoot()
+{
+#ifdef Q_OS_UNIX
+    return ::geteuid() == 0;
+#else
     return false;
 #endif
 }

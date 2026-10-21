@@ -43,7 +43,7 @@ library agent designs the details inside it and builds it.
    - Memory is bounded for anything read from the network or from files.
    - No `TODO` in code paths that run. Something unsupported returns a clear error.
    - The build is warning-free (`-Werror`). `tools/lint.sh src/<lib> tests/<lib>` is clean: clang-format, clang-tidy,
-     clazy, cppcheck. Tests pass under the `dev`, `asan` and `tsan` presets.
+     clazy, cppcheck. Tests pass under the `dev` and `asan` presets.
    - Tests never touch the real network. Allowed: loopback fakes, the local test server in `devenv/` (opt-in label),
      and recorded fixtures.
 6. **Style:**
@@ -61,7 +61,7 @@ Build and test:
 export VCPKG_ROOT="$HOME/vcpkg"
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 tools/lint.sh src/<lib> tests/<lib>
-cmake --preset asan && cmake --build --preset asan && ctest --preset asan   # likewise tsan
+cmake --preset asan && cmake --build --preset asan && ctest --preset asan
 ```
 
 Media libraries need `-DSELECTA_WITH_MEDIA=ON` (FFmpeg, LAME, soxr and TagLib from vcpkg; the binary cache makes it

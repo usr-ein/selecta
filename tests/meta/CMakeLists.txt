@@ -1,6 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # meta/ tests. Nothing here touches a real service: HTTP goes to FakeNetwork (scripted replies), the sign-in callback
 # to a loopback listener in the same process, and yt-dlp to the fake script in fixtures/.
+# The tool tests script their tools in /bin/sh and check process groups and owners, so they run on Unix only.
+set(_selecta_meta_tool_tests "")
+if(UNIX)
+    set(_selecta_meta_tool_tests ToolProcessTest.cpp YtDlpRunnerTest.cpp)
+endif()
 selecta_add_test_suite(selecta_meta_tests
     SOURCES
         support/Await.h
@@ -26,10 +31,9 @@ selecta_add_test_suite(selecta_meta_tests
         SpotifyJsonTest.cpp
         SpotifyLinksTest.cpp
         TokenStoreTest.cpp
-        ToolProcessTest.cpp
         WorkerTest.cpp
         YtDlpOutputTest.cpp
-        YtDlpRunnerTest.cpp
+        ${_selecta_meta_tool_tests}
     LIBRARIES selecta_meta Qt6::Network)
 target_compile_definitions(selecta_meta_tests PRIVATE
     SELECTA_META_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
