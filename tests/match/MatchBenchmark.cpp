@@ -16,7 +16,19 @@
 #include <QStringList>
 
 #include <benchmark/benchmark.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+// windows.h first: psapi.h needs its types.
+#include <psapi.h>
+#else
 #include <sys/resource.h>
+#endif
 #ifdef __APPLE__
 #include <pthread.h>
 #include <sys/qos.h>
@@ -283,9 +295,21 @@ double percentile(std::vector<double> values, double p)
 // The calling thread's CPU time in µs.
 double threadCpuMicros()
 {
+#ifdef _WIN32
+    FILETIME creation{};
+    FILETIME exit{};
+    FILETIME kernel{};
+    FILETIME user{};
+    GetThreadTimes(GetCurrentThread(), &creation, &exit, &kernel, &user);
+    const auto ticks = [](FILETIME time) { // 100 ns each
+        return (static_cast<std::uint64_t>(time.dwHighDateTime) << 32U) | time.dwLowDateTime;
+    };
+    return static_cast<double>(ticks(kernel) + ticks(user)) / 10.0;
+#else
     timespec now{};
     clock_gettime(CLOCK_THREAD_CPUTIME_ID, &now);
     return (static_cast<double>(now.tv_sec) * 1e6) + (static_cast<double>(now.tv_nsec) / 1e3);
+#endif
 }
 
 // On Apple silicon, ask for a performance core: the efficiency cores would measure the scheduler, not the matcher.
@@ -298,9 +322,17 @@ void preferPerformanceCores()
 
 long maxResidentKilobytes()
 {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)) == 0) {
+        return 0;
+    }
+    return static_cast<long>(counters.PeakWorkingSetSize / 1024);
+#else
     rusage usage{};
     getrusage(RUSAGE_SELF, &usage);
     return usage.ru_maxrss / 1024; // bytes on macOS
+#endif
 }
 
 void BM_BuildIndex(benchmark::State &state)

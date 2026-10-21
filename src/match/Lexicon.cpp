@@ -60,11 +60,11 @@ template <typename Value, std::size_t N>
 const Value *findEntry(const std::array<std::pair<Word, Value>, N> &entries, QStringView text)
 {
     const Word key = toWord(text);
-    const auto *it = std::ranges::lower_bound(entries, key, {}, &std::pair<Word, Value>::first);
-    if (it == entries.end() || it->first != key) {
+    const auto [first, last] = std::ranges::equal_range(entries, key, {}, &std::pair<Word, Value>::first);
+    if (first == last) {
         return nullptr;
     }
-    return &it->second;
+    return &first->second;
 }
 
 // --- Normalisation ---------------------------------------------------------------------------------------------------

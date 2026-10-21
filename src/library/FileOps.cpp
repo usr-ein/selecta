@@ -100,9 +100,15 @@ int renameExclusive(const QString &from, const QString &to)
 QString describeErrno(int code)
 {
     std::array<char, 256> buffer{};
+#ifdef Q_OS_WIN
+    if (strerror_s(buffer.data(), buffer.size(), code) != 0) {
+        return u"error %1"_s.arg(code);
+    }
+#else
     if (strerror_r(code, buffer.data(), buffer.size()) != 0) {
         return u"error %1"_s.arg(code);
     }
+#endif
     return QString::fromLocal8Bit(buffer.data());
 }
 

@@ -40,11 +40,11 @@ char cp1252Byte(char16_t c)
         {0x201A, 0x82}, {0x201C, 0x93}, {0x201D, 0x94}, {0x201E, 0x84}, {0x2020, 0x86}, {0x2021, 0x87}, {0x2022, 0x95},
         {0x2026, 0x85}, {0x2030, 0x89}, {0x2039, 0x8B}, {0x203A, 0x9B}, {0x20AC, 0x80}, {0x2122, 0x99},
     }};
-    const auto *it = std::ranges::lower_bound(kTable, c, {}, &std::pair<char16_t, unsigned char>::first);
-    if (it == kTable.end() || it->first != c) {
+    const auto [first, last] = std::ranges::equal_range(kTable, c, {}, &std::pair<char16_t, unsigned char>::first);
+    if (first == last) {
         return 0;
     }
-    return static_cast<char>(it->second);
+    return static_cast<char>(first->second);
 }
 
 // A UTF-8 lead byte read as Latin-1 ("Ã", "Â"…: U+00C2–U+00F4) followed by a continuation byte read the same way.

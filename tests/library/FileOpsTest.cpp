@@ -10,7 +10,6 @@
 #include <QTemporaryDir>
 
 #include <gtest/gtest.h>
-#include <unistd.h>
 
 using namespace Qt::StringLiterals;
 using selecta::library::FileOps;
@@ -315,7 +314,7 @@ TEST_F(FileOpsTest, AQuarantineAttributeAlreadyThereIsKeptOnTheWayIn)
 
 TEST_F(FileOpsTest, AFileThatCantBeQuarantinedStillArrives)
 {
-    if (!quarantine::isSupported() || ::geteuid() == 0) {
+    if (!quarantine::isSupported() || selecta::testing::runningAsRoot()) {
         GTEST_SKIP() << "needs the attribute, and a user that read-only files stop";
     }
     const QString temp = incoming + u"/locked.mp3"_s;
