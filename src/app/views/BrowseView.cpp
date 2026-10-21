@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/views/BrowseView.h"
 
+#include "app/Style.h"
+
 #include "app/Accessibility.h"
 #include "app/Format.h"
 #include "app/PeerMenu.h"
@@ -109,14 +111,18 @@ BrowseView::BrowseView(core::EngineHost &engine, AppSettings &settings, QWidget 
     m_pages->addWidget(m_waiting);
     m_pages->addWidget(m_table);
 
+    // The peer and the folder on the left, eliding; the actions pinned on the right (P-023, P-003).
+    m_headline->setSizePolicy(QSizePolicy::Ignored, m_headline->sizePolicy().verticalPolicy());
+    m_details->setSizePolicy(QSizePolicy::Ignored, m_details->sizePolicy().verticalPolicy());
     auto *top = new QHBoxLayout;
+    top->setSpacing(style::kSpace2);
     top->addWidget(m_headline, 1);
     top->addWidget(m_refresh);
     top->addWidget(m_downloadFolder);
     top->addWidget(m_download);
     auto *bar = new QVBoxLayout;
-    bar->setContentsMargins(16, 10, 16, 8);
-    bar->setSpacing(4);
+    bar->setContentsMargins(style::kBarMargins);
+    bar->setSpacing(style::kSpace1);
     bar->addLayout(top);
     bar->addWidget(m_details);
     auto *layout = new QVBoxLayout(this);
