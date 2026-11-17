@@ -25,6 +25,7 @@ qt_add_library(selecta_app STATIC
     WaveformView.h WaveformView.cpp
     models/ActivityModel.h models/ActivityModel.cpp
     models/BrowseTreeModel.h models/BrowseTreeModel.cpp
+    models/CollectionWallModel.h models/CollectionWallModel.cpp
     models/ConverterModel.h models/ConverterModel.cpp
     models/GetTracksModel.h models/GetTracksModel.cpp
     models/PeersModel.h models/PeersModel.cpp
@@ -33,7 +34,10 @@ qt_add_library(selecta_app STATIC
     views/ActivityView.h views/ActivityView.cpp
     views/AddTracksDialog.h views/AddTracksDialog.cpp
     views/BrowseView.h views/BrowseView.cpp
+    views/CollectionAlbumView.h views/CollectionAlbumView.cpp
+    views/CollectionCovers.h views/CollectionCovers.cpp
     views/CollectionView.h views/CollectionView.cpp
+    views/CollectionWall.h views/CollectionWall.cpp
     views/ConverterInspector.h views/ConverterInspector.cpp
     views/ConverterView.h views/ConverterView.cpp
     views/EditTagsDialog.h views/EditTagsDialog.cpp

@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "app/Format.h"
 
+#include "match/Types.h"
+
+#include <QDir>
+
 #include <gtest/gtest.h>
 #include <limits>
 
@@ -45,4 +49,29 @@ TEST(FormatTest, AboutRoundsUpToTheMinute)
     EXPECT_EQ(selecta::app::format::about(61'000), u"about 2 min"_s);
     EXPECT_EQ(selecta::app::format::about(3'600'000), u"about 1 h"_s);
     EXPECT_EQ(selecta::app::format::about(4'800'000), u"about 1 h 20 min"_s);
+}
+
+// P-010: the collection's files, as the Collection view words their quality.
+TEST(FormatTest, ALocalFilesQuality)
+{
+    using format::quality;
+    using selecta::match::AudioQuality;
+    using selecta::match::Codec;
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3, .bitrateKbps = 320, .vbr = false}), u"MP3 320"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3, .bitrateKbps = 245, .vbr = true}), u"MP3 VBR 245"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Mp3}), u"MP3"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Aac, .bitrateKbps = 256}), u"AAC 256"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Flac, .sampleRateHz = 44100, .bitDepth = 16}), u"FLAC 16/44.1"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Wav, .sampleRateHz = 96000, .bitDepth = 24}), u"WAV 24/96"_s);
+    EXPECT_EQ(quality(AudioQuality{.codec = Codec::Alac}), u"ALAC"_s);
+    EXPECT_EQ(quality(AudioQuality{}), u"?"_s);
+}
+
+TEST(FormatTest, PathsUnderTheHomeFolderStartWithATilde)
+{
+    const QString home = QDir::homePath();
+    EXPECT_EQ(format::shownPath(home + u"/Music/Tracks"_s), QDir::toNativeSeparators(u"~/Music/Tracks"_s));
+    EXPECT_EQ(format::shownPath(home), u"~"_s);
+    EXPECT_EQ(format::shownPath(home + u"stead/Music"_s), QDir::toNativeSeparators(home + u"stead/Music"_s));
+    EXPECT_EQ(format::shownPath(u"/Volumes/Crate/Albums"_s), QDir::toNativeSeparators(u"/Volumes/Crate/Albums"_s));
 }

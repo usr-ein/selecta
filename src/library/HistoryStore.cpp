@@ -13,7 +13,7 @@ using Kind = HistoryEntry::Kind;
 using Whereabouts = HistoryEntry::Whereabouts;
 
 constexpr auto kColumns = u"id, session, completed_at, kind, peer, remote_path, size_bytes, quality, artist, title, "
-                          "version, inbox_item, whereabouts, filed_path";
+                          "version, inbox_item, whereabouts, filed_path, likely_source_kbps";
 
 QString kindName(Kind kind)
 {
@@ -108,6 +108,9 @@ HistoryEntry readEntry(const Statement &row)
     entry.inboxItem = optionalInt64(row, 11);
     entry.whereabouts = whereaboutsFrom(row.text(12));
     entry.filedPath = row.text(13);
+    if (!row.isNull(14)) {
+        entry.likelySourceKbps = static_cast<int>(row.int64(14));
+    }
     return entry;
 }
 
@@ -126,8 +129,8 @@ std::optional<qint64> HistoryStore::add(const HistoryEntry &entry)
 {
     Statement insert = m_db.prepare(
         u"INSERT INTO history (session, completed_at, kind, peer, remote_path, size_bytes, quality, artist, title, "
-        "version, inbox_item, whereabouts, filed_path) "
-        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);");
+        "version, inbox_item, whereabouts, filed_path, likely_source_kbps) "
+        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14);");
     if (!insert.isValid()) {
         return std::nullopt;
     }
@@ -143,6 +146,10 @@ std::optional<qint64> HistoryStore::add(const HistoryEntry &entry)
     bindOptional(insert, 11, entry.inboxItem);
     insert.bind(12, whereaboutsName(entry.whereabouts));
     bindFiledPath(insert, 13, entry.whereabouts, entry.filedPath);
+    // A verdict is a bitrate: anything else is no verdict.
+    bindOptional(insert, 14,
+                 entry.likelySourceKbps && *entry.likelySourceKbps > 0 ? std::optional<qint64>(*entry.likelySourceKbps)
+                                                                       : std::nullopt);
     if (!insert.run()) {
         return std::nullopt;
     }
@@ -169,6 +176,22 @@ int HistoryStore::setWhereaboutsForInboxItem(qint64 inboxItem, Whereabouts where
     update.bind(1, whereaboutsName(whereabouts));
     bindFiledPath(update, 2, whereabouts, filedPath);
     return update.bind(3, inboxItem).run() ? m_db.changes() : -1;
+}
+
+int HistoryStore::trashFiledAt(const QString &filedPath)
+{
+    if (filedPath.isEmpty()) {
+        return 0;
+    }
+    Statement update = m_db.prepare(
+        u"UPDATE history SET whereabouts = ?1, filed_path = NULL WHERE whereabouts = ?2 AND filed_path = ?3;"_s);
+    if (!update.isValid()) {
+        return -1;
+    }
+    update.bind(1, whereaboutsName(Whereabouts::Trashed))
+        .bind(2, whereaboutsName(Whereabouts::Filed))
+        .bind(3, filedPath);
+    return update.run() ? m_db.changes() : -1;
 }
 
 QList<qint64> HistoryStore::idsForInboxItem(qint64 inboxItem)

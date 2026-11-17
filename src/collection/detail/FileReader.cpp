@@ -71,6 +71,30 @@ int nearestMpegBitrate(int kbps)
     return best;
 }
 
+// The longest genre kept: a group in the Collection view, never a paragraph.
+constexpr qsizetype kMaxGenreChars = 100;
+
+// The first non-empty GENRE value, trimmed and bounded: what the Collection view groups by (P-010). Values aren't split
+// further: "Hip-Hop/Rap" and "Drum & Bass" are one genre each.
+QString genreOf(const convert::MetadataModel &tags)
+{
+    const QStringList values = tags.values(convert::keys::Genre);
+    for (const QString &value : values) {
+        QString genre = value.simplified();
+        if (genre.isEmpty()) {
+            continue;
+        }
+        if (genre.size() > kMaxGenreChars) {
+            genre.truncate(kMaxGenreChars);
+            if (genre.back().isHighSurrogate()) {
+                genre.chop(1); // never half a character
+            }
+        }
+        return genre;
+    }
+    return {};
+}
+
 // Distinct non-empty values, joined with " & " (the matcher splits artist sets on it).
 QString joinedValues(const convert::MetadataModel &tags, QStringView key)
 {
@@ -99,6 +123,7 @@ void applyTags(const convert::MetadataModel &tags, ScannedFile &file)
         file.year = yearOf(tags.value(keys::OriginalDate));
     }
     file.isrc = tags.value(keys::Isrc).trimmed();
+    file.genre = genreOf(tags);
 }
 
 // No title tag: the names come from the file and its folders, as for a search result (note §12, `meta_source`).

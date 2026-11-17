@@ -121,6 +121,11 @@ public:
     // --- the collection ---
     void scanCollection();
     CollectionStatus collectionStatus() const { return m_collectionStatus; }
+    // The Collection view's tracks and albums (P-010), as last built; empty until the first build.
+    std::shared_ptr<const CollectionListing> collectionListing() const { return m_collectionListing; }
+    // "Search for Better Quality" (P-010): these collection tracks (CollectionTrack::id) go to Get tracks as upgrade
+    // lines, searched at once; betterQualitySearched() says what happened.
+    void searchForBetterQuality(const QList<qint64> &trackIds);
     // --- transfers (DL-1) and peers (FAIR-1) ---
     // This session's downloads and the unfinished ones, by id; bytes on disk and file size while they arrive.
     QList<Download> downloads() const { return m_downloads.values(); }
@@ -265,6 +270,9 @@ Q_SIGNALS:
     void previewRefused(const QString &key, const QString &why);
     void previewChanged(const selecta::core::Preview &preview);
     void collectionStatusChanged(const selecta::core::CollectionStatus &status);
+    void collectionListingChanged(const std::shared_ptr<const selecta::core::CollectionListing> &listing);
+    // What searchForBetterQuality() did (Engine::betterQualitySearched()).
+    void betterQualitySearched(int searching, int already, int best, int gone);
     void shareStatusChanged(const selecta::core::ShareStatus &status);
     void uploadsChanged(const QList<selecta::core::UploadEntry> &uploads);
     void inboxReleasesFound(qint64 itemId, const QList<selecta::meta::Candidate> &candidates, const QString &error);
@@ -314,6 +322,7 @@ private:
     QList<GetLine> m_getLines;
     NetworkStatus m_networkStatus;
     CollectionStatus m_collectionStatus;
+    std::shared_ptr<const CollectionListing> m_collectionListing = std::make_shared<const CollectionListing>();
     ShareStatus m_shareStatus;
     QList<UploadEntry> m_uploads;
     QMap<qint64, AlbumDownload> m_albums;                // by id: oldest first

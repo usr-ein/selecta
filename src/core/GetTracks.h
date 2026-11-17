@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include "core/CollectionBrowse.h"
 #include "meta/Release.h"
 
 #include <QByteArray>
@@ -87,6 +88,9 @@ struct GetLine
     bool lookingForPeers = false;
     QString peersNote;
     QStringList leftPeers;
+    // P-010: the collection file this line looks for a better copy of (CollectionTrack::path); empty for an ordinary
+    // line. Only a file of a higher quality tier counts as found, and what arrives replaces that file when filed.
+    QString upgradeOf;
 };
 
 // Reads and writes Get tracks lines (table get_lines). Uses the Database on its owning thread; failures are reported
@@ -111,6 +115,9 @@ public:
 private:
     storage::Database &m_db;
 };
+
+// The quality tier of a file on Soulseek, from what its peer declares (P-010). Pure.
+QualityTier qualityTierOf(const FileChoice &choice);
 
 // FileChoice ↔ JSON text, for the database.
 QByteArray fileChoiceToText(const FileChoice &choice);

@@ -4,6 +4,7 @@
 #include "app/Format.h"
 
 #include <QColor>
+#include <QDir>
 #include <QGuiApplication>
 #include <QPalette>
 
@@ -234,6 +235,11 @@ QString GetTracksModel::toolTip(const GetLine &line, int column)
     switch (column) {
     case TrackColumn:
         // The cleaned line shows; numbering, timestamps and labels stay in the raw text here.
+        if (!line.upgradeOf.isEmpty()) {
+            return line.raw + u'\n' + subtitle(line) + u'\n' +
+                   tr("A better copy of %1: once filed, it takes that file's place.")
+                       .arg(QDir::toNativeSeparators(line.upgradeOf));
+        }
         return line.raw + u'\n' + subtitle(line);
     case StatusColumn:
         return line.message;
@@ -246,21 +252,31 @@ QString GetTracksModel::toolTip(const GetLine &line, int column)
 
 QString GetTracksModel::subtitle(const GetLine &line)
 {
+    QString release;
     if (line.release && line.releaseState != ReleaseState::None) {
-        return u"✓ "_s + format::release(*line.release);
+        release = u"✓ "_s + format::release(*line.release);
+    } else {
+        switch (line.releaseState) {
+        case ReleaseState::Pending:
+            release = line.resolving ? tr("Looking for the release…")
+                                     : tr("Waiting for a release lookup (Spotify or Deezer)");
+            break;
+        case ReleaseState::None:
+            release = tr("No release found: Soulseek is searched by name, and tags come from the file");
+            break;
+        case ReleaseState::Failed:
+            release = line.message.isEmpty() ? tr("The lookup failed") : line.message;
+            break;
+        case ReleaseState::Resolved:
+        case ReleaseState::Ambiguous:
+            break;
+        }
     }
-    switch (line.releaseState) {
-    case ReleaseState::Pending:
-        return line.resolving ? tr("Looking for the release…") : tr("Waiting for a release lookup (Spotify or Deezer)");
-    case ReleaseState::None:
-        return tr("No release found: Soulseek is searched by name, and tags come from the file");
-    case ReleaseState::Failed:
-        return line.message.isEmpty() ? tr("The lookup failed") : line.message;
-    case ReleaseState::Resolved:
-    case ReleaseState::Ambiguous:
-        break;
+    if (line.upgradeOf.isEmpty()) {
+        return release;
     }
-    return {};
+    // P-010: a better copy of a track in the collection, asked for from the Collection view.
+    return release.isEmpty() ? tr("Upgrade") : tr("Upgrade · %1").arg(release);
 }
 
 QVariant GetTracksModel::accessibleText(const GetLine &line, int column)

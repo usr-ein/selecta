@@ -21,9 +21,11 @@ MatchIndex snapshots, the UI. The scanner has no database, no settings and no ne
 
 1. `struct FileSignature { QString path; qint64 size; qint64 modifiedMs; }`. Paths are absolute.
 2. `struct ScannedFile { FileSignature file; QString artist, title, album, albumArtist; int trackNumber = 0,
-   discNumber = 0, year = 0; qint64 durationMs = 0; match::AudioQuality quality; QString isrc;
+   discNumber = 0, year = 0; qint64 durationMs = 0; match::AudioQuality quality; QString isrc, genre;
    bool namesFromFileName = false; }`
    - The title keeps its version text, as tagged.
+   - The genre is the first GENRE value, whitespace tidied, at most 100 characters, never split further ("Hip-Hop/Rap"
+     is one genre): what the Collection view groups by (P-010).
    - Quality and duration come from the stream headers through `audio::probeStreamInfo()`: header only (tens of KB),
      never a decode and never a whole-file read. Lengths are exact when the header carries them (STREAMINFO, a LAME
      frame count, chunk sizes, an MP4 index), estimated otherwise.

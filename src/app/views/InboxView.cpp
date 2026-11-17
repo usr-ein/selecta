@@ -7,6 +7,7 @@
 #include "app/views/EmptyStateView.h"
 #include "app/views/InboxInspector.h"
 #include "core/EngineHost.h"
+#include "core/InboxService.h"
 #include "core/SpectrumCheck.h"
 
 #include <QDir>
@@ -81,9 +82,19 @@ QString statusText(const core::InboxEntry &entry)
     case InboxItem::State::Failed:
         return InboxView::tr("Failed");
     case InboxItem::State::Ready:
-        // What the file is comes first (PREV-9): "Likely from a ≈ 192 kbps MP3".
+        // P-010: an upgrade that isn't one comes first: Save to collection won't put it in its file's place.
+        if (entry.upgrade == core::UpgradeVerdict::NotBetter) {
+            return InboxView::tr("⚠ Not better than yours");
+        }
+        // What the file is comes next (PREV-9): "Likely from a ≈ 192 kbps MP3".
         if (const QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
             return InboxView::tr("⚠ %1").arg(badge);
+        }
+        if (entry.upgrade == core::UpgradeVerdict::Replaces || entry.upgrade == core::UpgradeVerdict::NotKnownYet) {
+            return InboxView::tr("Upgrade");
+        }
+        if (entry.upgrade == core::UpgradeVerdict::CantReplace) {
+            return InboxView::tr("⚠ Upgrade, can't replace");
         }
         if (!entry.item.belowWanted.isEmpty()) {
             return InboxView::tr("Below your quality"); // got anyway (Get tracks)
@@ -102,8 +113,17 @@ QString accessibleStatus(const core::InboxEntry &entry)
     if (entry.busy || entry.item.state != InboxItem::State::Ready) {
         return statusText(entry);
     }
+    if (entry.upgrade == core::UpgradeVerdict::NotBetter) {
+        return InboxView::tr("Warning: not better than your copy");
+    }
     if (QString badge = core::spectrumBadge(entry.item); !badge.isEmpty()) {
         return InboxView::tr("Warning: %1").arg(badge.replace(u"≈ "_s, InboxView::tr("roughly ")));
+    }
+    if (entry.upgrade == core::UpgradeVerdict::Replaces || entry.upgrade == core::UpgradeVerdict::NotKnownYet) {
+        return InboxView::tr("Ready, an upgrade");
+    }
+    if (entry.upgrade == core::UpgradeVerdict::CantReplace) {
+        return InboxView::tr("Warning: an upgrade that can't replace its file");
     }
     if (!entry.item.belowWanted.isEmpty()) {
         return InboxView::tr("Ready, below your quality");
@@ -127,6 +147,9 @@ QString statusToolTip(const core::InboxEntry &entry)
                                                 .arg(badge)
                                                 .arg(*item.qualityCutoffHz / 1000.0, 0, 'f', 1)
                                           : badge + u'.');
+    }
+    if (entry.upgrade != core::UpgradeVerdict::None) {
+        lines.append(InboxView::tr("An upgrade of %1. %2").arg(format::shownPath(item.replaces), entry.upgradeNote));
     }
     if (!item.belowWanted.isEmpty()) {
         lines.append(InboxView::tr("Below the quality you wanted (%1): you got it anyway.").arg(item.belowWanted));
@@ -439,21 +462,23 @@ void InboxView::showSelection()
     }
     std::optional<InboxItem> item;
     QStringList alsoOn;
+    QString upgrade;
     for (const core::InboxEntry &entry : std::as_const(m_entries)) {
         if (entry.item.id == id) {
             item = entry.item;
             alsoOn = entry.alsoOn;
+            upgrade = entry.upgradeNote;
             break;
         }
     }
     // The same item, unchanged: keep what the inspector shows (and its read in flight).
     if (item && m_inspector->itemId() == item->id && m_shownItem && *m_shownItem == *item) {
-        m_inspector->setAlsoOn(alsoOn);
+        m_inspector->setAlsoOn(alsoOn, upgrade);
         return;
     }
     m_shownItem = item;
     m_inspector->showItem(item, m_config.inboxRoot);
-    m_inspector->setAlsoOn(alsoOn);
+    m_inspector->setAlsoOn(alsoOn, upgrade);
 }
 
 void InboxView::refreshActions()
@@ -463,19 +488,29 @@ void InboxView::refreshActions()
     const QSet<qint64> selectedSet(selected.cbegin(), selected.cend());
     bool singles = false;
     bool albums = false;
+    bool upgrades = false; // P-010: singles that take a collection file's place, wherever it is
     for (const core::InboxEntry &entry : std::as_const(m_entries)) {
-        if (selectedSet.contains(entry.item.id)) {
-            (entry.item.kind == InboxItem::Kind::Album ? albums : singles) = true;
+        if (!selectedSet.contains(entry.item.id)) {
+            continue;
+        }
+        if (entry.item.kind == InboxItem::Kind::Album) {
+            albums = true;
+        } else if (entry.upgrade == core::UpgradeVerdict::Replaces || entry.upgrade == core::UpgradeVerdict::NotKnownYet) {
+            upgrades = true; // one not judged yet may be: saving it says to wait
+        } else {
+            singles = true;
         }
     }
     const bool tracksChosen = !m_config.tracksRoot.isEmpty();
     const bool albumsChosen = !m_config.albumsRoot.isEmpty();
     const QString tracksFolder = QDir::toNativeSeparators(m_config.tracksRoot);
     const QString albumsFolder = QDir::toNativeSeparators(m_config.albumsRoot);
-    m_file->setEnabled((singles && tracksChosen) || (albums && albumsChosen));
+    m_file->setEnabled((singles && tracksChosen) || (albums && albumsChosen) || upgrades);
     m_file->setText(selected.size() > 1 ? tr("Save %1 to collection").arg(selected.size()) : tr("Save to collection"));
     QString tip;
-    if ((singles || selected.isEmpty()) && !tracksChosen && (albums || selected.isEmpty()) && !albumsChosen) {
+    if (upgrades && !singles && !albums) {
+        tip = tr("Put the selection in the place of the files it upgrades, which go to the Trash");
+    } else if ((singles || selected.isEmpty()) && !tracksChosen && (albums || selected.isEmpty()) && !albumsChosen) {
         tip = tr("Choose your tracks folder and your albums folder in Settings → Library first");
     } else if (singles && !tracksChosen) {
         tip = tr("Choose your tracks folder in Settings → Library first: singles are filed there");
@@ -487,6 +522,9 @@ void InboxView::refreshActions()
         tip = tr("Move the selection into %1").arg(albums ? albumsFolder : tracksFolder);
     } else {
         tip = tr("Move singles into your tracks folder and albums into your albums folder");
+    }
+    if (upgrades && (singles || albums)) {
+        tip += u'\n' + tr("The upgrades take the place of the files they upgrade, which go to the Trash");
     }
     m_file->setToolTip(format::plainToolTip(tip)); // folder names
     m_trash->setEnabled(!selected.isEmpty());

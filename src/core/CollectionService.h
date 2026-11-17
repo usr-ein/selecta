@@ -3,6 +3,7 @@
 
 #include "collection/FolderRoles.h"
 #include "collection/Scanner.h"
+#include "core/CollectionBrowse.h"
 #include "library/HistoryStore.h"
 #include "library/InboxStore.h"
 #include "match/MatchIndex.h"
@@ -34,7 +35,9 @@ namespace selecta::core {
 // What the Collection view shows.
 struct CollectionStatus
 {
-    QStringList roots; // the tracks folder and the albums folder (those chosen)
+    QStringList roots;    // the tracks folder and the albums folder (those chosen)
+    QString tracksFolder; // empty until chosen
+    QString albumsFolder; // empty until chosen
     bool scanning = false;
     int done = 0;  // files read so far in this scan
     int total = 0; // files this scan reads (new or changed ones)
@@ -53,6 +56,9 @@ struct CollectionStatus
 // only new or changed files (collection::scan), kept current by watching the folders (collection::Watcher). From it,
 // the Inbox and the download history, it builds the match::MatchIndex snapshot that Get tracks lines and search
 // results are checked against ("you have it"), with one album per album folder (collection::albumsOf).
+// With the index comes the listing the Collection view shows (P-010): every track with its album, its quality tier and
+// when it came, from what History says of the files Selecta filed (the newest download filed at a path, or into an
+// album's folder), else from the files' modification times.
 //
 // Read-only on the user's files, always. Scans and index builds run one at a time on a worker; their results come back
 // through a mutex-guarded mailbox. A folder that isn't there (an unplugged drive) is reported, and the files known
@@ -93,6 +99,8 @@ public:
 
     // The latest snapshot (empty until the first build).
     std::shared_ptr<const match::MatchIndex> index() const { return m_index; }
+    // The latest listing (empty until the first build).
+    std::shared_ptr<const CollectionListing> listing() const { return m_listing; }
     CollectionStatus status() const { return m_status; }
     // Blocks until scans and index builds in flight are done and recorded. For tests.
     void waitForIdle();
@@ -100,6 +108,8 @@ public:
 Q_SIGNALS:
     void statusChanged(const selecta::core::CollectionStatus &status);
     void indexChanged(const std::shared_ptr<const selecta::match::MatchIndex> &index);
+    // After an index build that changed what the listing says.
+    void listingChanged(const std::shared_ptr<const selecta::core::CollectionListing> &listing);
 
 private Q_SLOTS:
     void drain();
@@ -114,6 +124,7 @@ private:
     struct IndexOutcome
     {
         std::shared_ptr<const match::MatchIndex> index;
+        std::shared_ptr<const CollectionListing> listing;
         int albums = 0;
     };
     struct ProgressOutcome
@@ -140,6 +151,7 @@ private:
     QList<library::InboxItem> m_inboxItems;
     QList<library::HistoryEntry> m_history;
     std::shared_ptr<const match::MatchIndex> m_index;
+    std::shared_ptr<const CollectionListing> m_listing;
     quint64 m_generation = 0;
     CollectionStatus m_status;
     collection::Watcher *m_watcher = nullptr;

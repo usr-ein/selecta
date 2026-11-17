@@ -14,7 +14,7 @@ constexpr auto kColumns =
     u"id, kind, relative_path, state, error, artist, title, version, album, year, track_count, "
     "duration_ms, format, bitrate, sample_rate, bit_depth, size_bytes, source_format, tag_source, "
     "release_json, peer, remote_path, session, created_at, warning, quality_checked, quality_findings, "
-    "quality_cutoff_hz, quality_source_kbps, quality_key, below_wanted";
+    "quality_cutoff_hz, quality_source_kbps, quality_key, below_wanted, replaces";
 
 QString kindName(InboxItem::Kind kind)
 {
@@ -93,7 +93,7 @@ void bindItem(Statement &statement, const InboxItem &item)
     statement.bind(25, item.qualityChecked ? 1 : 0).bind(26, item.qualityFindings.join(u','));
     bindOptional(statement, 27, item.qualityCutoffHz);
     bindOptional(statement, 28, item.qualitySourceKbps);
-    statement.bind(29, item.qualityKey).bind(30, item.belowWanted);
+    statement.bind(29, item.qualityKey).bind(30, item.belowWanted).bind(31, item.replaces);
 }
 
 InboxItem readItem(const Statement &row)
@@ -130,6 +130,7 @@ InboxItem readItem(const Statement &row)
     item.qualitySourceKbps = optionalInt(row, 28);
     item.qualityKey = row.text(29);
     item.belowWanted = row.text(30);
+    item.replaces = row.text(31);
     return item;
 }
 
@@ -141,9 +142,9 @@ std::optional<qint64> InboxStore::add(const InboxItem &item)
         u"INSERT INTO inbox_items (kind, relative_path, state, error, artist, title, version, album, year, "
         "track_count, duration_ms, format, bitrate, sample_rate, bit_depth, size_bytes, source_format, tag_source, "
         "release_json, peer, remote_path, session, created_at, warning, quality_checked, quality_findings, "
-        "quality_cutoff_hz, quality_source_kbps, quality_key, below_wanted) "
+        "quality_cutoff_hz, quality_source_kbps, quality_key, below_wanted, replaces) "
         "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, "
-        "?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30);");
+        "?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31);");
     if (!insert.isValid()) {
         return std::nullopt;
     }
@@ -162,12 +163,12 @@ bool InboxStore::update(const InboxItem &item)
         "sample_rate = ?14, bit_depth = ?15, size_bytes = ?16, source_format = ?17, tag_source = ?18, "
         "release_json = ?19, peer = ?20, remote_path = ?21, session = ?22, created_at = ?23, warning = ?24, "
         "quality_checked = ?25, quality_findings = ?26, quality_cutoff_hz = ?27, quality_source_kbps = ?28, "
-        "quality_key = ?29, below_wanted = ?30 WHERE id = ?31;");
+        "quality_key = ?29, below_wanted = ?30, replaces = ?31 WHERE id = ?32;");
     if (!update.isValid()) {
         return false;
     }
     bindItem(update, item);
-    update.bind(31, item.id);
+    update.bind(32, item.id);
     return update.run() && m_db.changes() == 1;
 }
 

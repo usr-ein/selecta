@@ -339,6 +339,21 @@ constexpr std::array kMigrations{
     Migration{19, R"sql(
         DELETE FROM inbox_items;
     )sql"},
+    // P-010 (PRD D41): the Collection view's genres and quality tiers, and upgrades of collection files.
+    // - collection_files.genre: every file is read once more for it. Its signature is reset, so the next scan finds it
+    //   changed and reads it again; its row and id stay.
+    // - get_lines.upgrade_of: the collection file a line looks for a better copy of; '' for an ordinary line.
+    // - inbox_items.replaces: the collection file an upgrade takes the place of when it is filed; '' for none.
+    // - history.likely_source_kbps: the spectrum check's verdict on the file as downloaded (PREV-9), so a fake 320
+    //   filed into the collection sits in its real quality tier; NULL when the check didn't run or found nothing.
+    // Its version is kCollectionUpgradesVersion.
+    Migration{20, R"sql(
+        ALTER TABLE collection_files ADD COLUMN genre TEXT NOT NULL DEFAULT '';
+        UPDATE collection_files SET modified_ms = -1;
+        ALTER TABLE get_lines ADD COLUMN upgrade_of TEXT NOT NULL DEFAULT '';
+        ALTER TABLE inbox_items ADD COLUMN replaces TEXT NOT NULL DEFAULT '';
+        ALTER TABLE history ADD COLUMN likely_source_kbps INTEGER CHECK (likely_source_kbps > 0);
+    )sql"},
 };
 
 bool isValidList(std::span<const Migration> migrations)

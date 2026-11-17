@@ -20,7 +20,9 @@ struct FileResult
 };
 
 // The only code that writes outside Selecta's caches (ADR-009, PRD principle 2):
-// - in collection roots it can only create new files, never overwrite, move, rename or delete anything;
+// - in collection roots it can only create new files, never overwrite, move, rename or delete anything, with one
+//   exception the user asks for: an upgrade filed takes a collection file's place, and that file goes to the Trash
+//   (replaceInCollection(), P-010, PRD D41);
 // - in the Inbox it can publish, rename and move files to the Trash;
 // - every path is canonicalised and must stay inside its root (no "..", no symlink escapes).
 // Moves within one volume use an atomic exclusive rename; across volumes, copy → flush → verify (SHA-256) → rename,
@@ -63,6 +65,24 @@ public:
     // Moves a file or folder inside the Inbox to the Trash. Anything outside the Inbox is refused.
     FileResult trashFromInbox(const QString &path) const;
 
+    // Files an Inbox file (an upgrade, P-010) in the place of `collectionFile` (PRD D41): at its exact path, or, when
+    // that file is another lossy type (AAC, Ogg, Opus, WMA) and the upgrade an MP3, under its name with .mp3
+    // (upgradeTarget()). A copy is made and verified (SHA-256) under a hidden name beside it, the old file goes to the
+    // Trash, then the copy is renamed into place (exclusively), and the Inbox file goes. Should that rename fail, the
+    // old file is put back from the Trash. The path holds the old file until the new one takes its place; it is empty
+    // only for the moment between the two steps, and a crash there leaves the old file in the Trash and the new one in
+    // the Inbox: saving it again fills the path. A path no file holds any more simply gets the new one. Refused: an
+    // Inbox file that isn't one, a path outside the collection folders or in a folder that isn't there, a symbolic
+    // link, a type the name can't keep, and an .mp3 name already taken by another file.
+    FileResult replaceInCollection(const QString &inboxFile, const QString &collectionFile) const;
+    // What replaceInCollection() checks before it touches anything: the path the upgrade would take (real, as filed
+    // paths are reported), or why it won't. Reads the disk (stat).
+    FileResult checkReplace(const QString &inboxFile, const QString &collectionFile) const;
+    // The path an upgrade takes in place of `collectionFile`: the same path when both are of one type (extension,
+    // without case); the same name with .mp3 when the upgrade is an MP3 and the file another lossy type (.m4a, .mp4,
+    // .aac, .ogg, .oga, .opus, .wma); empty when neither. Pure.
+    static QString upgradeTarget(const QString &upgradeFile, const QString &collectionFile);
+
     // Moves `sourceFolder` (a staged album, outside the Inbox) to `relativeFolder` inside the Inbox, with everything in
     // it, all quarantined: renamed on one volume, else copied and verified into a hidden folder next to the target that
     // is then renamed into place. A name already taken gets " (2)", " (3)"… Creates parent folders. The staged folder
@@ -88,6 +108,9 @@ public:
 private:
     FileResult moveExclusive(const QString &from, const QString &to) const;
     FileResult copyVerifyRename(const QString &from, const QString &to) const;
+    // Copies `from` to `part` (a new file) and checks the copy (SHA-256), with `from`'s quarantine attribute; removes
+    // the part when anything fails. Leaves `from` as it is.
+    FileResult copyToPart(const QString &from, const QString &part) const;
     // Checks that `collectionRoot` is configured and `relativePath` stays inside it; returns the absolute target.
     FileResult collectionTarget(const QString &collectionRoot, const QString &relativePath) const;
     FileResult copyFolderVerified(const QString &from, const QString &to) const;

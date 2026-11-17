@@ -2,6 +2,7 @@
 #pragma once
 
 #include "collection/FolderRoles.h"
+#include "core/CollectionBrowse.h"
 #include "core/InboxRetag.h"
 #include "library/FileOps.h"
 #include "library/HistoryStore.h"
@@ -45,6 +46,29 @@ struct LibraryConfig
 inline constexpr QStringView kInboxSinglesFolder = u"Singles";
 inline constexpr QStringView kInboxAlbumsFolder = u"Albums";
 
+// P-010: what Save to collection does with an upgrade (InboxItem::replaces), judged now.
+enum class UpgradeVerdict : quint8 {
+    None,        // not an upgrade
+    Replaces,    // better than its collection file, or that file is gone: it takes the file's place (D41)
+    NotBetter,   // its real tier isn't higher than its file's: saved as a new file, the file stays as it is
+    CantReplace, // the name can't stay (another type, PRD D41), or the file's folder left the collection: saved as new
+    NotKnownYet, // the collection isn't read yet (just after launch): saving waits until it is
+};
+struct UpgradeJudgement
+{
+    UpgradeVerdict verdict = UpgradeVerdict::None;
+    QString note; // the verdict in words, without the file's path (the views show it as they show paths)
+};
+
+// The tier a download was got in: the quality it arrived in (InboxItem::sourceFormat, else its format and bitrate),
+// lowered by the spectrum check's verdict (a fake 320, a FLAC made from an MP3). Pure.
+QualityTier downloadTier(const library::InboxItem &item);
+// Judges an upgrade: its real tier (downloadTier()) against its collection file's now (`tierOf`), and their types. It
+// replaces only a file of a lower tier, or one the collection hasn't any more whose place, in `folders`, is free.
+// Without a lookup the collection counts as not read yet. Pure but for `tierOf`.
+UpgradeJudgement judgeUpgrade(const library::InboxItem &item, const TierLookup &tierOf,
+                              const collection::FolderRoles &folders);
+
 // Why a library configuration can't be used, or an empty string when it can. The Inbox must be an absolute path. The
 // tracks and albums folders may be unset; a folder that is set must be an absolute path, and the two must stay apart
 // from each other and from the Inbox: not the same folder, neither inside the other.
@@ -57,6 +81,9 @@ struct InboxEntry
     bool busy = false;   // being filed or trashed right now
     QStringList alsoOn;  // a single: the albums it is also on (DL-8)
     QList<qint64> flags; // …and the supersede flags saying so (EngineHost::notTheSameTrack())
+    // An upgrade (P-010), judged when the list was published: what Save to collection will do with it, in words.
+    UpgradeVerdict upgrade = UpgradeVerdict::None;
+    QString upgradeNote;
 };
 
 // An Inbox item Selecta moved to the Trash, with what it takes to put it back (Undo).
@@ -96,8 +123,14 @@ public:
     std::optional<qint64> add(const library::InboxItem &item);
     // Files these items into the collection: singles into the tracks folder, albums into the albums folder, keeping
     // the names they got on arrival. Busy, unknown or still-processing items are skipped; an item whose folder isn't
-    // chosen yet stays, and finished() says so.
+    // chosen yet stays, and finished() says so. An upgrade (InboxItem::replaces, P-010) judged better than its
+    // collection file now (judgeUpgrade()) takes that file's place instead, at its path (FileOps::upgradeTarget()), and
+    // the file goes to the Trash (FileOps::replaceInCollection()); when it can't (its folder isn't there, an unplugged
+    // drive) it stays, and finished() says why. An upgrade not better, or that can't replace, is filed as a new file:
+    // its file stays. One judged before the collection is read stays too.
     void file(const QList<qint64> &ids);
+    // The quality tier of a collection file now: what an upgrade must beat. Publishes the list again (the verdicts).
+    void setTierLookup(TierLookup lookup);
     // Moves these items to the macOS Trash. trashed() reports each one that went.
     void trash(const QList<qint64> &ids);
     // Puts an item trashed() reported back into the Inbox (Undo), under its old name when it's free. finished()
@@ -126,7 +159,7 @@ Q_SIGNALS:
     void trashed(const selecta::core::TrashedItem &trashed);
 
 private:
-    enum class Work { File, Trash, Retag, Restore };
+    enum class Work { File, Trash, Retag, Restore, Replace };
     struct Outcome
     {
         qint64 id = 0;
@@ -136,9 +169,15 @@ private:
         QString tagSource;
         QString releaseJson;
         TrashedItem restored; // Work::Restore
+        // An upgrade's collection file: the one it replaced (Work::Replace), or was filed beside (Work::File).
+        QString upgraded;
+        bool oldThere = false; // Work::Replace: that file was there, and went to the Trash
     };
 
     void start(qint64 id, Work work, std::function<library::FileResult()> job);
+    // Files an upgrade in its collection file's place, or, `asNew`, as a new file beside it.
+    void startUpgrade(qint64 id, const QString &source, const QString &replaces, const QString &tracksRoot,
+                      const QString &name, bool asNew);
     void post(Outcome outcome);
     void drain();
     void retagged(const Outcome &outcome);
@@ -152,6 +191,7 @@ private:
     library::InboxStore m_inbox;
     library::HistoryStore m_history;
     std::shared_ptr<const library::FileOps> m_fileOps;
+    TierLookup m_tierOf;
     QSet<qint64> m_busy;
     QThreadPool m_pool;
     std::mutex m_outcomesMutex;

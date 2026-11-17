@@ -182,6 +182,36 @@ TEST(Scanner, SeveralArtistValuesAreJoined)
     EXPECT_EQ(result.added.front().artist, u"Bicep & Clara La San"_s);
 }
 
+// P-010: the Collection view groups by genre. The first value counts, whitespace tidied, never split further, bounded.
+TEST(Scanner, TheGenreIsTheFirstValueTidiedAndBounded)
+{
+    TestTree tree;
+    Tags spaced = tags(u"Bicep"_s, u"Glue"_s);
+    spaced.insert(u"GENRE"_s, u"  Deep   House "_s);
+    const QString deep = tree.add(u"a.mp3"_s, Format::Mp3, spaced);
+    const QString untagged = tree.add(u"b.mp3"_s, Format::Mp3, tags(u"Bicep"_s, u"Atlas"_s));
+    const QString several = tree.add(u"c.flac"_s, Format::Flac16);
+    convert::MetadataModel model;
+    model.set(convert::keys::Title, u"Apricots"_s, convert::Provenance::User);
+    model.set(convert::keys::Genre, QStringList{u"Hip-Hop/Rap"_s, u"Electronic"_s}, convert::Provenance::User);
+    ASSERT_TRUE(convert::writeTags(several, model).ok());
+    // 99 letters and an emoji (two UTF-16 units): cut at 100 units, it would be half a character.
+    Tags long99 = tags(u"Bicep"_s, u"Saku"_s);
+    long99.insert(u"GENRE"_s, QString(99, u'x') + u"😀 and more"_s);
+    const QString longGenre = tree.add(u"d.mp3"_s, Format::Mp3, long99);
+    Tags long300 = tags(u"Bicep"_s, u"Rever"_s);
+    long300.insert(u"GENRE"_s, QString(300, u'y'));
+    const QString longerGenre = tree.add(u"e.mp3"_s, Format::Mp3, long300);
+
+    const ScanResult result = scan(tree);
+    ASSERT_EQ(result.added.size(), 5);
+    EXPECT_EQ(findFile(result.added, deep)->genre, u"Deep House"_s);
+    EXPECT_TRUE(findFile(result.added, untagged)->genre.isEmpty());
+    EXPECT_EQ(findFile(result.added, several)->genre, u"Hip-Hop/Rap"_s);
+    EXPECT_EQ(findFile(result.added, longGenre)->genre, QString(99, u'x'));
+    EXPECT_EQ(findFile(result.added, longerGenre)->genre, QString(100, u'y'));
+}
+
 TEST(Scanner, NumbersAndYearsAreParsedLeniently)
 {
     using selecta::collection::detail::leadingNumber;

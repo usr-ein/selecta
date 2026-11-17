@@ -41,6 +41,7 @@ struct ScannedFile
     qint64 durationMs = 0; // from the stream headers; 0 = unknown
     match::AudioQuality quality;
     QString isrc;
+    QString genre;                  // the first GENRE value, simplified, at most 100 characters; empty when untagged
     bool namesFromFileName = false; // the file has no title tag: missing names were parsed from the file and folders
 };
 

@@ -59,6 +59,19 @@ bool linkFolder(const QString &target, const QString &link)
 }
 #endif
 
+// Makes `link` a symbolic link to the file `target` (see linkFolder()).
+bool linkFile(const QString &target, const QString &link)
+{
+#ifdef Q_OS_WIN
+    std::error_code error;
+    std::filesystem::create_symlink(QDir::toNativeSeparators(target).toStdWString(),
+                                    QDir::toNativeSeparators(link).toStdWString(), error);
+    return !error;
+#else
+    return QFile::link(target, link);
+#endif
+}
+
 class FileOpsTest : public ::testing::Test
 {
 protected:
@@ -461,4 +474,238 @@ TEST_F(FileOpsTest, ANewFilePlacedAcrossVolumesKeepsItsQuarantineAttribute)
     const auto placed = fileOps.placeNewFile(staged, dir.filePath(u"converted.mp3"_s));
     ASSERT_TRUE(placed.ok) << placed.error.toStdString();
     EXPECT_EQ(quarantine::value(placed.path), selecta::testing::safariApproved());
+}
+
+// --- Upgrades (P-010, PRD D41) ---------------------------------------------------------------------------------------
+
+namespace {
+
+// What a folder holds, hidden files included: no leftovers from staging.
+QStringList entriesOf(const QString &folder)
+{
+    return QDir(folder).entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot, QDir::Name);
+}
+
+} // namespace
+
+TEST_F(FileOpsTest, AnUpgradeTakesTheOldFilesExactPlace)
+{
+    const QString album = collection + u"/Albums/Okuma Drift - Nightfall"_s;
+    const QString old = album + u"/01 Dusk.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Okuma Drift - Dusk.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old 128") && writeFile(upgrade, "new 320"));
+    const auto result = ops().replaceInCollection(upgrade, old);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(result.path, QFileInfo(old).canonicalFilePath()); // reported as filed paths are: real ones
+    EXPECT_EQ(readFile(old), "new 320");
+    EXPECT_FALSE(QFileInfo::exists(upgrade));
+    ASSERT_EQ(trashedPaths.size(), 1);
+    EXPECT_EQ(QFileInfo(trashedPaths.constFirst()).fileName(), u"01 Dusk.mp3"_s);
+    EXPECT_EQ(readFile(dir.filePath(u"fake-trash/01 Dusk.mp3"_s)), "old 128"); // the old file, under its own name
+    EXPECT_EQ(entriesOf(album), QStringList{u"01 Dusk.mp3"_s});
+}
+
+TEST_F(FileOpsTest, AnUpgradeOfAFileNoLongerThereTakesItsPlace)
+{
+    const QString old = collection + u"/Tracks/Okuma Drift - Dusk.mp3"_s;
+    ASSERT_TRUE(QDir().mkpath(QFileInfo(old).absolutePath()));
+    const QString upgrade = inbox + u"/Singles/Okuma Drift - Dusk.mp3"_s;
+    ASSERT_TRUE(writeFile(upgrade, "new"));
+    const auto result = ops().replaceInCollection(upgrade, old);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(readFile(old), "new");
+    EXPECT_TRUE(trashedPaths.isEmpty());
+}
+
+TEST_F(FileOpsTest, AnUpgradeKeepsTheNameAndExtension)
+{
+    const QString old = collection + u"/Tracks/Okuma Drift - Dusk.flac"_s;
+    const QString upgrade = inbox + u"/Singles/Okuma Drift - Dusk.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "flac") && writeFile(upgrade, "mp3"));
+    const auto refused = ops().replaceInCollection(upgrade, old);
+    EXPECT_FALSE(refused.ok);
+    EXPECT_TRUE(refused.error.contains(u"same type"_s)) << refused.error.toStdString();
+    EXPECT_FALSE(ops().checkReplace(upgrade, old).ok);
+    EXPECT_EQ(readFile(old), "flac"); // nothing changed
+    EXPECT_EQ(readFile(upgrade), "mp3");
+    EXPECT_TRUE(trashedPaths.isEmpty());
+
+    // The extension's case doesn't make another type.
+    const QString upper = collection + u"/Tracks/Okuma Drift - Dawn.MP3"_s;
+    const QString lower = inbox + u"/Singles/Okuma Drift - Dawn.mp3"_s;
+    ASSERT_TRUE(writeFile(upper, "old") && writeFile(lower, "new"));
+    ASSERT_TRUE(ops().replaceInCollection(lower, upper).ok);
+    EXPECT_EQ(readFile(upper), "new");
+}
+
+// The maintainer: "Allow .mp3 for them". An AAC, Ogg or Opus file's upgrade arrives as an MP3: it keeps the folder
+// and the name, with .mp3, and the old file goes to the Trash.
+TEST_F(FileOpsTest, AnOtherLossyFilesUpgradeTakesItsNameWithMp3)
+{
+    EXPECT_EQ(FileOps::upgradeTarget(u"/In/a.mp3"_s, u"/Music/Tracks/Song.m4a"_s), u"/Music/Tracks/Song.mp3"_s);
+    EXPECT_EQ(FileOps::upgradeTarget(u"/In/a.mp3"_s, u"/Music/Tracks/Song.OGG"_s), u"/Music/Tracks/Song.mp3"_s);
+    EXPECT_EQ(FileOps::upgradeTarget(u"/In/a.mp3"_s, u"/Music/Tracks/Song.opus"_s), u"/Music/Tracks/Song.mp3"_s);
+    EXPECT_EQ(FileOps::upgradeTarget(u"/In/a.mp3"_s, u"/Music/Tracks/Song.mp3"_s), u"/Music/Tracks/Song.mp3"_s);
+    EXPECT_TRUE(FileOps::upgradeTarget(u"/In/a.mp3"_s, u"/Music/Tracks/Song.flac"_s).isEmpty());
+    EXPECT_TRUE(FileOps::upgradeTarget(u"/In/a.flac"_s, u"/Music/Tracks/Song.m4a"_s).isEmpty());
+
+    const QString album = collection + u"/Albums/Nightfall"_s;
+    const QString old = album + u"/03 Night Bus.m4a"_s;
+    const QString upgrade = inbox + u"/Singles/Ruben Ostrava - Night Bus.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "aac 128") && writeFile(upgrade, "mp3 320"));
+    const auto result = ops().replaceInCollection(upgrade, old);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(QFileInfo(result.path).fileName(), u"03 Night Bus.mp3"_s);
+    EXPECT_EQ(readFile(album + u"/03 Night Bus.mp3"_s), "mp3 320");
+    EXPECT_FALSE(QFileInfo::exists(old));
+    EXPECT_EQ(readFile(dir.filePath(u"fake-trash/03 Night Bus.m4a"_s)), "aac 128");
+    EXPECT_EQ(entriesOf(album), QStringList{u"03 Night Bus.mp3"_s});
+}
+
+// Never over another file: an .mp3 of the name already there stays, and so does the .m4a.
+TEST_F(FileOpsTest, AnMp3NameAlreadyTakenIsNeverReplaced)
+{
+    const QString old = collection + u"/Tracks/Song.m4a"_s;
+    const QString other = collection + u"/Tracks/Song.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "aac") && writeFile(other, "another song") && writeFile(upgrade, "new"));
+    const auto refused = ops().replaceInCollection(upgrade, old);
+    EXPECT_FALSE(refused.ok);
+    EXPECT_TRUE(refused.error.contains(u"already there"_s)) << refused.error.toStdString();
+    EXPECT_EQ(readFile(old), "aac");
+    EXPECT_EQ(readFile(other), "another song");
+    EXPECT_TRUE(trashedPaths.isEmpty());
+}
+
+TEST_F(FileOpsTest, AnUpgradeOnlyReplacesAPlainCollectionFile)
+{
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(upgrade, "new"));
+    // Outside the collection folders, relative, in a folder that isn't there, a folder, a symbolic link.
+    ASSERT_TRUE(writeFile(incoming + u"/Song.mp3"_s, "elsewhere"));
+    EXPECT_FALSE(ops().replaceInCollection(upgrade, incoming + u"/Song.mp3"_s).ok);
+    EXPECT_FALSE(ops().replaceInCollection(upgrade, u"Tracks/Song.mp3"_s).ok);
+    EXPECT_FALSE(ops().replaceInCollection(upgrade, collection + u"/Gone/Song.mp3"_s).ok);
+    ASSERT_TRUE(QDir().mkpath(collection + u"/Tracks/Folder.mp3"_s));
+    EXPECT_FALSE(ops().replaceInCollection(upgrade, collection + u"/Tracks/Folder.mp3"_s).ok);
+    if (linkFile(incoming + u"/Song.mp3"_s, collection + u"/Tracks/Link.mp3"_s)) {
+        EXPECT_FALSE(ops().replaceInCollection(upgrade, collection + u"/Tracks/Link.mp3"_s).ok);
+    } else {
+        EXPECT_TRUE(kLinksNeedPrivilege) << "couldn't make a symbolic link";
+    }
+    EXPECT_EQ(readFile(incoming + u"/Song.mp3"_s), "elsewhere");
+    // Only an Inbox file replaces anything.
+    ASSERT_TRUE(writeFile(collection + u"/Tracks/Old.mp3"_s, "old"));
+    EXPECT_FALSE(ops().replaceInCollection(incoming + u"/Song.mp3"_s, collection + u"/Tracks/Old.mp3"_s).ok);
+    EXPECT_EQ(readFile(collection + u"/Tracks/Old.mp3"_s), "old");
+    EXPECT_TRUE(trashedPaths.isEmpty());
+    EXPECT_EQ(readFile(upgrade), "new");
+}
+
+TEST_F(FileOpsTest, AnUpgradeWhoseOldFileCantGoToTheTrashChangesNothing)
+{
+    const QString old = collection + u"/Tracks/Song.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old") && writeFile(upgrade, "new"));
+    const FileOps refusing(inbox, {collection}, [](const QString &, QString *) { return false; });
+    const auto result = refusing.replaceInCollection(upgrade, old);
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.error.contains(u"nothing changed"_s)) << result.error.toStdString();
+    EXPECT_EQ(readFile(old), "old");
+    EXPECT_EQ(readFile(upgrade), "new");
+    EXPECT_EQ(entriesOf(collection + u"/Tracks"_s), QStringList{u"Song.mp3"_s}); // the staged copy went
+}
+
+// Should the copy fail to take the old file's place, the old file comes back from the Trash.
+TEST_F(FileOpsTest, AnUpgradeThatCantTakeThePlacePutsTheOldFileBack)
+{
+    const QString tracks = collection + u"/Tracks"_s;
+    const QString old = tracks + u"/Song.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old") && writeFile(upgrade, "new"));
+    const QString trashFolder = dir.filePath(u"fake-trash"_s);
+    ASSERT_TRUE(QDir().mkpath(trashFolder));
+    // The Trash takes the file, and the staged copy vanishes meanwhile (another app, a full disk…).
+    const FileOps vanishing(inbox, {collection}, [&](const QString &path, QString *trashed) {
+        *trashed = trashFolder + u"/Song.mp3"_s;
+        QFile::remove(QFileInfo(path).dir().filePath(u".Song.mp3.selecta-part"_s));
+        return QFile::rename(path, *trashed);
+    });
+    const auto result = vanishing.replaceInCollection(upgrade, old);
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.error.contains(u"the old file is back"_s)) << result.error.toStdString();
+    EXPECT_EQ(readFile(old), "old");
+    EXPECT_EQ(readFile(upgrade), "new"); // still in the Inbox, to file again
+    EXPECT_EQ(entriesOf(tracks), QStringList{u"Song.mp3"_s});
+}
+
+TEST_F(FileOpsTest, AnUpgradeKeepsItsQuarantineAttribute)
+{
+    if (!quarantine::isSupported()) {
+        GTEST_SKIP() << "this platform has no quarantine attribute";
+    }
+    const QString old = collection + u"/Tracks/Song.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old") && writeFile(upgrade, "new"));
+    ASSERT_TRUE(selecta::testing::setQuarantine(upgrade, selecta::testing::safariApproved()));
+    ASSERT_TRUE(ops().replaceInCollection(upgrade, old).ok);
+    EXPECT_EQ(quarantine::value(old), selecta::testing::safariApproved());
+}
+
+// A copy that can't be made (here a folder that can't be written, as a full disk would) changes nothing.
+TEST_F(FileOpsTest, AnUpgradeWhoseCopyFailsChangesNothing)
+{
+    if (!kReadOnlyFoldersStopWrites || selecta::testing::runningAsRoot()) {
+        GTEST_SKIP() << "needs a folder that refuses this user's writes";
+    }
+    const QString tracks = collection + u"/Tracks"_s;
+    const QString old = tracks + u"/Song.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old") && writeFile(upgrade, "new"));
+    ASSERT_TRUE(QFile::setPermissions(tracks, QFileDevice::ReadOwner | QFileDevice::ExeOwner));
+    const auto result = ops().replaceInCollection(upgrade, old);
+    QFile::setPermissions(tracks, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.error.contains(u"nothing changed"_s)) << result.error.toStdString();
+    EXPECT_EQ(readFile(old), "old");
+    EXPECT_EQ(readFile(upgrade), "new");
+    EXPECT_TRUE(trashedPaths.isEmpty());
+    EXPECT_EQ(entriesOf(tracks), QStringList{u"Song.mp3"_s});
+}
+
+// Should the old file not come back either, the message says where it is in the Trash.
+TEST_F(FileOpsTest, AnUpgradeThatCantPutTheOldFileBackSaysWhereItIs)
+{
+    const QString old = collection + u"/Tracks/Song.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(old, "old") && writeFile(upgrade, "new"));
+    const QString trashFolder = dir.filePath(u"fake-trash"_s);
+    ASSERT_TRUE(QDir().mkpath(trashFolder));
+    // The Trash takes the file; meanwhile another app takes the name, so neither the copy nor the old file fits.
+    const FileOps taken(inbox, {collection}, [&](const QString &path, QString *trashed) {
+        *trashed = trashFolder + u"/Song.mp3"_s;
+        const bool moved = QFile::rename(path, *trashed);
+        return moved && writeFile(path, "someone else's");
+    });
+    const auto result = taken.replaceInCollection(upgrade, old);
+    EXPECT_FALSE(result.ok);
+    EXPECT_TRUE(result.error.contains(u"the old file is in the Trash: "_s + trashFolder + u"/Song.mp3"_s))
+        << result.error.toStdString();
+    EXPECT_EQ(readFile(trashFolder + u"/Song.mp3"_s), "old");
+    EXPECT_EQ(readFile(upgrade), "new"); // still in the Inbox
+}
+
+// A crash between the two steps left the path empty, the old file in the Trash and a hidden copy beside it: saving the
+// upgrade again fills the path, and the leftover copy goes.
+TEST_F(FileOpsTest, AnUpgradeCutShortIsSavedAgain)
+{
+    const QString tracks = collection + u"/Tracks"_s;
+    const QString old = tracks + u"/Song.mp3"_s;
+    const QString upgrade = inbox + u"/Singles/Song.mp3"_s;
+    ASSERT_TRUE(writeFile(upgrade, "new") && writeFile(tracks + u"/.Song.mp3.selecta-part"_s, "half a cop"));
+    const auto result = ops().replaceInCollection(upgrade, old);
+    ASSERT_TRUE(result.ok) << result.error.toStdString();
+    EXPECT_EQ(readFile(old), "new");
+    EXPECT_TRUE(trashedPaths.isEmpty()); // nothing to trash: the old file went before
+    EXPECT_EQ(entriesOf(tracks), QStringList{u"Song.mp3"_s});
 }

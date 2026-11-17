@@ -67,6 +67,134 @@ match::Codec codecOf(const QString &format)
     return match::Codec::Unknown;
 }
 
+// What History says of a path where Selecta filed something: a file, or an album's folder (one entry per file).
+struct FiledFacts
+{
+    qint64 newestMs = 0;     // the newest download filed there
+    TierEvidence newest;     // what that download was
+    bool allLossless = true; // every download filed there was lossless (an album's files)
+};
+
+// What History says of the paths where Selecta filed something, by comparison key.
+QHash<QString, FiledFacts> filedFacts(const QList<library::HistoryEntry> &history)
+{
+    QHash<QString, FiledFacts> filed;
+    for (const library::HistoryEntry &entry : history) {
+        if (entry.whereabouts != library::HistoryEntry::Whereabouts::Filed || entry.filedPath.isEmpty()) {
+            continue;
+        }
+        const bool lossless = isLosslessQualityText(entry.quality);
+        FiledFacts &facts = filed[collection::comparisonKey(entry.filedPath)];
+        facts.allLossless = facts.allLossless && lossless;
+        if (entry.completedAt >= facts.newestMs) { // an upgrade filed in an older file's place wins
+            facts.newestMs = entry.completedAt;
+            facts.newest = TierEvidence{.fromLossless = lossless, .likelySourceKbps = entry.likelySourceKbps};
+        }
+    }
+    return filed;
+}
+
+// The comparison keys a file's History facts may be under: its own, and the one its root's real path gives (History
+// keeps the paths FileOps reported: /private/var/… for /var/…).
+class FiledLookup
+{
+public:
+    FiledLookup(QHash<QString, FiledFacts> filed, const QStringList &roots)
+        : m_filed(std::move(filed))
+    {
+        for (const QString &root : roots) {
+            const QString canonical = QFileInfo(root).canonicalFilePath();
+            const QString rootKey = collection::comparisonKey(root);
+            const QString canonicalKey = canonical.isEmpty() ? QString() : collection::comparisonKey(canonical);
+            if (!canonicalKey.isEmpty() && canonicalKey != rootKey) {
+                m_rewrites.append({rootKey + u'/', canonicalKey + u'/'});
+            }
+        }
+    }
+
+    const FiledFacts *find(const QString &path) const
+    {
+        if (m_filed.isEmpty()) {
+            return nullptr;
+        }
+        const QString key = collection::comparisonKey(path);
+        if (const auto it = m_filed.constFind(key); it != m_filed.cend()) {
+            return &it.value();
+        }
+        for (const auto &[from, to] : m_rewrites) {
+            if (key.startsWith(from)) {
+                if (const auto it = m_filed.constFind(to + key.mid(from.size())); it != m_filed.cend()) {
+                    return &it.value();
+                }
+            }
+        }
+        return nullptr;
+    }
+
+private:
+    QHash<QString, FiledFacts> m_filed;
+    QList<std::pair<QString, QString>> m_rewrites; // root key prefix → its real path's
+};
+
+// The listing of the collection (P-010) from the files the index is built of.
+std::shared_ptr<const CollectionListing> buildListing(const QList<collection::ScannedFile> &files,
+                                                      const QList<qint64> &ids,
+                                                      const QList<match::LibraryAlbum> &albums,
+                                                      const QHash<QString, quint64> &albumOf,
+                                                      const collection::FolderRoles &folders, const FiledLookup &filed)
+{
+    auto listing = std::make_shared<CollectionListing>();
+    listing->tracks.reserve(files.size());
+    QHash<quint64, QString> albumFolders;
+    for (qsizetype i = 0; i < files.size(); ++i) {
+        const collection::ScannedFile &file = files.at(i);
+        CollectionTrack track;
+        track.id = ids.at(i);
+        track.path = file.file.path;
+        track.artist = file.artist;
+        track.title = file.title;
+        track.album = file.album;
+        track.albumArtist = file.albumArtist;
+        track.genre = file.genre;
+        track.year = file.year;
+        track.trackNumber = file.trackNumber;
+        track.discNumber = file.discNumber;
+        track.durationMs = file.durationMs;
+        track.sizeBytes = file.file.size;
+        track.modifiedMs = file.file.modifiedMs;
+        track.quality = file.quality;
+        track.albumId = albumOf.value(file.file.path);
+        QString albumFolder;
+        if (track.albumId != 0 &&
+            folders.roleOf(file.file.path, &albumFolder) == collection::FolderRoles::Role::Album &&
+            !albumFolders.contains(track.albumId)) {
+            albumFolders.insert(track.albumId, albumFolder);
+        }
+        // History knows the file Selecta filed, or the album folder it filed; else the file's own date.
+        TierEvidence evidence;
+        track.addedMs = std::max<qint64>(0, file.file.modifiedMs);
+        if (const FiledFacts *facts = filed.find(file.file.path)) {
+            evidence = facts->newest;
+            track.addedMs = facts->newestMs;
+        } else if (const FiledFacts *album = albumFolder.isEmpty() ? nullptr : filed.find(albumFolder)) {
+            evidence.fromLossless = album->allLossless;
+            track.addedMs = album->newestMs;
+        }
+        track.tier = qualityTier(file.quality, evidence);
+        listing->tracks.append(std::move(track));
+    }
+    listing->albums.reserve(albums.size());
+    for (const match::LibraryAlbum &album : albums) {
+        listing->albums.append(CollectionAlbum{.id = album.id,
+                                               .folder = albumFolders.value(album.id),
+                                               .title = album.title,
+                                               .artist = album.artist,
+                                               .year = album.year,
+                                               .variousArtists = album.variousArtists});
+    }
+    return listing;
+}
+
 // Whether `path` is one of `folders` or inside one of them.
 bool coveredBy(const QString &path, const QStringList &folders)
 {
@@ -88,6 +216,7 @@ CollectionService::CollectionService(storage::Database &db, Options options, Wal
 {
     qRegisterMetaType<CollectionStatus>();
     qRegisterMetaType<std::shared_ptr<const match::MatchIndex>>();
+    qRegisterMetaType<std::shared_ptr<const CollectionListing>>();
     m_pool.setMaxThreadCount(1); // scans and builds take turns; a scan has reader threads of its own
     m_pool.setObjectName(u"selecta-collection"_s);
     m_rebuildTimer->setSingleShot(true);
@@ -129,6 +258,8 @@ void CollectionService::setFolders(const collection::FolderRoles &folders, const
     m_excluded = excluded;
     m_rootsSet = true;
     m_status.roots = m_roots;
+    m_status.tracksFolder = folders.tracks();
+    m_status.albumsFolder = folders.albums();
     if (!changed) {
         return;
     }
@@ -334,11 +465,18 @@ void CollectionService::rebuild()
         history.append({static_cast<quint64>(entry.id), entry.peer, QString::fromUtf8(entry.remotePath),
                         static_cast<quint64>(std::max<qint64>(0, entry.sizeBytes))});
     }
+    QHash<QString, FiledFacts> filed = filedFacts(m_history);
     const quint64 generation = ++m_generation;
     m_pool.start([this, files = std::move(files), ids = std::move(ids), inbox = std::move(inbox),
-                  history = std::move(history), folders = m_folders, generation] {
+                  history = std::move(history), folders = m_folders, filed = std::move(filed), previous = m_listing,
+                  generation]() mutable {
         QHash<QString, quint64> albumOf;
         const QList<match::LibraryAlbum> albums = collection::albumsOf(files, folders, &albumOf);
+        std::shared_ptr<const CollectionListing> listing =
+            buildListing(files, ids, albums, albumOf, folders, FiledLookup(std::move(filed), folders.roots()));
+        if (previous && *previous == *listing) {
+            listing = previous; // an Inbox change, say: nothing the view shows changed
+        }
         match::MatchIndexInput input;
         input.tracks.reserve(files.size() + inbox.size());
         for (qsizetype i = 0; i < files.size(); ++i) {
@@ -361,7 +499,7 @@ void CollectionService::rebuild()
         input.albums = albums;
         input.history = history;
         input.generation = generation;
-        post(IndexOutcome{match::MatchIndex::build(input), static_cast<int>(albums.size())});
+        post(IndexOutcome{match::MatchIndex::build(input), std::move(listing), static_cast<int>(albums.size())});
     });
 }
 
@@ -394,9 +532,14 @@ void CollectionService::drain()
         } else if (const auto *built = std::get_if<IndexOutcome>(&outcome)) {
             m_building = false;
             m_index = built->index;
+            const bool listed = built->listing != m_listing;
+            m_listing = built->listing;
             m_status.albums = built->albums;
             publish();
             Q_EMIT indexChanged(m_index);
+            if (listed) {
+                Q_EMIT listingChanged(m_listing);
+            }
             if (std::exchange(m_rebuildWanted, false)) {
                 rebuild();
             }

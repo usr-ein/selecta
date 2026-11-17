@@ -599,6 +599,7 @@ TEST_F(NetworkTextTest, Collection)
     auto window = makeWindow();
     core::CollectionStatus status;
     status.roots = {dir.filePath(kName)};
+    status.tracksFolder = dir.filePath(kName);
     status.tracks = 1;
     status.formats = {{kName, 1}};
     status.unreadable = 1;
@@ -613,7 +614,7 @@ TEST_F(NetworkTextTest, Collection)
     flag.summary = kName;
     Q_EMIT engine->supersedeFlagsChanged({flag});
     ASSERT_TRUE(window->navigateTo(u"collection"_s));
-    EXPECT_TRUE(shown(child<QLabel>(*window, u"collection.details"_s)).contains(kName));
+    EXPECT_TRUE(shown(child<QLabel>(*window, u"collection.folders"_s)).contains(kName));
     EXPECT_EQ(shown(child<QLabel>(*window, u"collection.message"_s)), kName);
     EXPECT_EQ(shown(child<QLabel>(*window, u"collection.formats"_s)), u"%1: 1"_s.arg(kName));
     expectLabelsShowTheName(*window, 3);

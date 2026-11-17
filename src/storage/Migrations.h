@@ -42,4 +42,8 @@ std::span<const Migration> selectaMigrations();
 // folder): a database below this version may hold their Inbox items.
 inline constexpr int kInboxMovedVersion = 19;
 
+// The migration of upgrades and the Collection view (P-010): genres in the collection index (every file read once
+// more), the collection file a Get tracks line or an Inbox item upgrades, and the spectrum check's verdict in History.
+inline constexpr int kCollectionUpgradesVersion = 20;
+
 } // namespace selecta::storage
